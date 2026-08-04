@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "skills": {
+    "welshman": {
+      "source": "coracle-social/welshman",
+      "sourceType": "github",
+      "skillPath": "skills/welshman/SKILL.md",
+      "computedHash": "7ec9442d932c358b6cf3ac1446cf9c478c0b2bff88db3d87a9fcb3db62900132"
+    },
+    "welshman-app": {
+      "source": "coracle-social/welshman",
+      "sourceType": "github",
+      "skillPath": "skills/welshman-app/SKILL.md",
+      "computedHash": "74455fe8ade7b69bcb1a63a0a2e6e5ad458d26b9d7f7dd4837c7670973d114bc"
+    },
+    "welshman-content": {
+      "source": "coracle-social/welshman",
+      "sourceType": "github",
+      "skillPath": "skills/welshman-content/SKILL.md",
+      "computedHash": "8ad4b3646e781d124c5332565cc4e0333664fcbcb5dccafc70b1d21266bcafd8"
+    },
+    "welshman-domain": {
+      "source": "coracle-social/welshman",
+      "sourceType": "github",
+      "skillPath": "skills/welshman-domain/SKILL.md",
+      "computedHash": "a9c48d96bdc8028d3b358cc7f68c7f82d9a09c373569cf86465b9492e9edc9f0"
+    },
+    "welshman-editor": {
+      "source": "coracle-social/welshman",
+      "sourceType": "github",
+      "skillPath": "skills/welshman-editor/SKILL.md",
+      "computedHash": "c742cde213f49cfba61b46bafdc0e7b490a6b6ffc3a6e2c46c68368d3beebc2b"
+    },
+    "welshman-feeds": {
+      "source": "coracle-social/welshman",
+      "sourceType": "github",
+      "skillPath": "skills/welshman-feeds/SKILL.md",
+      "computedHash": "148bd556a0a08b9dc07b959c7ecd8b3259058dd2b3a3b2a2f2171c1cc669b25c"
+    },
+    "welshman-lib": {
+      "source": "coracle-social/welshman",
+      "sourceType": "github",
+      "skillPath": "skills/welshman-lib/SKILL.md",
+      "computedHash": "89469b8506abecb53ccc731c7487d268235da87640347d65345d24f18e6a1f84"
+    },
+    "welshman-net": {
+      "source": "coracle-social/welshman",
+      "sourceType": "github",
+      "skillPath": "skills/welshman-net/SKILL.md",
+      "computedHash": "01db8bb7f3a299fe115850bcd5168de814e46a88dda41dcd644ce29e7d45ee6e"
+    },
+    "welshman-signer": {
+      "source": "coracle-social/welshman",
+      "sourceType": "github",
+      "skillPath": "skills/welshman-signer/SKILL.md",
+      "computedHash": "6f0dc05623422ea1f1599ee353b0417e6502b2a080040d89e2da2df4143f7394"
+    },
+    "welshman-store": {
+      "source": "coracle-social/welshman",
+      "sourceType": "github",
+      "skillPath": "skills/welshman-store/SKILL.md",
+      "computedHash": "350036dc927498e1193fbb7dc7b765a1c99e60ddd93e60187f7fc7c2ba250bd3"
+    },
+    "welshman-util": {
+      "source": "coracle-social/welshman",
+      "sourceType": "github",
+      "skillPath": "skills/welshman-util/SKILL.md",
+      "computedHash": "5dce6b6716f586424bd877a53c1c2211a97f247f969e5c9a72acdf097651d8a8"
+    }
+  }
+}

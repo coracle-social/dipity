@@ -1,0 +1,43 @@
+{
+  "name": "serendipity",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
+    "sync": "vite build && cap sync",
+    "ios": "npm run sync && cap open ios",
+    "android": "npm run sync && cap open android"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.0",
+    "@sveltejs/vite-plugin-svelte": "^7.2.0",
+    "@tsconfig/svelte": "^5.0.8",
+    "@types/node": "^24.13.3",
+    "svelte": "^5.56.8",
+    "svelte-check": "^4.7.3",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/ios": "^8.5.0",
+    "@frostr/bifrost": "^1.0.7",
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "^2.2.0",
+    "@pomade/core": "^0.3.3",
+    "@welshman/app": "^0.9.0-pre4",
+    "@welshman/domain": "^0.9.0-pre4",
+    "@welshman/feeds": "^0.9.0-pre4",
+    "@welshman/lib": "^0.9.0-pre4",
+    "@welshman/net": "^0.9.0-pre4",
+    "@welshman/signer": "^0.9.0-pre4",
+    "@welshman/store": "^0.9.0-pre4",
+    "@welshman/util": "^0.9.0-pre4",
+    "nostr-tools": "^2.24.1"
+  }
+}

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Serendipity</string>
+    <string name="title_activity_main">Serendipity</string>
+    <string name="package_name">social.coracle.serendipity</string>
+    <string name="custom_url_scheme">social.coracle.serendipity</string>
+</resources>
