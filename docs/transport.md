@@ -44,7 +44,7 @@ iroh is designed to defeat the constraint invariant I1 imposes, so it must be co
 - **No relay URL configured.** A connection that cannot be made directly must fail rather than fall back.
 - **`AddrFilter`** restricting published addresses to link-local and RFC1918 ranges.
 
-With all discovery paths off and no relay, iroh cannot reach a peer whose address was not handed to it directly. That turns I1 from a runtime check into a configuration property, which is the entire point.
+With all discovery paths off and no relay, iroh cannot reach a peer whose address was not handed to it directly. That turns I1 from a runtime check into a configuration property: there is no code path that could reach a distant peer, so there is none to audit or to regress.
 
 ### Dial policy
 

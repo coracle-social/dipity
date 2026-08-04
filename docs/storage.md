@@ -4,7 +4,7 @@ Where events live, who can answer a query, and what happens while the app is asl
 
 ## The constraint
 
-The webview is suspended in the background. If the event store lives only in the webview, nothing can be served while backgrounded — which means two phones in two pockets never sync. That is not a degraded experience, it is the removal of the premise. Passive proximity gossip is the product.
+The webview is suspended in the background. If the event store lives only in the webview, nothing can be served while backgrounded — which means two phones in two pockets never sync. Passive gossip between backgrounded devices is the core use case, not an enhancement on top of a foreground app.
 
 So the native side must hold events and answer queries autonomously.
 
@@ -74,8 +74,9 @@ Events arriving from peers while the app is foregrounded are ingested by native,
 
 Two pieces of per-event state are not in the event JSON and must be carried alongside it:
 
-- **`verifiedSymbol`.** Native verified these events on ingest. The adapter sets `event[verifiedSymbol] = true` before handing them to the Repository. Schnorr verification in JS costs roughly a millisecond per event, so re-verifying a 10,000-event hydration would cost ten seconds for no benefit. This is the single most important detail in the adapter.
-- **`seen_at`.** Not part of the signed event and not expressible in an `EVENT` frame. Native sends it in a parallel structure keyed by event id; the adapter attaches it as a symbol property, which keeps it out of JSON serialization and out of anything ever sent to a peer.
+- **`verifiedSymbol`.** Native checked the delivery grant on ingest. The adapter sets `event[verifiedSymbol] = true` before handing events to the Repository. Schnorr verification in JS costs roughly a millisecond per event, so re-checking a 10,000-event hydration would cost ten seconds for no benefit. Omitting it is silent — hydration stays correct and just gets slower as the store grows. Note this is welshman's flag for "signature already checked", and our events have no signature; it is set because grant verification has already established authenticity.
+- **`seen_at`.** Not part of the event and not expressible in an `EVENT` frame. Native sends it in a parallel structure keyed by event id; the adapter attaches it as a symbol property, which keeps it out of JSON serialization and out of anything ever sent to a peer.
+- **The delivery grant**, for chunks this device can forward — ones whose author handed them to us directly. One grant per chunk, stored with the sorted id list it commits to, so inclusion proofs can still be produced after retention has evicted some of the events. Never transmitted: forwarding sends a [grant proof](./sync.md#grant-proofs) derived from it instead. Events received at the second hop arrive with no grant and can never be forwarded.
 
 ### What `SqliteAdapter` must not do
 
@@ -95,7 +96,7 @@ Bounded, and deliberately mechanical:
 
 - Event storage with indexes on kind, pubkey, `created_at`, `seen_at`, and tags.
 - NIP-01 filter matching. Simple semantics, roughly 500 lines per platform.
-- Schnorr verification on ingest, **with partition support** (see [`identity.md`](./identity.md)) — libsecp256k1 is available on both platforms, but the serialization must append the partition before hashing.
+- Id recomputation and **delivery grant verification** on ingest (see [`sync.md`](./sync.md#delivery-grants)) — libsecp256k1 is available on both platforms. Native applies the same rule as the webview: a grant naming us when the sender authored the event, a valid grant proof from the sender otherwise, checked against the transport-authenticated peer. Events satisfying neither are never stored.
 - Quota counters.
 
 ### Native gets a compiled policy, not policy logic
@@ -115,7 +116,7 @@ Every stored event carries `seen_at`: when **this device** first received it. It
 Rules:
 
 - **Set once, on first insert. Never updated.** Receiving the same event again from a second peer must not move it — otherwise the recently-discovered view churns as duplicates arrive.
-- **Never transmitted.** It is metadata about the user's movements and encounters. It is not part of the signed event and must never appear in anything served to a peer. See [`privacy.md`](./privacy.md).
+- **Never transmitted.** It is metadata about the user's movements and encounters. It is not part of the event and must never appear in anything served to a peer. See [`privacy.md`](./privacy.md).
 - **Indexed.** It is the primary sort key for the main view.
 - **Distinct from `created_at`.** An event authored three years ago and discovered five minutes ago sorts to the top. This is the point of the app, not an anomaly to correct.
 

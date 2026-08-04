@@ -28,15 +28,25 @@ Prevented by the transport binding in [`nip-p2p-auth.md`](./nip-p2p-auth.md). Wi
 
 ## `seen_at` never leaves the device
 
-`seen_at` records when you encountered an event, which is a record of where you were and who you were near. It is local-only by construction: not part of the signed event, never transmitted, never served to a peer. See [`storage.md`](./storage.md#seen_at).
+`seen_at` records when you encountered an event, which is a record of where you were and who you were near. It is local-only by construction: not part of the event, never transmitted, never served to a peer. See [`storage.md`](./storage.md#seen_at).
 
 Provenance — which peer an event arrived from — is the same class of data and is subject to the same rule. It is not surfaced in the UI. Exposing it ("discovered near X") is a deliberate product decision with its own consent story, not a free consequence of having the column.
 
-## Partition signing as leak protection
+## Unsigned events as leak protection
 
-Proximity events are signed into the `proximity` partition, so an event that escapes to a normal relay does not validate as a nostr event at all. A bug that publishes proximity content to the open network produces garbage rather than a real post.
+Content events carry no signature, so an event that escapes to a normal relay is rejected on arrival rather than stored. A bug that publishes proximity content to the open network produces nothing a relay will keep or a client will render.
 
-This is defence in depth behind invariant I1, which is already enforced by transport configuration. See [`identity.md`](./identity.md#partition-signing).
+This is defence in depth behind invariant I1, which is already enforced by transport configuration. See [`identity.md`](./identity.md#events-are-not-signed-grants-are).
+
+## What a delivery grant discloses
+
+A grant is transferable evidence of authorship, so it never leaves the peer it names. The second hop receives a [grant proof](./sync.md#grant-proofs) instead — designated to that recipient and simulatable by them, so it convinces them and no one else.
+
+What a second-hop recipient learns is therefore bounded. They learn the forwarder holds a grant from the author, which implies the two met; they already observe the forwarder has the event, so this adds little. What they cannot do is carry any of it further — not the author's authorship, and not the encounter.
+
+One detail the chunking adds: a grant covers a whole encounter, and verifying an inclusion proof reveals its root and timestamp. A second-hop recipient can therefore tell that several events reached the forwarder in the same handover, and see the sibling hashes along each path. The other event ids stay hidden, but the grouping does not.
+
+One device does hold portable proof that the author wrote the content and handed it over: the peer the grant names. That is unavoidable, since it is the same object that authorises forwarding. It stays one hop from the author and is never transmitted.
 
 ## Key custody
 
@@ -48,7 +58,7 @@ The backup file is the weak point in an otherwise device-bound design. Unencrypt
 
 - **Traffic analysis of payload sizes.** Frames are not padded. A determined observer learns roughly how much is being exchanged and when.
 - **Correlating rotating identifiers** by radio fingerprint, timing, or co-presence patterns.
-- **An authorised peer leaking.** Anyone entitled to receive your events can do whatever they like with them. Scope limits reach; it does not limit recipients' behaviour.
+- **An authorised peer leaking.** Anyone entitled to receive your events can do whatever they like with them outside the protocol — screenshot, retype, republish. The two-hop cap bounds what the *protocol* will carry, not what a person will.
 - **Media at rest.** Blobs are written to disk unsealed, protected by the platform's data-protection class rather than app-layer encryption. The privacy policy states this plainly.
 - **A compromised device.** Secure storage protects keys from other apps, not from an attacker who controls the OS.
 
@@ -56,6 +66,6 @@ The backup file is the weak point in an otherwise device-bound design. Unencrypt
 
 Worth naming because the UI has to actively correct them:
 
-- **"My posts only reach people nearby."** False. Events propagate transitively through people who move — that is invariant I4 and the whole basis of offline gossip. Proximity constrains *connections*, not *information*. The gossip scope is the only control over reach and must be presented as such. See [`sync.md`](./sync.md#transitive-propagation).
+- **"My posts only reach people nearby."** False. Events propagate transitively through people who move — that is invariant I4 and the basis of offline gossip. Proximity constrains *connections*, not *information*. What is true, and what the UI should say instead, is that reach is bounded at two hops by I5: your posts reach people you meet, and people they meet. See [`sync.md`](./sync.md#bounded-propagation).
 - **"Nobody knows I'm here unless I connect."** Mostly true, but a device advertising is detectable as *a* device running this app.
 - **"Muting someone hides them."** It does more: it stops this device carrying their events for anyone, and purges what is already stored.

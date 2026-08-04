@@ -4,7 +4,7 @@ How peers find each other, decide to connect, identify each other, and decide wh
 
 ## The advertisement carries nothing
 
-The BLE advertisement is a bare presence beacon: our service UUID and nothing else. This is forced, not chosen.
+The BLE advertisement is a bare presence beacon: our service UUID and nothing else. iOS imposes this — there is no payload to put an identifier in once the app is backgrounded, as below. The privacy properties in [`privacy.md`](./privacy.md) follow from the platform limit rather than motivating it.
 
 When an iOS app advertises in the background, the local name and service data are stripped, and the 128-bit service UUID moves to the "overflow" area — readable only by another iOS device explicitly scanning for that exact UUID. In the background-to-background case, which is the case that matters, there is no payload to read. Any scheme that puts a resolvable identifier in the advertisement works in the foreground and silently stops working in the pocket.
 

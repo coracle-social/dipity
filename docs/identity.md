@@ -8,52 +8,70 @@ Three keypairs, three jobs. Keeping them distinct is what makes the transport bi
 
 | Key | Type | Scope | Purpose |
 | --- | --- | --- | --- |
-| nostr identity | secp256k1 | Long-term, user-facing | Signs events. The identity users see and follow. |
+| nostr identity | secp256k1 | Long-term, user-facing | Signs delivery grants and auth events, both ordinary nostr events. The identity users see and follow. |
 | Noise static | Curve25519 | Long-term, per-install | Authenticates the BLE channel. |
 | iroh endpoint | ed25519 | Long-term, per-install | Authenticates the QUIC session. |
 
 The transport keys and the nostr identity are bound at session time by mutual NIP-42 with transport binding. Nothing else binds them — no long-lived mapping is published anywhere, and the binding is scoped to the session.
 
-## Partition signing
+## Events are not signed, grants are
 
-Proximity events are signed into the `proximity` partition per [`nip-partition-sig.md`](./nip-partition-sig.md). The partition value is appended to the NIP-01 serialization before hashing, so the event id and signature differ from a default-partition event with identical contents.
+Content events carry an id and no `sig`. Authenticity comes instead from a **delivery grant**: a small signed nostr event by the author, tagging the content event id and one recipient pubkey, specified in [`sync.md`](./sync.md#delivery-grants).
 
-This makes invariant I1 cryptographic rather than operational. A proximity event that leaks to a normal relay does not validate as a nostr event at all — it is not a real post that escaped, it is garbage. No convention, tag, or relay policy is relied upon.
+Ids are plain NIP-01 hashes. Nothing about serialization is app-specific, so an id computed here matches what any nostr implementation would compute for the same content, and `@welshman/util` is used unmodified.
+
+This arrangement carries two properties that used to need separate mechanisms:
+
+- **Authenticity.** A grant covers the id, and only the author's key can produce one, so verifying a grant proves the author produced exactly this content. An event with no valid grant is never stored.
+- **Containment.** An event with no `sig` is not a valid nostr event. Proximity content that escapes to a relay is rejected on arrival rather than stored, and no existing client can render it — without relying on any tag, convention, or relay policy.
 
 ### Consequences, accepted deliberately
 
-- **No promotion path.** A proximity post can never be published to the open network. This is the intent, not a limitation to work around. Re-signing into the default partition would change the event id and orphan every reply, reaction, and quote pointing at it.
-- **No interoperability.** No existing nostr client can read these events; no relay can store them meaningfully. Nothing in the wider ecosystem is a fallback.
-- **No external signers.** NIP-07, NIP-46, and NIP-55 signers compute the event id themselves and cannot be asked for a partitioned signature. This rules them out entirely — see below.
-- **Partition support lives in `@welshman/util`** — in `getEventHash` / `verifyEvent` and everything downstream that recomputes an id. It is a library shipped to other people, so the partition parameter defaults to the default partition and is invisible to existing callers.
+- **The author can promote their own posts, and only their own.** Holding the key, they can sign one of their events normally and publish it to the open network. Because ids are canonical, a post promoted that way keeps its id and its replies still resolve. Nobody can do this for anyone else's content, which is the property that matters.
+- **No interoperability in the other direction.** Unsigned events cannot be read or stored by relays or existing clients, so nothing in the wider ecosystem is a fallback.
+- **External signers work, with reduced capability.** Grants and auth events are ordinary events, so a NIP-55 signer produces both without modification. What it will not do is surrender the key, so backup files and login with device are unavailable on that path. See [Key custody](#key-custody).
 
-### Authentication events stay in the default partition
+### Auth events are ordinary signed events
 
-Kind 22242 auth events are **not** partition-signed. Two reasons: the auth NIP is generally useful beyond this app, and the transport binding already prevents a proximity auth event from being replayed anywhere useful — its `relay` tag is `noise://…` or `iroh://…`, which no relay will ever match.
+Kind 22242 auth events are real nostr events, signed normally, because NIP-42 requires a verifiable signature and the peer checks it as one. They are the exception to "content events are unsigned", and they are the one place `@welshman/signer` is still used as-is.
 
-This also means the existing signing path works for auth unchanged.
+Transport binding keeps them from being replayed anywhere useful — the `relay` tag is `noise://…` or `iroh://…`, which no relay will ever match. See [`nip-p2p-auth.md`](./nip-p2p-auth.md).
 
-### The partition identifier
+### The key is not confined, only the content
 
-An arbitrary string, serialized like `content`, compared byte-for-byte, with no registry or namespacing. Ours is `proximity`.
+Worth being clear about: this isolates *events*, not identities. The nsec is an ordinary secp256k1 key, so the same pubkey can sign and post on the open network from any other nostr client.
 
-The default partition is the *absence* of the seventh serialization element rather than an empty string, so default-partition events serialize exactly as NIP-01 specifies and existing implementations are unaffected. This is what lets `@welshman/util` carry partition support without touching any existing caller.
-
-### The key is not partitioned, only the events
-
-Worth being clear about: partition signing isolates *events*, not identities. The nsec is an ordinary secp256k1 key, so the same pubkey can sign default-partition events from any other nostr client.
-
-This is fine — it is the same person either way — but two consequences follow. Proximity activity and open-network activity under one pubkey are trivially linkable by anyone who sees both. And a user who exports their key can post to the open network as themselves; what they cannot do is move a *proximity event* there, which is the property I1 needs.
+That is fine — it is the same person either way — but proximity activity and open-network activity under one pubkey are trivially linkable by anyone who sees both.
 
 ## Key custody
 
-Keys are generated in the app and stored in platform secure storage: Keychain on iOS (with an accessibility class that survives backgrounding but not device-unlocked-once), Keystore / EncryptedSharedPreferences on Android.
+Two login paths, and which one a user takes decides what else the app can offer them.
 
-There are no external signers, by consequence of the partition decision. `@welshman/signer` narrows to the local-key path.
+**In-app key.** Generated in the app or imported, held in platform secure storage: Keychain on iOS (with an accessibility class that survives backgrounding but not device-unlocked-once), Keystore / EncryptedSharedPreferences on Android.
+
+**NIP-55 external signer.** On Android, signing is delegated to a signer app and the key never reaches us. Grants and auth events are ordinary nostr events, so the signer handles both unmodified — this is the practical payoff of grants being events rather than bare signatures.
+
+**NIP-46 bunker.** Same shape, except the signer is remote and each signature is a round trip over a relay.
+
+| | In-app key | NIP-55 signer | NIP-46 bunker |
+| --- | --- | --- | --- |
+| Signing grants and auth events | yes | yes | yes, over the network |
+| Producing grant proofs | yes | yes | yes — proves knowledge of a grant we hold, not of our key |
+| [Backup file](#backup) | yes | no — nothing to export | no — nothing to export |
+| [Login with device](#login-with-device) | yes | no — nothing to transfer | no — nothing to transfer |
+| Peering with no internet | yes | yes | **no** |
+
+The backup and login-with-device gaps are structural rather than policy: those features move a key the app does not have. The UI omits them on those paths rather than failing when they are used.
+
+The last row is the one that bites. Establishing a session needs a signed kind 22242 in both directions ([`nip-p2p-auth.md`](./nip-p2p-auth.md)), and issuing grants needs a signature per chunk. A bunker user with no connectivity can do neither, so they cannot peer at all — not send, not receive. Forwarding is the exception, because a [grant proof](./sync.md#grant-proofs) demonstrates knowledge of a grant already held rather than producing a signature; but with no session there is nobody to forward to. Offer NIP-46 with that stated plainly, since a crowd with no signal is exactly where this app is meant to work.
+
+I3 scopes offline-first to the gossip protocol, not to the device, so a login method that needs network is allowed. It just has to be honest about when it stops working — hence the last row above.
 
 ## Login with device
 
 Identity moves between devices over the same proximity stack — BLE or iroh, Noise-encrypted, same session lifecycle. This is the multi-device story, and the first half of the backup story.
+
+**Offered only when the app holds the key.** With a NIP-55 signer there is nothing to transfer; the user installs their signer on the second device instead, and the app never sees the key on either.
 
 Requirements, because this is deliberate key exfiltration:
 
@@ -64,13 +82,15 @@ Requirements, because this is deliberate key exfiltration:
 
 ## Backup
 
+**Offered only when the app holds the key.** With a NIP-55 signer there is nothing to export and the signer app owns backup; the flow below does not appear.
+
 Multi-device is the happy path — two devices holding the same key means losing one costs nothing. But most users have one phone, so there is also a file export, following Flotilla's `KeyDownload.svelte`.
 
 A single text file containing prose instructions and the key itself:
 
 - **Optionally password-encrypted.** Unencrypted is `nsecEncode` from `nostr-tools/nip19`; encrypted is `encrypt` from `nostr-tools/nip49`, producing an `ncryptsec`. The user chooses; encryption is opt-in behind a toggle, not a wall.
 - **Minimum 12-character password**, stated in the UI, with "write this down" guidance. There is no recovery for a forgotten backup password either.
-- **Instructions, not just a key.** The copy explains what a keypair is, why the private half matters, and what to do with the file — following Flotilla's, with one adjustment. Flotilla tells the user to "import into a Nostr Signer app," which is misleading here, because a signer cannot produce partition-signed events. The wording instead says the key restores this app, and separately identifies them on the open network via other clients.
+- **Instructions, not just a key.** The copy explains what a keypair is, why the private half matters, and what to do with the file — following Flotilla's, with one adjustment. Flotilla tells the user to "import into a Nostr Signer app," which is misleading here, because on this path the app holds the key itself. The wording instead says the key restores this app, and separately identifies them on the open network via other clients.
 - **Gated flow.** The download must complete before the user can continue past the screen, so nobody skips it by accident.
 
 On device the `<a download>` blob trick is a no-op in native webviews, so the file is written with `@capacitor/filesystem` to `Directory.Cache` and handed to `@capacitor/share`. Android carries a FileProvider entry (`android/app/src/main/res/xml/file_paths.xml`) for the cache directory. Dismissing the share sheet rejects with "Share canceled", which counts as *not downloaded* rather than an error, so the user can retry. Flotilla's `downloadText` in `src/lib/html.ts` is the reference.
