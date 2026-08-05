@@ -44,7 +44,7 @@ These are load-bearing.
 
 - **TypeScript / Svelte 5** — the view: UI and reactivity.
 - **Tailwind 4 / shadcn-svelte** — design tokens and vendored components. See [`ui.md`](./ui.md).
-- **welshman** — nostr app layer: events, `Repository`, feeds, web of trust. Not the peer protocol — see [architecture](#architecture).
+- **welshman** — `util`, `lib` and `domain` for nostr types, kinds and typed readers. Not `app`, and not the peer protocol — see [architecture](#architecture).
 - **nostr-tools** — NIP-19 encoding for display.
 - **Vite 8** — bundles the web assets to `dist/`, which the shells load.
 - **Capacitor 8** — the shell, and the JSON bridge between view and core.
@@ -101,7 +101,7 @@ The shell depends on the core at link time, and the core depends on nothing plat
 
 Only one of those boundaries is expensive. SQLite is in-process C, and uniffi passes scalars directly and everything else as a compact binary buffer, so the cost lives at the Capacitor bridge, which marshals as JSON.
 
-The core holds the durable store and serves peers autonomously, resolving sync scope from the follows and mutes it already stores. The view reads from storage via a `SQLITE_STORAGE_URL` relay adapter that crosses that bridge. The in-memory `Repository` stays as the working set because welshman's reactive layer derives from it synchronously. See [`storage.md`](./storage.md).
+The core holds the only store and serves peers autonomously, resolving sync scope from the follows and mutes it already holds. The view keeps no store of its own: a controller layer queries the core over the bridge and caches per use case. See [`storage.md`](./storage.md).
 
 ## Discovery
 
@@ -140,7 +140,7 @@ Read more at [`sync.md`](./sync.md)
 
 ## Storage
 
-The core's SQLite is the source of truth, and it answers queries as a relay — the same protocol peers speak, behind `SQLITE_STORAGE_URL`. The in-memory `Repository` stays as the working set, because welshman's reactive layer derives from it synchronously.
+The core's SQLite is the only store, and it answers queries as a relay — the same protocol peers speak, over the Capacitor bridge. The view holds caches for what it reads synchronously, never a mirror.
 
 Ingest happens once, in the core: id recomputation, grant verification, quota accounting, `seen_at` assignment, retention. Nothing unverified ever reaches the view.
 
@@ -168,6 +168,6 @@ shadcn-svelte over bits-ui and Tailwind 4, vendored by CLI rather than taken as 
 
 Design values live in exactly one file: colour, elevation, motion and radius are Tailwind tokens in `src/app.css`, and the standard scales are redefined rather than supplemented, so the vendored components restyle without being edited. The look is restrained claymorphism.
 
-The view logic is organized against welshman's own extension points — an event kind is a `KindFactory` in `src/lib/kinds/`, a collection of events is a `DerivedPlugin` in `src/lib/data/`, and nothing outside them pokes at tags or queries the repository.
+An event kind is a `KindFactory` in `src/lib/kinds/`, a collection of events is a store in `src/lib/data/`, and nothing outside them pokes at tags or opens a query.
 
 Read more at [`ui.md`](./ui.md)

@@ -48,7 +48,7 @@ One device does hold portable proof that the author wrote the content and handed
 
 Keys are generated on device and held in platform secure storage. There is no bunker, no relay-side account, and no external signer — none of them can produce a signature during a background wake with no network, which is when every signature this app needs is produced ([`keys.md`](./keys.md#key-custody)). Redundancy is therefore the user's responsibility: a second device holding the same key, or a backup file they export themselves. See [`keys.md`](./keys.md#backup).
 
-**The key is [readable while the device is locked](./keys.md#the-key-is-readable-while-the-device-is-locked)**, because a phone that cannot sign cannot authenticate. The cost is in [What we do not defend against](#what-we-do-not-defend-against) below.
+**The key is [readable while the device is locked](./keys.md#signing-happens-at-encounter-time-in-the-background)**, because a phone that cannot sign cannot authenticate. The cost is in [What we do not defend against](#what-we-do-not-defend-against) below.
 
 The backup file is the weak point in an otherwise device-bound design. Unencrypted it is a plaintext key in whatever the user's share sheet sent it to; encrypted it is only as strong as a password they chose once and may never type again. Both are better than permanent identity loss, and the UI presents the tradeoff rather than picking silently.
 

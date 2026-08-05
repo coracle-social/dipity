@@ -12,19 +12,11 @@ Reusing it removes a protocol from the project rather than adding one: sync poli
 
 ### Client half
 
-Driving a peer — issuing `REQ`, running `NEG-*`, consuming `EVENT` — begins at IDENTIFIED and has to complete inside a background wake. So it is core code, and `@welshman/net` is not on the peer path at all. The cost is NIP-77: `diff` / `pull` / `push` would have given negentropy over any adapter for free. The core takes the algorithm from `coracle-lib` and supplies the rest — a `SyncStorage` implementation over SQLite, and the wire codec — carrying the [GCS filter](#one-shot-first-negentropy-if-the-session-lasts) alongside.
+Driving a peer — issuing `REQ`, running `NEG-*`, consuming `EVENT` — begins at IDENTIFIED and has to complete inside a background wake. So it is core code, and no TypeScript library is on the peer path at all. The cost is NIP-77: `diff` / `pull` / `push` would have given negentropy over any adapter for free. The core takes the algorithm from `coracle-lib` and supplies the rest — a `SyncStorage` implementation over SQLite, and the wire codec — carrying the [GCS filter](#one-shot-first-negentropy-if-the-session-lasts) alongside.
 
-What the view keeps is the same seam pointed at local storage. `AbstractAdapter` plus the `getAdapter` override still resolves two URLs, and both of them are ours:
+The view speaks the same protocol, pointed at local storage. Its controller layer issues `REQ` and consumes `EVENT` over the Capacitor bridge, against the core's SQLite — see [`storage.md`](./storage.md#the-controller-layer).
 
-```ts
-getAdapter: url =>
-  url === LOCAL_RELAY_URL    ? new LocalAdapter(repository) :
-  url === SQLITE_STORAGE_URL ? new SqliteAdapter()          : undefined
-```
-
-`SQLITE_STORAGE_URL` reaches the core's SQLite over the Capacitor bridge, so the view reads its own events through the protocol the core uses for peers — see [`storage.md`](./storage.md#sqlite-is-the-source-of-truth-and-it-is-also-a-relay).
-
-**Peers are absent from that dispatch by construction.** There is no `ble://` adapter in the view and no way to acquire one, so the untrusted side of the protocol is unreachable from the layer that has no verification, no `AUTH` and no policy.
+**Peers are unreachable from the view by construction.** The bridge addresses one store and offers no way to name a peer, so the untrusted side of the protocol is out of reach of the layer that has no verification, no `AUTH` and no policy.
 
 ### Relay half
 
@@ -40,7 +32,7 @@ Kind 22242 auth events are real nostr events, signed normally, because NIP-42 re
 
 This exchange is also the only thing binding the nostr identity to the Noise static key ([`transport.md`](./transport.md#channel-security)). No long-lived mapping is published anywhere, and the binding is scoped to the session.
 
-The core signs auth events, reading the identity key from platform secure storage, which is why that key has to be [readable while the device is locked](./keys.md#the-key-is-readable-while-the-device-is-locked). A peer that cannot authenticate can neither send nor receive.
+The core signs auth events, reading the identity key from platform secure storage, which is why that key has to be [readable while the device is locked](./keys.md#signing-happens-at-encounter-time-in-the-background). A peer that cannot authenticate can neither send nor receive.
 
 ## Delivery grants
 

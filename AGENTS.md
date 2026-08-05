@@ -24,7 +24,7 @@ Each is a decision already made; the linked doc carries the reasoning.
 - **Every inbound event needs a grant or a grant proof, or it is dropped.** A grant naming *me* if the sender authored it, a grant proof from *the sender* otherwise, checked against the pubkeys the peer authenticated as — a set, not a scalar, since a peer may authenticate as several. Grants cover a Merkle root over a whole chunk, so "covers this event" means an inclusion check. No policy flag relaxes it. [`sync.md`](./docs/sync.md#delivery-grants).
 - **Ids are plain NIP-01 hashes.** Nothing app-specific in serialization, so `@welshman/util` is used unmodified. Do not fold the recipient, the partition, or anything else into the id — reconciliation diffs id sets and would stop converging.
 - **The nsec is the only custody model, and the view never signs.** Both signed kinds are produced at encounter time, in a background wake, with no view and maybe no network — so an external signer fails the core loop rather than degrading. Do not add NIP-46 or NIP-55, and do not move signing into TypeScript. [`keys.md`](./docs/keys.md#key-custody).
-- **The identity key is readable while the device is locked** — `AfterFirstUnlock` on iOS, no user-auth requirement on Android. Deliberate: a phone that cannot sign cannot authenticate, and a peer that cannot authenticate can neither send nor receive. Do not "harden" this to `WhenUnlocked`; it silently kills pocket-to-pocket gossip. [`keys.md`](./docs/keys.md#the-key-is-readable-while-the-device-is-locked).
+- **The identity key is readable while the device is locked** — `AfterFirstUnlock` on iOS, no user-auth requirement on Android. Deliberate: a phone that cannot sign cannot authenticate, and a peer that cannot authenticate can neither send nor receive. Do not "harden" this to `WhenUnlocked`; it silently kills pocket-to-pocket gossip. [`keys.md`](./docs/keys.md#signing-happens-at-encounter-time-in-the-background).
 - **`seen_at` is never transmitted.** Set once on first insert, never updated, never served to a peer. It is a record of the user's movements. [`storage.md`](./docs/storage.md#seen_at) and [`privacy.md`](./docs/privacy.md).
 - **Grants and auth events are the only signed kinds.** Both are ordinary nostr events.
 - **Never claim posts only reach nearby people.** False under I4 — a second-hop recipient may be anywhere. Say reach is bounded at two hops instead. [`privacy.md`](./docs/privacy.md).
@@ -41,9 +41,9 @@ The central constraint on the whole app: **the view is suspended in the backgrou
 
 Peers speak the **nostr relay wire protocol** over every hop, including view → core: `REQ`/`EVENT`/`EOSE`/`CLOSE`/`OK`/`AUTH`/`NEG-*`. [`sync.md`](./docs/sync.md).
 
-**The view resolves two URLs, never a peer.** `LOCAL_RELAY_URL` and `SQLITE_STORAGE_URL` go through a `getAdapter` override; `ble://` exists only in the core. There is no `BleAdapter` in TypeScript and there should never be one — peers get grant checking, `AUTH` and policy, none of which the view has. Events crossing the bridge arrive pre-verified with `verifiedSymbol` set; do not re-check them. [`storage.md`](./docs/storage.md).
+**The view addresses one store, never a peer.** Queries go over the bridge to the core's SQLite; `ble://` exists only in the core, and there is no way to name a peer from TypeScript — peers get grant checking, `AUTH` and policy, none of which the view has. Events crossing the bridge arrive verified; do not re-check them. [`storage.md`](./docs/storage.md).
 
-**The in-memory `Repository` is not optional.** Querying SQLite directly instead would make every derived store async. [`storage.md`](./docs/storage.md#the-working-set-stays).
+**The view keeps no event store.** A controller layer in `src/lib/data/` owns every query and holds per-use-case caches — profiles, follows, mutes — never a mirror. `seen_at` windows travel beside the filter, never inside it, so a NIP-01 filter stays something safe to hand a peer. [`storage.md`](./docs/storage.md#the-controller-layer).
 
 ## UI
 
@@ -56,9 +56,9 @@ shadcn-svelte over bits-ui and Tailwind 4. Read [`ui.md`](./docs/ui.md) before t
 - **No `<style>` blocks in components.** A scoped rule cannot participate in the token system.
 - **`src/lib/components/ui/` is generated** by `just ui <name>`. Prettier ignores it and lint is relaxed there; hand-edit only deliberately, because the next `add` overwrites it. Our components go in `src/lib/components/`.
 - **Never `{@html}` nostr content.** It is attacker-controlled, and this is the one remotely exploitable mistake available in the view.
-- **An event kind is a `KindFactory` in `src/lib/kinds/`** — a reader/writer pair, reached via `app.use(Domain).reader(Kind)`. No `tags.find(t => t[0] === …)` in a component. [`ui.md`](./docs/ui.md#domain-kinds).
-- **A collection of events is a `DerivedPlugin` in `src/lib/data/`**, reached via `app.use()`. Components never query the `Repository` directly. Not `src/lib/plugins/` — `plugin` already means the Capacitor boundary here. [`ui.md`](./docs/ui.md#app-plugins).
-- **Read [flotilla](https://gitea.coracle.social/coracle/flotilla) for welshman-in-Svelte idiom** before inventing a pattern — same stack, large worked corpus. Its `@welshman/net` transport patterns do not transfer.
+- **An event kind is a `KindFactory` in `src/lib/kinds/`** — a reader/writer pair from `@welshman/domain`. No `tags.find(t => t[0] === …)` in a component. [`ui.md`](./docs/ui.md#domain-kinds).
+- **A collection of events is a store in `src/lib/data/`.** Components never open a query themselves. Not `src/lib/plugins/` — `plugin` already means the Capacitor boundary here. [`ui.md`](./docs/ui.md#components-do-not-query-the-core).
+- **Read [flotilla](https://gitea.coracle.social/coracle/flotilla) for Svelte idiom** before inventing a pattern. Its data layer is `@welshman/app` against real relays and does not transfer.
 
 ## Stack and commands
 
@@ -89,23 +89,21 @@ Native projects in `ios/` and `android/` are committed and regenerable. Capacito
 
 ## welshman
 
-The app layer is [welshman](https://github.com/coracle-social/welshman) `0.9.x`. Clone the source into `./ref/welshman` if you need to read or change it — see [Reference materials](#reference-materials).
+The view uses [welshman](https://github.com/coracle-social/welshman) `0.9.x` for nostr types and typed kinds. Clone the source into `./ref/welshman` if you need to read or change it — see [Reference materials](#reference-materials).
 
 **Per-package skills are installed** in `.agents/skills/` (symlinked into `.claude/skills/`) — `welshman`, plus `welshman-{app,util,lib,net,store,signer,feeds,domain,content,editor}`. Load the relevant one before working against a package rather than guessing at its API; they are the authoritative reference here. Refresh with `npx skills add coracle-social/welshman`.
 
-Siblings of `@welshman/app` are *peer* deps, so they are listed explicitly in `package.json` rather than resolved transitively. `@welshman/content` and `@welshman/editor` are not installed.
+The packages in use are listed explicitly in `package.json` rather than resolved transitively.
 
 ### What welshman is and is not used for
 
-**Instance-based.** Everything hangs off one `App` and is reached through `app.use(...)`; there are no importable `pubkey` / `deriveProfile` globals.
+**Used for:** `@welshman/util` (event types, kinds, tags, filters), `@welshman/lib` (standalone helpers), and `@welshman/domain` (typed reader/writer pairs per kind). This is nostr knowledge, consumed unmodified.
 
-**Used for:** the `Repository` and the reactive layer it feeds, domain kinds, feeds, web of trust, and `AbstractAdapter` / `getAdapter` for the two local URLs. This is the app layer above the bridge, and it is consumed unmodified.
+**`@welshman/app` is not used.** It assumes an in-memory event store, and there is none. [`ui.md`](./docs/ui.md#organising-against-welshman).
 
-**Not used for the peer protocol, either half.** Sync begins when a peer appears, which the view is not around for, so `@welshman/net` is not on that path at all — no `BleAdapter`, no `diff`/`pull`/`push` against a peer, no `Tracker` provenance for peer events. The core reimplements NIP-77 and NIP-42 against the same specifications. [`sync.md`](./docs/sync.md#peers-speak-the-relay-wire-protocol).
+**Not used for the peer protocol, either half.** Sync begins when a peer appears, which the view is not around for, so `@welshman/net` is not on that path — the core reimplements NIP-77 and NIP-42 against the same specifications, taking the negentropy algorithm from `coracle-lib`. [`sync.md`](./docs/sync.md#peers-speak-the-relay-wire-protocol).
 
-**`@welshman/signer` survives as an interface only.** Grants and auth events are signed in the core. What remains in TypeScript is a thin `ISigner` backed by a plugin `signEvent` op, which keeps welshman's session model working and serves the one deliberate foreground flow — promoting your own post to the open network. Nothing on the gossip path goes through it.
-
-If you find yourself wanting to patch welshman, that is a signal the boundary above is being crossed.
+**`@welshman/signer` survives as an interface only.** Grants and auth events are signed in the core. Nothing on the gossip path goes through TypeScript.
 
 ## Documents
 

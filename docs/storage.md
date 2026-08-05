@@ -4,77 +4,49 @@ Where events live, who can answer a query, and what happens while the app is asl
 
 ## SQLite is the source of truth, and it is also a relay
 
-The core's SQLite holds events durably. The view reaches it **through the same relay protocol used for peers**, behind a dedicated URL:
+The core's SQLite holds every event. The view reaches it **through the same relay protocol used for peers** — `REQ` / `EVENT` / `EOSE` / `CLOSE` — marshalled across the Capacitor bridge. The core streams `EVENT` frames as plugin listener callbacks and terminates with `EOSE`, so a large result set arrives incrementally rather than as one payload.
 
-```ts
-export const SQLITE_STORAGE_URL = 'sqlite://serendipity.storage/'
-```
+There is one store, and the view does not hold a second one:
 
-resolved by a `getAdapter` override that hands the request to the Capacitor plugin:
-
-```ts
-getAdapter: url =>
-  url === LOCAL_RELAY_URL    ? new LocalAdapter(repository) :
-  url === SQLITE_STORAGE_URL ? new SqliteAdapter()          : undefined
-```
-
-`SqliteAdapter` marshals `REQ` / `CLOSE` / `EVENT` across the bridge and emits inbound messages via `AdapterEvent.Receive`. The core streams `EVENT` frames as plugin listener callbacks and terminates with `EOSE`, so a large result set arrives incrementally rather than as one enormous bridge payload.
-
-Three URL families speak this protocol, but the view only resolves two of them:
-
-| URL | Backed by | Resolved in | Trust |
+| Store | Backed by | Reached from | Trust |
 | --- | --- | --- | --- |
-| `LOCAL_RELAY_URL` | In-memory `Repository` (working set) | View | Ours |
-| `SQLITE_STORAGE_URL` | SQLite in the core, via the plugin bridge | View | Ours — already verified |
-| `ble://…` | Remote peers | Rust core only | Untrusted; verify, authenticate, apply policy |
+| The local store | SQLite in the core | View, over the bridge | Ours — already verified |
+| `ble://…` | Remote peers | Core only | Untrusted; verify, authenticate, apply policy |
 
-The third row is unreachable from TypeScript. Peer sessions start during background wakes and are driven entirely by the core ([`sync.md`](./sync.md#peers-speak-the-relay-wire-protocol)), so there is no `BleAdapter` to construct and no way for view code to address a peer.
+The second row is unreachable from TypeScript. Peer sessions start during background wakes and are driven entirely by the core ([`sync.md`](./sync.md#peers-speak-the-relay-wire-protocol)), so there is no way for view code to address a peer.
 
-## The working set stays
+## The controller layer
 
-**welshman's reactive layer is synchronous over a `Repository` instance.** `deriveEventsById`, `deriveItemsByKey`, and `makeDeriveEvent` all take `{repository, filters}` and derive synchronously; `getter()` exists specifically to give callbacks and event handlers a synchronous lookup. Removing the in-memory store does not make reads slower — it makes every derived store asynchronous, which means rewriting the reactive layer rather than tuning it.
+Between components and the bridge sits a **controller layer**, in `src/lib/data/`. It owns every query against the core and the caches over them, and it is the only thing in the view that speaks the protocol.
 
-The working set is the layer the UI is built on. Bridge cost decides how much lives there, not whether it exists: Capacitor marshals plugin payloads as JSON, so the price of residency scales with serialized bytes.
+`deriveEvents(filter)` returns a store backed by an open `REQ`. The core matches the filter against events as they are ingested and pushes them, so nothing in the view has to work out which open queries a new event affects. Closing the store sends `CLOSE`.
 
-### Hydration is welshman's existing pattern
+Caches are per use case. Profiles, follow lists and mute lists are small, bounded by the social graph rather than by history, and read synchronously while rendering, so the controller keeps them in maps hydrated at startup and current through their own subscriptions. Content events are not cached: a view opens a query and drops it when it goes away. Aggregations are computed in the controller, cached, and debounced.
 
-The canonical chain — `deriveItemsByKey` → `deriveItems` → `getter` → `makeLoadItem` → `makeDeriveItem` — is exactly the mechanism needed, with `SQLITE_STORAGE_URL` in place of a network relay. `makeDeriveItem` calls the loader on each unique key access, `makeLoadItem` collapses concurrent calls for the same key and applies staleness and backoff, and the sync derive falls through to the Repository once the load lands.
-
-One adjustment: `makeLoadItem`'s default staleness window is 3600 s, tuned for network relays. The local store is authoritative and cheap, so it wants a much shorter window — or `makeForceLoadItem` where correctness beats latency.
-
-### Residency policy
-
-Two tiers rather than one decision:
-
-- **Resident always** — replaceable metadata: profiles, follow lists, mute lists, and the user's own events. Small, bounded by the social graph rather than by history, and needed synchronously for mute filtering and rendering any author's name. These are loaded at startup and kept.
-- **On demand** — content events, hydrated per view through the loader chain above and evicted under memory pressure.
-
-A full mirror works up to some store size and stops working past it.
+A few thousand events per query is the working size. Capacitor marshals plugin payloads as JSON, so cost scales with serialized bytes.
 
 ## Writes
 
-The same URL list works in the other direction:
+Composing sends the event to the core, which stores it. **Composing does not publish to peers**, because there is no peer to name — propagation happens when an encounter happens, from the store, under policy. Writing to the store is what makes an event eligible; the core decides the rest, possibly hours later and possibly while the app is closed.
 
-```ts
-publish({event, relays: [LOCAL_RELAY_URL, SQLITE_STORAGE_URL]})
-```
-
-Working set and durable store in one call, and that is the whole list. **Composing does not publish to peers**, because there is no peer to name — propagation happens when an encounter happens, from the store, under policy. Writing to `SQLITE_STORAGE_URL` is what makes an event eligible; the core decides the rest, possibly hours later and possibly while the app is closed.
-
-Events arriving from peers while the app is foregrounded are ingested by the core, so the Repository would otherwise go stale. Keep a live subscription open against the store — a `REQ` with `since: now` over `SqliteAdapter` — and new events flow into the working set the same way network events do in an ordinary nostr client.
+Events arriving from peers reach the view the same way anything else does: an open `REQ` matches them on ingest and the controller's stores update. There is no second copy to keep current.
 
 ## Crossing the boundary
 
-Two pieces of per-event state are not in the event JSON and must be carried alongside it:
+`seen_at` is not part of the event and not expressible in an `EVENT` frame. The core sends it in a parallel structure keyed by event id, and the controller carries it alongside. It never becomes a property of an event object, which is what keeps it out of anything serialized towards a peer.
 
-- **`verifiedSymbol`.** The core checked the delivery grant on ingest, so the adapter sets `event[verifiedSymbol] = true` before handing events to the Repository. Schnorr verification in JS costs roughly a millisecond per event, so re-checking a 10,000-event hydration would cost ten seconds for no benefit. Omitting it is silent — hydration stays correct and just gets slower as the store grows. This is welshman's flag for "signature already checked", and our events have no signature; it is set because grant verification has already established authenticity.
-- **`seen_at`.** Not part of the event and not expressible in an `EVENT` frame. The core sends it in a parallel structure keyed by event id; the adapter attaches it as a symbol property, which keeps it out of JSON serialization and out of anything ever sent to a peer.
-- **The delivery grant**, for chunks this device can forward — ones whose author handed them to us directly. One grant per chunk, stored with the sorted id list it commits to, so inclusion proofs can still be produced after retention has evicted some of the events. Never transmitted: forwarding sends a [grant proof](./sync.md#grant-proofs) derived from it instead. Events received at the second hop arrive with no grant and can never be forwarded.
+Events arrive verified. The core checked the delivery grant on ingest, so the view has no verification step.
 
-### What `SqliteAdapter` must not do
+### Filtering by `seen_at`
+
+The main view is ordered by `seen_at`, which no NIP-01 filter can express. The controller sends **`since_seen` and `until_seen` alongside the filter, never inside it.**
+
+The filter type is the one the gossip protocol uses, and it stays exactly NIP-01. A seen-window is a separate field on the local request, and the peer-facing message has no field to put one in — so a `seen_at` bound cannot be serialized towards a peer even by mistake. See [`privacy.md`](./privacy.md).
+
+### What the local protocol must not do
 
 - **No `AUTH`.** This is local IPC, not a peer. There is no identity to prove and no challenge to issue.
-- **No `NEG-*`.** The working set is a deliberate subset of the store; running negentropy between them would converge two things that are meant to differ. Reconciliation targets peers only.
+- **No `NEG-*`.** Reconciliation targets peers. There is one store, so there is nothing to reconcile against.
 - **No policy enforcement.** Egress policy exists to protect against peers. The view and the store are the same trust domain.
 
 ## What the core implements
@@ -84,6 +56,8 @@ The store is `rusqlite` inside the core, so this is one implementation rather th
 - Event storage with indexes on kind, pubkey, `created_at`, `seen_at`, and tags.
 - NIP-01 filter matching.
 - Id recomputation and **delivery grant verification** on ingest (see [`sync.md`](./sync.md#delivery-grants)): a grant naming us when the sender authored the event, a valid grant proof from the sender otherwise, checked by set membership against the pubkeys the peer authenticated as. Events satisfying neither are never stored.
+- Replaceable and addressable event semantics, and kind 5 deletions. The core serves peers, so a superseded profile must not reach one either.
+- The delivery grant for each chunk this device can forward, stored with the sorted id list it commits to, so inclusion proofs survive retention evicting some of the events ([`sync.md`](./sync.md#grant-proofs)).
 - Quota counters, `seen_at` assignment, and retention.
 
 The ingest rule is stated once and enforced once, at the only place events enter the system. Nothing untrusted reaches the view, so there is no second copy to drift.
@@ -92,7 +66,7 @@ The ingest rule is stated once and enforced once, at the only place events enter
 
 What the shell contributes is small: the database directory, the Keychain or Keystore entry holding the identity key, and the blob directory. The directory is passed in at startup rather than fetched through a callback, since it does not change during a run; the key stays a callback so it can be read on demand and zeroized. See [the call direction](./overview.md#architecture) for why these are traits the core declares rather than platform imports.
 
-On iOS the shell also sets the database's data-protection class, and SQLite's `-wal` and `-shm` sidecars have to carry the same class. A stricter class on any of the three breaks a write during a background wake on a locked phone, which is the failure mode [`AfterFirstUnlock`](./keys.md#the-key-is-readable-while-the-device-is-locked) exists to avoid. The default for app-container files is already the class we want, so the thing to avoid is hardening it later.
+On iOS the shell also sets the database's data-protection class, and SQLite's `-wal` and `-shm` sidecars have to carry the same class. A stricter class on any of the three breaks a write during a background wake on a locked phone, which is the failure mode [`AfterFirstUnlock`](./keys.md#signing-happens-at-encounter-time-in-the-background) exists to avoid. The default for app-container files is already the class we want, so the thing to avoid is hardening it later.
 
 ## Policy lives in preferences
 
@@ -119,7 +93,7 @@ Rules:
 
 ## Provenance
 
-Store which peer each event arrived from — a column in the core's schema, written at ingest, where the peer identity is known. `Tracker` in `@welshman/net` maps event → source relay URL in the view, but everything it sees over the bridge arrived from `SQLITE_STORAGE_URL`, so it records the store rather than the peer. Provenance is the core's, and it is not part of what crosses.
+Store which peer each event arrived from — a column in the core's schema, written at ingest, where the peer identity is known. It stays there. Provenance is not part of what crosses the bridge, and the view has no way to ask for it.
 
 Provenance drives quota accounting and debugging. It is not surfaced in the UI — see [`privacy.md`](./privacy.md).
 

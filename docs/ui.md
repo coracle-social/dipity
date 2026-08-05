@@ -31,7 +31,7 @@ The cost: nothing updates itself. A fix upstream reaches us only if someone re-r
 | `src/lib/components/ui/` | Vendored shadcn components. Generated — see below. |
 | `src/lib/components/` | Our components. Everything app-specific. |
 | `src/lib/kinds/` | Domain kinds — a `KindFactory` (reader + writer) per event kind. |
-| `src/lib/data/` | welshman app plugins — one per collection, registered with `app.use()`. |
+| `src/lib/data/` | The controller layer — queries against the core, and the caches over them. |
 | `src/lib/utils.ts` | `cn()` and the prop-type helpers shadcn components import. |
 | `components.json` | CLI config: aliases, base colour, style. Read by `just ui`, not at build time. |
 
@@ -62,7 +62,7 @@ Outside components, layout, spacing and type utilities remain available. The all
 
 `$state`, `$derived`, `$effect`, `$props` and friends are compiler syntax, and the compiler only runs on `.svelte` files. In a plain `.ts` module they are an undefined global that fails at runtime rather than at build, so the linter rejects them there.
 
-Shared reactive state goes in a welshman store instead, which works identically in a module and in a component. That also keeps `.svelte.ts` out of the tree, where a rune-bearing module would be a second reactivity system running alongside the `Repository`-derived stores.
+Shared reactive state goes in a plain Svelte store instead, which works identically in a module and in a component. That also keeps `.svelte.ts` out of the tree, where a rune-bearing module would be a second reactivity system running alongside the controller's stores.
 
 Vendored `ui/` is exempt — upstream ships `.svelte.ts` files and they are not ours to restructure.
 
@@ -188,62 +188,34 @@ Styling happens in Tailwind utilities, or in the theme. A component-scoped rule 
 
 ## Organising against welshman
 
-welshman is instance-based. Everything hangs off one `App` — the `repository`, `pool`, `tracker` and the signed-in `User` — and every feature is reached through `app.use(...)`, lazily constructed and memoized per app. There is no importable `pubkey` or `deriveProfile`, and code written against one does not compile.
-
-Two of its extension points decide where our code goes.
+`@welshman/util` supplies event types, kinds, tags and filters; `@welshman/lib` the standalone helpers; `@welshman/domain` the typed reader/writer pairs. `@welshman/app` is not used at all — its `App`, `Repository` and derived-store layer assume an in-memory event store, and there isn't one ([`storage.md`](./storage.md#the-controller-layer)).
 
 ### Domain kinds
 
 **An event kind is a `KindFactory` in `src/lib/kinds/`, and nothing outside it touches tags.**
 
-`@welshman/domain` pairs each kind with a Reader (a read-only view over a `TrustedEvent`, all getters synchronous) and a Writer (chainable setters that render an `EventTemplate` plus its publish relays). Ours are declared the same way the built-ins are:
+`@welshman/domain` pairs each kind with a Reader (a read-only view over an event, all getters synchronous) and a Writer (chainable setters that render an `EventTemplate`). Ours are declared the same way the built-ins are:
 
 ```typescript
 // src/lib/kinds/post.ts
 export const Post = new KindFactory({reader: PostReader, writer: PostWriter})
 ```
 
-Bind them through the app rather than calling `configure` yourself — `app.use(Domain)` supplies the resolver, repository and a lazy signer, and memoizes one `ConfiguredKind` per factory:
-
-```typescript
-const read = app.use(Domain).reader(Post)   // decoder: validates the kind, then parses
-const writer = app.use(Domain).writer(Post) // pass a reader to seed the edit flow
-```
+Each factory is configured once, in the controller, with the dependencies it needs; components read through the resulting getters.
 
 **`event.tags.find(t => t[0] === "…")` does not appear in a component.** A kind's shape is stated once, in its reader, and every screen reads it through getters. Unmodeled tags survive an edit, because a writer seeded from a reader re-emits whatever it did not model.
 
-### App plugins
+### Components do not query the core
 
-**A collection of events is an app plugin in `src/lib/data/`, and components never query the repository directly.**
+**A collection of events is a store in `src/lib/data/`, and components never open a query themselves.**
 
-`DerivedPlugin` is the pattern for anything derived from stored events — the repository stays the single source of truth, and the plugin is a typed, cached, lazily-loading view over it. It takes `{filters, eventToItem, getKey}`, with a domain reader as the decoder:
-
-```typescript
-// src/lib/data/posts.ts
-export class Posts extends DerivedPlugin<Parsed<PostReader>> {
-  constructor(app: IApp) {
-    super(app, {
-      filters: [{kinds: [POST]}],
-      eventToItem: app.use(Domain).reader(Post),
-      getKey: item => item.id(),
-    })
-  }
-}
-```
-
-Components then use the uniform accessor shape: `one(key)` for a reactive store that lazy-loads, `get(key)` for a synchronous cache read that does not, and `.$` on a `Projection` in markup against `.get()` in callbacks. `LoadableMapPlugin` and `MapPlugin` cover the cases that own their own map instead of deriving from events.
-
-`plugin` is an overloaded word here. A **welshman app plugin** is this: a class registered with `app.use()`, living in the view. The **native plugin** is the Capacitor boundary everything running at encounter time lives behind ([`overview.md`](./overview.md#architecture)). Hence `src/lib/data/`, and never a directory called `plugins/`.
+A component takes a store and renders it; it does not know a bridge exists. `plugin` is an overloaded word here, which is why this directory is `data/` and never `plugins/` — the **native plugin** is the Capacitor boundary the core lives behind ([`overview.md`](./overview.md#architecture)).
 
 ### What does not transfer
 
-Writers resolve publish relays through the `RelaySelection` DSL, and most of that DSL is meaningless here: the view resolves `LOCAL_RELAY_URL` and `SQLITE_STORAGE_URL` and nothing else, so routing is `forceRelays` against a local url rather than an outbox computation.
+There is no relay selection, no outbox computation, and no thunk: publishing is one call to the core ([`storage.md`](./storage.md#writes)).
 
-`Domain.command(writer).publish()` requires a signed-in user and publishes through thunks, which makes it the [promote-to-the-open-network](./sync.md#events-are-not-signed-grants-are) flow rather than anything on the gossip path. Gossip events are unsigned, and a writer's rendered template crosses the bridge for the core to handle; grants and auth events are signed in the core and never appear in TypeScript.
-
-### Flotilla is the reference for idiom
-
-Another Coracle app on this stack, [Flotilla](https://gitea.coracle.social/coracle/flotilla) carries a worked corpus of how plugins are declared and consumed, how readers are used in markup, and how feeds are driven. Read it before inventing a pattern. Clone it into `./ref/flotilla`; see [Reference materials](../AGENTS.md#reference-materials). Its `@welshman/net` relay code is the part that does not apply.
+Flotilla is still worth reading for Svelte idiom and for how readers are used in markup, but its data layer does not apply: it is built on `@welshman/app` against real relays. Clone it into `./ref/flotilla`; see [Reference materials](../AGENTS.md#reference-materials).
 
 ## Formatting
 
