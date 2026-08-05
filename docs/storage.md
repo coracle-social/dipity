@@ -2,12 +2,6 @@
 
 Where events live, who can answer a query, and what happens while the app is asleep.
 
-## The constraint
-
-The view is suspended in the background. If the event store lives only in the view, nothing can be served while backgrounded — which means two phones in two pockets never sync. Passive gossip between backgrounded devices is the core use case, not an enhancement on top of a foreground app.
-
-So the core must hold events and answer queries autonomously.
-
 ## SQLite is the source of truth, and it is also a relay
 
 The core's SQLite holds events durably. The view reaches it **through the same relay protocol used for peers**, behind a dedicated URL:
@@ -98,7 +92,7 @@ The ingest rule is stated once and enforced once, at the only place events enter
 
 What the shell contributes is small: the database directory, the Keychain or Keystore entry holding the identity key, and the blob directory. The directory is passed in at startup rather than fetched through a callback, since it does not change during a run; the key stays a callback so it can be read on demand and zeroized. See [the call direction](./overview.md#architecture) for why these are traits the core declares rather than platform imports.
 
-On iOS the shell also sets the database's data-protection class, and SQLite's `-wal` and `-shm` sidecars have to carry the same class. A stricter class on any of the three breaks a write during a background wake on a locked phone, which is the failure mode [`AfterFirstUnlock`](./identity.md#the-key-is-readable-while-the-device-is-locked) exists to avoid. The default for app-container files is already the class we want, so the thing to avoid is hardening it later.
+On iOS the shell also sets the database's data-protection class, and SQLite's `-wal` and `-shm` sidecars have to carry the same class. A stricter class on any of the three breaks a write during a background wake on a locked phone, which is the failure mode [`AfterFirstUnlock`](./keys.md#the-key-is-readable-while-the-device-is-locked) exists to avoid. The default for app-container files is already the class we want, so the thing to avoid is hardening it later.
 
 ## Policy lives in preferences
 

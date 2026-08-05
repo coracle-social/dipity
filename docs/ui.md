@@ -239,7 +239,7 @@ Components then use the uniform accessor shape: `one(key)` for a reactive store 
 
 Writers resolve publish relays through the `RelaySelection` DSL, and most of that DSL is meaningless here: the view resolves `LOCAL_RELAY_URL` and `SQLITE_STORAGE_URL` and nothing else, so routing is `forceRelays` against a local url rather than an outbox computation.
 
-`Domain.command(writer).publish()` requires a signed-in user and publishes through thunks, which makes it the [promote-to-the-open-network](./identity.md#events-are-not-signed-grants-are) flow rather than anything on the gossip path. Gossip events are unsigned, and a writer's rendered template crosses the bridge for the core to handle; grants and auth events are signed in the core and never appear in TypeScript.
+`Domain.command(writer).publish()` requires a signed-in user and publishes through thunks, which makes it the [promote-to-the-open-network](./sync.md#events-are-not-signed-grants-are) flow rather than anything on the gossip path. Gossip events are unsigned, and a writer's rendered template crosses the bridge for the core to handle; grants and auth events are signed in the core and never appear in TypeScript.
 
 ### Flotilla is the reference for idiom
 

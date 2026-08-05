@@ -36,11 +36,34 @@ This is core code, and it answers from SQLite, which is the only store that exis
 
 Mutual NIP-42 with transport binding — see [`nip-p2p-auth.md`](./nip-p2p-auth.md). Both directions run independently; neither blocks the other. The session identifier is `noise://<hex static key>`, naming the key the BLE handshake already authenticated.
 
-Auth events are ordinary signed nostr events, unlike content events — see [`identity.md`](./identity.md#events-are-not-signed-grants-are). The core signs them, reading the identity key from platform secure storage, which is why that key has to be [readable while the device is locked](./identity.md#the-key-is-readable-while-the-device-is-locked). A peer that cannot authenticate can neither send nor receive.
+Kind 22242 auth events are real nostr events, signed normally, because NIP-42 requires a verifiable signature and the peer checks it as one. They are the exception to "content events are unsigned". Transport binding keeps them from being replayed anywhere useful — the `relay` tag is `noise://…`, which no relay will ever match.
+
+This exchange is also the only thing binding the nostr identity to the Noise static key ([`transport.md`](./transport.md#channel-security)). No long-lived mapping is published anywhere, and the binding is scoped to the session.
+
+The core signs auth events, reading the identity key from platform secure storage, which is why that key has to be [readable while the device is locked](./keys.md#the-key-is-readable-while-the-device-is-locked). A peer that cannot authenticate can neither send nor receive.
 
 ## Delivery grants
 
-Content events carry no signature, which is also what keeps proximity content off the open network ([`identity.md`](./identity.md#events-are-not-signed-grants-are)). Authenticity and reach both come from a **delivery grant**, itself an ordinary signed nostr event:
+### Events are not signed, grants are
+
+Content events carry an id and no `sig`. Authenticity comes instead from a **delivery grant**, and this is also what keeps proximity content off the open network ([`privacy.md`](./privacy.md#unsigned-events-as-leak-protection)).
+
+Ids are plain NIP-01 hashes. Nothing about serialization is app-specific, so an id computed here matches what any nostr implementation would compute for the same content, and `@welshman/util` is used unmodified. Two implementations compute them — `@welshman/util` in the view and `coracle-lib` in the core — so they are checked against shared known-answer vectors. JSON string escaping is where they would diverge, and a divergence is silent: reconciliation would report every event as missing in both directions rather than failing.
+
+The arrangement carries two properties:
+
+- **Authenticity.** A grant covers the id, and only the author's key can produce one, so verifying a grant proves the author produced exactly this content. An event with no valid grant is never stored.
+- **Containment.** An event with no `sig` is not a valid nostr event. Proximity content that escapes to a relay is rejected on arrival rather than stored, and no existing client can render it — without relying on any tag, convention, or relay policy.
+
+And three consequences, accepted deliberately:
+
+- **The author can promote their own posts, and only their own.** Holding the key, they can sign one of their events normally and publish it to the open network. Because ids are canonical, a post promoted that way keeps its id and its replies still resolve. Nobody can do this for anyone else's content.
+- **No interoperability in the other direction.** Unsigned events cannot be read or stored by relays or existing clients, so nothing in the wider ecosystem is a fallback.
+- **The key has to be one the device holds.** Both signed kinds are produced at encounter time, in the background, which rules out every signer the app cannot reach then — see [`keys.md`](./keys.md#key-custody).
+
+### The grant
+
+A grant is an ordinary signed nostr event:
 
 ```jsonc
 {
@@ -76,7 +99,7 @@ Domain-separating leaves from internal nodes is not optional — without it an i
 
 The recipient holds every event in the chunk, so it rebuilds the tree itself and needs no inclusion proofs. It stores the grant with the sorted id list, which is what lets it produce proofs later even after retention has evicted some of the events.
 
-Handing a peer a thousand events therefore costs one signature and one grant on the wire, not a thousand of each. Signing is local and fast ([`identity.md`](./identity.md#key-custody)), so the binding cost is bytes rather than CPU: a per-event grant would add roughly 200 bytes of tags and signature to every event at 5–15 KB/s, and would have to be produced inside a background wake measured in seconds.
+Handing a peer a thousand events therefore costs one signature and one grant on the wire, not a thousand of each. Signing is local and fast ([`keys.md`](./keys.md#key-custody)), so the binding cost is bytes rather than CPU: a per-event grant would add roughly 200 bytes of tags and signature to every event at 5–15 KB/s, and would have to be produced inside a background wake measured in seconds.
 
 Ingest is one comparison, against the pubkeys the peer has authenticated as under mutual NIP-42 ([`nip-p2p-auth.md`](./nip-p2p-auth.md)):
 
@@ -146,13 +169,12 @@ Binding the recipient into the event id, by hashing it in, enforces the same two
 - **Threading would fragment.** A reply names a parent id. Recipients holding different ids for that parent cannot resolve it.
 - **Dedup would fail.** Receiving a post from its author and again from a forwarder would produce two entries, churning the recently-discovered view that `seen_at` exists to keep stable.
 
-Keeping the binding detached leaves the id canonical, so everything above works unchanged.
 
 ## Reconciliation
 
 ### `seen_at` changes what "recent" means
 
-The app's primary view is *recently discovered*, ordered by when **we** first saw an event, not when it was created. An event authored three years ago and discovered five minutes ago is new to the user and belongs at the top.
+The app's primary view is *recently discovered*, ordered by when **we** first saw an event, not when it was created. An event authored long ago and discovered five minutes ago is new to the user and belongs at the top.
 
 This has a sharp consequence for sync: **the reconciliation window cannot be a `created_at` recency window.** Filtering `created_at > now - 7d` would mean never receiving old events, and old events are precisely what proximity gossip surfaces — you meet someone carrying an archive.
 

@@ -24,9 +24,9 @@ These are load-bearing.
 
 **I1 — Proximity.** A peer connection is only ever established with a device that is currently physically nearby. Enforced structurally, not by runtime policy: the only way to learn how to reach a peer is to have been in Bluetooth range of them.
 
-**I2 — Progressive enhancement.** Bluetooth is the floor and always works. Any transport above it is an optimization for bandwidth. See [`transport.md`](./transport.md#adding-a-transport-later) for details.
+**I2 — Progressive enhancement.** Bluetooth is the floor and always works. Any transport above it is an optimization for bandwidth. See [`transport.md`](./transport.md).
 
-**I3 — Offline-first gossip.** No part of the gossip protocol requires internet: discovery, session establishment, sync, storage, signing and forwarding all work with no network. The app has direct access to the user's key ([`identity.md`](./identity.md#key-custody)), so no network is needed for signing.
+**I3 — Offline-first gossip.** No part of the gossip protocol requires internet: discovery, session establishment, sync, storage, signing and forwarding all work with no network. The app has direct access to the user's key ([`keys.md`](./keys.md#key-custody)), so no network is needed for signing.
 
 **I4 — Data outlives connections.** Sync is store-and-forward. Tearing down a link does not discard what was synced over it, and events propagate transitively through people who move. This means I1 constrains *connections*, not *information* — see [`privacy.md`](./privacy.md).
 
@@ -37,7 +37,7 @@ These are load-bearing.
 - No relay fallback, no hole punching, no global discovery, no DHT.
 - No bridging of peers who have not been co-present.
 - **No unbounded flooding.** Reach is capped at two hops by construction, not by a policy each device is trusted to apply. See [`sync.md`](./sync.md#delivery-grants).
-- **No interoperability with the open nostr network.** Content events carry no signature, so relays reject them and no existing client can read them. See [`identity.md`](./identity.md#events-are-not-signed-grants-are).
+- **No interoperability with the open nostr network.** Content events carry no signature, so relays reject them and no existing client can read them. See [`keys.md`](./sync.md#events-are-not-signed-grants-are).
 - Not a chat app. Rich nostr event types, including media, are first-class.
 
 ## Tech stack
@@ -54,7 +54,7 @@ These are load-bearing.
 - **CoreBluetooth** — iOS dual-role GATT, background modes, state restoration.
 - **`android.bluetooth`** — Android advertiser, scanner, GATT server and client.
 - **BLE GATT** — the transport, with [our own framing](./transport.md#framing) over one characteristic.
-- **`coracle-lib`** — nostr types for the core: NIP-01 serialization, filters, NIP-77 negentropy. Its event hierarchy separates an unsigned `HashedEvent` from a signed `Event`, which is what the [content/grant split](./identity.md#events-are-not-signed-grants-are) needs; rust-nostr's mandatory signature cannot express it.
+- **`coracle-lib`** — nostr types for the core: NIP-01 serialization, filters, NIP-77 negentropy. Its event hierarchy separates an unsigned `HashedEvent` from a signed `Event`, which is what the [content/grant split](./sync.md#events-are-not-signed-grants-are) needs; rust-nostr's mandatory signature cannot express it.
 - **`snow`** — Noise XX: Curve25519 / ChaCha20-Poly1305 / SHA-256.
 - **`rusqlite`** — durable event store, indexes, NIP-01 filter matching.
 - **`secp256k1`** — signing and verifying grants and auth events; **`k256`** for the [grant proof](./sync.md#grant-proofs), which needs explicit group arithmetic that the binding does not expose.
@@ -107,7 +107,6 @@ The core holds the durable store and serves peers autonomously, resolving sync s
 
 The BLE advertisement is a bare presence beacon: our service UUID and no payload. Identification is therefore always post-connect, and a stranger is indistinguishable from a close friend until the link is up and the handshake has run.
 
-Since every identification costs a connection, resolved identities are cached against the ~15 minute BLE address rotation, attempts are rate-limited and ordered by RSSI so the nearest stranger is tried first, and peers already declined get a hard backoff.
 
 A session climbs a fixed ladder — IDLE, LINKED once GATT connects, SECURED once Noise XX completes, IDENTIFIED once mutual NIP-42 has run and policy has been evaluated, SYNCING, then DRAINING and CLOSED. Between SECURED and IDENTIFIED sits the consent gate, because authenticating discloses a long-term identity and, on a proximity transport, a physical presence at a time and place.
 
@@ -121,13 +120,13 @@ Measured throughput is 5–15 KB/s. Event sync fits in a drive-by, image preview
 
 Read more at [`transport.md`](./transport.md)
 
-## Identity
+## Keys
 
 Two keypairs with two jobs: a long-term secp256k1 nostr identity, and a per-install Curve25519 Noise static key. Nothing binds them durably — mutual NIP-42 binds them per session, naming `noise://<static key>`, an identity the BLE handshake has already authenticated.
 
 The app holds the key in platform secure storage, readable while the device is locked. Moving it to a second device runs over the same proximity stack, gated on explicit action at both ends and a short authentication string; the fallback is a file export.
 
-Read more at [`identity.md`](./identity.md)
+Read more at [`keys.md`](./keys.md)
 
 ## Sync
 
@@ -151,9 +150,7 @@ Read more at [`storage.md`](./storage.md)
 
 ## Media
 
-Events reference blobs by SHA-256 hash in `imeta` tags, and blob transfer is a separate protocol on its own channel with its own quotas. Content addressing makes a transfer resumable, dedupable across peers, and verifiable on arrival.
-
-Three tiers follow from 5–15 KB/s. Tier 0 — blurhash, dimensions, duration, mime — rides inline with the event and makes the timeline render immediately; tier 1 is a preview of at most 32 KB, fetched automatically under policy; tier 2 is the full-resolution original, never automatic, and may take several encounters to arrive. Images added by the user are compressed before they are stored.
+Blobs are referenced by hash and transferred on their own channel, separately from events. Three tiers follow from 5–15 KB/s. Tier 0 — blurhash, dimensions, duration, mime — rides inline with the event and makes the timeline render immediately; tier 1 is a preview of at most 32 KB, fetched automatically under policy; tier 2 is the full-resolution original, never automatic, and may take several encounters to arrive. Images added by the user are compressed before they are stored.
 
 Read more at [`media.md`](./media.md)
 
