@@ -1,6 +1,6 @@
 # Media
 
-Media is in scope. BLE runs at 5–15 KB/s in practice, so it cannot be treated as slow Wi-Fi. See [`overview.md`](./overview.md).
+Media is in scope. BLE runs at 5–15 KB/s in practice, so it cannot be treated as slow Wi-Fi.
 
 ## Events and blobs are separate
 
@@ -20,7 +20,7 @@ Tier 0 is what makes the timeline render immediately with placeholders when noth
 
 Rough BLE budget: a 32 KB preview is 3–7 s. A 30 s opus voice note at 16 kbps is ~60 KB, so ~10 s. A 2 MB photo is 3–7 minutes, which is why tier 2 is never automatic.
 
-**Tier 2 is user-initiated and patient.** BLE is the only transport, so there is no faster link to promote a transfer onto ([`transport.md`](./transport.md#what-the-ceiling-costs)). An original moves only when someone asks for it, and then outlives the encounter: transfers are chunked by offset and content-addressed, so bytes accumulate across encounters and across peers until the hash verifies. A 2 MB photo may take several meetings, or never complete. Needing originals to move reliably is an argument for [L2CAP](./transport.md#l2cap-is-the-reserved-bandwidth-upgrade), not for a relay.
+**Tier 2 is user-initiated and patient.** BLE is the only transport, so there is no faster link to promote a transfer onto ([`transport.md`](./transport.md#what-fits-in-an-encounter)). An original moves only when someone asks for it, and then outlives the encounter: transfers are chunked by offset and content-addressed, so bytes accumulate across encounters and across peers until the hash verifies. A 2 MB photo may take several meetings, or never complete. The answer to unreliable originals is [L2CAP](./transport.md#the-l2cap-bandwidth-upgrade), never a relay.
 
 ## Fetch policy
 
@@ -34,7 +34,7 @@ Not a user-facing setting. Three gates, all automatic:
 
 ## Transfer
 
-- Chunked by offset, resumable across disconnections, **across encounters, and across peers** — content addressing means bytes from one source combine with bytes from another. Transport-independence is kept deliberately, so a [future transport](./transport.md#adding-a-transport-later) inherits it.
+- Chunked by offset, resumable across disconnections, **across encounters, and across peers** — content addressing means bytes from one source combine with bytes from another.
 - Hash-verified on completion; partial data discarded on mismatch.
 - Yields to control traffic (see [`transport.md`](./transport.md)), so the heartbeat survives a large transfer.
 - Runs on its own channel so it cannot head-of-line block event sync.
@@ -50,6 +50,8 @@ Blob quotas are separate from and much tighter than event quotas:
 Accepting blobs from nearby strangers is the most obviously exploitable surface in the design.
 
 ## Generation
+
+**Images are compressed on import.** What gets stored, and therefore what tier 2 offers, is the compressed image rather than whatever the camera produced.
 
 Tier 1 previews are generated on the sending device at publish time. This costs the author storage but guarantees the preview is available from anyone carrying the event, rather than only from peers holding the tier 2 original.
 

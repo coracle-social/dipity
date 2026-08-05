@@ -1,7 +1,5 @@
 # Privacy and threat model
 
-See [`overview.md`](./overview.md).
-
 ## What a passive radio observer learns
 
 That a device running this app is present, and nothing else. The advertisement carries no identity, no payload, and — in the iOS background case — not even a readable service UUID except to another device scanning for it specifically. See [`discovery.md`](./discovery.md).

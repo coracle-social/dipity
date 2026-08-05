@@ -1,6 +1,6 @@
 # Serendipity — Overview
 
-Offline-first nostr social gossip over local transports. This is the overview; each subsystem has its own document.
+Offline-first nostr social gossip over Bluetooth. This is the overview; each subsystem has its own document.
 
 ## What this is
 
@@ -8,12 +8,15 @@ A nostr client whose network is the people physically around you. Events propaga
 
 The setting it is designed around is a neighborhood or a town: local gossip propagating between people who might not otherwise talk, and conversations that start because two phones were in the same place.
 
-It differs from its two closest relatives:
+It differs from its closest relatives:
 
-- **Manyverse** (SSB) gets offline gossip right but bridges freely over rooms and pubs, and its data model is SSB's append-only log rather than nostr's signed events.
+- **Samiz** sits closest: a Bluetooth mesh for nostr, running beside a local relay and an ordinary client, reconciling with negentropy. Once a peer with internet joins the mesh, their device republishes what it synced to its own relays, so a note reaches people who were never nearby.
 - **bitchat** gets local mesh right but is a chat app, and its "global reach" path bridges distant peers over public relays — precisely what this design excludes.
+- **Briar** is the closest on framing: offline-first, with forums and blogs rather than only chat, syncing over Bluetooth and Wi-Fi. Its escape hatch is Tor rather than public relays, it runs on Android only, and its data model is its own rather than nostr's.
+- **Manyverse** (SSB) gets offline gossip right but bridges freely over rooms and pubs, and its data model is SSB's append-only log rather than nostr's signed events.
+- **Rhizome** (Serval Project) is the unbounded case, and the one I5 is written against: a bundle may end up replicated on every node in the network, and the project's own disclaimer says the app copies shared files to every other device running it, regardless of size, content, or intended recipient.
 
-Serendipity takes Manyverse's sync model, bitchat's transport engineering, nostr's data model, and neither project's bridging.
+Serendipity takes Manyverse's sync model, bitchat's transport engineering, nostr's data model, and none of their bridging.
 
 ## Invariants
 
@@ -37,133 +40,137 @@ These are load-bearing.
 - **No interoperability with the open nostr network.** Content events carry no signature, so relays reject them and no existing client can read them. See [`identity.md`](./identity.md#events-are-not-signed-grants-are).
 - Not a chat app. Rich nostr event types, including media, are first-class.
 
-## The stack
+## Tech stack
 
-```
-┌──────────────────────────────────────────────────────┐
-│  Svelte UI · welshman app layer          (webview)   │
-├──────────────────────────────────────────────────────┤
-│  Capacitor bridge — streamed EVENT frames            │
-├──────────────────────────────────────────────────────┤
-│  Sync — relay wire protocol, grants      sync.md     │
-│  Storage — SQLite, seen_at, blobs        storage.md  │
-│  Discovery — connect, identify, beat     discovery.md│
-│  Transport — framing, Noise XX           transport.md│
-│                                        (Rust core)   │
-├──────────────────────────────────────────────────────┤
-│  BLE radio · Keychain / Keystore · lifecycle         │
-│                                    (Swift / Kotlin)  │
-└──────────────────────────────────────────────────────┘
-```
-
-| Document | Covers |
-| --- | --- |
-| [`discovery.md`](./discovery.md) | Advertisement, connection scheduling, identification, session lifecycle, heartbeat and teardown |
-| [`transport.md`](./transport.md) | BLE link layer and framing, Noise XX, the bandwidth ceiling, the seam for a second transport |
-| [`sync.md`](./sync.md) | Relay wire protocol as the peer protocol, delivery grants and the two-hop cap, reconciliation, sync policy, mute, quotas |
-| [`storage.md`](./storage.md) | Native SQLite as source of truth and relay, `seen_at`, background serving, retention |
-| [`media.md`](./media.md) | Blob tiers, transfer, fetch policy, quotas |
-| [`identity.md`](./identity.md) | Keys, unsigned events and grants, key custody, login with device, backup |
-| [`privacy.md`](./privacy.md) | Threat model, what leaks, what users will wrongly assume |
-| [`ui.md`](./ui.md) | Component framework, design tokens, the conventions the linter enforces |
-| [`nip-p2p-auth.md`](./nip-p2p-auth.md) | Peer authentication — the NIP-42 additions covering transports without URLs |
-
-## Client stack
-
-Four languages, split along [the plugin boundary](#the-plugin-boundary) below.
-
-- **TypeScript / Svelte 5** — the webview: UI, reactivity, the social graph.
+- **TypeScript / Svelte 5** — the view: UI and reactivity.
 - **Tailwind 4 / shadcn-svelte** — design tokens and vendored components. See [`ui.md`](./ui.md).
-- **welshman** — nostr app layer: events, `Repository`, feeds, web of trust. Not the peer protocol — see [the plugin boundary](#the-plugin-boundary).
+- **welshman** — nostr app layer: events, `Repository`, feeds, web of trust. Not the peer protocol — see [architecture](#architecture).
 - **nostr-tools** — NIP-19 encoding for display.
-- **Vite 8** — bundles the web assets to `dist/`, which the native shells load.
-- **Capacitor 8** — native shell, and the JSON bridge between webview and plugin.
+- **Vite 8** — bundles the web assets to `dist/`, which the shells load.
+- **Capacitor 8** — the shell, and the JSON bridge between view and core.
 - **Rust** — the core: protocol, crypto, store, session state. Everything below the UI that has to run while backgrounded.
 - **uniffi** — Swift and Kotlin bindings to that core.
 - **Swift / Kotlin** — the platform shell: radio, secure storage, lifecycle, bridge.
 - **CoreBluetooth** — iOS dual-role GATT, background modes, state restoration.
 - **`android.bluetooth`** — Android advertiser, scanner, GATT server and client.
-- **BLE GATT** — the floor transport, with [our own framing](./transport.md#framing) over one characteristic.
+- **BLE GATT** — the transport, with [our own framing](./transport.md#framing) over one characteristic.
+- **`coracle-lib`** — nostr types for the core: NIP-01 serialization, filters, NIP-77 negentropy. Its event hierarchy separates an unsigned `HashedEvent` from a signed `Event`, which is what the [content/grant split](./identity.md#events-are-not-signed-grants-are) needs; rust-nostr's mandatory signature cannot express it.
 - **`snow`** — Noise XX: Curve25519 / ChaCha20-Poly1305 / SHA-256.
 - **`rusqlite`** — durable event store, indexes, NIP-01 filter matching.
 - **`secp256k1`** — signing and verifying grants and auth events; **`k256`** for the [grant proof](./sync.md#grant-proofs), which needs explicit group arithmetic that the binding does not expose.
 
-### The plugin boundary
+## Architecture
 
-The webview is suspended in the background. **Everything that must survive backgrounding lives in the native plugin.** This is the central constraint on the whole app.
+There are three layers: the **core** (Rust), the **shell** (Swift and Kotlin), and the **view** (web).
 
-What decides where a piece of work lives is whether it happens at *encounter time*, not which layer it belongs to conceptually. A peer appears while both phones are in pockets. Whatever has to run then runs with no webview, so it is native, whatever it looks like.
+Because gossip has to happen in the background with peers over bluetooth while the user's device is locked and in their pocket, none of it can live in the view. The responsibility for nearly all application logic therefore belongs to the core. This also allows us to avoid duplicating application logic in the shell.
 
-| Rust core (via uniffi) | Platform shell (Swift / Kotlin) | Webview (TypeScript) |
-| --- | --- | --- |
-| Relay protocol, both halves | BLE advertise, scan, GATT both roles | UI, all of it |
-| Noise handshake, framing codec | Keychain / Keystore | Social graph, WoT, scope computation |
-| Session state machine, heartbeat | Background lifecycle, state restoration | Feed construction, rendering, composition |
-| Signing — auth events and grants | Paths and data-protection classes | Working-set `Repository` |
-| Merkle trees, grant proofs | Capacitor bridge marshalling | Onboarding, backup and transfer UI |
-| Reconciliation — GCS, negentropy | | |
-| SQLite store, filter matching | | |
-| Policy application, quotas | | |
-| Blob transfer, assembly, verification | | |
+The core covers:
 
-Native holds the durable store and serves peers autonomously using a policy snapshot compiled by the webview. The webview reads its own store over the same relay protocol, through a `SQLITE_STORAGE_URL` adapter that crosses the Capacitor bridge. The in-memory `Repository` stays as the working set because welshman's reactive layer derives from it synchronously. See [`storage.md`](./storage.md).
+- Both halves of the relay protocol
+- Noise handshake and framing codec
+- Session state machine, heartbeat
+- Signing auth events and grants
+- Merkle trees, grant proofs
+- Reconciliation - GCS, negentropy
+- SQLite store, filter matching
+- Policy interpretation, scope and web of trust, quotas
+- Blob transfer, assembly, verification
 
-#### The webview does not sign
+The shell covers:
 
-Exactly two things need the identity key, and both happen at encounter time: **kind 22242 auth events**, one per direction per session, and **delivery grants**, one per chunk handed over. Everything else is key-free — content events carry no signature at all, [grant proofs](./sync.md#grant-proofs) demonstrate knowledge of a grant's signature rather than of our key, and verification is public.
+- BLE advertise, scan, GATT both roles
+- Keychain / Keystore
+- Background lifecycle, state restoration
+- Paths and data-protection classes
+- Capacitor bridge marshalling
 
-So signing is native, and the key lives where native can read it, which is what forces custody down to one model ([`identity.md`](./identity.md#key-custody)). The webview composes unsigned events and hands them across the bridge; nothing on the gossip path passes through it. The one exception is deliberate and user-initiated: [promoting your own post](./identity.md#events-are-not-signed-grants-are) to the open network calls a `signEvent` op on the plugin, which is also what backs the thin `ISigner` that keeps welshman's session model working.
+The view covers:
 
-#### Why the core is Rust
+- Editing policy preferences: scope, mutes, discoverability
+- Event parsing (for display), rendering, composition
+- All user interfaces
 
-The alternative is Swift and Kotlin implementing the same protocol twice.
+Calls run one way:
 
-- **The crypto has to be right once, not twice.** The [grant proof](./sync.md#grant-proofs) is a Cramer–Damgård–Schoenmakers OR-proof where a mistake is silent rather than loud — it produces a proof that verifies and proves nothing. Two independent implementations of that is two chances to get it silently wrong, and known-answer tests that have to be maintained in parallel.
-- **Two implementations of one wire protocol diverge.** The relay protocol, the Merkle construction, negentropy and the GCS filter all have to agree byte-for-byte with a *peer*, which is another copy of this app on the other platform. Divergence shows up as a sync failure between an iPhone and an Android in someone's pocket, which is the hardest possible place to observe it.
-- **The platform layer is genuinely platform-specific, and small.** CoreBluetooth and `android.bluetooth` are not convergent enough to share, and they are exactly the part with no cryptographic subtlety. That is the right seam.
+```
+view ──JSON over Capacitor──▶ shell ──uniffi──▶ core ──C FFI──▶ SQLite
+```
 
-The cost is a cross-compiled toolchain: `cargo` builds the core for every iOS and Android target and `uniffi-bindgen` generates the bindings, both before `cap sync`.
+The shell depends on the core at link time, and the core depends on nothing platform-specific. Where the core needs a platform capability it declares a trait and the shell hands it an implementation.
 
-## Decisions log
+Only one of those boundaries is expensive. SQLite is in-process C, and uniffi passes scalars directly and everything else as a compact binary buffer, so the cost lives at the Capacitor bridge, which marshals as JSON.
 
-| Decision | Rationale |
-| --- | --- |
-| Proximity enforced by configuration, not runtime checks | A heartbeat that tears down a wrong connection is reactive; disabling discovery and relay means it can't form. |
-| BLE is the only address-lookup service | The only way to learn an address is to have been in radio range. Makes I1 structural. |
-| BLE only; no second transport | A LAN upgrade serves only peers on one access point, can't run while backgrounded, and drags back the discovery stack I1 exists to exclude. |
-| The transport seam stays open anyway | Scheme-dispatched adapters, and reachability exchanged only over the authenticated BLE channel. Keeps I1 structural for whatever arrives. |
-| L2CAP is the reserved bandwidth upgrade | Same radio, same connection, same Noise session — a data plane under the existing `ble://` peer, so it needs no scheme, no discovery, and no change to I1 or to the sync layer. |
-| Own BLE framing, not `iroh-ble-transport` | AGPL-3.0 vs. app store distribution, no legal review planned. Also drops the 1200-byte datagram floor and L2CAP fallback. |
-| Heartbeat is liveness, not authorization | Proximity already guaranteed structurally, so teardown can be lenient and never kills a live transfer. |
-| Advertisement carries no identity | Not a choice — iOS strips background advertisement payload. Identification is necessarily post-connect. |
-| Consent is compiled, not prompted | Encounters happen with no user present. A prompt that cannot be shown has to resolve to a decision made earlier, so the snapshot carries paired Noise keys plus any open discoverable window. |
-| Nostr relay wire protocol as the peer protocol | A specified protocol with prior art on both sides, and policy compiles to filters. Reusing it removes a protocol from the project rather than adding one. |
-| Both halves of the peer protocol are native | Sync starts when a peer appears, which is when the webview does not exist. A TypeScript implementation could only run in the foreground, which is not the case the app is for. |
-| The Rust core holds everything below the UI | The alternative is implementing one wire protocol and one silent-failure crypto construction twice, and having them disagree between an iPhone and an Android in two pockets. |
-| Mutual NIP-42 bound to transport identity | Without the binding, any peer you authenticate to can impersonate you to every other peer. |
-| Auth events are signed; content events are not | NIP-42 needs a verifiable signature. Content authenticity comes from the grant instead. |
-| Content events carry no signature | An unsigned event is invalid everywhere, so a leak is rejected by relays rather than stored. |
-| Two-hop cap via delivery grants | Makes the social topology structural. A grant names one recipient and cannot be forged, so the bound needs no honest-node assumption. |
-| One grant per synchronized chunk, over a Merkle root | Handing a peer *n* events costs one signature and one grant on the wire, not *n* of each. At BLE bandwidth the bytes matter as much as the signatures. |
-| Grant is detached, not folded into the event id | Hashing the recipient in would give one post a different id per recipient, and reconciliation diffs id sets — it could never converge. Also breaks threading and dedup. |
-| Ids are plain NIP-01 hashes | Nothing app-specific in serialization, so `@welshman/util` is used unmodified and a promoted post keeps its id and its replies. |
-| The nsec is the only custody model | Authenticating a session needs a signature at encounter time, with no webview and possibly no network. A signer the app cannot reach then fails the core loop rather than degrading. |
-| The webview never signs on the gossip path | Both signed kinds are produced at encounter time. Moving signing native also means the key never crosses the bridge except in the export flows that exist to move it. |
-| Identity key readable while the device is locked | `AfterFirstUnlock`. A locked phone that cannot sign cannot authenticate, and a peer that cannot authenticate can neither send nor receive — which is pocket-to-pocket gossip, the core case. |
-| Key stored as bytes, not a hardware key handle | Secure Enclave and Android Keystore do P-256, not secp256k1. There is no hardware-backed option for a nostr identity key; the platform protects the bytes at rest instead. |
-| Grants are nostr events, not bare signatures | Ordinary NIP-01 serialization, so grants and auth events share one signing and verification path, and a grant is inspectable as an event. |
-| Login with device for multi-device | Reuses the proximity stack. Needs a short authentication string — the user has no prior knowledge of the target's key. |
-| Backup is an exported text file, optionally NIP-49 encrypted | Follows Flotilla's `KeyDownload`. Multi-device is the happy path; most users have one phone. Instructions ship in the file. |
-| One-shot GCS on connect, negentropy only if the session lasts | Session duration, not latency: a drive-by lasts seconds and a multi-round negotiation may never converge. |
-| Reconciliation scope is `created_at`; ordering is `seen_at` | `seen_at` is local and private, so it can't define a scope both peers can compute. |
-| `seen_at` set once, never updated, never transmitted | Duplicate arrivals must not churn the recently-discovered view; encounter times are movement data. |
-| Sync scope is social distance, not a boolean | On/off is either too leaky or useless. Manyverse's `hops=2` is the precedent; "hops" is reserved here for delivery distance under I5. |
-| Mute and block conflated, kind 10000 | One concept: nothing to do with this person. Blocks ingest, egress, transitive gossip, and peering; purges stored events. |
-| Media in three tiers | BLE at 5–15 KB/s carries previews, not originals. Tier 0 makes the timeline render instantly, and tier 2 never transfers automatically. |
-| Native SQLite is source of truth and speaks the relay protocol | Background serving is non-negotiable; the relay protocol keeps the app layer unchanged. |
-| `SQLITE_STORAGE_URL` adapter for webview → native reads | Same protocol as peers, resolved by `getAdapter`. Hydration is welshman's existing `makeLoadItem` chain pointed at a local URL. |
-| Working set is kept, not replaced by direct SQLite reads | welshman derives from a `Repository` synchronously. Dropping it makes every derived store async — an app-layer rewrite, not a perf tradeoff. |
-| Capacitor over Tauri and KMP | The UI is TypeScript and stays TypeScript; the hard problems are background iOS, where Capacitor has the most prior art. The shared core is Rust either way, so the shell is chosen on its webview and lifecycle story alone. |
-| shadcn-svelte, vendored rather than depended on | The surfaces are unusual — hop badges, consent gates, peers that vanish mid-session. Owning the component source makes those edits rather than fights with someone's variant API. See [`ui.md`](./ui.md). |
-| Design values live only in Tailwind tokens | shadcn components are written against `shadow-sm` and `rounded-lg`, so redefining the scales restyles the vendored set without editing it, and the linter can then reject any hard-coded value. |
-| Fonts and icons bundled, never fetched | A CDN request on first paint fails exactly where the app is meant to work — I3. |
+The core holds the durable store and serves peers autonomously, resolving sync scope from the follows and mutes it already stores. The view reads from storage via a `SQLITE_STORAGE_URL` relay adapter that crosses that bridge. The in-memory `Repository` stays as the working set because welshman's reactive layer derives from it synchronously. See [`storage.md`](./storage.md).
+
+## Discovery
+
+The BLE advertisement is a bare presence beacon: our service UUID and no payload. Identification is therefore always post-connect, and a stranger is indistinguishable from a close friend until the link is up and the handshake has run.
+
+Since every identification costs a connection, resolved identities are cached against the ~15 minute BLE address rotation, attempts are rate-limited and ordered by RSSI so the nearest stranger is tried first, and peers already declined get a hard backoff.
+
+A session climbs a fixed ladder — IDLE, LINKED once GATT connects, SECURED once Noise XX completes, IDENTIFIED once mutual NIP-42 has run and policy has been evaluated, SYNCING, then DRAINING and CLOSED. Between SECURED and IDENTIFIED sits the consent gate, because authenticating discloses a long-term identity and, on a proximity transport, a physical presence at a time and place.
+
+Read more at [`discovery.md`](./discovery.md)
+
+## Transport
+
+Bluetooth is the only transport. Every device runs a GATT peripheral and a GATT central at once, over one service and one characteristic, with our own framing over a Noise XX channel — multiplexed, priority-scheduled, fragmented to the MTU, resumable by offset.
+
+Measured throughput is 5–15 KB/s. Event sync fits in a drive-by, image previews fit, but originals do not. Increased bandwidth can be obtained by upgrading to an L2CAP channel over the same connection and Noise session.
+
+Read more at [`transport.md`](./transport.md)
+
+## Identity
+
+Two keypairs with two jobs: a long-term secp256k1 nostr identity, and a per-install Curve25519 Noise static key. Nothing binds them durably — mutual NIP-42 binds them per session, naming `noise://<static key>`, an identity the BLE handshake has already authenticated.
+
+The app holds the key in platform secure storage, readable while the device is locked. Moving it to a second device runs over the same proximity stack, gated on explicit action at both ends and a short authentication string; the fallback is a file export.
+
+Read more at [`identity.md`](./identity.md)
+
+## Sync
+
+Each device is a p2p nostr relay and a nostr client at once, reusing the relay protocol in both directions.
+
+Content events carry an id and no `sig`, so authenticity comes instead from a delivery grant — a signed nostr event which names a recipient and commits through a Merkle root to a whole chunk of events at once. Ids stay plain NIP-01 hashes, so an author can sign one of their own posts and promote it to the open network, keeping its id and its replies. Every inbound event needs a grant naming us if the sender wrote it, or a grant proof from the sender if someone else did; anything else is dropped. A grant is transferable evidence of authorship, so it never leaves the peer it names and the second hop receives a proof designated to it instead. That is what caps reach at two hops without trusting anyone's software.
+
+Reconciliation runs a one-shot GCS filter on connect and negentropy for as long as the session survives. What can be received or sent to a given peer depends on social graph data, including follows and mutes, as well as specific settings for app behavior, including whether to ask the user before peering with a stranger and whether to gossip second hops.
+
+Read more at [`sync.md`](./sync.md)
+
+## Storage
+
+The core's SQLite is the source of truth, and it answers queries as a relay — the same protocol peers speak, behind `SQLITE_STORAGE_URL`. The in-memory `Repository` stays as the working set, because welshman's reactive layer derives from it synchronously.
+
+Ingest happens once, in the core: id recomputation, grant verification, quota accounting, `seen_at` assignment, retention. Nothing unverified ever reaches the view.
+
+`seen_at` is set once on first insert, never updated, never transmitted. This allows for eviction not based on `created_at`, and provides some affordances for the view layer.
+
+Read more at [`storage.md`](./storage.md)
+
+## Media
+
+Events reference blobs by SHA-256 hash in `imeta` tags, and blob transfer is a separate protocol on its own channel with its own quotas. Content addressing makes a transfer resumable, dedupable across peers, and verifiable on arrival.
+
+Three tiers follow from 5–15 KB/s. Tier 0 — blurhash, dimensions, duration, mime — rides inline with the event and makes the timeline render immediately; tier 1 is a preview of at most 32 KB, fetched automatically under policy; tier 2 is the full-resolution original, never automatic, and may take several encounters to arrive. Images added by the user are compressed before they are stored.
+
+Read more at [`media.md`](./media.md)
+
+## Privacy
+
+A passive radio observer learns that a device running this app is present, and nothing else. A peer who completes a session learns the user's pubkey, that they were physically present at a time and place, and whatever the gossip scope serves — which is why the consent gate sits before authentication.
+
+`seen_at` and provenance are records of the user's movements, so they never leave the device. A grant is transferable evidence of authorship, so it stays one hop from the author: a second-hop recipient knows where an event came from but can't prove it.
+
+Read more at [`privacy.md`](./privacy.md)
+
+## Interface
+
+shadcn-svelte over bits-ui and Tailwind 4, vendored by CLI rather than taken as a dependency.
+
+Design values live in exactly one file: colour, elevation, motion and radius are Tailwind tokens in `src/app.css`, and the standard scales are redefined rather than supplemented, so the vendored components restyle without being edited. The look is restrained claymorphism.
+
+The view logic is organized against welshman's own extension points — an event kind is a `KindFactory` in `src/lib/kinds/`, a collection of events is a `DerivedPlugin` in `src/lib/data/`, and nothing outside them pokes at tags or queries the repository.
+
+Read more at [`ui.md`](./ui.md)

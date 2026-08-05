@@ -1,7 +1,5 @@
 # Peer authentication
 
-See [`overview.md`](./overview.md).
-
 Sessions authenticate with [NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md), used unmodified. The two things this app needs from it — naming a peer that has no URL, and running the exchange in both directions — were added to NIP-42 itself rather than specified separately here. NIP-42 is the specification; where it and this document disagree, it wins.
 
 ## What was added upstream
@@ -42,9 +40,9 @@ Transports should also provide confidentiality. Not against replay, which the ru
 
 ## What it means here
 
-- **The session identifier is `noise://<hex static key>`.** It names a key the BLE handshake has already authenticated, so the tag is checked against something the handshake established rather than something the peer claimed. This app registers no other scheme — the table above is the general registry, and a [second transport](./transport.md#adding-a-transport-later) would add one. See [`transport.md`](./transport.md).
+- **The session identifier is `noise://<hex static key>`.** It names a key the BLE handshake has already authenticated, so the tag is checked against something the handshake established rather than something the peer claimed. This app registers no other scheme; the table above is the general registry. See [`transport.md`](./transport.md).
 - **A captured auth event is useless against a relay.** On these transports the `relay` tag never holds a URL, so no relay will ever match it. See [`identity.md`](./identity.md#auth-events-are-ordinary-signed-events).
 - **A peer may authenticate as several pubkeys**, since NIP-42 allows a sequence of `AUTH` messages. Ingest therefore tests set membership rather than equality — see [`sync.md`](./sync.md#delivery-grants).
-- **Authentication sits behind the consent gate**, because it discloses presence. Sessions are never established automatically with unknown peers, and since the gate is usually evaluated with nobody looking at the screen, the decision comes from the compiled policy snapshot rather than a prompt — see [`discovery.md`](./discovery.md#the-consent-gate).
-- **The signature is produced in the background, by us.** This exchange is the reason custody is limited to a key the device holds: it runs during a CoreBluetooth wake, with the webview suspended and possibly with no network, and a peer that cannot complete it can neither send nor receive. It is also why the identity key must be readable while the device is locked — see [`identity.md`](./identity.md#key-custody).
+- **Authentication sits behind the consent gate**, because it discloses presence. Sessions are never established automatically with unknown peers, and since the gate is usually evaluated with nobody looking at the screen, the decision comes from stored preferences rather than a prompt — see [`discovery.md`](./discovery.md#the-consent-gate).
+- **The signature is produced in the background, by us.** This exchange is the reason custody is limited to a key the device holds: it runs during a CoreBluetooth wake, with the view suspended and possibly with no network, and a peer that cannot complete it can neither send nor receive. It is also why the identity key must be readable while the device is locked — see [`identity.md`](./identity.md#key-custody).
 - **The `created_at` window is wider than NIP-42 suggests.** Its ~10 minutes assumes a network time source. Devices that have been offline for days drift, and rejecting them would fail exactly the case this app is built for.

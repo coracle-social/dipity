@@ -1,6 +1,6 @@
 # Serendipity — UI
 
-The webview layer: component framework, design tokens, and the conventions a linter can hold us to. Everything here lives above [the plugin boundary](./overview.md#the-plugin-boundary) and none of it runs at encounter time.
+The view layer: component framework, design tokens, and the conventions a linter can hold us to. Everything here lives above [the plugin boundary](./overview.md#architecture) and none of it runs at encounter time.
 
 ## The framework
 
@@ -90,7 +90,7 @@ Semantic tokens only. `bg-card`, `text-muted-foreground`, `border-border` — ne
 | `destructive` | Irreversible actions only. |
 | `border` / `input` / `ring` | Hairlines and focus. |
 
-Values are `oklch`, so lightness is perceptually even: `oklch(0.7 …)` reads as the same brightness at every hue, which makes the dark theme derivable rather than hand-tuned. Both themes are defined in `app.css`, and dark mode is a `.dark` class on `<html>` set before first paint by an inline script in `index.html`.
+Values are `oklch`, so lightness is perceptually even: `oklch(0.7 …)` reads as the same brightness at every hue, which makes the dark theme derivable rather than hand-tuned. Both themes are defined in `app.css`, and dark mode is a `.dark` class on `<html>` set before first paint by an inline script in `index.html` — `ModeWatcher` runs after the bundle parses, which on a cold launch is a white flash on a dark-mode phone.
 
 **`primary` is rationed.** One primary action per screen. Terracotta at scale stops being warm and starts being loud.
 
@@ -183,7 +183,7 @@ Styling happens in Tailwind utilities, or in the theme. A component-scoped rule 
 - **`cn()` last, always.** `class={cn(variants({size}), className)}` — the caller's class has to be able to win, and `twMerge` is what makes that deterministic.
 - **`tv()` for variants, not conditionals.** If a component has more than two visual states, it gets a variant table.
 - **Semantic HTML before ARIA.** bits-ui handles the wiring for anything interactive; hand-rolled `role` attributes are a sign the wrong primitive was used.
-- **The UI owns no durable state.** The webview is suspended in the background, so anything that must survive that lives in the plugin. UI state is view state.
+- **The UI owns no durable state.** The view is suspended in the background, so anything that must survive that lives in the plugin. UI state is view state.
 - **Never claim posts only reach nearby people.** False under [I4](./overview.md#invariants), and copy is where that lie is easiest to tell. Say reach is bounded at two hops.
 
 ## Organising against welshman
@@ -233,13 +233,13 @@ export class Posts extends DerivedPlugin<Parsed<PostReader>> {
 
 Components then use the uniform accessor shape: `one(key)` for a reactive store that lazy-loads, `get(key)` for a synchronous cache read that does not, and `.$` on a `Projection` in markup against `.get()` in callbacks. `LoadableMapPlugin` and `MapPlugin` cover the cases that own their own map instead of deriving from events.
 
-`plugin` is an overloaded word here. A **welshman app plugin** is this: a class registered with `app.use()`, living in the webview. The **native plugin** is the Capacitor boundary everything running at encounter time lives behind ([`overview.md`](./overview.md#the-plugin-boundary)). Hence `src/lib/data/`, and never a directory called `plugins/`.
+`plugin` is an overloaded word here. A **welshman app plugin** is this: a class registered with `app.use()`, living in the view. The **native plugin** is the Capacitor boundary everything running at encounter time lives behind ([`overview.md`](./overview.md#architecture)). Hence `src/lib/data/`, and never a directory called `plugins/`.
 
 ### What does not transfer
 
-Writers resolve publish relays through the `RelaySelection` DSL, and most of that DSL is meaningless here: the webview resolves `LOCAL_RELAY_URL` and `SQLITE_STORAGE_URL` and nothing else, so routing is `forceRelays` against a local url rather than an outbox computation.
+Writers resolve publish relays through the `RelaySelection` DSL, and most of that DSL is meaningless here: the view resolves `LOCAL_RELAY_URL` and `SQLITE_STORAGE_URL` and nothing else, so routing is `forceRelays` against a local url rather than an outbox computation.
 
-`Domain.command(writer).publish()` requires a signed-in user and publishes through thunks, which makes it the [promote-to-the-open-network](./identity.md#events-are-not-signed-grants-are) flow rather than anything on the gossip path. Gossip events are unsigned, and a writer's rendered template crosses the bridge for the core to handle; grants and auth events are signed natively and never appear in TypeScript.
+`Domain.command(writer).publish()` requires a signed-in user and publishes through thunks, which makes it the [promote-to-the-open-network](./identity.md#events-are-not-signed-grants-are) flow rather than anything on the gossip path. Gossip events are unsigned, and a writer's rendered template crosses the bridge for the core to handle; grants and auth events are signed in the core and never appear in TypeScript.
 
 ### Flotilla is the reference for idiom
 
@@ -260,32 +260,3 @@ just lint            # eslint
 just fmt             # prettier + eslint --fix + cargo fmt
 just qa              # types, lint, format check, and the Rust half
 ```
-
-## Decisions log
-
-| Decision | Rationale |
-| --- | --- |
-| shadcn-svelte over a component library dependency | The surfaces are unusual — hop badges, consent gates, peers that vanish. Owning the source makes those edits rather than fights with a variant API. |
-| shadcn-svelte over Panda CSS | Panda is the stricter leash — an unknown token is a type error, which scales better than review. It loses on training-data density: shadcn is the most-written-about component pattern there is, so a model writes idiomatic code unprompted, where Panda's smaller corpus and codegen step produce worse first drafts. The bet is good first drafts plus a linter. Revisit if concurrent unreviewed edits become the norm. |
-| shadcn-svelte over daisyUI | Semantic classes shrink the surface per element, but accessibility for interactive elements is left to us, and overriding means utility-first fighting semantic classes. bits-ui gives the same reduction with the a11y attached. |
-| shadcn-svelte over Skeleton v3 and Flowbite Svelte | Skeleton has the best theming engine of the group and Zag.js-derived accessibility. Both are excluded because their recent rewrites mean models confidently emit the previous major's API. |
-| Tailwind 4, tokens in CSS not config | The theme is data. A designer can change the whole app in one file without touching a build config. |
-| Override the standard scales, don't add new ones | shadcn components are written against `shadow-sm` and `rounded-lg`. Redefining those restyles the vendored set without editing it. |
-| `shadow-control` as a separate step | The rim that reads as an edge on near-white card stock is a gloss line on a saturated fill. Calibration, not preference — the surface scale stays the default everywhere else. |
-| Claymorphism, restrained | Buttoned-down without being flat. Chrome only, because universal tactility carries no information. |
-| `oklch` for every colour | Perceptually even lightness, so the dark theme is derived rather than hand-tuned. |
-| Warm neutrals, terracotta accent | A neighbourhood app should not look like an admin dashboard. Grey-on-grey is the default failure mode. |
-| A second accent hue under a new name | `secondary` and `accent` are neutral tokens the vendored components already depend on. A de-emphasised accent needs a hue, so it needs a third name. |
-| One easing curve, no overshoot | Springiness makes an interface ask to be looked at. |
-| Animation never gates an interaction | Makes the global reduced-motion collapse safe. |
-| Fonts and icons bundled, never fetched | A CDN request on first paint fails exactly where the app is meant to work — [I3](./overview.md#invariants). |
-| Vendored `ui/` unformatted and loosely linted | Otherwise every `shadcn add` arrives as a whitespace conflict against our own style. |
-| Theme class set inline before first paint | `ModeWatcher` runs after the bundle parses, which on a cold launch is a white flash on a dark-mode phone. |
-| `viewport-fit=cover` | Without it iOS reports zero safe-area insets and the header sits under the notch. |
-| Zoom left enabled | The one accessibility affordance a webview cannot reimplement itself. |
-| Arbitrary values banned outside `src/lib/components/` | A style guide holds for about six files before something is locally convenient enough to inline. |
-| A kind is a `KindFactory`, not tag-poking | The shape of an event is stated once, in its reader. Otherwise `tags.find(t => t[0] === …)` spreads across components and every kind change is a grep. |
-| A collection is a `DerivedPlugin`, not an ad-hoc store | The repository stays the single source of truth, and `app.use()` gives one memoized, lazily-loading instance per app instead of a store per caller. |
-| welshman app plugins live in `src/lib/data/` | `plugin` already means the Capacitor native boundary in this project. A directory called `plugins/` in the webview would name the opposite thing. |
-| Runes only in `.svelte` files | Compiler syntax; in a plain module they are an undefined global that fails at runtime. Shared reactive state goes in a welshman store, which works in both. |
-| Conventions in the linter, not in this file | A convention a reviewer has to remember is a convention that erodes. |

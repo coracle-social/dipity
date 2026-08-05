@@ -1,6 +1,6 @@
 # core
 
-Everything below the UI, in Rust. See [`docs/overview.md`](../docs/overview.md#the-plugin-boundary) for why it exists and what belongs here; this file covers the build.
+Everything below the UI, in Rust. See [`docs/overview.md`](../docs/overview.md#architecture) for why it exists and what belongs here; this file covers the build.
 
 ## Layout
 
@@ -10,6 +10,8 @@ Everything below the UI, in Rust. See [`docs/overview.md`](../docs/overview.md#t
 | `serendipity-ffi` | The uniffi surface. Everything crossing to Swift or Kotlin is declared here by hand. |
 
 The split keeps binding machinery out of the code under test, and keeps the FFI surface something you have to write on purpose rather than something that accumulates.
+
+Anything the core needs from the platform is a trait declared here and implemented by the shell — see [the call direction](../docs/overview.md#architecture). Keep that trait set small and coarse; each one is a place the core blocks on Swift or Kotlin.
 
 **This is scaffolding.** One exported call, enough to prove the toolchain links end to end. Modules will mirror the design documents one to one as they land.
 
@@ -40,4 +42,6 @@ Both shells need the artifacts referenced once, and neither reference exists yet
 
 ## Adding a dependency
 
-The heavy ones are chosen but not yet added, since nothing uses them: `rusqlite` for the store, `secp256k1` for grant and auth signing, `k256` for the grant proof's explicit group arithmetic, `snow` for Noise XX. Add them to `[workspace.dependencies]` when the module that needs them arrives, so version choices stay in one place.
+The heavy ones are chosen but not yet added, since nothing uses them: `coracle-lib` for nostr types and negentropy, `rusqlite` for the store, `secp256k1` for grant and auth signing, `k256` for the grant proof's explicit group arithmetic, `snow` for Noise XX. Add them to `[workspace.dependencies]` when the module that needs them arrives, so version choices stay in one place.
+
+`coracle-lib` comes from `coracle-rust` on gitea as a git dependency pinned to a rev, never a path dependency — a path resolves on one machine and `just sync` has to build in CI. Its `src/` is tangled from `book/`, so anything we need upstream is a chapter edit rather than a patch, and hand-editing the vendored source is lost on the next tangle.

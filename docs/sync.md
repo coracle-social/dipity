@@ -1,6 +1,6 @@
 # Sync
 
-What moves between peers, how the two sides agree on what's missing, and what policy governs it. See [`overview.md`](./overview.md).
+What moves between peers, how the two sides agree on what's missing, and what policy governs it.
 
 ## Peers speak the relay wire protocol
 
@@ -8,13 +8,13 @@ Each device is a relay for its peers and a client of its peers, simultaneously, 
 
 Reusing it removes a protocol from the project rather than adding one: sync policy compiles to filters, reconciliation is NIP-77, authentication is NIP-42, and both sides of the wire are specified rather than invented.
 
-**Both halves live in the Rust core.** A session begins when a peer appears, which is a moment the webview does not exist for ([`overview.md`](./overview.md#the-plugin-boundary)). Anything that runs then is native, and for sync that is everything: driving the peer, serving the peer, and the crypto in between.
+**Both halves live in the core.** A session begins when a peer appears, which is a moment the view does not exist for ([`overview.md`](./overview.md#architecture)). Anything that runs then is core code, and for sync that is everything: driving the peer, serving the peer, and the crypto in between.
 
 ### Client half
 
-Driving a peer — issuing `REQ`, running `NEG-*`, consuming `EVENT` — begins at IDENTIFIED and has to complete inside a background wake. So it is core code, and `@welshman/net` is not on the peer path at all. The cost is NIP-77: `diff` / `pull` / `push` would have given negentropy over any adapter for free, and the core implements it instead, against the same specification, carrying the [GCS filter](#one-shot-first-negentropy-if-the-session-lasts) alongside.
+Driving a peer — issuing `REQ`, running `NEG-*`, consuming `EVENT` — begins at IDENTIFIED and has to complete inside a background wake. So it is core code, and `@welshman/net` is not on the peer path at all. The cost is NIP-77: `diff` / `pull` / `push` would have given negentropy over any adapter for free. The core takes the algorithm from `coracle-lib` and supplies the rest — a `SyncStorage` implementation over SQLite, and the wire codec — carrying the [GCS filter](#one-shot-first-negentropy-if-the-session-lasts) alongside.
 
-What the webview keeps is the same seam pointed at local storage. `AbstractAdapter` plus the `getAdapter` override still resolves two URLs, and both of them are ours:
+What the view keeps is the same seam pointed at local storage. `AbstractAdapter` plus the `getAdapter` override still resolves two URLs, and both of them are ours:
 
 ```ts
 getAdapter: url =>
@@ -22,15 +22,15 @@ getAdapter: url =>
   url === SQLITE_STORAGE_URL ? new SqliteAdapter()          : undefined
 ```
 
-`SQLITE_STORAGE_URL` reaches native SQLite over the Capacitor bridge, so the webview reads its own events through the protocol the core uses for peers — see [`storage.md`](./storage.md#sqlite-is-the-source-of-truth-and-it-is-also-a-relay).
+`SQLITE_STORAGE_URL` reaches the core's SQLite over the Capacitor bridge, so the view reads its own events through the protocol the core uses for peers — see [`storage.md`](./storage.md#sqlite-is-the-source-of-truth-and-it-is-also-a-relay).
 
-**Peers are absent from that dispatch by construction.** There is no `ble://` adapter in the webview and no way to acquire one, so the untrusted side of the protocol is unreachable from the layer that has no verification, no `AUTH` and no policy.
+**Peers are absent from that dispatch by construction.** There is no `ble://` adapter in the view and no way to acquire one, so the untrusted side of the protocol is unreachable from the layer that has no verification, no `AUTH` and no policy.
 
 ### Relay half
 
 Serving a peer: parse inbound `REQ`, match filters, stream `EVENT` then `EOSE`, honour `CLOSE`, issue `AUTH` challenges, validate kind 22242, check a [delivery grant](#delivery-grants) or [grant proof](#grant-proofs) on every inbound event and attach the right one on every outbound event, and enforce policy on both ingest and egress.
 
-Native, and it answers from SQLite, which is the only store that exists when the query arrives. One backend, always: backgrounded there is no working set to answer from. The webview finds out what arrived the same way it finds out anything else, through its live subscription against the store ([`storage.md`](./storage.md#writes)).
+This is core code, and it answers from SQLite, which is the only store that exists when the query arrives. One backend, always: backgrounded there is no working set to answer from. The view finds out what arrived the same way it finds out anything else, through its live subscription against the store ([`storage.md`](./storage.md#writes)).
 
 ### Authentication
 
@@ -85,7 +85,7 @@ Ingest is one comparison, against the pubkeys the peer has authenticated as unde
 | the sender | a **grant naming me** whose root covers it | First hop. The author handed it to me. |
 | anyone else | a **[grant proof](#grant-proofs) from the sender** covering it | Second hop. The sender holds a grant naming them, and proves it without revealing it. |
 
-Anything else is dropped, including any event arriving with neither.
+Anything else is dropped.
 
 **A peer may authenticate as several pubkeys.** NIP-42 permits a sequence of `AUTH` messages, and a shared or multi-account device legitimately holds more than one identity. So both "the sender" and "me" are *sets*, and every check above is set membership rather than equality — "authored by the sender" means the event's pubkey is one the peer authenticated as, and a grant satisfies the rule if its `p` tag names any of them. This does not loosen I5: each grant still authorises exactly one hop from its author, and holding several identities lets a device sit in several chains rather than extend any of them.
 
@@ -130,13 +130,11 @@ Each property falls out of one part of the construction:
 - **C cannot forward the event.** Convincing D means proving knowledge of a grant naming C. None exists, and forging one needs A's key.
 - **The grant never leaves B.** Transferable evidence of A's authorship exists only on the device A handed the content to.
 
-C knows A wrote the event and can say so. C simply cannot prove it.
-
 **Replay binding.** The Fiat–Shamir transcript includes both session identifiers from [`nip-p2p-auth.md`](./nip-p2p-auth.md). Designation already stops C relaying a proof to D, so this is the narrower protection: it stops a proof captured from one session being replayed to the same peer in a later one.
 
 **Cost.** Roughly 200 bytes and a handful of secp256k1 scalar multiplications — no pairings, no trusted setup. One proof per event forwarded, computed at encounter time, inside a background wake.
 
-**Implementation.** The arithmetic needs explicit scalars and points, which the `secp256k1` binding deliberately does not expose, so it uses `k256` from RustCrypto while signing and verification stay on the audited binding. A mistake here is *silent*: a broken OR-proof still produces bytes that verify and prove nothing. It wants known-answer tests and a verifier that rejects malformed input before doing any arithmetic, and it is the construction that most wants a single implementation rather than one per platform — see [`overview.md`](./overview.md#why-the-core-is-rust).
+**Implementation.** The arithmetic needs explicit scalars and points, which the `secp256k1` binding deliberately does not expose, so it uses `k256` from RustCrypto while signing and verification stay on the audited binding. A mistake here is *silent*: a broken OR-proof still produces bytes that verify and prove nothing. It wants known-answer tests and a verifier that rejects malformed input before doing any arithmetic, and it is the construction that most wants a single implementation rather than one per platform — see [`overview.md`](./overview.md#architecture).
 
 **No key access.** B proves knowledge of `s`, which is data B already holds, not B's own private key. Forwarding therefore never reads secure storage, and no part of the proof can be steered into acting as a signing oracle for B's identity. The only signature B produces in an encounter is its own auth event.
 
@@ -181,7 +179,7 @@ Sizing, using bitchat's `GCSFilter` as the reference implementation:
 
 **If the link holds: NIP-77 negentropy.** Range-based reconciliation, multiple round trips, converging precisely over the full scope. At 50–150 ms per round trip this is affordable whenever the encounter is measured in minutes rather than seconds — two people in the same room, or two phones in the same building for an afternoon. The core implements it ([Client half](#client-half)), so carrying both modes costs an implementation as well as the decision of when to switch.
 
-Run both: one-shot GCS immediately on connect for the drive-by case, then negentropy for as long as the session survives. Same event store, two entry points.
+Run both: one-shot GCS immediately on connect for the drive-by case, then negentropy for as long as the session survives.
 
 ### Walking backward
 

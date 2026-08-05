@@ -1,7 +1,5 @@
 # Identity
 
-See [`overview.md`](./overview.md).
-
 ## Keys
 
 Two keypairs, two jobs. Keeping them distinct is what makes the transport binding in [`nip-p2p-auth.md`](./nip-p2p-auth.md) meaningful.
@@ -13,13 +11,15 @@ Two keypairs, two jobs. Keeping them distinct is what makes the transport bindin
 
 The transport key and the nostr identity are bound at session time by mutual NIP-42 with transport binding. Nothing else binds them — no long-lived mapping is published anywhere, and the binding is scoped to the session.
 
-A [second transport](./transport.md#adding-a-transport-later) would add a third key under the same rule: the identity NIP-42 names has to be one that transport's own handshake authenticated, never one taken from an address book.
+Any transport added later follows the same rule: the identity NIP-42 names has to be one that transport's own handshake authenticated, never one taken from an address book. See [Adding a transport later](./transport.md#adding-a-transport-later).
 
 ## Events are not signed, grants are
 
 Content events carry an id and no `sig`. Authenticity comes instead from a **delivery grant**: a small signed nostr event by the author, tagging the content event id and one recipient pubkey, specified in [`sync.md`](./sync.md#delivery-grants).
 
 Ids are plain NIP-01 hashes. Nothing about serialization is app-specific, so an id computed here matches what any nostr implementation would compute for the same content, and `@welshman/util` is used unmodified.
+
+Two implementations compute them: `@welshman/util` in the view and `coracle-lib` in the core. They are checked against shared known-answer vectors, because JSON string escaping is where they would diverge and a divergence is silent — reconciliation would report every event as missing in both directions rather than failing.
 
 This arrangement carries two properties:
 
@@ -46,7 +46,7 @@ That is fine — it is the same person either way — but proximity activity and
 
 ## Key custody
 
-**One model: the app holds the key.** Generated on device or imported, kept in platform secure storage, and read by the Rust core when a signature is needed. There is no external signer path. This is forced rather than chosen.
+**One model: the app holds the key.** Generated on device or imported, kept in platform secure storage, and read by the core when a signature is needed. There is no external signer path. This is forced rather than chosen.
 
 ### Signing happens at encounter time, in the background
 
@@ -57,9 +57,9 @@ Exactly two kinds are signed, and both are produced when a peer appears:
 | Kind 22242 auth event | Session establishment, both directions | Once per session per direction |
 | [Delivery grant](./sync.md#delivery-grants) | Handover | Once per chunk handed to a peer |
 
-Both fall inside a CoreBluetooth background wake, with the webview suspended and possibly with no network. A signer that cannot produce a signature *there* does not reduce the app's capability at the edges; it removes the core loop, because a peer that cannot authenticate can neither send nor receive ([`nip-p2p-auth.md`](./nip-p2p-auth.md)).
+Both fall inside a CoreBluetooth background wake, with the view suspended and possibly with no network. A signer that cannot produce a signature *there* does not reduce the app's capability at the edges; it removes the core loop, because a peer that cannot authenticate can neither send nor receive ([`nip-p2p-auth.md`](./nip-p2p-auth.md)).
 
-Everything else is key-free, which is why the list is only two rows long. Content events carry no signature. [Grant proofs](./sync.md#grant-proofs) prove knowledge of a grant's signature — data we already hold — not knowledge of our key. Verification is public.
+Everything else is key-free. Content events carry no signature. [Grant proofs](./sync.md#grant-proofs) prove knowledge of a grant's signature — data we already hold — not knowledge of our key. Verification is public.
 
 ### Why external signers are out
 
@@ -84,7 +84,7 @@ Background signing means the core reads the key during a CoreBluetooth wake, whi
 
 **The identity key cannot live in the Secure Enclave or in hardware-backed Keystore, on either platform.** Both do NIST P-256; nostr is secp256k1, and Android Keystore dropped secp256k1 support years ago.
 
-So what secure storage holds is the key *bytes*, protected at rest by the platform, and signing happens in the core with `secp256k1`. The platform layer owns Keychain and Keystore and hands the bytes to the core through a uniffi callback, which zeroizes after use.
+So what secure storage holds is the key *bytes*, protected at rest by the platform, and signing happens in the core with `secp256k1`. The shell owns Keychain and Keystore and hands the bytes to the core through a uniffi callback, which zeroizes after use.
 
 ## Login with device
 
@@ -103,7 +103,7 @@ Multi-device is the happy path — two devices holding the same key means losing
 
 A single text file containing prose instructions and the key itself:
 
-- **Optionally password-encrypted.** NIP-19 `nsec` encoding and NIP-49 `ncryptsec` encryption both happen in the core, which hands the webview a finished string rather than key bytes. The user chooses; encryption is opt-in behind a toggle, not a wall. In the unencrypted case that string *is* the key, so it does cross the bridge — deliberately, since exporting it is the whole point of the flow. In the encrypted case nothing usable does.
+- **Optionally password-encrypted.** NIP-19 `nsec` encoding and NIP-49 `ncryptsec` encryption both happen in the core, which hands the view a finished string rather than key bytes. The user chooses; encryption is opt-in behind a toggle, not a wall. In the unencrypted case that string *is* the key, so it does cross the bridge — deliberately, since exporting it is the whole point of the flow. In the encrypted case nothing usable does.
 - **Minimum 12-character password**, stated in the UI, with "write this down" guidance. There is no recovery for a forgotten backup password either.
 - **Instructions, not just a key.** The copy explains what a keypair is, why the private half matters, and what to do with the file — following Flotilla's, with one adjustment. Flotilla tells the user to "import into a Nostr Signer app," which is misleading here, because this app holds the key itself. The wording instead says the key restores this app, and separately identifies them on the open network via other clients.
 - **Gated flow.** The download must complete before the user can continue past the screen, so nobody skips it by accident.
