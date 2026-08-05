@@ -2,7 +2,7 @@
 //!
 //! Everything crossing this boundary is declared here by hand. That is the
 //! point of keeping it in its own crate: the FFI surface stays small and
-//! deliberate, and [`serendipity`] stays free of binding machinery.
+//! deliberate, and [`dip`] stays free of binding machinery.
 //!
 //! Scaffolding only — one call, enough to prove bindings generate and link.
 
@@ -13,5 +13,5 @@ uniffi::setup_scaffolding!();
 #[uniffi::export]
 #[must_use]
 pub fn core_version() -> String {
-    serendipity::version().to_owned()
+    dip::version().to_owned()
 }

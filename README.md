@@ -1,9 +1,9 @@
-# Serendipity
+# Dip
 
 Svelte + Vite + TypeScript nostr app built on [welshman](https://github.com/coracle-social/welshman), wrapped in [Capacitor](https://capacitorjs.com) for iOS and Android.
 
-- **App ID:** `social.coracle.serendipity`
-- **App name:** `Serendipity`
+- **App ID:** `social.coracle.dip`
+- **App name:** `Dip`
 - **Web build output:** `dist/` (Capacitor's `webDir`)
 
 ## Scripts

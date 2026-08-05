@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["serendipity", "serendipity-ffi"]
+members = ["dip", "dip-ffi"]
 
 [workspace.package]
 version = "0.0.0"
@@ -10,7 +10,7 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
-serendipity = { path = "serendipity" }
+dip = { path = "dip" }
 uniffi = "0.32"
 
 [workspace.lints.rust]

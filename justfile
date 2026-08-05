@@ -1,4 +1,4 @@
-# Serendipity — task runner. `just` with no arguments lists everything.
+# Dip — task runner. `just` with no arguments lists everything.
 #
 # Two halves, matching the plugin boundary in docs/overview.md: a TypeScript
 # webview and a Rust core reached through uniffi. The core builds before the
@@ -8,7 +8,7 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 core := "core"
-ffi := "serendipity_ffi"
+ffi := "dip_ffi"
 
 # Staging for everything generated. Under target/, so `cargo clean` and
 # `just clean` both take it and nothing generated is ever committed.
@@ -70,7 +70,7 @@ core-test:
 
 # Regenerate Swift and Kotlin bindings from the built library.
 bindings:
-    cd {{core}} && cargo build -p serendipity-ffi
+    cd {{core}} && cargo build -p dip-ffi
     mkdir -p {{out}}/swift {{out}}/kotlin
     cd {{core}} && cargo run -q --bin uniffi-bindgen -- generate \
         --library target/debug/lib{{ffi}}.dylib \
@@ -84,9 +84,9 @@ bindings:
 
 # Build the iOS XCFramework: device and simulator slices plus the module map.
 ios-lib: bindings
-    cd {{core}} && cargo build -p serendipity-ffi --release --target {{ios_device}}
-    cd {{core}} && cargo build -p serendipity-ffi --release --target {{ios_sim}}
-    rm -rf {{out}}/headers {{out}}/SerendipityFFI.xcframework
+    cd {{core}} && cargo build -p dip-ffi --release --target {{ios_device}}
+    cd {{core}} && cargo build -p dip-ffi --release --target {{ios_sim}}
+    rm -rf {{out}}/headers {{out}}/DipFFI.xcframework
     mkdir -p {{out}}/headers
     cp {{out}}/swift/{{ffi}}FFI.h {{out}}/headers/
     cp {{out}}/swift/{{ffi}}FFI.modulemap {{out}}/headers/module.modulemap
@@ -95,15 +95,15 @@ ios-lib: bindings
         -headers {{out}}/headers \
         -library {{core}}/target/{{ios_sim}}/release/lib{{ffi}}.a \
         -headers {{out}}/headers \
-        -output {{out}}/SerendipityFFI.xcframework
-    @echo "xcframework → {{out}}/SerendipityFFI.xcframework"
+        -output {{out}}/DipFFI.xcframework
+    @echo "xcframework → {{out}}/DipFFI.xcframework"
 
 # Build Android jniLibs for every ABI. Needs the NDK and cargo-ndk — see `setup`.
 android-lib: bindings
     @command -v cargo-ndk >/dev/null || { echo "cargo-ndk missing: cargo install cargo-ndk"; exit 1; }
     rm -rf {{out}}/jniLibs
     cd {{core}} && cargo ndk {{ prepend('-t ', android_targets) }} \
-        -o target/ffi/jniLibs build -p serendipity-ffi --release
+        -o target/ffi/jniLibs build -p dip-ffi --release
     @echo "jniLibs → {{out}}/jniLibs"
 
 # ------------------------------------------------------------------ native app

@@ -1,8 +1,8 @@
 import type {CapacitorConfig} from "@capacitor/cli"
 
 const config: CapacitorConfig = {
-  appId: "social.coracle.serendipity",
-  appName: "Serendipity",
+  appId: "social.coracle.dip",
+  appName: "Dip",
   webDir: "dist",
 }
 

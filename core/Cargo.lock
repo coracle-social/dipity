@@ -172,6 +172,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
+name = "dip"
+version = "0.0.0"
+
+[[package]]
+name = "dip-ffi"
+version = "0.0.0"
+dependencies = [
+ "dip",
+ "uniffi",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -441,18 +453,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
 dependencies = [
  "serde_core",
-]
-
-[[package]]
-name = "serendipity"
-version = "0.0.0"
-
-[[package]]
-name = "serendipity-ffi"
-version = "0.0.0"
-dependencies = [
- "serendipity",
- "uniffi",
 ]
 
 [[package]]

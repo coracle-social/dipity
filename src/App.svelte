@@ -45,7 +45,7 @@
         <RadioIcon class="size-4.5" />
       </div>
       <div class="min-w-0 flex-1">
-        <h1 class="truncate text-base leading-tight font-semibold">Serendipity</h1>
+        <h1 class="truncate text-base leading-tight font-semibold">Dip</h1>
         <p class="truncate text-xs text-muted-foreground">Design system reference</p>
       </div>
       <Button variant="ghost" size="icon" onclick={toggleMode} aria-label="Toggle colour scheme">

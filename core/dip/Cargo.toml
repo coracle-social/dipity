@@ -1,5 +1,5 @@
 [package]
-name = "serendipity"
+name = "dip"
 description = "Protocol, crypto, store and session logic — everything below the UI"
 version.workspace = true
 edition.workspace = true

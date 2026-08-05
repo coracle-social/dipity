@@ -1,4 +1,4 @@
-# Serendipity — agent guide
+# Dip — agent guide
 
 Read [`docs/overview.md`](./docs/overview.md) before making design decisions — it carries what the app is, the invariants, and the architecture. This file is the short version plus the things that are easy to get wrong.
 
@@ -80,7 +80,7 @@ just ios          # sync, then open Xcode
 just android      # sync, then open Android Studio
 ```
 
-App ID `social.coracle.serendipity`. Web assets build to `dist/`; the shells load the *built* output, so `just sync` after web changes or the app runs stale code.
+App ID `social.coracle.dip`. Web assets build to `dist/`; the shells load the *built* output, so `just sync` after web changes or the app runs stale code.
 
 **The core builds before the shells**, and `just sync` enforces the order — `cargo` cross-compiles for each target, `uniffi-bindgen` generates bindings from the *compiled* library, then `cap sync`. Never run `npx cap sync` directly; it skips the first two steps and the shells link against whatever was there before. Generated output stages in `core/target/ffi/` and is never committed. [`core/README.md`](./core/README.md).
 

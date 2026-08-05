@@ -1,4 +1,4 @@
-package social.coracle.serendipity;
+package social.coracle.dip;
 
 import com.getcapacitor.BridgeActivity;
 

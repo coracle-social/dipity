@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "social.coracle.serendipity"
+    namespace = "social.coracle.dip"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "social.coracle.serendipity"
+        applicationId "social.coracle.dip"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

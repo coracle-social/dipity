@@ -1,8 +1,8 @@
-# Blog post outline — Serendipity
+# Blog post outline — Dip
 
 **Title:** *Encryption that enforces localism*
 
-**Thesis:** Every messaging app uses cryptography to collapse distance. Serendipity uses it to preserve distance — so a social network can be made of the people actually around you.
+**Thesis:** Every messaging app uses cryptography to collapse distance. Dip uses it to preserve distance — so a social network can be made of the people actually around you.
 
 ---
 

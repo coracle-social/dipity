@@ -1,4 +1,4 @@
-//! Serendipity's core: everything below the UI.
+//! Dip's core: everything below the UI.
 //!
 //! The webview is suspended in the background, so anything that runs at
 //! *encounter time* — a peer appearing while both phones are in pockets — lives
@@ -9,7 +9,7 @@
 //! Scaffolding only so far. Modules will mirror the design documents one to
 //! one, so that a question about a module has a document that answers it.
 //!
-//! Platform bindings live in `serendipity-ffi`, kept separate so this crate
+//! Platform bindings live in `dip-ffi`, kept separate so this crate
 //! stays testable on the host with nothing but `cargo test`.
 
 #![forbid(unsafe_code)]
