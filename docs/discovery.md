@@ -20,7 +20,7 @@ Since every identification costs a connection, the work is in not paying for it 
 
 **Peripheral cache.** `CBPeripheral` identifiers are stable per-app-per-device until the peer's BLE address rotates — roughly 15 minutes for non-bonded devices. The identity resolved for a peripheral identifier is cached with a TTL matched to that, so the same person is not re-identified on every rediscovery. bitchat's `BLERecentPeripheralCache` is exactly this, and exists specifically to arm pending background connections when the app leaves the foreground.
 
-**Identification budget.** In a crowd, connecting to everyone is neither possible nor desirable. Attempts are rate-limited, candidates are ordered by RSSI so the nearest stranger is tried first, and peers already identified and declined get a hard backoff.
+**Identification budget.** In a busy place, connecting to everyone is neither possible nor desirable. Attempts are rate-limited, candidates are ordered by RSSI so the nearest stranger is tried first, and peers already identified and declined get a hard backoff.
 
 ## Connection scheduling
 
@@ -49,15 +49,12 @@ bitchat's `BLEConnectionScheduler.swift` is the reference for this, and is publi
       ┌────▼─────┐
       │IDENTIFIED│  nostr pubkeys bound; policy evaluated
       └────┬─────┘
-           │ sync begins over BLE; address exchange
-      ┌────▼────┐        iroh dial succeeds
-      │ SYNCING ├───────────────────────┐
-      └────┬────┘                       │
-           │                       ┌────▼─────┐
-           │                       │ UPGRADED │  bulk over QUIC,
-           │                       └────┬─────┘  control stays on BLE
-           │  heartbeat lost            │
-      ┌────▼────┐◄──────────────────────┘
+           │ sync begins
+      ┌────▼────┐
+      │ SYNCING │  events, then blobs, over BLE
+      └────┬────┘
+           │ heartbeat lost
+      ┌────▼────┐
       │DRAINING │  no new work; in-flight transfers finish or time out
       └────┬────┘
            │
@@ -66,12 +63,18 @@ bitchat's `BLEConnectionScheduler.swift` is the reference for this, and is publi
       └─────────┘
 ```
 
+**UPGRADED** is reserved between SYNCING and DRAINING for a second transport carrying bulk traffic while control stays on BLE. Nothing enters it today — see [`transport.md`](./transport.md#adding-a-transport-later).
+
 ### The consent gate
 
 Between SECURED and IDENTIFIED. Authenticating discloses a long-term nostr identity to whoever is nearby, and on a proximity transport also discloses that you were physically present at a time and place. It is not automatic for unknown peers.
 
-- **Known peers** — followed, or previously paired — authenticate silently.
-- **Strangers** require an explicit user action, or an opt-in "discoverable" mode with a duration.
+**The decision is compiled, not prompted.** Most encounters happen with both phones in pockets, so the gate is evaluated by the core with no webview to raise a dialog in. A prompt that cannot be shown has to resolve to a decision the user already made, which means the [policy snapshot](./storage.md#native-gets-a-compiled-policy-not-policy-logic) carries it:
+
+- **Paired peers** authenticate silently. The snapshot carries their **Noise static keys**, not their pubkeys — at SECURED the static key is the only identity available, and the whole point of the gate is that it sits before the exchange that would reveal a pubkey.
+- **Strangers** are admitted only inside an open discoverable window: a mode the user turned on in the foreground, with a duration, which the snapshot carries as an expiry. Outside one, an unknown static key gets no authentication; the session stops at SECURED and closes.
+
+This is a real narrowing. "Followed" cannot be a criterion, because knowing whether a peer is followed requires knowing who they are, which requires the authentication being gated. "Explicit user action" only exists as an option when someone is looking at the screen; the foreground can still offer it live, but the design cannot depend on it. The durable form of consent is a window the user opened earlier, so meeting new people is something the user switches on rather than something that happens continuously.
 
 ## Heartbeat and teardown
 
@@ -83,9 +86,7 @@ Interval: 15–30 s when connected, jittered. A 60 s timeout is 2–4 missed bea
 | --- | --- |
 | BLE link healthy | Nothing. |
 | Heartbeat missed, session idle | After 60 s → DRAINING → CLOSED. |
-| Heartbeat missed, transfer in flight | DRAINING: accept no new work, let in-flight transfers finish. Hard cap 5 min. |
-| BLE lost, iroh healthy | DRAINING. Do not kill a working transfer over two missed beacons — radio contention during bulk transfer and iOS background throttling both cause this. |
-| iroh lost, BLE healthy | Downgrade to BLE. Session continues. Retry upgrade on address change. |
+| Heartbeat missed, transfer in flight | DRAINING: accept no new work, let in-flight transfers finish. Hard cap 5 min. Do not kill a working transfer over two missed beacons — radio contention during bulk transfer and iOS background throttling both cause them. |
 | Clean BLE disconnect event | Immediate DRAINING, no timeout. Disconnects are reliable when they fire; the timeout is for the ambiguous case. |
 
 **welshman note:** `socketPolicyCloseInactive` (30 s idle close) and `socketPolicyPing` (30 s WebSocket ping) both fight this. Peer adapters opt out of `defaultSocketPolicies` and carry their own.

@@ -1,92 +1,50 @@
-NIP-XX
-======
+# Peer authentication
 
-Authentication over non-WebSocket transports
---------------------------------------------
+See [`overview.md`](./overview.md).
 
-`draft` `optional`
+Sessions authenticate with [NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md), used unmodified. The two things this app needs from it — naming a peer that has no URL, and running the exchange in both directions — were added to NIP-42 itself rather than specified separately here. NIP-42 is the specification; where it and this document disagree, it wins.
 
-This NIP extends [NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md) to connections that are not WebSockets, and to sessions where both parties act as relay.
+## What was added upstream
 
-## Motivation
+NIP-42's `relay` tag names the party that issued the challenge, and on WebSocket that name is a URL. A BLE link has no URL, so there was nothing to put in the tag. Leaving it out is not an option: without it an auth event is a bearer token for the pubkey that signed it, and here every participant is a relay, so every participant that receives one is in a position to replay it.
 
-The `relay` tag in kind `22242` stops a relay from replaying a client's `AUTH` event to a different relay to impersonate that client. It holds a URL, which non-WebSocket transports do not have. Such connections also have no distinguished relay — each party serves the other, and both must authenticate.
+### Transport identities
 
-Every participant in a peer-to-peer network is a relay, so every participant can replay. This NIP retains the binding by naming the relay by its transport public key instead of its URL.
-
-Throughout, "relay" means the party issuing a challenge and "client" the party signing the response. In a peer-to-peer session each peer is both.
-
-## Session identifier
-
-The `relay` tag holds a session identifier: a URI naming the relay on the transport carrying this connection.
-
-```
-<transport>://<lowercase-hex public key>
-```
+Transports with no URL may define an identity scheme of the form `<transport>://<authority>`:
 
 | Transport | Scheme | Authority |
 | --- | --- | --- |
-| WebSocket | `ws` / `wss` | Relay URL, as in NIP-42 |
-| iroh | `iroh` | 32-byte `EndpointId` |
-| Noise | `noise` | 32-byte static public key |
+| WebSocket | `ws` / `wss` | Relay URL |
+| iroh | `iroh` | 32-byte `EndpointId`, lowercase hex |
+| Noise | `noise` | 32-byte static public key, lowercase hex |
 
-Other transports MAY define schemes. The key MUST be long-term for the relay and MUST be authenticated by the transport handshake.
+The authority must be a long-term key of the challenging party, and the transport handshake must authenticate the peer to that key. A scheme is usable only if completing its handshake proves the peer holds the key the authority names, which rules out plain TCP unless something that does authenticate — Noise or TLS — is layered underneath and the key it establishes is the one named.
 
-Transports that do not authenticate their endpoints to a key MUST NOT be used with this NIP. A plain TCP connection should run Noise or TLS first and use the resulting key.
+### The check runs on both sides
 
-## Authentication event
+The verifier checks that the `relay` tag names it. The signer checks that the handshake authenticated the identity it is about to name, taking that identity from the completed handshake rather than from an address book or an advertisement.
 
-Unchanged from NIP-42, except that `relay` holds the session identifier of the party that issued the challenge:
+Both are needed, and the second is the one that is easy to skip. An attacker posing as a third party collects an event naming that party and replays it to them, where the tag check passes — because the tag does name the recipient. The verifier cannot catch this on its own; the event is well-formed for it.
 
-```jsonc
-{
-  "kind": 22242,
-  "created_at": 1740000000,
-  "tags": [
-    ["relay", "iroh://a3f2c1...9e"],
-    ["challenge", "8f14e45fceea167a5a36dedd4bea2543"]
-  ],
-  "content": ""
-}
-```
+### Challenges
 
-Clients that build the tag from the connection URI need no changes: the transport supplies `iroh://…` where it supplied `wss://…`.
+A challenge carries at least 128 bits from a CSPRNG, is scoped to a single connection, and is accepted once. A predictable or reused challenge lets a captured auth event be replayed to the same relay on a later connection.
 
-## Challenges
+### Mutual authentication
 
-A challenge MUST carry at least 128 bits of CSPRNG entropy, MUST be scoped to one connection, and MUST be single-use. Challenges MUST NOT be derived from the peer's identity, the time, or any other guessable input.
+Both parties may act as relay. Each may send `["AUTH", <challenge>]` as soon as the connection opens without waiting for the peer, the two directions are independent, and neither party may treat its own success as evidence about the other.
 
-## Verification
+### Verification
 
-A relay receiving kind `22242` MUST check that:
+Two of NIP-42's existing checks were extended. A challenge must also not have been consumed already, and the `relay` tag comparison splits by scheme: `ws` and `wss` keep the existing tolerance for URL normalization, while every other scheme compares byte-exactly with normalization forbidden, each scheme defining a single canonical encoding for its authority.
 
-1. the signature is valid;
-2. `created_at` is within 600 seconds of its current time;
-3. the `challenge` tag matches a challenge it issued on this connection and has not consumed;
-4. the `relay` tag equals its own session identifier for this connection, byte-for-byte after lowercasing the hex authority.
+Transports should also provide confidentiality. Not against replay, which the rules above cover, but because authenticating discloses a long-term identity to anyone listening, and on a proximity transport it discloses physical presence at a time and place.
 
-WebSocket URL normalisation MUST NOT be applied to non-WebSocket schemes.
+## What it means here
 
-On success `event.pubkey` is the peer's identity for this connection, and the relay responds `["OK", <id>, true, ""]`. On failure it responds `["OK", <id>, false, "auth-required: <reason>"]`.
-
-## Mutual authentication
-
-Both parties MAY act as relay. Each MAY send `["AUTH", <challenge>]` as soon as the connection opens, without waiting for the peer.
-
-The two directions are independent. Neither party's status gates the other's, and a party MUST NOT treat its own successful authentication as evidence about the peer.
-
-## Rebinding
-
-A connection has at most one authenticated identity per direction. A relay receiving a second valid authentication event MUST either reject it or replace the bound identity and re-evaluate every authorization decision made under the previous one. Subscriptions and permissions MUST NOT carry over.
-
-## Compatibility
-
-On WebSocket transports nothing changes. An implementation supporting this NIP is a conforming NIP-42 implementation.
-
-## Security considerations
-
-- Omitting check 4, or accepting a wildcard session identifier, lets every peer you authenticate to impersonate you to every other peer.
-- Verification proves the peer holds the nostr key *and* is the endpoint of this transport session. The second half is false on unauthenticated transports, where a machine-in-the-middle can relay the whole exchange.
-- Authenticating discloses a long-term identity, and on proximity transports also discloses physical presence at a time and place. Implementations SHOULD gate it behind consent or policy and SHOULD NOT authenticate automatically to unknown peers.
-- This NIP authenticates; it does not establish keys. Confidentiality is the transport's concern.
-- Devices without a network time source drift. Tightening the 600-second window will produce legitimate failures from long-offline peers.
+- **The session identifier is `noise://<hex static key>`.** It names a key the BLE handshake has already authenticated, so the tag is checked against something the handshake established rather than something the peer claimed. This app registers no other scheme — the table above is the general registry, and a [second transport](./transport.md#adding-a-transport-later) would add one. See [`transport.md`](./transport.md).
+- **A captured auth event is useless against a relay.** On these transports the `relay` tag never holds a URL, so no relay will ever match it. See [`identity.md`](./identity.md#auth-events-are-ordinary-signed-events).
+- **A peer may authenticate as several pubkeys**, since NIP-42 allows a sequence of `AUTH` messages. Ingest therefore tests set membership rather than equality — see [`sync.md`](./sync.md#delivery-grants).
+- **Authentication sits behind the consent gate**, because it discloses presence. Sessions are never established automatically with unknown peers, and since the gate is usually evaluated with nobody looking at the screen, the decision comes from the compiled policy snapshot rather than a prompt — see [`discovery.md`](./discovery.md#the-consent-gate).
+- **The signature is produced in the background, by us.** This exchange is the reason custody is limited to a key the device holds: it runs during a CoreBluetooth wake, with the webview suspended and possibly with no network, and a peer that cannot complete it can neither send nor receive. It is also why the identity key must be readable while the device is locked — see [`identity.md`](./identity.md#key-custody).
+- **The `created_at` window is wider than NIP-42 suggests.** Its ~10 minutes assumes a network time source. Devices that have been offline for days drift, and rejecting them would fail exactly the case this app is built for.

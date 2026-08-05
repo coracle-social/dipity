@@ -1,0 +1,24 @@
+[package]
+name = "serendipity-ffi"
+description = "uniffi bindings — the core's only surface to Swift and Kotlin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "serendipity_ffi"
+# lib for tests and the bindgen bin, cdylib for Android, staticlib for iOS.
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+serendipity.workspace = true
+uniffi = { workspace = true, features = ["cli"] }
+
+[lints]
+workspace = true

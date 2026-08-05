@@ -20,28 +20,27 @@ resolved by a `getAdapter` override that hands the request to the Capacitor plug
 
 ```ts
 getAdapter: url =>
-  url === SQLITE_STORAGE_URL     ? new SqliteAdapter()    :
-  url.startsWith('ble://')       ? new BleAdapter(url)    :
-  url.startsWith('iroh://')      ? new IrohAdapter(url)   : undefined
+  url === LOCAL_RELAY_URL    ? new LocalAdapter(repository) :
+  url === SQLITE_STORAGE_URL ? new SqliteAdapter()          : undefined
 ```
 
 `SqliteAdapter` marshals `REQ` / `CLOSE` / `EVENT` across the bridge and emits inbound messages via `AdapterEvent.Receive`. Native streams `EVENT` frames as plugin listener callbacks and terminates with `EOSE`, so a large result set arrives incrementally rather than as one enormous bridge payload.
 
-That gives three URL families, all speaking one protocol:
+Three URL families speak this protocol, but the webview only resolves two of them:
 
-| URL | Backed by | Trust |
-| --- | --- | --- |
-| `LOCAL_RELAY_URL` | In-memory `Repository` (working set) | Ours |
-| `SQLITE_STORAGE_URL` | Native SQLite, via the plugin bridge | Ours — already verified |
-| `ble://…`, `iroh://…` | Remote peers | Untrusted; verify, authenticate, apply policy |
+| URL | Backed by | Resolved in | Trust |
+| --- | --- | --- | --- |
+| `LOCAL_RELAY_URL` | In-memory `Repository` (working set) | Webview | Ours |
+| `SQLITE_STORAGE_URL` | SQLite in the core, via the plugin bridge | Webview | Ours — already verified |
+| `ble://…` | Remote peers | Rust core only | Untrusted; verify, authenticate, apply policy |
+
+The third row is unreachable from TypeScript. Peer sessions start during background wakes and are driven entirely by the core ([`sync.md`](./sync.md#peers-speak-the-relay-wire-protocol)), so there is no `BleAdapter` to construct and no way for webview code to address a peer.
 
 ## The working set stays
 
-It is worth being explicit about why, because "just query SQLite for everything" looks simpler.
-
 **welshman's reactive layer is synchronous over a `Repository` instance.** `deriveEventsById`, `deriveItemsByKey`, and `makeDeriveEvent` all take `{repository, filters}` and derive synchronously; `getter()` exists specifically to give callbacks and event handlers a synchronous lookup. Removing the in-memory store does not make reads slower — it makes every derived store asynchronous, which means rewriting the reactive layer rather than tuning it.
 
-So the working set is not a cache we could drop if the bridge turned out cheap. It is the layer the UI is built on. What the bridge cost actually decides is *how much lives there*, not *whether it exists*.
+The working set is therefore the layer the UI is built on rather than a cache. Bridge cost decides how much lives there, not whether it exists.
 
 ### Hydration is welshman's existing pattern
 
@@ -56,7 +55,7 @@ Two tiers rather than one decision:
 - **Resident always** — replaceable metadata: profiles, follow lists, mute lists, and the user's own events. Small, bounded by the social graph rather than by history, and needed synchronously for WoT computation, mute filtering, and rendering any author's name. These are loaded at startup and kept.
 - **On demand** — content events, hydrated per view through the loader chain above and evicted under memory pressure.
 
-A full mirror is fine early and stops being fine at some store size. Starting with the split costs little and avoids a migration later.
+A full mirror works up to some store size and stops working past it. The split costs little and avoids a migration.
 
 ## Writes
 
@@ -66,7 +65,7 @@ The same URL list works in the other direction:
 publish({event, relays: [LOCAL_RELAY_URL, SQLITE_STORAGE_URL]})
 ```
 
-Working set and durable store in one call, with peers appended when the event should also propagate.
+Working set and durable store in one call, and that is the whole list. **Composing does not publish to peers**, because there is no peer to name — propagation happens when an encounter happens, from the store, under policy. Writing to `SQLITE_STORAGE_URL` is what makes an event eligible; the core decides the rest, possibly hours later and possibly while the app is closed.
 
 Events arriving from peers while the app is foregrounded are ingested by native, so the Repository would otherwise go stale. Keep a live subscription open against the store — a `REQ` with `since: now` over `SqliteAdapter` — and new events flow into the working set the same way network events do in an ordinary nostr client.
 
@@ -74,7 +73,7 @@ Events arriving from peers while the app is foregrounded are ingested by native,
 
 Two pieces of per-event state are not in the event JSON and must be carried alongside it:
 
-- **`verifiedSymbol`.** Native checked the delivery grant on ingest. The adapter sets `event[verifiedSymbol] = true` before handing events to the Repository. Schnorr verification in JS costs roughly a millisecond per event, so re-checking a 10,000-event hydration would cost ten seconds for no benefit. Omitting it is silent — hydration stays correct and just gets slower as the store grows. Note this is welshman's flag for "signature already checked", and our events have no signature; it is set because grant verification has already established authenticity.
+- **`verifiedSymbol`.** Native checked the delivery grant on ingest, so the adapter sets `event[verifiedSymbol] = true` before handing events to the Repository. Schnorr verification in JS costs roughly a millisecond per event, so re-checking a 10,000-event hydration would cost ten seconds for no benefit. Omitting it is silent — hydration stays correct and just gets slower as the store grows. This is welshman's flag for "signature already checked", and our events have no signature; it is set because grant verification has already established authenticity.
 - **`seen_at`.** Not part of the event and not expressible in an `EVENT` frame. Native sends it in a parallel structure keyed by event id; the adapter attaches it as a symbol property, which keeps it out of JSON serialization and out of anything ever sent to a peer.
 - **The delivery grant**, for chunks this device can forward — ones whose author handed them to us directly. One grant per chunk, stored with the sorted id list it commits to, so inclusion proofs can still be produced after retention has evicted some of the events. Never transmitted: forwarding sends a [grant proof](./sync.md#grant-proofs) derived from it instead. Events received at the second hop arrive with no grant and can never be forwarded.
 
@@ -88,16 +87,20 @@ Two pieces of per-event state are not in the event JSON and must be carried alon
 
 The residency split above is a starting guess. The number that settles it is bridge throughput for a realistic hydration — Capacitor marshals plugin payloads as JSON, so cost scales with serialized bytes, and Android's `JavascriptInterface` has historically been the worse of the two.
 
-Benchmark it during build step 3, once native SQLite exists and before the UI depends on a residency assumption: stream 1k, 10k, and 100k events across the bridge and record wall-clock and peak memory on a mid-range Android device, not just a simulator. Streaming via listener callbacks is what makes the large cases survivable; the benchmark should use the real path.
+The benchmark that settles it streams 1k, 10k, and 100k events across the bridge and records wall-clock and peak memory on a mid-range Android device rather than a simulator. It runs the real path, since streaming via listener callbacks is what makes the large cases survivable. It wants native SQLite in place, and it wants to land before the UI depends on a residency assumption.
 
-### What native implements
+### What the core implements
 
-Bounded, and deliberately mechanical:
+The store is `rusqlite` inside the Rust core, so this is one implementation rather than one per platform:
 
 - Event storage with indexes on kind, pubkey, `created_at`, `seen_at`, and tags.
-- NIP-01 filter matching. Simple semantics, roughly 500 lines per platform.
-- Id recomputation and **delivery grant verification** on ingest (see [`sync.md`](./sync.md#delivery-grants)) — libsecp256k1 is available on both platforms. Native applies the same rule as the webview: a grant naming us when the sender authored the event, a valid grant proof from the sender otherwise, checked against the transport-authenticated peer. Events satisfying neither are never stored.
-- Quota counters.
+- NIP-01 filter matching.
+- Id recomputation and **delivery grant verification** on ingest (see [`sync.md`](./sync.md#delivery-grants)): a grant naming us when the sender authored the event, a valid grant proof from the sender otherwise, checked by set membership against the pubkeys the peer authenticated as. Events satisfying neither are never stored.
+- Quota counters, `seen_at` assignment, and retention.
+
+The ingest rule is stated once and enforced once, at the only place events enter the system. Nothing untrusted reaches the webview, so there is no second copy to drift.
+
+The platform layer owns what is genuinely platform-specific: the database file path and its data-protection class, the Keychain or Keystore entry holding the identity key, and the blob directory. The core asks for those through uniffi callbacks.
 
 ### Native gets a compiled policy, not policy logic
 
@@ -107,7 +110,7 @@ The snapshot goes stale while backgrounded, so it carries a max age. After some 
 
 ### Background execution
 
-CoreBluetooth background wakes are short bursts, not continuous execution. That fits the design: small `REQ` responses are served within a burst, and bulk transfers are deferred to the foreground or to an iroh upgrade. It is consistent with the media tiering in [`media.md`](./media.md).
+CoreBluetooth background wakes are short bursts, not continuous execution. That fits the design: small `REQ` responses are served within a burst, and bulk transfers are deferred to the foreground or to a later encounter. It is consistent with the media tiering in [`media.md`](./media.md).
 
 ## `seen_at`
 
@@ -118,15 +121,15 @@ Rules:
 - **Set once, on first insert. Never updated.** Receiving the same event again from a second peer must not move it — otherwise the recently-discovered view churns as duplicates arrive.
 - **Never transmitted.** It is metadata about the user's movements and encounters. It is not part of the event and must never appear in anything served to a peer. See [`privacy.md`](./privacy.md).
 - **Indexed.** It is the primary sort key for the main view.
-- **Distinct from `created_at`.** An event authored three years ago and discovered five minutes ago sorts to the top. This is the point of the app, not an anomaly to correct.
+- **Distinct from `created_at`.** An event authored three years ago and discovered five minutes ago sorts to the top — the point of the app, not an anomaly to correct.
 
 `seen_at` also changes reconciliation, which cannot use it — see [`sync.md`](./sync.md#seen_at-changes-what-recent-means).
 
 ## Provenance
 
-Store which peer each event arrived from. `Tracker` in `@welshman/net` already maps event → source relay URL, and peer URLs (`ble://…`, `iroh://…`) slot in unchanged.
+Store which peer each event arrived from — a column in the core's schema, written at ingest, where the peer identity is known. `Tracker` in `@welshman/net` maps event → source relay URL in the webview, but everything it sees over the bridge arrived from `SQLITE_STORAGE_URL`, so it records the store rather than the peer. Provenance is the core's, and it is not part of what crosses.
 
-Provenance drives quota accounting and debugging. It is not surfaced in the UI: "discovered near X" carries obvious privacy implications, and exposing it is a deliberate product decision rather than a side effect of having the data.
+Provenance drives quota accounting and debugging. It is not surfaced in the UI — see [`privacy.md`](./privacy.md).
 
 ## Blobs
 
@@ -136,7 +139,7 @@ Media is written to disk unsealed, protected by the platform's data-protection c
 
 ## Retention
 
-A device that gossips for a year in a dense city will fill its disk.
+A device that gossips for a year in a busy neighborhood will fill its disk.
 
 Eviction is driven by **`seen_at`, not `created_at`.** Evicting the oldest-authored events would delete exactly the archival material the app exists to surface, moments after discovering it.
 

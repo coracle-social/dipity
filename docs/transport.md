@@ -1,6 +1,6 @@
 # Transport
 
-Two transports. BLE is the floor and always works; iroh is a bandwidth upgrade for peers who are already co-present. See [`overview.md`](./overview.md).
+One transport: BLE, which is both the floor and the ceiling. The seam for a second transport stays open — see [Adding a transport later](#adding-a-transport-later) — and nothing in the design waits on one arriving. See [`overview.md`](./overview.md).
 
 ## BLE — the floor
 
@@ -12,82 +12,72 @@ iOS requires both `bluetooth-central` and `bluetooth-peripheral` background mode
 
 ### Channel security
 
-Noise XX — Curve25519 / ChaCha20-Poly1305 / SHA-256 — giving mutual authentication of static keys and forward secrecy for the live session.
+Noise XX — Curve25519 / ChaCha20-Poly1305 / SHA-256 — giving mutual authentication of static keys and forward secrecy for the live session. The handshake and the transport state run in the Rust core on `snow`; the platform layer only moves bytes on and off the characteristic.
 
-Events are signed and mostly public, so content confidentiality matters less than metadata. Without channel encryption a passive listener learns which event ids two people are reconciling, which leaks the social graph directly.
+Events are mostly public, so content confidentiality matters less than metadata. Without channel encryption a passive listener learns which event ids two people are reconciling, which leaks the social graph directly.
 
 ### Framing
 
-Our own, directly over GATT:
+Our own, directly over GATT. The codec is core-side — pure byte manipulation that has to agree exactly with a peer running the other platform's build — while the writes, the MTU, and the ATT queue belong to CoreBluetooth and `android.bluetooth`:
 
 - **Multiplexed.** A channel id in the frame header lets control traffic, event sync, and blob transfer share the one link.
-- **Priority-scheduled.** The ATT queue is per-connection, so separate characteristics would not give QoS isolation. The sender interleaves instead: control frames pre-empt bulk fragments. This is what keeps the heartbeat alive during a media transfer.
+- **Priority-scheduled.** The ATT queue is per-connection, so separate characteristics would not give QoS isolation. The sender interleaves instead: control frames pre-empt bulk fragments, which keeps the heartbeat alive during a media transfer.
 - **Fragmented.** Chunked to `maximumWriteValueLength(for:)` minus header — roughly 500 bytes usable at a 512-byte MTU, often less.
 - **Reliable.** Acknowledged ATT writes give ordered reliable delivery on the control and sync channels. The blob channel uses `writeWithoutResponse` with application-level acking and pacing, at 25–30 ms between fragments to avoid loss.
 - **Resumable.** Blob transfers survive disconnection and resume by offset. See [`media.md`](./media.md).
 
 ### Throughput
 
-5–15 KB/s in practice. This is the number that drives the media tiering and the reconciliation strategy, not theoretical PHY rates.
+5–15 KB/s measured, rather than theoretical PHY rates. This is the number that drives media tiering and the reconciliation strategy, and with no second transport it is a ceiling rather than a starting point.
 
-## iroh — the upgrade
+## What the ceiling costs
 
-Used for exactly one thing: a high-bandwidth link between two peers who are already co-present.
+At 5–15 KB/s an encounter is measured by what fits in it:
 
-### Configuration is the security boundary
+- **Event sync fits.** A one-shot GCS filter is 4–8 KB and covers thousands of events, and events themselves are a few hundred bytes. Someone walking past for eight seconds still exchanges useful data — [`sync.md`](./sync.md#one-shot-first-negentropy-if-the-session-lasts).
+- **Previews fit.** A 32 KB tier-1 preview is 3–7 s.
+- **Originals do not.** A 2 MB photo is 3–7 minutes of link time. Tier 2 is never fetched automatically and may accumulate across several encounters — [`media.md`](./media.md#three-tiers).
 
-iroh is designed to defeat the constraint invariant I1 imposes, so it must be configured not to:
+Everything above tier 1 is what a faster transport would buy, and roughly all it would buy.
 
-- **No pkarr / DNS address lookup** — do not publish, do not resolve.
-- **No Mainline DHT lookup.**
-- **No mDNS.** Not needed; the BLE control channel replaces it.
-- **No relay URL configured.** A connection that cannot be made directly must fail rather than fall back.
-- **`AddrFilter`** restricting published addresses to link-local and RFC1918 ranges.
+### L2CAP is the reserved bandwidth upgrade
 
-With all discovery paths off and no relay, iroh cannot reach a peer whose address was not handed to it directly. That turns I1 from a runtime check into a configuration property: there is no code path that could reach a distant peer, so there is none to audit or to regress.
+If bandwidth becomes the binding constraint, the cheapest fix stays inside Bluetooth: an **L2CAP connection-oriented channel** — `CBL2CAPChannel` on iOS 11+, `createL2capChannel` / `listenUsingL2capChannel` on Android 10+. It is a stream over the same radio, the same connection and the same Noise session, so it needs no scheme, no discovery mechanism, no pairing story and none of the machinery in [Adding a transport later](#adding-a-transport-later). Range is still range, so I1 is untouched.
 
-### Dial policy
+It is not free. Real throughput has to be measured on device rather than taken from spec numbers, Android's implementation has device-specific history, and it raises the Android floor to API 29. The comparison that matters is against standing up a second network stack with its own discovery, identity and session story, and against that it is cheap: the channel carries frames the core already produces, under a session the core already holds open. `iroh-ble-transport` reaches for L2CAP-with-GATT-fallback for the same reason; we passed on that library over its licence, not its technique.
 
-Only dial an `EndpointAddr` assembled from addresses that are
+**It moves byte budgets, not round trips.** Round trips are set by the BLE connection interval, which an L2CAP channel shares, so the reconciliation strategy is unchanged — a drive-by still ends before a multi-round negotiation converges ([`sync.md`](./sync.md#one-shot-first-negentropy-if-the-session-lasts)). What grows is every budget that is a byte count: the GCS filter, the chunk one Merkle tree and one grant cover, how much of a negentropy exchange completes before the link drops. Control frames stay on GATT so the heartbeat keeps defining session lifetime, and bulk `EVENT` streams and blob fragments move across, which is what UPGRADED is reserved for ([`discovery.md`](./discovery.md#session-lifecycle)). Blob transfer is what would justify building it; event sync is a beneficiary.
 
-1. received over an authenticated BLE session,
-2. in a private or link-local range, and
-3. fresher than the heartbeat timeout.
+### Wi-Fi has no cross-platform path
 
-Reject everything else.
+iOS has no Wi-Fi Direct — peer-to-peer Wi-Fi there means AWDL via Network.framework or MultipeerConnectivity. Android has Wi-Fi Aware, and the pairing story between the two is bad.
 
-### Failure is normal
+That leaves peers who happen to share an access point, which is not the common case for two people who have just walked past each other. A LAN transport optimizes the encounter that was already easy.
 
-Two people in a park on cellular share no LAN. The upgrade fails and BLE carries the session. Correct behaviour, not an error to surface.
+## Adding a transport later
 
-## BLE is the address-lookup service
+I2 makes anything above the floor an optimization, so the seam costs nothing to keep open. These rules hold now, with nothing on the other side of them:
 
-The mechanism behind I1. After the Noise handshake and mutual auth, each peer sends over the BLE control channel:
+- **BLE is the control plane, always.** A second transport is a data plane only. Session state, heartbeat and teardown stay on BLE, so a session's lifetime is defined by radio proximity rather than by what the fast link believes — [`discovery.md`](./discovery.md#session-lifecycle).
+- **Reachability information is exchanged over the authenticated BLE channel, or not at all.** Whatever a future transport needs in order to dial — an address, an endpoint id, a token — is handed over *after* the Noise handshake and mutual auth, carries a monotonic generation counter so stale entries are detectable, and is never obtained from a discovery service. This is the mechanism that makes I1 structural, and it has to survive whatever arrives.
+- **Transports are URL schemes.** Peers are `ble://…`; a second transport is a second scheme resolved by the same `getAdapter` override, speaking the same relay protocol over the same session — [`sync.md`](./sync.md#client-half). Adding a transport is registering a scheme, not integrating a protocol.
+- **Blob transfer stays offset-resumable and content-addressed**, so a transfer begun on one transport continues on another — [`media.md`](./media.md#transfer).
+- **UPGRADED stays a reserved session state.** Nothing enters it today.
 
-- its iroh `EndpointId`
-- its current LAN socket addresses
-- a monotonic generation counter, so stale addresses are detectable
-
-The peer dials that `EndpointAddr` directly. No discovery service is involved at any point.
-
-Address changes — joining Wi-Fi, switching networks — are re-sent with an incremented generation. **The BLE link is the control plane for the whole session; iroh is only ever a data plane.** If BLE drops, the session is draining regardless of iroh's health.
-
-This also sidesteps a practical problem: iroh's Swift/Kotlin FFI exposes only QUIC streams, with mDNS and custom transports still Rust-only because those APIs are unstable. None of the unshipped parts are needed here.
-
-### Integration
-
-Rust core wrapped with uniffi, called from the Capacitor plugin. Only iroh's endpoint and stream APIs are used.
+A transport that cannot satisfy the second rule — one needing a discovery service, a rendezvous server or a relay to reach its peer — is not a candidate, whatever its throughput.
 
 ## What we are not using
 
-**`iroh-ble-transport`.** AGPL-3.0 with a commercial option. This app ships to app stores, where GPL-family licensing has a long history of conflict with store terms, and resolving that would require legal review. Own framing also removes iroh's 1200-byte minimum datagram requirement and the L2CAP-with-GATT-fallback complexity it forces.
+**iroh.** A QUIC endpoint over the LAN, for the bandwidth upgrade. Rejected for three reasons that compound:
+
+- **Its window is small.** It only helps when both devices sit on the same access point. Two people who pass on the street, or share a room on cellular, share no LAN.
+- **It cannot serve the main case.** The core loop is two backgrounded phones in two pockets, where execution is short CoreBluetooth wakes rather than sustained runtime ([`storage.md`](./storage.md#background-execution)). A bulk QUIC transfer is therefore a foreground-to-foreground feature.
+- **It works against I1.** iroh exists to connect peers who are *not* co-present — pkarr, Mainline DHT, mDNS, relays — so using it means turning all of that off and keeping it off across every version bump. Leaving it out converts I1 from a configuration property into an absence: there is no code that could reach a distant peer, so there is none to audit or to regress.
+
+None of that forecloses a second transport. I2 permits one, and the rules in [Adding a transport later](#adding-a-transport-later) are what keep the option open.
+
+**`iroh-ble-transport`.** AGPL-3.0 with a commercial option. This app ships to app stores, where GPL-family licensing has a long history of conflict with store terms, and resolving that would require legal review. Own framing also removes the 1200-byte minimum datagram requirement and the L2CAP-with-GATT-fallback complexity it forces.
 
 bitchat remains available as a reference — it is public domain.
 
-**QUIC over BLE**, for the same reasons. The application protocol is identical on both transports (see [`sync.md`](./sync.md)); only the framing differs.
-
-## The capability gap
-
-There is no fast local Wi-Fi path when peers are not on the same access point. iOS has no Wi-Fi Direct; peer-to-peer Wi-Fi means AWDL via Network.framework or MultipeerConnectivity, and no iroh transport exists for either. Android has Wi-Fi Aware but the cross-platform pairing story is bad.
-
-This bites hardest in exactly the situations this app is for — crowds, festivals, protests, anywhere without shared infrastructure. Closing it would mean a Network.framework-backed iroh custom transport. The gap stands: peers without a shared access point run on BLE alone, which invariant I2 already requires them to tolerate.
+**QUIC over BLE**, for the same reasons. The application protocol is identical whatever the framing, so a transport swap never reaches the app layer — see [`sync.md`](./sync.md).

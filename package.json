@@ -3,15 +3,6 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
-    "sync": "vite build && cap sync",
-    "ios": "npm run sync && cap open ios",
-    "android": "npm run sync && cap open android"
-  },
   "devDependencies": {
     "@capacitor/cli": "^8.5.0",
     "@sveltejs/vite-plugin-svelte": "^7.2.0",

@@ -4,48 +4,43 @@ What moves between peers, how the two sides agree on what's missing, and what po
 
 ## Peers speak the relay wire protocol
 
-Each device is a relay for its peers and a client of its peers, simultaneously, over whichever transport is live. Event sync is not a new protocol — it is `REQ` / `EVENT` / `EOSE` / `CLOSE` / `OK` / `AUTH` / `NEG-*`.
+Each device is a relay for its peers and a client of its peers, simultaneously, over whichever transport is live. Event sync is `REQ` / `EVENT` / `EOSE` / `CLOSE` / `OK` / `AUTH` / `NEG-*`.
 
-Reusing it removes a protocol from the project rather than adding one: sync policy compiles to filters, reconciliation is NIP-77, authentication is NIP-42, and both sides of the wire already have implementations.
+Reusing it removes a protocol from the project rather than adding one: sync policy compiles to filters, reconciliation is NIP-77, authentication is NIP-42, and both sides of the wire are specified rather than invented.
+
+**Both halves live in the Rust core.** A session begins when a peer appears, which is a moment the webview does not exist for ([`overview.md`](./overview.md#the-plugin-boundary)). Anything that runs then is native, and for sync that is everything: driving the peer, serving the peer, and the crypto in between.
 
 ### Client half
 
-`@welshman/net` provides the seam. `AbstractAdapter` plus the `getAdapter` context override runs the relay protocol over any transport:
+Driving a peer — issuing `REQ`, running `NEG-*`, consuming `EVENT` — begins at IDENTIFIED and has to complete inside a background wake. So it is core code, and `@welshman/net` is not on the peer path at all. The cost is NIP-77: `diff` / `pull` / `push` would have given negentropy over any adapter for free, and the core implements it instead, against the same specification, carrying the [GCS filter](#one-shot-first-negentropy-if-the-session-lasts) alongside.
+
+What the webview keeps is the same seam pointed at local storage. `AbstractAdapter` plus the `getAdapter` override still resolves two URLs, and both of them are ours:
 
 ```ts
-request({
-  relays: ['ble://<peer-id>'],
-  filters: [{authors: [peerPubkey]}],
-  context: {
-    getAdapter: url =>
-      url === SQLITE_STORAGE_URL ? new SqliteAdapter()  :
-      url.startsWith('ble://')   ? new BleAdapter(url)  :
-      url.startsWith('iroh://')  ? new IrohAdapter(url) : undefined,
-  },
-})
+getAdapter: url =>
+  url === LOCAL_RELAY_URL    ? new LocalAdapter(repository) :
+  url === SQLITE_STORAGE_URL ? new SqliteAdapter()          : undefined
 ```
 
-The same dispatch covers the durable store: `SQLITE_STORAGE_URL` reaches native SQLite over the Capacitor bridge, so the webview reads its own events through the protocol it uses for peers. See [`storage.md`](./storage.md#sqlite-is-the-source-of-truth-and-it-is-also-a-relay). Peer adapters and the storage adapter differ in trust, not in protocol — peers get verification, `AUTH`, and policy; the store gets none of them.
+`SQLITE_STORAGE_URL` reaches native SQLite over the Capacitor bridge, so the webview reads its own events through the protocol the core uses for peers — see [`storage.md`](./storage.md#sqlite-is-the-source-of-truth-and-it-is-also-a-relay).
 
-`diff` / `pull` / `push` give NIP-77 over that adapter unchanged.
+**Peers are absent from that dispatch by construction.** There is no `ble://` adapter in the webview and no way to acquire one, so the untrusted side of the protocol is unreachable from the layer that has no verification, no `AUTH` and no policy.
 
 ### Relay half
 
-`LocalAdapter` / `LOCAL_RELAY_URL` serves this app from its own repository. The server side handles a remote peer: it parses inbound `REQ`, matches filters, streams `EVENT` then `EOSE`, honours `CLOSE`, issues `AUTH` challenges, validates kind 22242, checks a [delivery grant](#delivery-grants) or [grant proof](#grant-proofs) on every inbound event and attaches the right one on every outbound event, and enforces policy on both ingest and egress.
+Serving a peer: parse inbound `REQ`, match filters, stream `EVENT` then `EOSE`, honour `CLOSE`, issue `AUTH` challenges, validate kind 22242, check a [delivery grant](#delivery-grants) or [grant proof](#grant-proofs) on every inbound event and attach the right one on every outbound event, and enforce policy on both ingest and egress.
 
-**This is an app module, not an upstream contribution to `@welshman/net`.** The deciding factor is where the events come from. A library implementation would serve a `Repository`, but our authoritative store is native SQLite, and the working set in memory is a deliberate subset of it (see [`storage.md`](./storage.md#the-working-set-stays)). Owning the server side means a `REQ` can be answered from whichever backend suits the request — the working set when the answer is already resident, native SQLite when it is not — instead of from whatever a library API fixed on. Grant verification on ingest is app-local for the same reason ([Delivery grants](#delivery-grants)).
-
-The native side implements the same protocol independently, for background serving — see [`storage.md`](./storage.md).
+Native, and it answers from SQLite, which is the only store that exists when the query arrives. One backend, always: backgrounded there is no working set to answer from. The webview finds out what arrived the same way it finds out anything else, through its live subscription against the store ([`storage.md`](./storage.md#writes)).
 
 ### Authentication
 
-Mutual NIP-42 with transport binding, specified in [`nip-p2p-auth.md`](./nip-p2p-auth.md). Both directions run independently; neither blocks the other. Session identifiers are `iroh://<hex endpoint id>` and `noise://<hex static key>`.
+Mutual NIP-42 with transport binding — see [`nip-p2p-auth.md`](./nip-p2p-auth.md). Both directions run independently; neither blocks the other. The session identifier is `noise://<hex static key>`, naming the key the BLE handshake already authenticated.
 
-Auth events are ordinary signed nostr events, unlike content events — see [`identity.md`](./identity.md#events-are-not-signed-grants-are).
+Auth events are ordinary signed nostr events, unlike content events — see [`identity.md`](./identity.md#events-are-not-signed-grants-are). The core signs them, reading the identity key from platform secure storage, which is why that key has to be [readable while the device is locked](./identity.md#the-key-is-readable-while-the-device-is-locked). A peer that cannot authenticate can neither send nor receive.
 
 ## Delivery grants
 
-Content events carry no signature. Authenticity and reach both come from a **delivery grant**, which is itself an ordinary signed nostr event:
+Content events carry no signature, which is also what keeps proximity content off the open network ([`identity.md`](./identity.md#events-are-not-signed-grants-are)). Authenticity and reach both come from a **delivery grant**, itself an ordinary signed nostr event:
 
 ```jsonc
 {
@@ -61,15 +56,15 @@ Content events carry no signature. Authenticity and reach both come from a **del
 }
 ```
 
-Making the grant an event rather than a bare signature is deliberate: it is signed by `@welshman/signer` and verified by `@welshman/util`, both unmodified. There is no bespoke signing path anywhere in the app.
+Grants and auth events then share one serialization, one signing path and one verification path in the core, and a grant is readable with the same tools as any other nostr event. There is no bespoke signature format anywhere in the app.
 
 A grant does two jobs at once. Its `root` commits to exactly which events it covers, and the author's signature over that root proves the author produced each of them, since ids are hashes of content. Its `p` tag names exactly one recipient, which is what bounds reach.
 
-Grants and auth events are the only signed kinds in the system. Content events are not signed.
+Grants and auth events are the only signed kinds.
 
 ### One signature per chunk
 
-A grant covers the whole set of events handed over in one encounter, not a single event. Reconciliation already produces that set; the author builds a Merkle tree over it and signs the root once.
+A grant covers the whole set of events handed over in one encounter, not a single event — one signature per chunk per recipient. Reconciliation already produces that set; the author builds a Merkle tree over it and signs the root once.
 
 ```
 leaves    tagged_hash("grant/leaf", event_id), sorted ascending
@@ -81,9 +76,9 @@ Domain-separating leaves from internal nodes is not optional — without it an i
 
 The recipient holds every event in the chunk, so it rebuilds the tree itself and needs no inclusion proofs. It stores the grant with the sorted id list, which is what lets it produce proofs later even after retention has evicted some of the events.
 
-This matters most for remote signers. Handing a peer a thousand events costs one signature rather than a thousand, which is the difference between a workable NIP-46 or NIP-55 login and a hopeless one — see [`identity.md`](./identity.md#key-custody).
+Handing a peer a thousand events therefore costs one signature and one grant on the wire, not a thousand of each. Signing is local and fast ([`identity.md`](./identity.md#key-custody)), so the binding cost is bytes rather than CPU: a per-event grant would add roughly 200 bytes of tags and signature to every event at 5–15 KB/s, and would have to be produced inside a background wake measured in seconds.
 
-Ingest is one comparison, against the transport-authenticated peer identity established by mutual NIP-42 ([`nip-p2p-auth.md`](./nip-p2p-auth.md)):
+Ingest is one comparison, against the pubkeys the peer has authenticated as under mutual NIP-42 ([`nip-p2p-auth.md`](./nip-p2p-auth.md)):
 
 | The event was authored by | Accept only with | Meaning |
 | --- | --- | --- |
@@ -92,17 +87,13 @@ Ingest is one comparison, against the transport-authenticated peer identity esta
 
 Anything else is dropped, including any event arriving with neither.
 
+**A peer may authenticate as several pubkeys.** NIP-42 permits a sequence of `AUTH` messages, and a shared or multi-account device legitimately holds more than one identity. So both "the sender" and "me" are *sets*, and every check above is set membership rather than equality — "authored by the sender" means the event's pubkey is one the peer authenticated as, and a grant satisfies the rule if its `p` tag names any of them. This does not loosen I5: each grant still authorises exactly one hop from its author, and holding several identities lets a device sit in several chains rather than extend any of them.
+
 ### Why this bounds at two hops
 
 Alice meets Bob and hands over a chunk of her events with one grant naming Bob. Bob later meets Carol and forwards some of them, proving he holds that grant without handing it over. Carol accepts. Carol cannot forward them in turn: Dave would need proof of a grant naming Carol, only Alice can mint one, and Alice has never met Carol.
 
 The bound needs no honest-node assumption. A modified client gains nothing by ignoring the rule, because the check runs on the receiver and a grant cannot be forged without the author's key.
-
-### Unsigned events are the leak protection
-
-An event with no `sig` is not a valid nostr event. A proximity event that escapes to a relay is rejected on arrival rather than stored, and no existing client can render it. This is what keeps proximity content off the open network, and it is stronger than any tagging convention because it needs no cooperation from the relay.
-
-The one exception is deliberate and belongs to the author: they hold the key, so they can sign one of their own events normally and publish it. Nobody else can, for anyone else's content. Ids are plain NIP-01 hashes, so a post promoted that way keeps its id and its replies still resolve.
 
 ### Grant proofs
 
@@ -139,27 +130,25 @@ Each property falls out of one part of the construction:
 - **C cannot forward the event.** Convincing D means proving knowledge of a grant naming C. None exists, and forging one needs A's key.
 - **The grant never leaves B.** Transferable evidence of A's authorship exists only on the device A handed the content to.
 
-C knows A wrote the event and can say so. C simply cannot prove it. That asymmetry is the point: the second hop can read and trust, but not attest.
+C knows A wrote the event and can say so. C simply cannot prove it.
 
 **Replay binding.** The Fiat–Shamir transcript includes both session identifiers from [`nip-p2p-auth.md`](./nip-p2p-auth.md). Designation already stops C relaying a proof to D, so this is the narrower protection: it stops a proof captured from one session being replayed to the same peer in a later one.
 
-**Cost.** Roughly 200 bytes and a handful of secp256k1 scalar multiplications, all available from `@noble/curves` — no pairings, no trusted setup, no new dependency. One proof per event forwarded, computed at encounter time. The delicate part is the OR-proof itself, where a mistake is silent rather than loud, so it wants known-answer tests and a verifier that rejects malformed input before doing any arithmetic.
+**Cost.** Roughly 200 bytes and a handful of secp256k1 scalar multiplications — no pairings, no trusted setup. One proof per event forwarded, computed at encounter time, inside a background wake.
 
-**No key access.** B proves knowledge of `s`, which is data B already holds — not B's own private key. Grant proofs therefore work unchanged when the user signs through an external signer.
+**Implementation.** The arithmetic needs explicit scalars and points, which the `secp256k1` binding deliberately does not expose, so it uses `k256` from RustCrypto while signing and verification stay on the audited binding. A mistake here is *silent*: a broken OR-proof still produces bytes that verify and prove nothing. It wants known-answer tests and a verifier that rejects malformed input before doing any arithmetic, and it is the construction that most wants a single implementation rather than one per platform — see [`overview.md`](./overview.md#why-the-core-is-rust).
 
-### The grant is detached, not folded into the id
+**No key access.** B proves knowledge of `s`, which is data B already holds, not B's own private key. Forwarding therefore never reads secure storage, and no part of the proof can be steered into acting as a signing oracle for B's identity. The only signature B produces in an encounter is its own auth event.
 
-Binding the recipient into the event id — by hashing it in — enforces the same two-hop bound, and was the first shape this took. It fails because it gives one logical post a different id per recipient:
+### The grant is detached from the id
+
+Binding the recipient into the event id, by hashing it in, enforces the same two-hop bound. It fails because it gives one logical post a different id per recipient:
 
 - **Reconciliation would not converge.** Both the GCS filter and NIP-77 negentropy diff sets of event ids. Two peers holding the same post would share no ids, so every exchange would report everything as missing in both directions and re-send it.
 - **Threading would fragment.** A reply names a parent id. Recipients holding different ids for that parent cannot resolve it.
 - **Dedup would fail.** Receiving a post from its author and again from a forwarder would produce two entries, churning the recently-discovered view that `seen_at` exists to keep stable.
 
 Keeping the binding detached leaves the id canonical, so everything above works unchanged.
-
-### Cost
-
-One signature per (chunk, recipient), produced at encounter time on the author's device, plus one proof of knowledge per chunk forwarded and a multiproof over the events taken from it. Grants are stored with the events they cover and never transmitted; second-hop recipients hold neither a grant nor anything they could forward. See [`storage.md`](./storage.md).
 
 ## Reconciliation
 
@@ -178,11 +167,11 @@ So the two clocks do different jobs, and neither substitutes for the other:
 | `created_at` | The event itself | The shared reconciliation scope. Both peers can compute it. |
 | `seen_at` | Local storage | Ordering, the "recently discovered" view, retention. Never transmitted. |
 
-### One shot over BLE, negentropy over iroh
+### One shot first, negentropy if the session lasts
 
-**Over BLE: one-shot GCS filter.** Send a compact probabilistic sketch of what we hold in the scope; the peer replies with what we appear to be missing. False positives cost a missed event this round, which the next encounter or an iroh upgrade fixes.
+**On connect: one-shot GCS filter.** Send a compact probabilistic sketch of what we hold in the scope; the peer replies with what we appear to be missing. False positives cost a missed event this round, which the next encounter fixes.
 
-The argument for one-shot is **session duration, not latency**. BLE round trips are 50–150 ms, so a few negentropy rounds would be tolerable in principle — but someone walks past you for eight seconds. A single round trip completes and captures most of the value; a multi-round negotiation may never converge before the link drops.
+The argument for one-shot is **session duration, not latency**. BLE round trips are 50–150 ms, so a few negentropy rounds would be tolerable in principle, but someone walks past you for eight seconds. A single round trip completes and captures most of the value; a multi-round negotiation may never converge before the link drops.
 
 Sizing, using bitchat's `GCSFilter` as the reference implementation:
 
@@ -190,9 +179,9 @@ Sizing, using bitchat's `GCSFilter` as the reference implementation:
 - bitchat budgets 400 bytes, but **that is a mesh-flooding constraint, not a BLE constraint** — they broadcast filters through a multi-hop network where every relay pays. We are point-to-point over an established link.
 - Budget 4–8 KB. At 10 KB/s that costs under a second and covers 2,700–5,400 events.
 
-**Over iroh: NIP-77 negentropy.** Range-based reconciliation, multiple round trips, converges precisely over the full scope. `diff` / `pull` / `push` already do this.
+**If the link holds: NIP-77 negentropy.** Range-based reconciliation, multiple round trips, converging precisely over the full scope. At 50–150 ms per round trip this is affordable whenever the encounter is measured in minutes rather than seconds — two people in the same room, or two phones in the same building for an afternoon. The core implements it ([Client half](#client-half)), so carrying both modes costs an implementation as well as the decision of when to switch.
 
-Run both: one-shot GCS immediately on connect for the drive-by case, then negentropy if the session survives and especially once upgraded. Same event store, two entry points.
+Run both: one-shot GCS immediately on connect for the drive-by case, then negentropy for as long as the session survives. Same event store, two entry points.
 
 ### Walking backward
 
@@ -200,7 +189,7 @@ Because the scope is not a recency window, it can be far larger than one filter 
 
 - The first exchange covers the most recent range, so a brief encounter still yields the freshest events.
 - Subsequent encounters with the same peer extend the watermark backward.
-- A long session, or an iroh upgrade, jumps straight to negentropy over the whole scope.
+- A long session jumps straight to negentropy over the whole scope.
 
 The cursor mechanism follows bitchat's: `buildFilter` returns `includedCount`, trimming drops from the input tail, so the first *n* inputs are exactly what the filter covers and the sender derives its `since` cursor from that. Without it the peer cannot distinguish "you are missing this" from "this is outside the range your filter describes," and floods you with everything old.
 
@@ -234,7 +223,7 @@ Default *N* = 2.
 - **Transitive gossip** — we do not carry their events for anybody. A muted author's events do not propagate through this device.
 - **Peering** — their sessions are refused. Because identity is only known after auth, this happens post-IDENTIFIED and the session closes immediately.
 
-The collective-moderation objection is real — one user's mute slightly degrades what they relay to others — but it is small in a network with redundant paths, and the alternative is a phone that physically carries a harasser's posts into new rooms. That is not defensible in a UI.
+This costs a little collective moderation: one user's mute slightly degrades what they relay to others. The alternative is a phone that physically carries a harasser's posts into new rooms.
 
 **Muting purges.** Already-stored events by that author are deleted, or egress silently keeps serving them.
 
@@ -249,11 +238,11 @@ Accepting gossiped events is an unbounded write from whoever is standing nearby.
 
 ## Bounded propagation
 
-Information still flows further than connections do. Alice syncs with Bob; Alice later walks past Carol; Alice's events reach Carol though Alice and Carol were never co-present at the same moment as Bob. That is invariant I4, and it is what makes offline gossip work.
+Information flows further than connections do. Alice syncs with Bob; Alice later walks past Carol; Alice's events reach Carol though Alice and Carol were never co-present at the same moment as Bob. That is invariant I4, and it is what makes offline gossip work.
 
-Invariant I5 caps how far. An event reaches the people its author meets, and the people they meet — two hops, and no further, enforced by [delivery grants](#delivery-grants) rather than by every device applying policy correctly.
+Invariant I5 caps how far. An event reaches the people its author meets, and the people they meet — two hops, enforced by [delivery grants](#delivery-grants) rather than by every device applying policy correctly.
 
 Reach is therefore a property of the author's social topology, not of how long the app has run or how many devices a post has passed through. Two consequences for the UI:
 
-- **"You only ever connect to people nearby" is true. "Your posts only reach people nearby" is still false** — a second-hop recipient may be anywhere the first-hop recipient has since travelled. What is now true, and worth saying plainly, is that reach is bounded and describable: your posts reach people you meet, and people they meet.
+- **"You only ever connect to people nearby" is true; "your posts only reach people nearby" is false.** A second-hop recipient may be anywhere the first-hop recipient has since travelled. Reach is bounded and describable: your posts reach people you meet, and people they meet.
 - **Gossip scope narrows reach within that bound and cannot extend it.** Scope filters authors ([Scope, not booleans](#scope-not-booleans)); the two-hop cap is structural and applies whatever the scope says.

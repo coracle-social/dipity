@@ -21,6 +21,10 @@ dist
 dist-ssr
 *.local
 
+# Rust core. Generated bindings, xcframework and jniLibs all stage under
+# target/ffi, so this covers them too — see the justfile.
+core/target
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
