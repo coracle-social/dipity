@@ -3,8 +3,38 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>viteinit</title>
+
+    <!--
+      Without viewport-fit=cover, iOS returns 0 for every env(safe-area-inset-*),
+      so the `safe-t` / `safe-b` spacing tokens silently collapse and the header
+      sits under the notch.
+
+      Zoom is deliberately left enabled. It is the one accessibility
+      affordance a webview cannot reimplement.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f8f5f1" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#15120f" media="(prefers-color-scheme: dark)" />
+
+    <title>Serendipity</title>
+
+    <script>
+      // Set the theme class before first paint. `ModeWatcher` does this too,
+      // but only once the bundle has parsed — on a cold launch that is long
+      // enough to show a white flash on a dark-mode phone.
+      //
+      // `mode-watcher-mode` is mode-watcher's documented storage key; this and
+      // the <ModeWatcher /> in App.svelte have to agree on it.
+      ;(() => {
+        const stored = localStorage.getItem("mode-watcher-mode")
+        const dark =
+          stored === "dark" ||
+          (stored !== "light" && matchMedia("(prefers-color-scheme: dark)").matches)
+        document.documentElement.classList.toggle("dark", dark)
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

@@ -40,6 +40,8 @@ A document describes the design. It is not a plan for building it, and not a set
 
 Search for: `step 1`, `first,` / `then,` / `finally,`, `TODO`, `TBD`, `we will`, `we need to`, `in the future`, `for now`, `eventually`, `phase 1`, `next steps`, `should be implemented`, `is planned`.
 
+Also search for the imperative form, which carries no tense marker and so matches none of the above: `delete this`, `delete it once`, `remove when`, `remove this once`, `replace this`, `can go away`, `until there are`, `once there are`, `for the time being`, `placeholder`, `temporary`, `scaffolding`, `stopgap`.
+
 > **Step 3.** Once the handshake completes, we then need to send the auth challenge. In the future this will also carry a generation counter.
 
 > Reachability is exchanged after the Noise handshake and carries a monotonic generation counter.
@@ -49,6 +51,22 @@ Numbered procedure is right for a runbook, a migration guide, or a skill. It is 
 `TODO` and `TBD` belong in the tracker or the code, not in prose. If something is undecided, say what is undecided and what constrains the answer, in the present tense: "the chunk size is not fixed; it is bounded below by signature cost and above by the MTU." That is a fact about the design. "TODO: pick a chunk size" is a note to self.
 
 Present tense throughout. `will be`, `is going to`, `is planned to` become `is`. If it is not true yet, either it is a rule about future work — phrase it as a rule — or it does not belong in the document.
+
+### Scaffolding, and instructions to remove it
+
+Two failures wear the same sentence, and the grammatical one hides the substantive one.
+
+> `src/App.svelte` renders the token scales in both themes so they can be checked by eye. It is a design system reference; delete it once there are real screens.
+
+The surface problem is `delete it once` — an imperative aimed at the future, which the searches above miss because it marks no tense.
+
+The real problem is that the sentence is in the document at all. A design document describes the design. A file that exists only until something replaces it is not part of the design; it is the current state of the tree, which git already holds and which the document is guaranteed to describe wrongly within a month. Worse, documenting it promotes a placeholder to an architectural element — a reader now believes the app has a design system reference screen, and that was never a decision anyone made.
+
+Cut it. If the transience is worth recording, it is a fact about the code and belongs in a header comment next to the code, stated in the present: "Scaffolding. Renders the token scales from `app.css`."
+
+The test is whether a sentence would still be true after the work everyone expects to happen. If not, the document is describing a moment rather than a design.
+
+This cuts the other way too. Do not write a document *around* the current state — "there is only one screen so far", "the store is not wired up yet". State what the design is; absence of an implementation is not a property of the design.
 
 ### Commentary about the document
 
@@ -118,6 +136,7 @@ Do not merge sections just to reduce heading count. Headings are how the documen
 
 - Word count dropped. If it did not, the pass did not happen.
 - Every sentence is in the present tense and describes what is true, not what was true or what someone should do next.
+- Every sentence would still be true after the work everyone expects to happen. Anything describing a placeholder, or telling a reader when to delete something, is out.
 - Deleted headings are not linked from anywhere: grep the anchor slug across the repo before finishing.
 - Nothing was asserted that the previous version did not assert.
 - Read it through. Fluency is the constraint that brevity operates under, not the other way around.

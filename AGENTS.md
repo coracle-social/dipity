@@ -45,16 +45,34 @@ Three URL families, one protocol — but **the webview only resolves two.** `LOC
 
 **The in-memory `Repository` is not optional.** welshman's reactive layer (`deriveEventsById`, `deriveItemsByKey`, `getter`) derives from a `Repository` instance synchronously. Querying SQLite directly instead would make every derived store async.
 
+## UI
+
+shadcn-svelte over bits-ui and Tailwind 4. Read [`ui.md`](./docs/ui.md) before touching the webview; most of it is enforced by `just lint`, so a violation is a build failure rather than a review comment.
+
+- **`src/app.css` is the only place a design value lives.** Colour, elevation, motion and radius are Tailwind tokens. Restyle by changing a token, never by adding a value to a component.
+- **No arbitrary values outside `src/lib/components/`** — `bg-[#3a2f28]`, `w-[13px]`. Feature code composes components; components own the pixels. Arbitrary *variants* (`supports-[…]:`, `[&_svg]:`) are fine. [`ui.md`](./docs/ui.md#the-composition-rule).
+- **Semantic tokens only** — `bg-card`, not `bg-white`. A palette colour is correct in exactly one theme.
+- **Runes only in `.svelte` files.** `$state`, `$derived`, `$effect`, `$props` are compiler syntax; in a plain `.ts` module they are an undefined global that fails at runtime. Shared reactive state goes in a welshman store. [`ui.md`](./docs/ui.md#runes-stay-in-components).
+- **No `<style>` blocks in components.** A scoped rule cannot participate in the token system.
+- **`src/lib/components/ui/` is generated** by `just ui <name>`. Prettier ignores it and lint is relaxed there; hand-edit only deliberately, because the next `add` overwrites it. Our components go in `src/lib/components/`.
+- **Never `{@html}` nostr content.** It is attacker-controlled, and this is the one remotely exploitable mistake available in the webview.
+- **An event kind is a `KindFactory` in `src/lib/kinds/`** — a reader/writer pair, reached via `app.use(Domain).reader(Kind)`. No `tags.find(t => t[0] === …)` in a component. [`ui.md`](./docs/ui.md#domain-kinds).
+- **A collection of events is a `DerivedPlugin` in `src/lib/data/`**, reached via `app.use()`. Components never query the `Repository` directly. Not `src/lib/plugins/` — `plugin` already means the Capacitor boundary here. [`ui.md`](./docs/ui.md#app-plugins).
+- **Read [flotilla](https://gitea.coracle.social/coracle/flotilla) for welshman-in-Svelte idiom** before inventing a pattern — same stack, large worked corpus. Its `@welshman/net` transport patterns do not transfer.
+
 ## Stack and commands
 
-Capacitor 8 · Svelte 5 · Vite 8 · TypeScript · welshman `0.9.x` · Rust + uniffi for the core.
+Capacitor 8 · Svelte 5 · Vite 8 · TypeScript · welshman `0.9.x` · Tailwind 4 + shadcn-svelte · Rust + uniffi for the core.
 
 **Tasks live in the [`justfile`](./justfile), not in `package.json`** — which has no `scripts` block, deliberately, because half the pipeline is `cargo`. `just` on its own lists everything.
 
 ```sh
 just setup        # rust targets, npm deps — once after cloning
 just dev          # Vite dev server, browser only
-just qa           # svelte-check, tsc, cargo fmt/clippy/test — what CI runs
+just ui <name>    # vendor a shadcn-svelte component into src/lib/components/ui
+just lint         # eslint over the webview
+just fmt          # prettier, eslint --fix, cargo fmt
+just qa           # types, lint, format, cargo fmt/clippy/test — what CI runs
 just core-test    # core tests alone, the fast loop
 just bindings     # regenerate Swift + Kotlin from the built cdylib
 just sync         # core → bindings → xcframework → web → cap sync
@@ -80,6 +98,8 @@ Siblings of `@welshman/app` are *peer* deps, so they are listed explicitly in `p
 
 ### What welshman is and is not used for
 
+**Instance-based.** Everything hangs off one `App` and is reached through `app.use(...)`; there are no importable `pubkey` / `deriveProfile` globals.
+
 **Used for:** the `Repository` and the reactive layer it feeds, domain kinds, feeds, web of trust, and `AbstractAdapter` / `getAdapter` for the two local URLs. This is the app layer above the bridge, and it is consumed unmodified.
 
 **Not used for the peer protocol, either half.** Sync begins when a peer appears, which the webview is not around for, so `@welshman/net` is not on that path at all — no `BleAdapter`, no `diff`/`pull`/`push` against a peer, no `Tracker` provenance for peer events. The core reimplements NIP-77 and NIP-42 against the same specifications. [`sync.md`](./docs/sync.md#peers-speak-the-relay-wire-protocol).
@@ -100,6 +120,7 @@ If you find yourself wanting to patch welshman, that is a signal the boundary ab
 | [`media.md`](./docs/media.md) | Blob tiers, transfer, fetch policy, quotas |
 | [`identity.md`](./docs/identity.md) | Keys, unsigned events and grants, custody, login with device, backup |
 | [`privacy.md`](./docs/privacy.md) | Threat model, what leaks, what users wrongly assume |
+| [`ui.md`](./docs/ui.md) | Component framework, design tokens, the conventions the linter enforces |
 | [`nip-p2p-auth.md`](./docs/nip-p2p-auth.md) | Peer authentication — the NIP-42 additions covering transports without URLs |
 
 ## Reference materials
@@ -109,7 +130,7 @@ Four other codebases inform this design. They may be cloned into `./ref/`, which
 | Reference | Clone URL | License | Consult for |
 | --- | --- | --- | --- |
 | welshman | `https://github.com/coracle-social/welshman.git` | MIT | Library source for the whole app layer — read it before guessing at an API |
-| flotilla | `https://gitea.coracle.social/coracle/flotilla.git` | MIT | Another Coracle app on the same stack; `KeyDownload.svelte` and `lib/html.ts` model the backup flow in [`identity.md`](./docs/identity.md#backup) |
+| flotilla | `https://gitea.coracle.social/coracle/flotilla.git` | MIT | Another Coracle app on the same stack; `KeyDownload.svelte` and `lib/html.ts` model the backup flow in [`identity.md`](./docs/identity.md#backup); includes a large corpus of how to use welshman in a svelte project |
 | bitchat | `https://github.com/permissionlesstech/bitchat.git` | Unlicense (public domain) | BLE transport engineering — framing, connection scheduling, `BLERecentPeripheralCache`, `GCSFilter` |
 | manyverse | `https://gitlab.com/staltz/manyverse.git` | **MPL-2.0** | Offline sync model and `hops` scoping |
 

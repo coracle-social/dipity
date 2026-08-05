@@ -1,0 +1,175 @@
+import js from "@eslint/js"
+import ts from "typescript-eslint"
+import svelte from "eslint-plugin-svelte"
+import tailwind from "eslint-plugin-better-tailwindcss"
+import prettier from "eslint-config-prettier"
+import globals from "globals"
+import svelteConfig from "./svelte.config.js"
+
+// The conventions in docs/ui.md that a machine can check. Anything a reviewer
+// would otherwise have to notice by eye belongs here rather than in the doc.
+
+/** Utilities that hard-code a value the design system already owns. */
+const RESTRICTED_CLASSES = [
+  {
+    pattern:
+      "^-?(bg|text|border|ring|outline|fill|stroke|shadow|divide|from|via|to|accent|caret|decoration|placeholder)-(inherit|current|transparent|black|white|slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)(-\\d{2,3})?(/\\d+)?$",
+    message:
+      "Use a semantic token (bg-card, text-muted-foreground, border-border, …) rather than a palette colour. Both themes are defined in src/app.css; a raw colour is only correct in one of them.",
+  },
+  {
+    pattern: "^ease-(linear|in|out|in-out)$",
+    message: "Use `ease-clay` for entrances and settles, `ease-exit` for dismissals.",
+  },
+]
+
+// A style guide holds for about six files before an agent reaches for
+// `bg-[#3a2f28]` because it is locally convenient. See docs/ui.md.
+//
+// Arbitrary *variants* are fine — `supports-[backdrop-filter]:`, `[&_svg]:`,
+// `group-data-[state=open]:` select things rather than inventing values. The
+// lookahead separates the two: a bracket group followed by `:` is a selector,
+// one that is not is a value.
+const ARBITRARY_VALUE = {
+  pattern: "\\[[^\\]]*\\](?![^\\s]*:)",
+  message:
+    "No arbitrary values outside src/lib/components. Compose an existing component, or add the value to the theme in src/app.css so it has a name. See docs/ui.md#the-composition-rule.",
+}
+
+/** Runes are compiler syntax, and the compiler only runs on `.svelte`. */
+const RUNES_ARE_COMPONENT_ONLY = {
+  selector: "Identifier[name=/^\\$(state|derived|effect|props|bindable|inspect|host)$/]",
+  message:
+    "Runes belong in .svelte components. Shared reactive state goes in a welshman store, which works in both plain modules and components. See docs/ui.md#runes-stay-in-components.",
+}
+
+export default ts.config(
+  {
+    ignores: [
+      "dist/",
+      "dist-ssr/",
+      "core/",
+      "ios/",
+      "android/",
+      "ref/",
+      ".local/",
+      "node_modules/",
+    ],
+  },
+
+  js.configs.recommended,
+  ts.configs.recommended,
+  svelte.configs.recommended,
+  prettier,
+  svelte.configs.prettier,
+
+  {
+    languageOptions: {
+      globals: {...globals.browser, ...globals.node},
+    },
+    rules: {
+      "no-undef": "off", // TypeScript already does this.
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {argsIgnorePattern: "^_", varsIgnorePattern: "^_"},
+      ],
+    },
+  },
+
+  {
+    files: ["**/*.svelte", "**/*.svelte.ts", "**/*.svelte.js"],
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        extraFileExtensions: [".svelte"],
+        parser: ts.parser,
+        svelteConfig,
+      },
+    },
+  },
+
+  // ------------------------------------------------------------- tailwind --
+  {
+    files: ["**/*.svelte", "**/*.ts"],
+    plugins: {"better-tailwindcss": tailwind},
+    settings: {
+      "better-tailwindcss": {
+        // Resolves the real token set, so `bg-clay` fails while `bg-card`,
+        // `pt-safe-t` and `ease-clay` pass.
+        entryPoint: "src/app.css",
+      },
+    },
+    rules: {
+      "better-tailwindcss/no-unknown-classes": "error",
+      "better-tailwindcss/no-conflicting-classes": "error",
+      "better-tailwindcss/no-duplicate-classes": "error",
+      "better-tailwindcss/no-restricted-classes": ["error", {restrict: RESTRICTED_CLASSES}],
+    },
+  },
+
+  // ------------------------------------------------------------ our code --
+  {
+    files: ["src/**/*.svelte"],
+    rules: {
+      // Nostr content is attacker-controlled. Rendering it as HTML is the one
+      // mistake in this app that is remotely exploitable.
+      "svelte/no-at-html-tags": "error",
+      "svelte/require-each-key": "error",
+      "svelte/no-useless-mustaches": "error",
+      "svelte/prefer-const": "error",
+      "svelte/no-target-blank": "error",
+
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "SvelteStyleElement",
+          message:
+            "No component-scoped CSS. Style with Tailwind utilities; if a value is missing, add it to the theme in src/app.css so both themes and every other component get it too. See docs/ui.md#no-style-blocks.",
+        },
+      ],
+    },
+  },
+
+  // Runes are compiler syntax. In a plain module they are an undefined global
+  // that fails at runtime rather than at build.
+  {
+    files: ["src/**/*.ts", "src/**/*.js"],
+    rules: {"no-restricted-syntax": ["error", RUNES_ARE_COMPONENT_ONLY]},
+  },
+
+  // Feature code composes components; components own the pixels. The split is
+  // by directory because that is the line a linter can see.
+  {
+    files: ["src/**"],
+    ignores: ["src/lib/components/**"],
+    rules: {
+      "better-tailwindcss/no-restricted-classes": [
+        "error",
+        {restrict: [...RESTRICTED_CLASSES, ARBITRARY_VALUE]},
+      ],
+    },
+  },
+
+  // ---------------------------------------------------------- vendored ui --
+  //
+  // Written by `shadcn-svelte add`, not by us. Correctness and accessibility
+  // still apply; the house conventions do not, because the next `add` would
+  // overwrite them and every upgrade would arrive as a formatting conflict.
+  {
+    files: ["src/lib/components/ui/**"],
+    rules: {
+      "better-tailwindcss/no-unknown-classes": "off",
+      "better-tailwindcss/no-restricted-classes": "off",
+      "better-tailwindcss/no-conflicting-classes": "off",
+      "better-tailwindcss/no-duplicate-classes": "off",
+      "@typescript-eslint/no-explicit-any": "off",
+      "no-restricted-syntax": "off",
+    },
+  },
+
+  // ------------------------------------------------------------- tooling --
+  {
+    files: ["*.config.{js,ts}", "eslint.config.js", "svelte.config.js"],
+    languageOptions: {globals: globals.node},
+  },
+)

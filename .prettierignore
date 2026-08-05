@@ -1,0 +1,21 @@
+# Generated, vendored, or prose — see docs/ui.md#the-vendored-seam.
+
+# Written by `shadcn-svelte add`. Left in upstream's formatting so that
+# re-adding or updating a component is a clean diff rather than a whitespace
+# conflict against our own style.
+src/lib/components/ui/
+
+# Prose is written, not formatted. Prettier pads every markdown table to its
+# widest cell and rewrites `*emphasis*` to `_emphasis_`, which turns a one-line
+# edit to a design doc into a hundred-line diff.
+*.md
+.agents/
+
+dist/
+core/
+ios/
+android/
+ref/
+.local/
+node_modules/
+package-lock.json

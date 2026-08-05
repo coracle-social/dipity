@@ -39,6 +39,13 @@ setup:
 dev:
     npx vite
 
+# Components are copied into the repo rather than depended on, so this is the
+# only way one arrives. See docs/ui.md.
+
+# Vendor shadcn-svelte components into src/lib/components/ui. No args to choose.
+ui *components:
+    npx shadcn-svelte@latest add {{components}}
+
 # Build web assets to dist/, which the native shells load.
 build:
     npx vite build
@@ -123,12 +130,19 @@ check:
     npx svelte-check --tsconfig ./tsconfig.app.json
     npx tsc -p tsconfig.node.json
 
-# Format the core in place.
+# Lint the webview: the UI conventions in docs/ui.md that a machine can check.
+lint:
+    npx eslint .
+
+# Format both halves in place.
 fmt:
+    npx prettier --write .
+    npx eslint . --fix
     cd {{core}} && cargo fmt
 
 # Everything a change has to pass. What CI runs.
-qa: check
+qa: check lint
+    npx prettier --check .
     cd {{core}} && cargo fmt --check
     cd {{core}} && cargo clippy --workspace --all-targets -- -D warnings
     cd {{core}} && cargo test --workspace

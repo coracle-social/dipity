@@ -6,7 +6,7 @@ Offline-first nostr social gossip over local transports. This is the overview; e
 
 A nostr client whose network is the people physically around you. Events propagate device-to-device over Bluetooth, with no internet dependency in the core loop.
 
-The setting it is designed around is a neighborhood or a town: local gossip propagating between people who might not otherwise talk, and conversations that start because two phones were in the same place. It works anywhere people gather, but that is the case it is shaped for.
+The setting it is designed around is a neighborhood or a town: local gossip propagating between people who might not otherwise talk, and conversations that start because two phones were in the same place.
 
 It differs from its two closest relatives:
 
@@ -21,13 +21,13 @@ These are load-bearing.
 
 **I1 — Proximity.** A peer connection is only ever established with a device that is currently physically nearby. Enforced structurally, not by runtime policy: the only way to learn how to reach a peer is to have been in Bluetooth range of them.
 
-**I2 — Progressive enhancement.** Bluetooth is the floor and always works. Any transport above it is an optimization for bandwidth, and no feature may depend on one being available. Today there is only the floor — see [`transport.md`](./transport.md#adding-a-transport-later).
+**I2 — Progressive enhancement.** Bluetooth is the floor and always works. Any transport above it is an optimization for bandwidth. See [`transport.md`](./transport.md#adding-a-transport-later) for details.
 
-**I3 — Offline-first gossip.** No part of the *gossip* loop requires internet: discovery, session establishment, sync, storage, signing and forwarding all work with no network. There is no exception. Custody is a key the device itself holds ([`identity.md`](./identity.md#key-custody)), so every signature a session needs is produced locally.
+**I3 — Offline-first gossip.** No part of the gossip protocol requires internet: discovery, session establishment, sync, storage, signing and forwarding all work with no network. The app has direct access to the user's key ([`identity.md`](./identity.md#key-custody)), so no network is needed for signing.
 
 **I4 — Data outlives connections.** Sync is store-and-forward. Tearing down a link does not discard what was synced over it, and events propagate transitively through people who move. This means I1 constrains *connections*, not *information* — see [`privacy.md`](./privacy.md).
 
-**I5 — Bounded reach.** An event travels at most two hops from its author: to someone the author met, and one step beyond. Enforced cryptographically by delivery grants ([`sync.md`](./sync.md#delivery-grants)), not by policy — a device holding no grant that names it cannot forward, whatever its software does.
+**I5 — Bounded reach.** An event travels at most two hops from its author: to someone the author met, and one step beyond. Enforced cryptographically by delivery grants ([`sync.md`](./sync.md#delivery-grants)), not by policy.
 
 ## Non-goals
 
@@ -65,6 +65,7 @@ These are load-bearing.
 | [`media.md`](./media.md) | Blob tiers, transfer, fetch policy, quotas |
 | [`identity.md`](./identity.md) | Keys, unsigned events and grants, key custody, login with device, backup |
 | [`privacy.md`](./privacy.md) | Threat model, what leaks, what users will wrongly assume |
+| [`ui.md`](./ui.md) | Component framework, design tokens, the conventions the linter enforces |
 | [`nip-p2p-auth.md`](./nip-p2p-auth.md) | Peer authentication — the NIP-42 additions covering transports without URLs |
 
 ## Client stack
@@ -72,6 +73,7 @@ These are load-bearing.
 Four languages, split along [the plugin boundary](#the-plugin-boundary) below.
 
 - **TypeScript / Svelte 5** — the webview: UI, reactivity, the social graph.
+- **Tailwind 4 / shadcn-svelte** — design tokens and vendored components. See [`ui.md`](./ui.md).
 - **welshman** — nostr app layer: events, `Repository`, feeds, web of trust. Not the peer protocol — see [the plugin boundary](#the-plugin-boundary).
 - **nostr-tools** — NIP-19 encoding for display.
 - **Vite 8** — bundles the web assets to `dist/`, which the native shells load.
@@ -162,3 +164,6 @@ The cost is a cross-compiled toolchain: `cargo` builds the core for every iOS an
 | `SQLITE_STORAGE_URL` adapter for webview → native reads | Same protocol as peers, resolved by `getAdapter`. Hydration is welshman's existing `makeLoadItem` chain pointed at a local URL. |
 | Working set is kept, not replaced by direct SQLite reads | welshman derives from a `Repository` synchronously. Dropping it makes every derived store async — an app-layer rewrite, not a perf tradeoff. |
 | Capacitor over Tauri and KMP | The UI is TypeScript and stays TypeScript; the hard problems are background iOS, where Capacitor has the most prior art. The shared core is Rust either way, so the shell is chosen on its webview and lifecycle story alone. |
+| shadcn-svelte, vendored rather than depended on | The surfaces are unusual — hop badges, consent gates, peers that vanish mid-session. Owning the component source makes those edits rather than fights with someone's variant API. See [`ui.md`](./ui.md). |
+| Design values live only in Tailwind tokens | shadcn components are written against `shadow-sm` and `rounded-lg`, so redefining the scales restyles the vendored set without editing it, and the linter can then reject any hard-coded value. |
+| Fonts and icons bundled, never fetched | A CDN request on first paint fails exactly where the app is meant to work — I3. |
