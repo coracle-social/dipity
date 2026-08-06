@@ -32,7 +32,7 @@ Kind 22242 auth events are real nostr events, signed normally, because NIP-42 re
 
 This exchange is also the only thing binding the nostr identity to the Noise static key ([`transport.md`](./transport.md#channel-security)). No long-lived mapping is published anywhere, and the binding is scoped to the session.
 
-The core signs auth events, reading the identity key from platform secure storage, which is why that key has to be [readable while the device is locked](./keys.md#signing-happens-at-encounter-time-in-the-background). A peer that cannot authenticate can neither send nor receive.
+The core signs auth events, reading the identity key from platform secure storage, which is why that key has to be [readable while the device is locked](./keys.md#signing-happens-in-the-background). A peer that cannot authenticate can neither send nor receive.
 
 ## Reconciliation
 

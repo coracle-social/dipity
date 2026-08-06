@@ -36,19 +36,19 @@ Content events carry no signature, so a bug that publishes proximity content to 
 
 ## What an authorship proof discloses
 
-A direct authorship proof is transferable evidence, so it never leaves the peer it names. The second hop receives an [indirect proof](./proofs.md#indirect-authorship-proofs) instead — designated to that recipient and simulatable by them, so it convinces them and no one else.
+The author's signature is transferable evidence, so it never leaves the peer it names. The second hop receives an [authorship proof](./proofs.md#authorship-proofs) instead — designated to that recipient and simulatable by them, so it convinces them and no one else.
 
-What a second-hop recipient learns is therefore bounded. They learn the forwarder holds a direct proof from the author, which implies the two met; they already observe the forwarder has the event, so per event this adds little. Accumulated it does not: a device's arrival log is a record of other people's co-presence as well as its owner's, since every forwarder that hands over an event is one who met that event's author. They cannot carry any of it further — neither the author's authorship nor the encounter.
+What a second-hop recipient learns is therefore bounded. They learn the forwarder holds the author's signature, which implies the two met; they already observe the forwarder has the event, so per event this adds little. Accumulated it does not: a device's arrival log is a record of other people's co-presence as well as its owner's, since every forwarder that hands over an event is one who met that event's author. They cannot carry any of it further — neither the author's authorship nor the encounter.
 
-One detail the chunking adds: a direct proof covers a whole encounter, and verifying an inclusion proof reveals its root and timestamp. A second-hop recipient can therefore tell that several events reached the forwarder in the same handover, and see the sibling hashes along each path. The other event ids stay hidden, but the grouping does not.
+A proof covers one event and nothing else, so a second-hop recipient learns nothing about anything else the forwarder was given.
 
-One device does hold portable proof that the author wrote the content and handed it over: the peer the direct proof names. That is unavoidable, since it is the same object that authorises forwarding. It stays one hop from the author and is never transmitted.
+One device does hold portable proof that the author wrote the content and handed it over: the peer the signature names. That is unavoidable, since it is the same object that authorises forwarding. It stays one hop from the author and is never transmitted.
 
 ## Key custody
 
 Keys are generated on device and held in platform secure storage. There is no bunker, no relay-side account, and no external signer — none of them can produce a signature during a background wake with no network, which is when every signature this app needs is produced ([`keys.md`](./keys.md#key-custody)). Redundancy is therefore the user's responsibility: a second device holding the same key, or a backup file they export themselves. See [`keys.md`](./keys.md#backup).
 
-**The key is [readable while the device is locked](./keys.md#signing-happens-at-encounter-time-in-the-background)**, because a phone that cannot sign cannot authenticate. The cost is in [What we do not defend against](#what-we-do-not-defend-against) below.
+**The key is [readable while the device is locked](./keys.md#signing-happens-in-the-background)**, because a phone that cannot sign cannot authenticate. The cost is in [What we do not defend against](#what-we-do-not-defend-against) below.
 
 The backup file is the weak point in an otherwise device-bound design. Unencrypted it is a plaintext key in whatever the user's share sheet sent it to; encrypted it is only as strong as a password they chose once and may never type again. Both are better than permanent identity loss, and the UI presents the tradeoff rather than picking silently.
 
@@ -57,7 +57,7 @@ The backup file is the weak point in an otherwise device-bound design. Unencrypt
 - **Traffic analysis of payload sizes.** Frames are not padded. A determined observer learns roughly how much is being exchanged and when.
 - **Correlating rotating identifiers** by radio fingerprint, timing, or co-presence patterns.
 - **An authorised peer leaking.** Anyone entitled to receive your events can do whatever they like with them outside the protocol — screenshot, retype, republish. The two-hop cap bounds what the *protocol* will carry, not what a person will.
-- **Media at rest.** Blobs are written to disk unsealed, protected by the platform's data-protection class rather than app-layer encryption. The privacy policy states this plainly.
+- **Media at rest.** Blobs are written to disk unsealed ([`storage.md`](./storage.md#blobs)). The privacy policy states this plainly.
 - **A compromised device.** Secure storage protects keys from other apps, not from an attacker who controls the OS.
 - **A locked device that has been unlocked since boot.** The identity key is readable to the app from first unlock onward, so the data-protection class is not a barrier to an attacker who can execute code as the app on a seized-but-locked phone. What is left protecting it is the sandbox and whatever exploit getting inside it costs. There is no good recovery: nostr has no revocation, so a stolen identity key stays valid forever and the only remedy is abandoning the pubkey and rebuilding the social graph under a new one. A device passcode and remote wipe are the real mitigations, and both are the platform's rather than ours.
 
