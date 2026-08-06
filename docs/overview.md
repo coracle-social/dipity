@@ -140,11 +140,9 @@ Read more at [`sync.md`](./sync.md)
 
 ## Storage
 
-The core's SQLite is the only store, and it answers queries as a relay — the same protocol peers speak, over the Capacitor bridge. The view holds caches for what it reads synchronously, never a mirror.
+The core's SQLite is the only store: events, their tags, a full-text index, and provenance: one row per event per peer it has been seen from. It answers peers with the relay protocol, and the view with a live query method built for the store, which filters on seen time and peer. The view holds caches for what it reads synchronously.
 
-Ingest happens once, in the core: id recomputation, grant verification, quota accounting, `seen_at` assignment, retention. Nothing unverified ever reaches the view.
-
-`seen_at` is set once on first insert, never updated, never transmitted. This allows for eviction not based on `created_at`, and provides some affordances for the view layer.
+Ingest happens once, in the core: id recomputation, grant verification, quota accounting, and the provenance row. Nothing unverified ever reaches the view.
 
 Read more at [`storage.md`](./storage.md)
 

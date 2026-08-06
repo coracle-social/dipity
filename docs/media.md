@@ -44,8 +44,7 @@ Not a user-facing setting. Three gates, all automatic:
 Blob quotas are separate from and much tighter than event quotas:
 
 - Per-peer bytes per session and per rolling 24 h.
-- Global storage ceiling with eviction — see [`storage.md`](./storage.md#retention).
-- Blobs evict independently of the events referencing them. The timeline entry survives with its tier-0 placeholder, and the blob can be re-fetched on a later encounter.
+- A blob that has not transferred leaves its event intact: the timeline entry renders from the tier-0 placeholder, and the blob can be fetched on a later encounter.
 
 Accepting blobs from nearby strangers is the most obviously exploitable surface in the design.
 

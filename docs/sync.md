@@ -14,7 +14,7 @@ Reusing it removes a protocol from the project rather than adding one: sync poli
 
 Driving a peer — issuing `REQ`, running `NEG-*`, consuming `EVENT` — begins at IDENTIFIED and has to complete inside a background wake. So it is core code, and no TypeScript library is on the peer path at all. The cost is NIP-77: `diff` / `pull` / `push` would have given negentropy over any adapter for free. The core takes the algorithm from `coracle-lib` and supplies the rest — a `SyncStorage` implementation over SQLite, and the wire codec — carrying the [GCS filter](#one-shot-first-negentropy-if-the-session-lasts) alongside.
 
-The view speaks the same protocol, pointed at local storage. Its controller layer issues `REQ` and consumes `EVENT` over the Capacitor bridge, against the core's SQLite — see [`storage.md`](./storage.md#the-controller-layer).
+The view does not speak this protocol at all. It reads the same store through a query method built for it, which can filter on seen time and peer — things the relay protocol has no way to phrase. See [`storage.md`](./storage.md#the-read-boundary).
 
 **Peers are unreachable from the view by construction.** The bridge addresses one store and offers no way to name a peer, so the untrusted side of the protocol is out of reach of the layer that has no verification, no `AUTH` and no policy.
 
@@ -89,7 +89,7 @@ odd node  promoted unchanged to the next level
 
 Domain-separating leaves from internal nodes is not optional — without it an internal node can be replayed as a leaf, and the tree stops binding. Sorting makes the tree a deterministic function of the id set, so both sides derive the same root with nothing to negotiate.
 
-The recipient holds every event in the chunk, so it rebuilds the tree itself and needs no inclusion proofs. It stores the grant with the sorted id list, which is what lets it produce proofs later even after retention has evicted some of the events.
+The recipient holds every event in the chunk, so it rebuilds the tree itself and needs no inclusion proofs. It stores the grant with the sorted id list, which is what lets it produce proofs later — chunk membership is not recoverable from the events themselves.
 
 Handing a peer a thousand events therefore costs one signature and one grant on the wire, not a thousand of each. Signing is local and fast ([`keys.md`](./keys.md#key-custody)), so the binding cost is bytes rather than CPU: a per-event grant would add roughly 200 bytes of tags and signature to every event at 5–15 KB/s, and would have to be produced inside a background wake measured in seconds.
 
@@ -166,7 +166,7 @@ Binding the recipient into the event id, by hashing it in, enforces the same two
 
 ### `seen_at` changes what "recent" means
 
-The app's primary view is *recently discovered*, ordered by when **we** first saw an event, not when it was created. An event authored long ago and discovered five minutes ago is new to the user and belongs at the top.
+What the app surfaces is *recently discovered* — judged by when **we** first saw an event, not when it was created. An event authored long ago and discovered five minutes ago is new to the user.
 
 This has a sharp consequence for sync: **the reconciliation window cannot be a `created_at` recency window.** Filtering `created_at > now - 7d` would mean never receiving old events, and old events are precisely what proximity gossip surfaces — you meet someone carrying an archive.
 
@@ -177,7 +177,7 @@ So the two clocks do different jobs, and neither substitutes for the other:
 | | Defined by | Used for |
 | --- | --- | --- |
 | `created_at` | The event itself | The shared reconciliation scope. Both peers can compute it. |
-| `seen_at` | Local storage | Ordering, the "recently discovered" view, retention. Never transmitted. |
+| `seen_at` | Local storage | What this device has already seen. Never transmitted. |
 
 ### One shot first, negentropy if the session lasts
 

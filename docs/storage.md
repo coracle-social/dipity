@@ -2,65 +2,56 @@
 
 Where events live, who can answer a query, and what happens while the app is asleep.
 
-## SQLite is the source of truth, and it is also a relay
+## The schema
 
-The core's SQLite holds every event. The view reaches it **through the same relay protocol used for peers** — `REQ` / `EVENT` / `EOSE` / `CLOSE` — marshalled across the Capacitor bridge. The core streams `EVENT` frames as plugin listener callbacks and terminates with `EOSE`, so a large result set arrives incrementally rather than as one payload.
+Four tables in the core's SQLite:
 
-There is one store, and the view does not hold a second one:
+| Table | Holds |
+| --- | --- |
+| `events` | The events themselves. |
+| `event_tags` | One row per tag, so NIP-01 tag filters are an index lookup. |
+| `event_fts` | Full-text index over content, for search. |
+| `event_provenance` | `event_id`, `seen_at`, `peer_pubkey`. Unique on (`event_id`, `peer_pubkey`). |
 
-| Store | Backed by | Reached from | Trust |
-| --- | --- | --- | --- |
-| The local store | SQLite in the core | View, over the bridge | Ours — already verified |
-| `ble://…` | Remote peers | Core only | Untrusted; verify, authenticate, apply policy |
+**Provenance** is that last table: which peers an event has been seen from, and when each of them first handed it over. A row is never updated, so re-gossip of an event a peer has already given us is a no-op, and the table grows with distinct pairs rather than with gossip volume.
 
-The second row is unreachable from TypeScript. Peer sessions start during background wakes and are driven entirely by the core ([`sync.md`](./sync.md#peers-speak-the-relay-wire-protocol)), so there is no way for view code to address a peer.
+## The read boundary
+
+The view does not speak the relay protocol. That protocol exists for peers, and can only ask for events.
+
+Instead the bridge exposes a **query method built for this store**: it filters on the event fields a NIP-01 filter covers, and additionally on `seen_at` and `peer_pubkey`, and it returns each event **with** its provenance attached. Seen time and peer are first-class in both the query and the result.
+
+A query is live. The controller registers it rather than asking once, and the core pushes every change that affects the result: events newly matching the filter, deletions, an addressable event superseded by a newer one, and a new peer appearing on an event already in the set.
+
+Three of those four are things a relay cannot express. It only ever pushes events, and has no way to say that one is gone, has been replaced, or has arrived from someone new.
+
+The gossip filter stays exactly NIP-01. It is a different type reached by a different call, so there is no shared filter with optional local-only fields for someone to populate by mistake, and nothing on the peer path has a field for `seen_at` at all.
 
 ## The controller layer
 
-Between components and the bridge sits a **controller layer**, in `src/lib/data/`. It owns every query against the core and the caches over them, and it is the only thing in the view that speaks the protocol.
+Between components and the bridge sits a **controller layer**, in `src/lib/data/`. It owns every query against the core and the caches over them, and it is the only thing in the view that talks to the bridge.
 
-`deriveEvents(filter)` returns a store backed by an open `REQ`. The core matches the filter against events as they are ingested and pushes them, so nothing in the view has to work out which open queries a new event affects. Closing the store sends `CLOSE`.
-
-Caches are per use case. Profiles, follow lists and mute lists are small, bounded by the social graph rather than by history, and read synchronously while rendering, so the controller keeps them in maps hydrated at startup and current through their own subscriptions. Content events are not cached: a view opens a query and drops it when it goes away. Aggregations are computed in the controller, cached, and debounced.
-
-A few thousand events per query is the working size. Capacitor marshals plugin payloads as JSON, so cost scales with serialized bytes.
+Caches are per use case. Profiles, follow lists and mute lists are small, bounded by the social graph rather than by history, and read synchronously while rendering, so the controller keeps them in maps hydrated at startup. Content events are not cached: a view issues a query and drops the result when it goes away. Aggregations are computed in the controller, cached, and debounced.
 
 ## Writes
 
 Composing sends the event to the core, which stores it. **Composing does not publish to peers**, because there is no peer to name — propagation happens when an encounter happens, from the store, under policy. Writing to the store is what makes an event eligible; the core decides the rest, possibly hours later and possibly while the app is closed.
 
-Events arriving from peers reach the view the same way anything else does: an open `REQ` matches them on ingest and the controller's stores update. There is no second copy to keep current.
-
-## Crossing the boundary
-
-`seen_at` is not part of the event and not expressible in an `EVENT` frame. The core sends it in a parallel structure keyed by event id, and the controller carries it alongside. It never becomes a property of an event object, which is what keeps it out of anything serialized towards a peer.
-
-Events arrive verified. The core checked the delivery grant on ingest, so the view has no verification step.
-
-### Filtering by `seen_at`
-
-The main view is ordered by `seen_at`, which no NIP-01 filter can express. The controller sends **`since_seen` and `until_seen` alongside the filter, never inside it.**
-
-The filter type is the one the gossip protocol uses, and it stays exactly NIP-01. A seen-window is a separate field on the local request, and the peer-facing message has no field to put one in — so a `seen_at` bound cannot be serialized towards a peer even by mistake. See [`privacy.md`](./privacy.md).
-
-### What the local protocol must not do
-
-- **No `AUTH`.** This is local IPC, not a peer. There is no identity to prove and no challenge to issue.
-- **No `NEG-*`.** Reconciliation targets peers. There is one store, so there is nothing to reconcile against.
-- **No policy enforcement.** Egress policy exists to protect against peers. The view and the store are the same trust domain.
+Events arriving from peers land in the same store the view reads, so there is no second copy to keep current. Events published to storage (either gossiped from peers or created by the user) are immediately picked up for replication to connected peers.
 
 ## What the core implements
 
 The store is `rusqlite` inside the core, so this is one implementation rather than one per platform:
 
-- Event storage with indexes on kind, pubkey, `created_at`, `seen_at`, and tags.
-- NIP-01 filter matching.
+- The four tables above, with indexes on kind, pubkey and `created_at`, and on `seen_at` and `peer_pubkey`.
+- NIP-01 filter matching for peers, and the local query method for the view.
+- Full-text search over `event_fts`.
 - Id recomputation and **delivery grant verification** on ingest (see [`sync.md`](./sync.md#delivery-grants)): a grant naming us when the sender authored the event, a valid grant proof from the sender otherwise, checked by set membership against the pubkeys the peer authenticated as. Events satisfying neither are never stored.
 - Replaceable and addressable event semantics, and kind 5 deletions. The core serves peers, so a superseded profile must not reach one either.
-- The delivery grant for each chunk this device can forward, stored with the sorted id list it commits to, so inclusion proofs survive retention evicting some of the events ([`sync.md`](./sync.md#grant-proofs)).
-- Quota counters, `seen_at` assignment, and retention.
+- The delivery grant for each chunk this device can forward, stored with the sorted id list it commits to, since chunk membership cannot be recovered from the events themselves ([`sync.md`](./sync.md#grant-proofs)).
+- Quota counters, and a provenance row the first time each peer hands over an event.
 
-The ingest rule is stated once and enforced once, at the only place events enter the system. Nothing untrusted reaches the view, so there is no second copy to drift.
+The ingest rule is stated once and enforced once, at the only place events enter the system. Nothing untrusted reaches the view.
 
 `rusqlite` is built with the bundled amalgamation, so both platforms run one pinned SQLite rather than whatever the OS shipped, and neither `libsqlite3.dylib` nor `android.database.sqlite` is on the path. **There is no storage API in the shell.**
 
@@ -76,37 +67,28 @@ The view edits those preferences and computes nothing the core depends on. A dev
 
 ## Background execution
 
-CoreBluetooth background wakes are short bursts, not continuous execution. That fits the design: small `REQ` responses are served within a burst, and bulk transfers are deferred to the foreground or to a later encounter. It is consistent with the media tiering in [`media.md`](./media.md).
+CoreBluetooth background wakes are short bursts, not continuous execution. That fits the design: small `REQ` responses are served within a burst, and bulk transfers are deferred to the foreground or to a later encounter.
 
 ## `seen_at`
 
-Every stored event carries `seen_at`: when **this device** first received it. It drives the "recently discovered" view, which is the app's primary surface.
+When **this device** first saw an event: the earliest `seen_at` across its [provenance](#provenance) rows.
 
-Rules:
-
-- **Set once, on first insert. Never updated.** Receiving the same event again from a second peer must not move it — otherwise the recently-discovered view churns as duplicates arrive.
-- **Never transmitted.** It is metadata about the user's movements and encounters. It is not part of the event and must never appear in anything served to a peer. See [`privacy.md`](./privacy.md).
-- **Indexed.** It is the primary sort key for the main view.
-- **Distinct from `created_at`.** An event authored three years ago and discovered five minutes ago sorts to the top — the point of the app, not an anomaly to correct.
+- **Derived, not stored.** Rows are written once and never updated, so the earliest one cannot move. Seeing the same event again — from the same peer or a new one — cannot change it.
+- **Never transmitted.** It is metadata about the user's movements and encounters, not part of the event, and must never appear in anything served to a peer. See [`privacy.md`](./privacy.md).
+- **Distinct from `created_at`.** An event authored long ago and seen five minutes ago is new to this device, which is the point of the app rather than an anomaly to correct.
 
 `seen_at` also changes reconciliation, which cannot use it — see [`sync.md`](./sync.md#seen_at-changes-what-recent-means).
 
 ## Provenance
 
-Store which peer each event arrived from — a column in the core's schema, written at ingest, where the peer identity is known. It stays there. Provenance is not part of what crosses the bridge, and the view has no way to ask for it.
+Every peer an event has been seen from, each with the first time they handed it over — the `event_provenance` rows for that event. Accumulated across the store, they are a connectivity graph.
 
-Provenance drives quota accounting and debugging. It is not surfaced in the UI — see [`privacy.md`](./privacy.md).
+A second copy from a peer already on the list is a no-op. A second copy from a new one is the entire signal.
+
+Provenance is never transmitted. It is not part of an event, has no place in an `EVENT` frame, and like [`seen_at`](#seen_at) it records who the user was physically near and when. It also drives quota accounting.
 
 ## Blobs
 
 Blob bytes are stored outside the event store, keyed by SHA-256 hash. Partial transfers persist with their byte offset so a transfer interrupted on BLE resumes later. See [`media.md`](./media.md).
 
-Media is written to disk unsealed, protected by the platform's data-protection class rather than app-layer encryption. bitchat does the same, and the privacy policy states it plainly.
-
-## Retention
-
-A device that gossips for a year in a busy neighborhood will fill its disk.
-
-Eviction is driven by **`seen_at`, not `created_at`.** Evicting the oldest-authored events would delete exactly the archival material the app exists to surface, moments after discovering it.
-
-Events and blobs have separate budgets. Blobs dominate by volume and evict independently, keeping the event that references them so the timeline entry survives with its tier-0 placeholder.
+Media is written to disk unsealed, protected by the platform's data-protection class rather than app-layer encryption. See [`privacy.md`](./privacy.md#what-we-do-not-defend-against).

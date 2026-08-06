@@ -25,7 +25,7 @@ Each is a decision already made; the linked doc carries the reasoning.
 - **Ids are plain NIP-01 hashes.** Nothing app-specific in serialization, so `@welshman/util` is used unmodified. Do not fold the recipient, the partition, or anything else into the id — reconciliation diffs id sets and would stop converging.
 - **The nsec is the only custody model, and the view never signs.** Both signed kinds are produced at encounter time, in a background wake, with no view and maybe no network — so an external signer fails the core loop rather than degrading. Do not add NIP-46 or NIP-55, and do not move signing into TypeScript. [`keys.md`](./docs/keys.md#key-custody).
 - **The identity key is readable while the device is locked** — `AfterFirstUnlock` on iOS, no user-auth requirement on Android. Deliberate: a phone that cannot sign cannot authenticate, and a peer that cannot authenticate can neither send nor receive. Do not "harden" this to `WhenUnlocked`; it silently kills pocket-to-pocket gossip. [`keys.md`](./docs/keys.md#signing-happens-at-encounter-time-in-the-background).
-- **`seen_at` is never transmitted.** Set once on first insert, never updated, never served to a peer. It is a record of the user's movements. [`storage.md`](./docs/storage.md#seen_at) and [`privacy.md`](./docs/privacy.md).
+- **Provenance never leaves the device.** `event_provenance` holds one row per event per peer it has been seen from, written once and never updated; an event's `seen_at` is the earliest of them. Neither is part of an event, and neither is ever served to a peer — together they record the user's movements and who they were with. [`storage.md`](./docs/storage.md#seen_at), [`storage.md`](./docs/storage.md#provenance), [`privacy.md`](./docs/privacy.md).
 - **Grants and auth events are the only signed kinds.** Both are ordinary nostr events.
 - **Never claim posts only reach nearby people.** False under I4 — a second-hop recipient may be anywhere. Say reach is bounded at two hops instead. [`privacy.md`](./docs/privacy.md).
 
@@ -39,11 +39,11 @@ The central constraint on the whole app: **the view is suspended in the backgrou
 
 **Policy is stored as user preferences and interpreted by the core**, because there is no user to prompt during a background wake. The view edits preferences and computes nothing the core depends on — no author set, no web of trust. [`storage.md`](./docs/storage.md#policy-lives-in-preferences), [`discovery.md`](./docs/discovery.md#the-consent-gate).
 
-Peers speak the **nostr relay wire protocol** over every hop, including view → core: `REQ`/`EVENT`/`EOSE`/`CLOSE`/`OK`/`AUTH`/`NEG-*`. [`sync.md`](./docs/sync.md).
+Peers speak the **nostr relay wire protocol**: `REQ`/`EVENT`/`EOSE`/`CLOSE`/`OK`/`AUTH`/`NEG-*`. The view does not — it reads the store through a query method that filters on seen time and peer, which the relay protocol cannot express. [`sync.md`](./docs/sync.md), [`storage.md`](./docs/storage.md#the-read-boundary).
 
 **The view addresses one store, never a peer.** Queries go over the bridge to the core's SQLite; `ble://` exists only in the core, and there is no way to name a peer from TypeScript — peers get grant checking, `AUTH` and policy, none of which the view has. Events crossing the bridge arrive verified; do not re-check them. [`storage.md`](./docs/storage.md).
 
-**The view keeps no event store.** A controller layer in `src/lib/data/` owns every query and holds per-use-case caches — profiles, follows, mutes — never a mirror. `seen_at` windows travel beside the filter, never inside it, so a NIP-01 filter stays something safe to hand a peer. [`storage.md`](./docs/storage.md#the-controller-layer).
+**The view keeps no event store.** A controller layer in `src/lib/data/` owns every query and holds per-use-case caches — profiles, follows, mutes — never a mirror. Seen-time and peer criteria live on the local query method, never on a NIP-01 filter, so the gossip filter stays something safe to hand a peer. [`storage.md`](./docs/storage.md#the-controller-layer).
 
 ## UI
 
@@ -113,7 +113,7 @@ The packages in use are listed explicitly in `package.json` rather than resolved
 | [`discovery.md`](./docs/discovery.md) | Advertisement, connection scheduling, identification, session lifecycle, consent gate, heartbeat |
 | [`transport.md`](./docs/transport.md) | BLE link layer and framing, Noise XX, the bandwidth ceiling |
 | [`sync.md`](./docs/sync.md) | Relay wire protocol as peer protocol, delivery grants and the two-hop cap, reconciliation, scopes, mute, quotas |
-| [`storage.md`](./docs/storage.md) | SQLite in the core as source of truth and relay, `seen_at`, background serving, retention |
+| [`storage.md`](./docs/storage.md) | SQLite in the core as source of truth and relay, `seen_at`, provenance, background serving |
 | [`media.md`](./docs/media.md) | Blob tiers, transfer, fetch policy, quotas |
 | [`keys.md`](./docs/keys.md) | The nostr identity key: custody, storage, login with device, backup |
 | [`privacy.md`](./docs/privacy.md) | Threat model, what leaks, what users wrongly assume |

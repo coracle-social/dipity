@@ -28,17 +28,17 @@ Prevented by the transport binding in [`nip-p2p-auth.md`](./nip-p2p-auth.md). Wi
 
 `seen_at` records when you encountered an event, which is a record of where you were and who you were near. It is local-only by construction: not part of the event, never transmitted, never served to a peer. See [`storage.md`](./storage.md#seen_at).
 
-Provenance — which peer an event arrived from — is the same class of data and is subject to the same rule. It is not surfaced in the UI. Exposing it ("discovered near X") is a deliberate product decision with its own consent story, not a free consequence of having the column.
+Provenance — which peers an event arrived from — is the same class of data and is subject to the same rule ([`storage.md`](./storage.md#provenance)). It is more sensitive than `seen_at` alone: `seen_at` says the user was somewhere, provenance says who they were with, and it accumulates into a connectivity graph. Exposing any of it ("discovered near X") is a deliberate product decision with its own consent story, not a free consequence of having the rows.
 
 ## Unsigned events as leak protection
 
-Content events carry no signature, so a bug that publishes proximity content to the open network produces nothing a relay will keep or a client will render. This is defence in depth behind invariant I1, which is already enforced by transport configuration. See [`keys.md`](./sync.md#events-are-not-signed-grants-are).
+Content events carry no signature, so a bug that publishes proximity content to the open network produces nothing a relay will keep or a client will render. This is defence in depth behind invariant I1, which is already enforced by transport configuration. See [`sync.md`](./sync.md#events-are-not-signed-grants-are).
 
 ## What a delivery grant discloses
 
 A grant is transferable evidence of authorship, so it never leaves the peer it names. The second hop receives a [grant proof](./sync.md#grant-proofs) instead — designated to that recipient and simulatable by them, so it convinces them and no one else.
 
-What a second-hop recipient learns is therefore bounded. They learn the forwarder holds a grant from the author, which implies the two met; they already observe the forwarder has the event, so this adds little. They cannot carry any of it further — neither the author's authorship nor the encounter.
+What a second-hop recipient learns is therefore bounded. They learn the forwarder holds a grant from the author, which implies the two met; they already observe the forwarder has the event, so per event this adds little. Accumulated it does not: a device's arrival log is a record of other people's co-presence as well as its owner's, since every forwarder that hands over an event is one who met that event's author. They cannot carry any of it further — neither the author's authorship nor the encounter.
 
 One detail the chunking adds: a grant covers a whole encounter, and verifying an inclusion proof reveals its root and timestamp. A second-hop recipient can therefore tell that several events reached the forwarder in the same handover, and see the sibling hashes along each path. The other event ids stay hidden, but the grouping does not.
 
@@ -68,3 +68,4 @@ The UI has to actively correct these:
 - **"My posts only reach people nearby."** False. Events propagate transitively through people who move — that is invariant I4 and the basis of offline gossip. Proximity constrains *connections*, not *information*. What is true, and what the UI should say instead, is that reach is bounded at two hops by I5: your posts reach people you meet, and people they meet. See [`sync.md`](./sync.md#bounded-propagation).
 - **"Nobody knows I'm here unless I connect."** Mostly true, but a device advertising is detectable as *a* device running this app.
 - **"Muting someone hides them."** It does more: it stops this device carrying their events for anyone, and purges what is already stored.
+- **"People are who they say they are."** There is no mechanism for preventing impersonation. Web of trust, explicit pairing, or forcing generated identities may be used to mitigate this.
