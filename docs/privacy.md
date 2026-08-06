@@ -26,23 +26,23 @@ Prevented by the transport binding in [`nip-p2p-auth.md`](./nip-p2p-auth.md). Wi
 
 ## `seen_at` never leaves the device
 
-`seen_at` records when you encountered an event, which is a record of where you were and who you were near. It is local-only by construction: not part of the event, never transmitted, never served to a peer. See [`storage.md`](./storage.md#seen_at).
+`seen_at` records when you encountered an event, which is a record of where you were and who you were near. It is local-only by construction: not part of the event, never transmitted, never served to a peer. See [`storage.md`](./storage.md#event-provenance).
 
-Provenance — which peers an event arrived from — is the same class of data and is subject to the same rule ([`storage.md`](./storage.md#provenance)). It is more sensitive than `seen_at` alone: `seen_at` says the user was somewhere, provenance says who they were with, and it accumulates into a connectivity graph. Exposing any of it ("discovered near X") is a deliberate product decision with its own consent story, not a free consequence of having the rows.
+Provenance — which peers an event arrived from — is the same class of data and is subject to the same rule ([`storage.md`](./storage.md#event-provenance)). It is more sensitive than `seen_at` alone: `seen_at` says the user was somewhere, provenance says who they were with, and it accumulates into a connectivity graph. Exposing any of it ("discovered near X") is a deliberate product decision with its own consent story, not a free consequence of having the rows.
 
 ## Unsigned events as leak protection
 
-Content events carry no signature, so a bug that publishes proximity content to the open network produces nothing a relay will keep or a client will render. This is defence in depth behind invariant I1, which is already enforced by transport configuration. See [`sync.md`](./sync.md#events-are-not-signed-grants-are).
+Content events carry no signature, so a bug that publishes proximity content to the open network produces nothing a relay will keep or a client will render. This is defence in depth behind invariant I1, which is already enforced by transport configuration. See [`sync.md`](./proofs.md#events-are-not-signed).
 
-## What a delivery grant discloses
+## What an authorship proof discloses
 
-A grant is transferable evidence of authorship, so it never leaves the peer it names. The second hop receives a [grant proof](./sync.md#grant-proofs) instead — designated to that recipient and simulatable by them, so it convinces them and no one else.
+A direct authorship proof is transferable evidence, so it never leaves the peer it names. The second hop receives an [indirect proof](./proofs.md#indirect-authorship-proofs) instead — designated to that recipient and simulatable by them, so it convinces them and no one else.
 
-What a second-hop recipient learns is therefore bounded. They learn the forwarder holds a grant from the author, which implies the two met; they already observe the forwarder has the event, so per event this adds little. Accumulated it does not: a device's arrival log is a record of other people's co-presence as well as its owner's, since every forwarder that hands over an event is one who met that event's author. They cannot carry any of it further — neither the author's authorship nor the encounter.
+What a second-hop recipient learns is therefore bounded. They learn the forwarder holds a direct proof from the author, which implies the two met; they already observe the forwarder has the event, so per event this adds little. Accumulated it does not: a device's arrival log is a record of other people's co-presence as well as its owner's, since every forwarder that hands over an event is one who met that event's author. They cannot carry any of it further — neither the author's authorship nor the encounter.
 
-One detail the chunking adds: a grant covers a whole encounter, and verifying an inclusion proof reveals its root and timestamp. A second-hop recipient can therefore tell that several events reached the forwarder in the same handover, and see the sibling hashes along each path. The other event ids stay hidden, but the grouping does not.
+One detail the chunking adds: a direct proof covers a whole encounter, and verifying an inclusion proof reveals its root and timestamp. A second-hop recipient can therefore tell that several events reached the forwarder in the same handover, and see the sibling hashes along each path. The other event ids stay hidden, but the grouping does not.
 
-One device does hold portable proof that the author wrote the content and handed it over: the peer the grant names. That is unavoidable, since it is the same object that authorises forwarding. It stays one hop from the author and is never transmitted.
+One device does hold portable proof that the author wrote the content and handed it over: the peer the direct proof names. That is unavoidable, since it is the same object that authorises forwarding. It stays one hop from the author and is never transmitted.
 
 ## Key custody
 

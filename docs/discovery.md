@@ -67,7 +67,7 @@ bitchat's `BLEConnectionScheduler.swift` is the reference for this.
 
 Between SECURED and IDENTIFIED. Authenticating discloses a long-term nostr identity to whoever is nearby, and on a proximity transport also discloses that you were physically present at a time and place. It is not automatic for unknown peers.
 
-**The decision is stored, not prompted.** Most encounters happen with both phones in pockets, so the gate is evaluated by the core with no view to raise a dialog in. A prompt that cannot be shown has to resolve to a decision the user already made, which the core reads from [stored preferences](./storage.md#policy-lives-in-preferences):
+**The decision is stored, not prompted.** Most encounters happen with both phones in pockets, so the gate is evaluated by the core with no view to raise a dialog in. A prompt that cannot be shown has to resolve to a decision the user already made, which the core reads from [stored preferences](./policy.md):
 
 - **Paired peers** authenticate silently, matched on their **Noise static key** rather than their pubkey — at SECURED the static key is the only identity available, and the whole point of the gate is that it sits before the exchange that would reveal a pubkey.
 - **Strangers** are admitted only inside an open discoverable window: a mode the user turned on in the foreground, stored with an expiry. Outside one, an unknown static key gets no authentication; the session stops at SECURED and closes.

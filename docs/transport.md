@@ -14,9 +14,7 @@ iOS requires both `bluetooth-central` and `bluetooth-peripheral` background mode
 
 Noise XX — Curve25519 / ChaCha20-Poly1305 / SHA-256 — giving mutual authentication of static keys and forward secrecy for the live session. The handshake and the transport state run in the core on `snow`; the shell only moves bytes on and off the characteristic.
 
-The **Noise static key** is Curve25519, long-term and per-install. It authenticates the channel and nothing else — it is not the nostr identity ([`keys.md`](./keys.md#the-nostr-identity)), and the two are bound only for the life of a session, by mutual NIP-42 ([`sync.md`](./sync.md#authentication)). Keeping them distinct is what makes that binding worth anything.
-
-Events are mostly public, so content confidentiality matters less than metadata. Without channel encryption a passive listener learns which event ids two people are reconciling, which leaks the social graph directly.
+The **Noise static key** is Curve25519, long-term and per-install. It authenticates the channel and nothing else — it is not the nostr identity ([`keys.md`](./keys.md#the-nostr-identity)), and the two are bound only for the life of a session, by mutual NIP-42 ([`sync.md`](./sync.md#authentication)). Keeping them distinct is what makes that binding worth anything. This keeps both metadata and content synced between two peers confidential.
 
 ### Framing
 
@@ -46,10 +44,4 @@ More bandwidth stays inside Bluetooth: an **L2CAP connection-oriented channel** 
 
 It is not free. Real throughput has to be measured on device rather than taken from spec numbers, Android's implementation has device-specific history, and it raises the Android floor to API 29. What makes it cheap next to a second network stack is that the channel carries frames the core already produces, under a session the core already holds open. `iroh-ble-transport` reaches for L2CAP-with-GATT-fallback for the same reason; we passed on that library because it is AGPL-3.0 and this app ships to app stores, not because of its technique.
 
-**It moves byte budgets, not round trips.** Round trips are set by the BLE connection interval, which an L2CAP channel shares, so the reconciliation strategy is unchanged — a drive-by still ends before a multi-round negotiation converges ([`sync.md`](./sync.md#one-shot-first-negentropy-if-the-session-lasts)). What grows is every budget that is a byte count: the GCS filter, the chunk one Merkle tree and one grant cover, how much of a negentropy exchange completes before the link drops. Control frames stay on GATT so the heartbeat keeps defining session lifetime ([`discovery.md`](./discovery.md#session-lifecycle)); bulk `EVENT` streams and blob fragments move across. Blob transfer is what justifies it, and event sync is a beneficiary.
-
-### Wi-Fi has no cross-platform path
-
-iOS has no Wi-Fi Direct — peer-to-peer Wi-Fi there means AWDL via Network.framework or MultipeerConnectivity. Android has Wi-Fi Aware, and the pairing story between the two is bad.
-
-That leaves peers who happen to share an access point, which is not the common case for two people who have just walked past each other. A LAN transport optimizes the encounter that was already easy.
+**It moves byte budgets, not round trips.** Round trips are set by the BLE connection interval, which an L2CAP channel shares, so the reconciliation strategy is unchanged — a drive-by still ends before a multi-round negotiation converges ([`sync.md`](./sync.md#one-shot-first-negentropy-if-the-session-lasts)). Control frames stay on GATT so the heartbeat keeps defining session lifetime ([`discovery.md`](./discovery.md#session-lifecycle)); bulk `EVENT` streams and blob fragments move across.

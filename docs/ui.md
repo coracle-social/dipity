@@ -188,7 +188,7 @@ Styling happens in Tailwind utilities, or in the theme. A component-scoped rule 
 
 ## Organising against welshman
 
-`@welshman/util` supplies event types, kinds, tags and filters; `@welshman/lib` the standalone helpers; `@welshman/domain` the typed reader/writer pairs. `@welshman/app` is not used at all — its `App`, `Repository` and derived-store layer assume an in-memory event store, and there isn't one ([`storage.md`](./storage.md#the-controller-layer)).
+`@welshman/util` supplies event types, kinds, tags and filters; `@welshman/lib` the standalone helpers; `@welshman/domain` the typed reader/writer pairs. `@welshman/app` is not used at all — its `App`, `Repository` and derived-store layer assume an in-memory event store, and there isn't one ([`storage.md`](./storage.md#the-sqlite-store)).
 
 ### Domain kinds
 
@@ -213,7 +213,7 @@ A component takes a store and renders it; it does not know a bridge exists. `plu
 
 ### What does not transfer
 
-There is no relay selection, no outbox computation, and no thunk: publishing is one call to the core ([`storage.md`](./storage.md#writes)).
+There is no relay selection, no outbox computation, and no thunk: publishing is one call to the core ([`storage.md`](./storage.md#the-sqlite-store)).
 
 Flotilla is still worth reading for Svelte idiom and for how readers are used in markup, but its data layer does not apply: it is built on `@welshman/app` against real relays. Clone it into `./ref/flotilla`; see [Reference materials](../AGENTS.md#reference-materials).
 

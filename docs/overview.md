@@ -30,14 +30,14 @@ These are load-bearing.
 
 **I4 — Data outlives connections.** Sync is store-and-forward. Tearing down a link does not discard what was synced over it, and events propagate transitively through people who move. This means I1 constrains *connections*, not *information* — see [`privacy.md`](./privacy.md).
 
-**I5 — Bounded reach.** An event travels at most two hops from its author: to someone the author met, and one step beyond. Enforced cryptographically by delivery grants ([`sync.md`](./sync.md#delivery-grants)), not by policy.
+**I5 — Bounded reach.** An event travels at most two hops from its author: to someone the author met, and one step beyond. Enforced cryptographically by authorship proofs ([`proofs.md`](./proofs.md#direct-authorship-proofs)), not by policy.
 
 ## Non-goals
 
 - No relay fallback, no hole punching, no global discovery, no DHT.
 - No bridging of peers who have not been co-present.
-- **No unbounded flooding.** Reach is capped at two hops by construction, not by a policy each device is trusted to apply. See [`sync.md`](./sync.md#delivery-grants).
-- **No interoperability with the open nostr network.** Content events carry no signature, so relays reject them and no existing client can read them. See [`keys.md`](./sync.md#events-are-not-signed-grants-are).
+- **No unbounded flooding.** Reach is capped at two hops by construction, not by a policy each device is trusted to apply. See [`sync.md`](./proofs.md#direct-authorship-proofs).
+- **No interoperability with the open nostr network.** Content events carry no signature, so relays reject them and no existing client can read them. See [`keys.md`](./proofs.md#events-are-not-signed).
 - Not a chat app. Rich nostr event types, including media, are first-class.
 
 ## Tech stack
@@ -54,10 +54,10 @@ These are load-bearing.
 - **CoreBluetooth** — iOS dual-role GATT, background modes, state restoration.
 - **`android.bluetooth`** — Android advertiser, scanner, GATT server and client.
 - **BLE GATT** — the transport, with [our own framing](./transport.md#framing) over one characteristic.
-- **`coracle-lib`** — nostr types for the core: NIP-01 serialization, filters, NIP-77 negentropy. Its event hierarchy separates an unsigned `HashedEvent` from a signed `Event`, which is what the [content/grant split](./sync.md#events-are-not-signed-grants-are) needs; rust-nostr's mandatory signature cannot express it.
+- **`coracle-lib`** — nostr types for the core: NIP-01 serialization, filters, NIP-77 negentropy. Its event hierarchy separates an unsigned `HashedEvent` from a signed `Event`, which is what the [content/grant split](./proofs.md#events-are-not-signed) needs; rust-nostr's mandatory signature cannot express it.
 - **`snow`** — Noise XX: Curve25519 / ChaCha20-Poly1305 / SHA-256.
 - **`rusqlite`** — durable event store, indexes, NIP-01 filter matching.
-- **`secp256k1`** — signing and verifying grants and auth events; **`k256`** for the [grant proof](./sync.md#grant-proofs), which needs explicit group arithmetic that the binding does not expose.
+- **`secp256k1`** — signing and verifying authorship proofs and auth events; **`k256`** for the [indirect authorship proof](./proofs.md#indirect-authorship-proofs), which needs explicit group arithmetic that the binding does not expose.
 
 ## Architecture
 
@@ -70,8 +70,8 @@ The core covers:
 - Both halves of the relay protocol
 - Noise handshake and framing codec
 - Session state machine, heartbeat
-- Signing auth events and grants
-- Merkle trees, grant proofs
+- Signing auth events and authorship proofs
+- Merkle trees, indirect authorship proofs
 - Reconciliation - GCS, negentropy
 - SQLite store, filter matching
 - Policy interpretation, scope and web of trust, quotas
@@ -132,7 +132,7 @@ Read more at [`keys.md`](./keys.md)
 
 Each device is a p2p nostr relay and a nostr client at once, reusing the relay protocol in both directions.
 
-Content events carry an id and no `sig`, so authenticity comes instead from a delivery grant — a signed nostr event which names a recipient and commits through a Merkle root to a whole chunk of events at once. Ids stay plain NIP-01 hashes, so an author can sign one of their own posts and promote it to the open network, keeping its id and its replies. Every inbound event needs a grant naming us if the sender wrote it, or a grant proof from the sender if someone else did; anything else is dropped. A grant is transferable evidence of authorship, so it never leaves the peer it names and the second hop receives a proof designated to it instead. That is what caps reach at two hops without trusting anyone's software.
+Content events carry an id and no `sig`, so authenticity comes instead from a direct authorship proof — a signed nostr event which names a recipient and commits through a Merkle root to a whole chunk of events at once. Ids stay plain NIP-01 hashes, so an author can sign one of their own posts and promote it to the open network, keeping its id and its replies. Every inbound event needs a grant naming us if the sender wrote it, or a grant proof from the sender if someone else did; anything else is dropped. A grant is transferable evidence of authorship, so it never leaves the peer it names and the second hop receives a proof designated to it instead. That is what caps reach at two hops without trusting anyone's software.
 
 Reconciliation runs a one-shot GCS filter on connect and negentropy for as long as the session survives. What can be received or sent to a given peer depends on social graph data, including follows and mutes, as well as specific settings for app behavior, including whether to ask the user before peering with a stranger and whether to gossip second hops.
 
@@ -142,7 +142,7 @@ Read more at [`sync.md`](./sync.md)
 
 The core's SQLite is the only store: events, their tags, a full-text index, and provenance: one row per event per peer it has been seen from. It answers peers with the relay protocol, and the view with a live query method built for the store, which filters on seen time and peer. The view holds caches for what it reads synchronously.
 
-Ingest happens once, in the core: id recomputation, grant verification, quota accounting, and the provenance row. Nothing unverified ever reaches the view.
+Ingest happens once, in the core: id recomputation, proof verification, quota accounting, and the provenance row. Nothing unverified ever reaches the view.
 
 Read more at [`storage.md`](./storage.md)
 
@@ -156,7 +156,7 @@ Read more at [`media.md`](./media.md)
 
 A passive radio observer learns that a device running this app is present, and nothing else. A peer who completes a session learns the user's pubkey, that they were physically present at a time and place, and whatever the gossip scope serves — which is why the consent gate sits before authentication.
 
-`seen_at` and provenance are records of the user's movements, so they never leave the device. A grant is transferable evidence of authorship, so it stays one hop from the author: a second-hop recipient knows where an event came from but can't prove it.
+`seen_at` and provenance are records of the user's movements, so they never leave the device. A direct authorship proof is transferable evidence, so it stays one hop from the author: a second-hop recipient knows where an event came from but can't prove it.
 
 Read more at [`privacy.md`](./privacy.md)
 
