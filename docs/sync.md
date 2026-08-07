@@ -26,11 +26,13 @@ This is core code, and it answers from SQLite, which is the only store that exis
 
 ### Authentication
 
-Mutual NIP-42 with transport binding — see [`nip-p2p-auth.md`](./nip-p2p-auth.md). Both directions run independently; neither blocks the other. The session identifier is `noise://<hex static key>`, naming the key the BLE handshake already authenticated.
+Mutual NIP-42 with transport binding — see [`nip-p2p-auth.md`](./nip-p2p-auth.md). Both directions are independent; neither draws evidence from the other. The session identifier is `noise://<hex static key>`, naming the key the BLE handshake established for this session and no other.
+
+**The side that dialled goes first.** Independence permits the ordering, and it buys the dialled side a look at a known pubkey before disclosing its own — see [`discovery.md`](./discovery.md#the-dialler-authenticates-first).
 
 Kind 22242 auth events are real nostr events, signed normally, because NIP-42 requires a verifiable signature and the peer checks it as one. They are the exception to "content events are unsigned". Transport binding keeps them from being replayed anywhere useful — the `relay` tag is `noise://…`, which no relay will ever match.
 
-This exchange is also the only thing binding the nostr identity to the Noise static key ([`transport.md`](./transport.md#channel-security)). No long-lived mapping is published anywhere, and the binding is scoped to the session.
+This exchange is also the only thing binding the nostr identity to the Noise static key ([`transport.md`](./transport.md#channel-security)). There is no long-lived mapping to publish: the key is regenerated every session, so the binding expires with the channel it names. That matters because the auth event, unlike everything else this protocol emits, is [portable evidence](./privacy.md#the-auth-event-is-portable-evidence) — signed, and convincing to anyone who holds it.
 
 The core signs auth events, reading the identity key from platform secure storage, which is why that key has to be [readable while the device is locked](./keys.md#signing-happens-in-the-background). A peer that cannot authenticate can neither send nor receive.
 
@@ -79,37 +81,52 @@ The cursor mechanism follows bitchat's: `buildFilter` returns `includedCount`, t
 
 ## Sync policy
 
-Policy is expressed as filters on both ingest and egress, so it compiles onto the wire protocol rather than being enforced by a separate layer.
+[`policy.md`](./policy.md) defines the settings and what each value means. This section is how they reach the wire: policy compiles to filters on ingest and egress, so it rides the relay protocol rather than sitting in a layer beside it.
 
-### Scope, not booleans
+### Scope is the trust graph
 
-Both directions are a scope. On/off means either relaying your whole database to a stranger standing nearby, or relaying nothing.
+Every setting resolves to a set of pubkeys, and those sets come from the user's own classifications — trust and block — not from follows. A follow says the user wants to read someone; trust says the user is willing to carry their events and to be seen by them. Those are different questions, and conflating them would widen what a stranger standing nearby can pull out of the device.
 
-| Setting | Values |
+The same three tiers appear throughout, tested against the author of an event or against the peer on the other end of the session:
+
+| Tier | Pubkeys |
 | --- | --- |
-| **Accept** — what we ingest from a peer | Nothing · Peer's own events · Peer + peer's follows · Within social distance *N* of me · Everything |
-| **Gossip** — what we serve to a peer | My events only · My follows · Within social distance *N* of the peer · Everything |
+| Trusted | those the user has trusted |
+| Network | those, plus the ones each of them has trusted — two steps out |
+| Lenient | unconstrained, minus blocks |
 
-Default *N* = 2.
+**The second step depends on other people's lists.** Network scope needs trusted peers' trust lists, and metadata visibility defaults to `trusted` ([`policy.md`](./policy.md#visibility)), so the scope is fed by the same gossip it governs. A device that has met nobody trusted has a Network scope no wider than Trusted.
 
-**Two different distances, and they are easy to confuse.** *Social distance* is follow-graph distance — you, your follows, their follows. *Hops* means delivery distance under I5, capped at two. They are independent: an event from someone at social distance 1 still cannot travel more than two hops. Manyverse calls the follow-graph one `hops`, which is where the collision comes from; this document reserves that word for delivery.
+**Two steps of trust is not the two hops of I5.** Trust distance bounds *whose* events are eligible; hops bound *how far* an event travels, structurally, via [authorship proofs](./proofs.md). They are independent — an event from a directly trusted author still cannot travel more than two hops, and no scope extends that. Manyverse calls its graph distance `hops`, which is where the collision comes from; this document reserves the word for delivery.
 
-"Peer's own events" compiles to `{authors: [peerPubkey]}`. Everything else compiles to an author set derived from the social graph.
+### Compiling to filters
+
+Trusted and Network compile to `{authors: […]}`. Lenient compiles to an unconstrained filter, because **NIP-01 has no negation** — "everything except blocked" cannot be phrased as a filter at all. Blocks are therefore applied outside the filter: dropped on receipt when ingesting, excluded when answering a query on egress. The same absence means an inbound `REQ` cannot ask us for a negation either.
+
+### Egress answers two questions
+
+Serving a peer is gated twice, on two independently configured settings:
+
+- **May this peer see the user's own profile, content and metadata** — the [visibility settings](./policy.md#visibility), evaluated against *the peer*.
+- **Whose other events will we relay to this peer** — the [Gossip scope](./policy.md#accept-and-gossip), evaluated against *the author* of each candidate event.
+
+They do not collapse into each other. Gossip's narrowest value still serves the user's own events, so the floor of relaying is the user's own content and visibility is what decides whether even that goes out. Visibility also carries a fourth value, `Public`, which constrains nobody — what separates it from `Lenient` is on the [proofs](./proofs.md) side rather than the filter side.
+
+Ingest is the simpler direction: one setting, [Accept](./policy.md#accept-and-gossip), against the author of each inbound event.
 
 **UX consequence:** at the narrow end you receive a peer's reply without the note it replies to. Threads will have holes. That is inherent to author-scoped sync, and the UI must render it gracefully rather than pretend the parent is loading.
 
-### Mute
+### Trust, block and mute do different jobs
 
-**One concept, kind 10000.** Mute and block are conflated — a muted pubkey is one the user wants nothing to do with, and it acts everywhere:
+Three classifications ([`policy.md`](./policy.md#social-graph)), and only two of them reach the wire.
 
-- **Ingest** — their events are dropped at receipt, never stored.
-- **Egress** — their events are never served onward, regardless of scope.
-- **Transitive gossip** — we do not carry their events for anybody. A muted author's events do not propagate through this device.
-- **Peering** — their sessions are refused. Because identity is only known after auth, this happens post-IDENTIFIED and the session closes immediately.
+- **Trust** (kind xxxxx) is the positive one. It builds the author sets above, and it is what the visibility settings test a peer against.
+- **Block** (kind xxxxx) is subtractive and acts everywhere: events dropped at receipt, never served onward at any scope, never carried for anybody, and sessions refused. Identity is only known after auth, so the refusal is evaluated at IDENTIFIED and the session closes immediately. When the blocked peer dialled us, [they authenticate first](./discovery.md#the-dialler-authenticates-first) and the close lands before we have disclosed anything; when we dialled them, we have already gone first and the close is all that is left.
+- **Mute** (kind 10000) is a display filter and stays local. A muted author's events are still accepted, still stored, and still relayed.
 
-This costs a little collective moderation: one user's mute slightly degrades what they relay to others. The alternative is a phone that physically carries a harasser's posts into new rooms.
+Mute costs something real: the device will carry a muted author's posts into new rooms, and block is the control that stops that. Kind 10000 is a reading preference on the open network, and treating it as a propagation rule would mean every "I'd rather not see this" silently degrades what the user relays for everyone else.
 
-**Muting purges.** Already-stored events by that author are deleted, or egress silently keeps serving them.
+**Blocking purges.** Already-stored events by that author are deleted, rather than relying on the egress check alone.
 
 ### Quotas
 
@@ -117,7 +134,7 @@ Accepting gossiped events is an unbounded write from whoever is standing nearby.
 
 - Per-peer event-count and byte budgets per session and per rolling 24 h.
 - Per-event size cap.
-- A separate, smaller budget for peers outside the web of trust, with a hard ceiling that cannot crowd out known peers. bitchat's courier trust tiers are the pattern.
+- A separate, smaller budget for untrusted peers, with a hard ceiling that cannot crowd out known peers. bitchat's courier trust tiers are the pattern.
 - Blob quotas are separate and much tighter — see [`media.md`](./media.md).
 
 ## Bounded propagation
@@ -129,4 +146,4 @@ Invariant I5 caps how far. An event reaches the people its author meets, and the
 Reach is therefore a property of the author's social topology, not of how long the app has run or how many devices a post has passed through. Two consequences for the UI:
 
 - **"You only ever connect to people nearby" is true; "your posts only reach people nearby" is false.** A second-hop recipient may be anywhere the first-hop recipient has since travelled. Reach is bounded and describable: your posts reach people you meet, and people they meet.
-- **Gossip scope narrows reach within that bound and cannot extend it.** Scope filters authors ([Scope, not booleans](#scope-not-booleans)); the two-hop cap is structural and applies whatever the scope says.
+- **Gossip scope narrows reach within that bound and cannot extend it.** Scope filters authors ([Scope is the trust graph](#scope-is-the-trust-graph)); the two-hop cap is structural and applies whatever the scope says.

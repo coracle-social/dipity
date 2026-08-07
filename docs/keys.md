@@ -6,7 +6,7 @@ The nostr identity key: what holds it, what reads it, and how it moves between d
 
 One secp256k1 keypair, long-term and user-facing. It signs kind 22242 auth events and [authorship proofs](./proofs.md#authorship-proofs), and it is the identity users see and follow.
 
-The Noise static key that authenticates the BLE channel is a separate key with a separate job, described in [`transport.md`](./transport.md#channel-security). The two are bound only per session, by mutual NIP-42 ([`sync.md`](./sync.md#authentication)).
+The Noise static key that encrypts the BLE channel is a separate key with a separate job, described in [`transport.md`](./transport.md#channel-security). It is [regenerated every session](./transport.md#the-static-key-is-generated-per-session), so the identity key is the only durable key on the device. Mutual NIP-42 binds the two for the life of one session ([`sync.md`](./sync.md#authentication)).
 
 ### The key is not confined
 
@@ -39,7 +39,7 @@ Identity moves between devices over the same proximity stack — BLE, Noise-encr
 Requirements, because this is deliberate key exfiltration:
 
 - **Explicit on both ends.** Initiated by user action on the source and confirmed by user action on the target. Never automatic, never a background capability — this is the one flow the core will not run during a background wake, whatever the session state says.
-- **Short authentication string.** Both devices display a derived comparison value the user checks by eye before the key moves. Noise XX authenticates the channel to static keys, but the user has no prior knowledge of the target's static key — the SAS is what stops an active attacker posing as the intended device. Same mechanism as Bluetooth numeric comparison or Signal safety numbers.
+- **Short authentication string.** Both devices display a comparison value derived from the transcript, which the user checks by eye before the key moves. Nothing else authenticates this flow: the Noise handshake authenticates nobody ([`transport.md`](./transport.md#the-static-key-is-generated-per-session)), and NIP-42 cannot help because the target device does not hold the identity key yet — acquiring it is the point. Same mechanism as Bluetooth numeric comparison or Signal safety numbers.
 
 ## Backup
 
@@ -47,9 +47,10 @@ Multi-device is the happy path — two devices holding the same key means losing
 
 A single text file containing prose instructions and the key itself:
 
-- **Optionally password-encrypted.** NIP-19 `nsec` encoding and NIP-49 `ncryptsec` encryption both happen in the core, which hands the view a finished string rather than key bytes. The user chooses; encryption is opt-in behind a toggle, not a wall. In the unencrypted case that string *is* the key, so it does cross the bridge — deliberately, since exporting it is the whole point of the flow. In the encrypted case nothing usable does.
+- **Optionally password-encrypted.** NIP-19 `nsec` encoding and NIP-49 `ncryptsec` encryption both happen in the core. The user chooses; encryption is opt-in behind a toggle, not a wall.
+- **The view never holds the key, encrypted or not.** It starts the flow and learns only *shared* or *canceled*, the second counting as not downloaded rather than an error, so the user can retry.
 - **Minimum 12-character password**, stated in the UI, with "write this down" guidance. There is no recovery for a forgotten backup password either.
 - **Instructions, not just a key.** The copy explains what a keypair is, why the private half matters, and what to do with the file — following Flotilla's, with one adjustment. Flotilla tells the user to "import into a Nostr Signer app," which is misleading here, because this app holds the key itself. The wording instead says the key restores this app, and separately identifies them on the open network via other clients.
 - **Gated flow.** The download must complete before the user can continue past the screen, so nobody skips it by accident.
 
-On device the `<a download>` blob trick is a no-op in native webviews, so the file is written with `@capacitor/filesystem` to `Directory.Cache` and handed to `@capacitor/share`. Android carries a FileProvider entry (`android/app/src/main/res/xml/file_paths.xml`) for the cache directory. Dismissing the share sheet rejects with "Share canceled", which counts as *not downloaded* rather than an error, so the user can retry. Flotilla's `downloadText` in `src/lib/html.ts` is the reference.
+The core writes the file to the cache directory and the shell presents the share sheet, so the key never crosses the bridge. Android carries a FileProvider entry (`android/app/src/main/res/xml/file_paths.xml`) for the cache directory. Returning a path instead would not help, since `Capacitor.convertFileSrc` lets the view fetch any path back.

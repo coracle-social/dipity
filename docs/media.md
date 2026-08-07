@@ -26,7 +26,7 @@ Rough BLE budget: a 32 KB preview is 3–7 s. A 30 s opus voice note at 16 kbps 
 
 Not a user-facing setting. Three gates, all automatic:
 
-**Trust — reuse the sync scope.** In-scope authors (followed, or within social distance *N*) fetch automatically; out-of-scope requires an explicit tap. You already accept their events; a 32 KB cap plus per-peer budget bounds the damage, and someone you follow flooding you with images is a social problem rather than a protocol one.
+**Trust — reuse the sync scope.** Authors inside the [Accept scope](./sync.md#scope-is-the-trust-graph) fetch automatically; anyone outside it requires an explicit tap. You already accept their events; a 32 KB cap plus per-peer budget bounds the damage, and someone you trust flooding you with images is a social problem rather than a protocol one.
 
 **Render proximity.** Fetch what is about to scroll into view, not everything that synced. Standard lazy loading, and it collapses most of the quota concern on its own.
 

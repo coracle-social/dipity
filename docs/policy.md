@@ -8,14 +8,19 @@ Content can never be propagated more than two hops away due to how [authorship p
 
 ## Discoverability
 
-Any peer that authenticates learns the user's nostr identity, and on a proximity transport also learns that the user was physically present at a time and place. The [consent gate](./discovery.md#the-consent-gate) decides who gets that far. Peers that have already been paired are stored by **Noise static key** — not by pubkey, since the static key is the only identity available before authentication — and pass silently.
+Any peer that authenticates learns the user's nostr identity, and on a proximity transport also learns that the user was physically present at a time and place. The [consent gate](./discovery.md#the-consent-gate) decides who gets that far.
+
+Peers that have already been paired are stored against a **pair secret** derived from the authenticated session, and pass silently. They are [recognised](./discovery.md#recognition) without either side disclosing anything durable — not a pubkey, which is unavailable before authentication, and not a Noise static key, which does not survive between sessions.
 
 Otherwise, the user has a few preferences they can set for controlling background connections:
 
 - Cool-off window - when the app is foregrounded, it begins accepting connections. This cool-off period determines how long the app will continue accepting unknown connections after the app is backgrounded. 10 minutes by default.
 - Discoverable times - times of day, in the device's local timezone, when the user is willing to be passively discoverable. Empty by default.
+- Disclosure budget - the number of new pubkeys the device will disclose to per discoverable window. Bounds what a harvester camped in a busy place collects, without needing to know who anyone is; nothing else can, since a burner pubkey defeats any per-identity limit. See [the disclosure budget](./discovery.md#the-disclosure-budget).
 
-An unknown peer is admitted if either preference allows it.
+An unknown peer is admitted if either of the first two preferences allows it and the budget has not been spent.
+
+The cool-off window carries most of the gate: at its default, checking the app on a bus leaves the device open to that bus for ten minutes.
 
 ## Social graph
 
@@ -25,42 +30,31 @@ There are certain classifications that users may wish to use to tag other users:
 - Block - the user has blocked this person (kind xxxxx)
 - Mute - the user has muted this person (kind 10000)
 
-## Profile Visibility
+Every setting below is expressed on the same tiers, applied either to the peer on the other end of a session or to the author of an event:
 
-This setting governs who the user's profile is visible to:
+- **Trusted** - people the user explicitly trusts.
+- **Network** - people the user transitively trusts, two hops out.
+- **Lenient** - anyone who connects, except blocked pubkeys.
+- **Public** - anyone; [proofs are generated](./proofs.md) for whatever the setting covers. Visibility settings only.
 
-- Public - user profile is visible to anyone; [signatures are generated](./proofs.md) for the user's profile.
-- Lenient - user profile is visible to anyone who connects except for blocked pubkeys.
-- Strict - user profile is visible only to people who the user explicitly trusts.
+## Visibility
 
-Default is `public`.
+Who can see what the user publishes:
 
-## Content Visibility
+| Setting | Governs | Default |
+| --- | --- | --- |
+| Profile visibility | the user's profile | `public` |
+| Content visibility | the user's content | `public` |
+| Metadata visibility | the user's trust, block and mute lists | `trusted` |
 
-This setting governs who the user's content is visible to:
+## Accept and gossip
 
-- Public - user content is visible to anyone; [signatures are generated](./proofs.md) for the user's content.
-- Lenient - user content is visible to anyone who connects except for blocked pubkeys.
-- Strict - user content is visible only to people who the user explicitly trusts.
+How much of other people's content the device takes in, and how much of it goes on to the next peer:
 
-Default is `public`.
+| Setting | Governs | Default |
+| --- | --- | --- |
+| Accept | what the device stores from a peer | `lenient` |
+| Gossip | what the device relays onward | `network` |
 
-## Metadata Visibility
+Gossip takes one extra value, **Nothing**, which shares only the user's own content. How both compile onto the wire is in [`sync.md`](./sync.md#sync-policy).
 
-This setting governs who the user's social graph information (trust, block, and mute lists) is visible to:
-
-- Public - user metadata is visible to anyone; [signatures are generated](./proofs.md) for the user's metadata.
-- Lenient - user metadata is visible to anyone who connects except for blocked pubkeys.
-- Strict - user metadata is visible only to people who the user explicitly trusts.
-
-Default is `lenient`.
-
-## Gossip
-
-Users may want to tune how much of others' content to relay to other peers:
-
-- Nothing - nothing is shared with peers except the user's own content.
-- Trusted - only content from people the user explicitly trusts is forwarded.
-- Network - everything except content from blocked people is forwarded.
-
-Default is `network`.

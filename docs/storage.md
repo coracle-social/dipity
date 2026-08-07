@@ -21,7 +21,7 @@ The store is `rusqlite` inside the core with a simple interface for inserting an
 
 The store is accessed in two places. [`sync.md`](./sync.md) accesses the store directly, interpreting the relay protocol and enforcing authentication, policy, validation, authorship proofs, and so on. This layer only exposes events themselves, not their provenance.
 
-The view layer accesses the database through a capacitorjs `storage` plugin which is a thin wrapper around a view-oriented `core` api, which provides reactive access to events as well as their provenance. Content isn't cached in the `view`, but some metadata (like profiles, follow lists, and mute lists) may be cached for random access. Access should all flow through utilities defined in `src/lib/data`, including content, metadata, aggregation, and writes.
+The view layer accesses the database through a capacitorjs `storage` plugin which is a thin wrapper around a view-oriented `core` api, which provides reactive access to events as well as their provenance. Content isn't cached in the `view`, but some metadata (like profiles, trust lists, and mute lists) may be cached for random access. Access should all flow through utilities defined in `src/lib/data`, including content, metadata, aggregation, and writes.
 
 When an event is written to the store (whether from an incoming sync or when the user writes to the store via the `view` layer), it becomes immediately available for propagation to any connected peers whose subscription matches the event, and whom the user's policy grants access.
 

@@ -18,9 +18,9 @@ Session authentication cannot be handed onward: B knows A wrote an event because
 sig_A( event_id ‖ recipient_pubkey )
 ```
 
-Sharing this signature with a peer provides them independent proof of authorship, however it is transferable evidence: anyone holding it can prove to anyone that A signed it. Users should only provide proofs to peers they trust not to leak them. The two-hop limit provided by system assumes that this proof is never forwarded to a third party.
+That signature is a universally verifiable certificate. It names B, but nothing inside it ties it to the peer presenting it: anyone holding the pair can carry it to anyone and prove that A authored this event. Handed on with B's pubkey it is a forwarding capability of unlimited depth, which is why it never leaves B.
 
-Instead of sharing the signature itself, relayers should construct an **authorship proof** in order to prove the signature without revealing it. In this scenario, B proves to C, designated to C, that B holds A's signature over this event and B's own pubkey, without revealing it.
+Instead of sharing the signature itself, a forwarder constructs an **authorship proof** that proves the signature without revealing it. B proves to C, designated to C, that B holds A's signature over this event and B's own pubkey.
 
 The signature is BIP-340 Schnorr `(R, s)` over the message `event_id ‖ B_pubkey`, verifying as
 

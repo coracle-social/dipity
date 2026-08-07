@@ -24,10 +24,14 @@ Each is a decision already made; the linked doc carries the reasoning.
 - **Every inbound event is authorised by the session or by a proof, or it is dropped.** If the sender authored it, the authenticated session is enough; otherwise it needs an authorship proof from *the sender*. Checked against the pubkeys the peer authenticated as — a set, not a scalar, since a peer may authenticate as several. No policy flag relaxes it. [`proofs.md`](./docs/proofs.md#authorship-proofs).
 - **Ids are plain NIP-01 hashes.** Nothing app-specific in serialization, so `@welshman/util` is used unmodified. Do not fold the recipient, the partition, or anything else into the id — reconciliation diffs id sets and would stop converging.
 - **The nsec is the only custody model, and the view never signs.** Both signed kinds are produced at encounter time, in a background wake, with no view and maybe no network — so an external signer fails the core loop rather than degrading. Do not add NIP-46 or NIP-55, and do not move signing into TypeScript. [`keys.md`](./docs/keys.md#key-custody).
+- **Key bytes never cross the bridge.** Backup export is written and shared by the core and shell; the view starts the flow and gets back shared or canceled, never the string and never the path. [`keys.md`](./docs/keys.md#backup).
 - **The identity key is readable while the device is locked** — `AfterFirstUnlock` on iOS, no user-auth requirement on Android. Deliberate: a phone that cannot sign cannot authenticate, and a peer that cannot authenticate can neither send nor receive. Do not "harden" this to `WhenUnlocked`; it silently kills pocket-to-pocket gossip. [`keys.md`](./docs/keys.md#signing-happens-in-the-background).
 - **Provenance never leaves the device.** `event_provenance` holds one row per event per peer it has been seen from, written once and never updated; an event's `seen_at` is the earliest of them. Neither is part of an event, and neither is ever served to a peer — together they record the user's movements and who they were with. [`storage.md`](./docs/storage.md#event-provenance), [`storage.md`](./docs/storage.md#event-provenance), [`privacy.md`](./docs/privacy.md).
-- **Kind 22242 auth events are the only signed nostr events.** An authorship proof rests on a bare signature over `event_id ‖ recipient_pubkey`, which is not an event.
+- **Nothing that outlives a session is disclosed before the consent gate.** The Noise static key is generated per handshake, and paired peers are recognised by a MAC over the handshake hash keyed on a per-pair secret — never by a stable key, an epoch-derived tag, or anything else a stranger could collect twice. Noise XX completes before the gate runs, so anything durable in the handshake is a device identifier obtainable on demand by anything in radio range. [`transport.md`](./docs/transport.md#the-static-key-is-generated-per-session), [`discovery.md`](./docs/discovery.md#recognition).
+- **Kind 22242 auth events are the only signed nostr events.** An authorship proof rests on a bare signature over `event_id ‖ recipient_pubkey`, which is not an event. Unlike an authorship proof an auth event is *not* designated-verifier, so it is portable evidence binding a pubkey to a channel, which is why that channel's key must not be durable. [`privacy.md`](./docs/privacy.md#the-auth-event-is-portable-evidence).
+- **Scope is the trust graph, and trust, block and mute are three things.** Author sets come from explicit trust, never from follows. Block is the wire control — dropped on ingest, never served, sessions refused. Mute (kind 10000) is a display filter and never gates propagation, so do not fold the two together. [`policy.md`](./docs/policy.md#social-graph), [`sync.md`](./docs/sync.md#trust-block-and-mute-do-different-jobs).
 - **Never claim posts only reach nearby people.** False under I4 — a second-hop recipient may be anywhere. Say reach is bounded at two hops instead. [`privacy.md`](./docs/privacy.md).
+- **Never claim the app is untrackable.** An active attacker can always complete a handshake; what is true is that no identifier survives a session, so tracking costs continuous observation rather than a single sighting. Inside a discoverable window the user does disclose to strangers, by design. [`privacy.md`](./docs/privacy.md#what-an-active-radio-attacker-learns).
 
 ## The plugin boundary
 
@@ -37,13 +41,13 @@ The central constraint on the whole app: **the view is suspended in the backgrou
 
 **Calls run one way: view → shell → core.** A platform capability the core needs — the radio, the Keychain, a directory path — is a trait the core declares and the shell implements at startup, never an import pointing the other way. SQLite is `rusqlite` inside the core, not a storage API the shell provides. [`overview.md`](./docs/overview.md#architecture).
 
-**Policy is stored as user preferences and interpreted by the core**, because there is no user to prompt during a background wake. The view edits preferences and computes nothing the core depends on — no author set, no web of trust. [`storage.md`](./docs/policy.md), [`discovery.md`](./docs/discovery.md#the-consent-gate).
+**Policy is stored as user preferences and interpreted by the core**, because there is no user to prompt during a background wake. The view edits preferences and computes nothing the core depends on — no author set, no trust graph. [`policy.md`](./docs/policy.md), [`discovery.md`](./docs/discovery.md#the-consent-gate).
 
 Peers speak the **nostr relay wire protocol**: `REQ`/`EVENT`/`EOSE`/`CLOSE`/`OK`/`AUTH`/`NEG-*`. The view does not — it reads the store through a query method that filters on seen time and peer, which the relay protocol cannot express. [`sync.md`](./docs/sync.md), [`storage.md`](./docs/storage.md#the-sqlite-store).
 
 **The view addresses one store, never a peer.** Queries go over the bridge to the core's SQLite; `ble://` exists only in the core, and there is no way to name a peer from TypeScript — peers get grant checking, `AUTH` and policy, none of which the view has. Events crossing the bridge arrive verified; do not re-check them. [`storage.md`](./docs/storage.md).
 
-**The view keeps no event store.** A controller layer in `src/lib/data/` owns every query and holds per-use-case caches — profiles, follows, mutes — never a mirror. Seen-time and peer criteria live on the local query method, never on a NIP-01 filter, so the gossip filter stays something safe to hand a peer. [`storage.md`](./docs/storage.md#the-sqlite-store).
+**The view keeps no event store.** A controller layer in `src/lib/data/` owns every query and holds per-use-case caches — profiles, trust lists, mutes — never a mirror. Seen-time and peer criteria live on the local query method, never on a NIP-01 filter, so the gossip filter stays something safe to hand a peer. [`storage.md`](./docs/storage.md#the-sqlite-store).
 
 ## UI
 
@@ -112,7 +116,7 @@ The packages in use are listed explicitly in `package.json` rather than resolved
 | [`overview.md`](./docs/overview.md) | Overview, invariants, stack, architecture, and a summary of every subsystem |
 | [`discovery.md`](./docs/discovery.md) | Advertisement, connection scheduling, identification, session lifecycle, consent gate, heartbeat |
 | [`transport.md`](./docs/transport.md) | BLE link layer and framing, Noise XX, the bandwidth ceiling |
-| [`sync.md`](./docs/sync.md) | Relay wire protocol as peer protocol, reconciliation, scopes, mute, quotas |
+| [`sync.md`](./docs/sync.md) | Relay wire protocol as peer protocol, reconciliation, how policy compiles to filters, quotas |
 | [`proofs.md`](./docs/proofs.md) | Unsigned events, session auth, authorship proofs, the two-hop cap |
 | [`storage.md`](./docs/storage.md) | SQLite in the core as source of truth and relay, `seen_at`, provenance, background serving |
 | [`media.md`](./docs/media.md) | Blob tiers, transfer, fetch policy, quotas |

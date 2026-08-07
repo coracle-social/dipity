@@ -74,7 +74,7 @@ The core covers:
 - Authorship proofs
 - Reconciliation - GCS, negentropy
 - SQLite store, filter matching
-- Policy interpretation, scope and web of trust, quotas
+- Policy interpretation, scope and trust graph, quotas
 - Blob transfer, assembly, verification
 
 The shell covers:
@@ -87,7 +87,7 @@ The shell covers:
 
 The view covers:
 
-- Editing policy preferences: scope, mutes, discoverability
+- Editing policy preferences: scope, trust and blocks, discoverability
 - Event parsing (for display), rendering, composition
 - All user interfaces
 
@@ -101,13 +101,15 @@ The shell depends on the core at link time, and the core depends on nothing plat
 
 Only one of those boundaries is expensive. SQLite is in-process C, and uniffi passes scalars directly and everything else as a compact binary buffer, so the cost lives at the Capacitor bridge, which marshals as JSON.
 
-The core holds the only store and serves peers autonomously, resolving sync scope from the follows and mutes it already holds. The view keeps no store of its own: a controller layer queries the core over the bridge and caches per use case. See [`storage.md`](./storage.md).
+The core holds the only store and serves peers autonomously, resolving sync scope from the trust and block lists it already holds. The view keeps no store of its own: a controller layer queries the core over the bridge and caches per use case. See [`storage.md`](./storage.md).
 
 ## Discovery
 
 The advertisement carries no identity, so identification is always post-connect: a stranger and a close friend are indistinguishable until the handshake has run.
 
-A session climbs a fixed ladder — IDLE, LINKED once GATT connects, SECURED once Noise XX completes, IDENTIFIED once mutual NIP-42 has run and policy has been evaluated, SYNCING, then DRAINING and CLOSED. Between SECURED and IDENTIFIED sits the consent gate, because authenticating discloses a long-term identity and, on a proximity transport, a physical presence at a time and place.
+A session climbs a fixed ladder — IDLE, LINKED once GATT connects, SECURED once Noise XX completes, IDENTIFIED once mutual NIP-42 has run and policy has been evaluated, SYNCING, then DRAINING and CLOSED. SECURED means encrypted, not identified: the Noise static key is generated per session, so the handshake establishes a channel and nothing about who is on the other end of it.
+
+Between SECURED and IDENTIFIED sit a recognition exchange and the consent gate. Paired peers are recognised without either side naming anything durable; everyone else needs a discoverable window the user opened earlier. Authenticating discloses a long-term identity and, on a proximity transport, a physical presence at a time and place, so the side that dialled discloses first and the other decides whether to answer.
 
 Read more at [`discovery.md`](./discovery.md)
 
@@ -121,7 +123,7 @@ Read more at [`transport.md`](./transport.md)
 
 ## Keys
 
-Two keypairs with two jobs: a long-term secp256k1 nostr identity, and a per-install Curve25519 Noise static key. Nothing binds them durably — mutual NIP-42 binds them per session, naming `noise://<static key>`, an identity the BLE handshake has already authenticated.
+Two keypairs with two jobs: a long-term secp256k1 nostr identity, and a Curve25519 Noise static key generated fresh for every session, since the handshake hands it to a peer that has not yet been through the consent gate. Mutual NIP-42 binds the two per session, naming `noise://<static key>`, a channel the handshake established.
 
 The app holds the key in platform secure storage, readable while the device is locked. Moving it to a second device runs over the same proximity stack, gated on explicit action at both ends and a short authentication string; the fallback is a file export.
 
@@ -133,7 +135,7 @@ Each device is a p2p nostr relay and a nostr client at once, reusing the relay p
 
 Content events carry an id and no `sig`. At the first hop the authenticated session establishes authorship; passing an event on needs an authorship proof, which convinces one recipient and leaves them nothing to show anyone else. That is what caps reach at two hops without trusting anyone's software.
 
-Reconciliation runs a one-shot GCS filter on connect and negentropy for as long as the session survives. What can be received or sent to a given peer depends on social graph data, including follows and mutes, as well as specific settings for app behavior, including whether to ask the user before peering with a stranger and whether to gossip second hops.
+Reconciliation runs a one-shot GCS filter on connect and negentropy for as long as the session survives. What can be received or sent to a given peer depends on social graph data — who the user trusts and who they have blocked — as well as specific settings for app behavior, including whether the device is discoverable to strangers at all and whether to gossip second hops.
 
 Read more at [`sync.md`](./sync.md)
 
@@ -153,7 +155,7 @@ Read more at [`media.md`](./media.md)
 
 ## Privacy
 
-A passive radio observer learns only that some device running this app is nearby. A peer who completes a session learns the user's pubkey, that they were physically present at a time and place, and whatever the gossip scope serves — which is why the consent gate sits before authentication.
+A passive radio observer learns only that some device running this app is nearby. An active one can always complete a handshake, so nothing that handshake discloses outlives the session, and outside a discoverable window no pubkey moves at all. A peer who completes a session learns the user's pubkey, that they were physically present at a time and place, and whatever the gossip scope serves — which is why the consent gate sits before authentication.
 
 `seen_at` and provenance are records of the user's movements, so they never leave the device. An authorship proof convinces its recipient and nobody else, so a second-hop recipient knows where an event came from and cannot prove it.
 

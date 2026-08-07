@@ -12,9 +12,24 @@ iOS requires both `bluetooth-central` and `bluetooth-peripheral` background mode
 
 ### Channel security
 
-Noise XX — Curve25519 / ChaCha20-Poly1305 / SHA-256 — giving mutual authentication of static keys and forward secrecy for the live session. The handshake and the transport state run in the core on `snow`; the shell only moves bytes on and off the characteristic.
+Noise XX — Curve25519 / ChaCha20-Poly1305 / SHA-256 — giving forward secrecy for the live session and a key for each side to be named by. The handshake and the transport state run in the core on `snow`; the shell only moves bytes on and off the characteristic. This keeps both metadata and content synced between two peers confidential.
 
-The **Noise static key** is Curve25519, long-term and per-install. It authenticates the channel and nothing else — it is not the nostr identity ([`keys.md`](./keys.md#the-nostr-identity)), and the two are bound only for the life of a session, by mutual NIP-42 ([`sync.md`](./sync.md#authentication)). Keeping them distinct is what makes that binding worth anything. This keeps both metadata and content synced between two peers confidential.
+#### The static key is generated per session
+
+**Every handshake uses a fresh Curve25519 static key.** Nothing about it persists across sessions, and no device has a long-term Noise identity.
+
+This is forced by where the key is disclosed. Noise XX hands the responder's static key to the initiator in msg2, and the initiator's to the responder in msg3 — both before the [consent gate](./discovery.md#the-consent-gate), which sits after SECURED. There is no way to withhold it: the handshake is what produces the channel the gate is evaluated on, so an unauthenticated peer that completes it holds the key by construction. A long-term key in that position is a stable 32-byte device identifier that anything in radio range can demand at will ([`privacy.md`](./privacy.md#what-an-active-radio-attacker-learns)).
+
+A fresh key costs a base-point multiplication, on the order of 50 µs. Nothing depends on the key being stable:
+
+- **Recognising a paired peer** happens in the [recognition exchange](./discovery.md#recognition), inside the encrypted channel, keyed on a per-pair secret rather than on a global name.
+- **Backing off a peer that never completes** is keyed on the `CBPeripheral` identifier, at BLE-address granularity ([`discovery.md`](./discovery.md#making-identification-cheap)).
+- **Transport binding** requires its authority to be unique and established by the handshake, not long-lived ([`nip-p2p-auth.md`](./nip-p2p-auth.md#transport-identities)). A per-session key binds an auth event to exactly one channel.
+- **Login with device** compares a short authentication string derived from the transcript ([`keys.md`](./keys.md#login-with-device)), never prior knowledge of the peer's key.
+
+What it does give up is Noise-layer authentication. A handshake against a key nobody has seen before authenticates no one, so **SECURED means encrypted, not identified**, and a machine-in-the-middle is caught one step later by the transport binding in mutual NIP-42 — see [`privacy.md`](./privacy.md#what-a-machine-in-the-middle-can-do).
+
+The Noise key is not the nostr identity ([`keys.md`](./keys.md#the-nostr-identity)); mutual NIP-42 binds the two for the life of one session ([`sync.md`](./sync.md#authentication)), and that binding expires with the channel it names.
 
 ### Framing
 
