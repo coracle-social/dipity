@@ -9,7 +9,7 @@ The view layer: component framework, design tokens, and the conventions a linter
 | Package | Role |
 | --- | --- |
 | `shadcn-svelte` | CLI only. Copies component source into the repo; never imported at runtime. |
-| `bits-ui` | Headless behaviour — focus traps, roving tabindex, ARIA wiring, dismissal. |
+| `bits-ui` | Headless behavior — focus traps, roving tabindex, ARIA wiring, dismissal. |
 | `tailwindcss` | The token system. Every design decision below is a Tailwind theme variable. |
 | `tailwind-variants` | Variant tables (`tv`) inside components. |
 | `tailwind-merge`, `clsx` | `cn()` — conflict-aware class merging, so a caller's `class` can override. |
@@ -27,13 +27,13 @@ The cost: nothing updates itself. A fix upstream reaches us only if someone re-r
 
 | Path | What |
 | --- | --- |
-| `src/app.css` | Every design token. The single source of colour, elevation, motion and spacing. |
+| `src/app.css` | Every design token. The single source of color, elevation, motion and spacing. |
 | `src/lib/components/ui/` | Vendored shadcn components. Generated — see below. |
 | `src/lib/components/` | Our components. Everything app-specific. |
 | `src/lib/kinds/` | Domain kinds — a `KindFactory` (reader + writer) per event kind. |
 | `src/lib/data/` | The controller layer — queries against the core, and the caches over them. |
 | `src/lib/utils.ts` | `cn()` and the prop-type helpers shadcn components import. |
-| `components.json` | CLI config: aliases, base colour, style. Read by `just ui`, not at build time. |
+| `components.json` | CLI config: aliases, base color, style. Read by `just ui`, not at build time. |
 
 ## The vendored seam
 
@@ -56,7 +56,7 @@ Arbitrary values — `bg-[#3a2f28]`, `w-[13px]`, `text-[0.6875rem]` — are reje
 
 A screen that needs a value which does not exist has two legal moves: add it to `@theme` in `app.css` so it has a name, or push the markup down into a component. "Make the button subtle" has exactly one spelling, `<Button variant="ghost">`.
 
-Outside components, layout, spacing and type utilities remain available. The allowlist is a deny-list rather than an allow-list — no arbitrary values, no palette colours — and it narrows as the component library absorbs the patterns that need them.
+Outside components, layout, spacing and type utilities remain available. The allowlist is a deny-list rather than an allow-list — no arbitrary values, no palette colors — and it narrows as the component library absorbs the patterns that need them.
 
 ### Runes stay in components
 
@@ -68,13 +68,13 @@ Vendored `ui/` is exempt — upstream ships `.svelte.ts` files and they are not 
 
 ## Design
 
-The app is **buttoned-down but pleasant to use**, and gets out of the user's way. The content is other people's posts; the interface is the paper they are printed on. Restraint is not flatness, though: a neighbourhood gossip app that looks like an admin dashboard has the wrong character.
+The app is **buttoned-down but pleasant to use**, and gets out of the user's way. The content is other people's posts; the interface is the paper they are printed on. Restraint is not flatness, though: a neighborhood gossip app that looks like an admin dashboard has the wrong character.
 
 The specific answer is **restrained claymorphism**: soft, slightly thick surfaces with warm diffuse shadows and generous rounding, over a warm off-white page. Surfaces feel like objects you could pick up. Nothing glows or has a gradient.
 
 Clay lives in the *chrome* — cards, controls, sheets — and content sits flat on it. When every element is tactile, tactility carries no information.
 
-### Colour
+### Color
 
 Semantic tokens only. `bg-card`, `text-muted-foreground`, `border-border` — never `bg-white` or `text-gray-500`, which are correct in exactly one theme. This is [enforced](#enforced-by-the-linter).
 
@@ -86,7 +86,7 @@ Semantic tokens only. `bg-card`, `text-muted-foreground`, `border-border` — ne
 | `muted` / `muted-foreground` | Recessed fills and secondary text. |
 | `accent` / `accent-foreground` | Hover and active states on neutral surfaces. |
 | `primary` | Terracotta. The loud accent, and the rationed one. |
-| `secondary-accent` | Muted teal. The quiet accent — informational chips, status dots, anything that needs colour without asking for the eye. |
+| `secondary-accent` | Muted teal. The quiet accent — informational chips, status dots, anything that needs color without asking for the eye. |
 | `destructive` | Irreversible actions only. |
 | `border` / `input` / `ring` | Hairlines and focus. |
 
@@ -94,7 +94,7 @@ Values are `oklch`, so lightness is perceptually even: `oklch(0.7 …)` reads as
 
 **`primary` is rationed.** One primary action per screen. Terracotta at scale stops being warm and starts being loud.
 
-`secondary-accent` is what carries colour everywhere else. It sits at roughly half the chroma of `primary` (0.07 against 0.148), which is what makes it read as subordinate — not lower contrast, which would just make it hard to read, but less saturated, so it recedes while staying legible.
+`secondary-accent` is what carries color everywhere else. It sits at roughly half the chroma of `primary` (0.07 against 0.148), which is what makes it read as subordinate — not lower contrast, which would just make it hard to read, but less saturated, so it recedes while staying legible.
 
 Three tokens have confusable names, and only one of them is a hue:
 
@@ -102,7 +102,7 @@ Three tokens have confusable names, and only one of them is a hue:
 | --- | --- |
 | `secondary` | A neutral surface. Drives `<Button variant="secondary">` and `<Badge variant="secondary">`. |
 | `accent` | A neutral hover/active state. Drives every dropdown and menu item. |
-| `secondary-accent` | The teal. The only one of the three that is a colour. |
+| `secondary-accent` | The teal. The only one of the three that is a color. |
 
 `secondary` and `accent` are wired into the vendored components, so neither could be repurposed without restyling every secondary button and every menu hover.
 
@@ -122,7 +122,7 @@ Six steps. A component picks one by **what it is**, not by how much lift looks g
 | `shadow-control-raised` | The same control under the pointer |
 | `inset-shadow-clay` | Pressed *into* the page — toggles, wells, active segments |
 
-A button is not a small card, and gets its own two steps. Both `--clay-rim` and `--clay-base` are calibrated for near-white card stock, where a near-opaque white edge reads as a lit rim and 5% warm grey reads as a shaded one. On a saturated fill the first is a hard gloss line and the second is invisible, so `shadow-control` works over `--clay-rim-fill` and `--clay-base-fill` instead, and tightens the penumbra — a card-sized one under a button reads as a floating tile.
+A button is not a small card, and gets its own two steps. Both `--clay-rim` and `--clay-base` are calibrated for near-white card stock, where a near-opaque white edge reads as a lit rim and 5% warm gray reads as a shaded one. On a saturated fill the first is a hard gloss line and the second is invisible, so `shadow-control` works over `--clay-rim-fill` and `--clay-base-fill` instead, and tightens the penumbra — a card-sized one under a button reads as a floating tile.
 
 The thickness comes from edges rather than curvature: a lit hairline along the top, a shaded one along the bottom, and only a trace of interior shading above it. A blurred highlight falling away from the top edge is what makes a surface read as a bubble, so there isn't one — a button is a slab with soft corners, not a blown shape.
 
@@ -176,7 +176,7 @@ Skim `src/lib/components/` periodically. It is where drift starts, and it is the
 
 ### No `<style>` blocks
 
-Styling happens in Tailwind utilities, or in the theme. A component-scoped rule is invisible to every other component, cannot participate in the token system, and is where the second, undocumented set of colours always begins. If a value is missing, add it to `@theme` in `app.css` — then both themes and every other component get it too.
+Styling happens in Tailwind utilities, or in the theme. A component-scoped rule is invisible to every other component, cannot participate in the token system, and is where the second, undocumented set of colors always begins. If a value is missing, add it to `@theme` in `app.css` — then both themes and every other component get it too.
 
 ### Held by review
 
@@ -186,7 +186,7 @@ Styling happens in Tailwind utilities, or in the theme. A component-scoped rule 
 - **The UI owns no durable state.** The view is suspended in the background, so anything that must survive that lives in the plugin. UI state is view state.
 - **Never claim posts only reach nearby people.** False under [I4](./overview.md#invariants), and copy is where that lie is easiest to tell. Say reach is bounded at two hops.
 
-## Organising against welshman
+## Organizing against welshman
 
 `@welshman/util` supplies event types, kinds, tags and filters; `@welshman/lib` the standalone helpers; `@welshman/domain` the typed reader/writer pairs. `@welshman/app` is not used at all — its `App`, `Repository` and derived-store layer assume an in-memory event store, and there isn't one ([`storage.md`](./storage.md#the-sqlite-store)).
 

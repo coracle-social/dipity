@@ -1,6 +1,6 @@
 # Authorship proofs
 
-Content events carry no signature. This document describes how to prove authorship to peers, and what stops it travelling more than two hops.
+Content events carry no signature. This document describes how to prove authorship to peers, and what stops it traveling more than two hops.
 
 ## Events are not signed
 

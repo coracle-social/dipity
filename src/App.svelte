@@ -48,7 +48,7 @@
         <h1 class="truncate text-base leading-tight font-semibold">Dip</h1>
         <p class="truncate text-xs text-muted-foreground">Design system reference</p>
       </div>
-      <Button variant="ghost" size="icon" onclick={toggleMode} aria-label="Toggle colour scheme">
+      <Button variant="ghost" size="icon" onclick={toggleMode} aria-label="Toggle color scheme">
         {#if mode.current === "dark"}
           <MoonIcon />
         {:else}
@@ -106,7 +106,7 @@
               <Avatar.Fallback>JS</Avatar.Fallback>
             </Avatar.Root>
             <div class="min-w-0 flex-1">
-              <p class="truncate text-sm font-medium">A neighbour</p>
+              <p class="truncate text-sm font-medium">A neighbor</p>
               <p class="truncate text-xs text-muted-foreground">Seen 2 minutes ago</p>
             </div>
             <Badge class="bg-secondary-accent text-secondary-accent-foreground">1 hop</Badge>

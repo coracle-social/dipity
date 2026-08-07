@@ -10,7 +10,7 @@ Content can never be propagated more than two hops away due to how [authorship p
 
 Any peer that authenticates learns the user's nostr identity, and on a proximity transport also learns that the user was physically present at a time and place. The [consent gate](./discovery.md#the-consent-gate) decides who gets that far.
 
-Peers that have already been paired are stored against a **pair secret** derived from the authenticated session, and pass silently. They are [recognised](./discovery.md#recognition) without either side disclosing anything durable — not a pubkey, which is unavailable before authentication, and not a Noise static key, which does not survive between sessions.
+Peers that have already been paired are stored against a **pair secret** derived from the authenticated session, and pass silently. They are [recognized](./discovery.md#recognition) without either side disclosing anything durable — not a pubkey, which is unavailable before authentication, and not a Noise static key, which does not survive between sessions.
 
 Otherwise, the user has a few preferences they can set for controlling background connections:
 

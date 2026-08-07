@@ -37,7 +37,7 @@ These are load-bearing.
 - No relay fallback, no hole punching, no global discovery, no DHT.
 - No bridging of peers who have not been co-present.
 - **No unbounded flooding.** Reach is capped at two hops by construction, not by a policy each device is trusted to apply. See [`sync.md`](./proofs.md#authorship-proofs).
-- **No interoperability with the open nostr network.** Content events carry no signature, so relays reject them and no existing client can read them. See [`keys.md`](./proofs.md#events-are-not-signed).
+- **No compatibility with public relays.** Content events carry no signature, so relays reject them and no existing client can read them. See [`proofs.md`](./proofs.md#events-are-not-signed). Only that compatibility is given up: kinds and serialization stay nostr's, and the extensions this design needs — authorship proofs, [transport identities](./nip-p2p-auth.md), the [`imeta` BLAKE3 root](./nip-imeta-blake3.md) — are meant to land in the protocol rather than stay here.
 - Not a chat app. Rich nostr event types, including media, are first-class.
 
 ## Tech stack
@@ -63,81 +63,45 @@ These are load-bearing.
 
 There are three layers: the **core** (Rust), the **shell** (Swift and Kotlin), and the **view** (web).
 
-Because gossip has to happen in the background with peers over bluetooth while the user's device is locked and in their pocket, none of it can live in the view. The responsibility for nearly all application logic therefore belongs to the core. This also allows us to avoid duplicating application logic in the shell.
-
-The core covers:
-
-- Both halves of the relay protocol
-- Noise handshake and framing codec
-- Session state machine, heartbeat
-- Signing auth events and authorship proofs
-- Authorship proofs
-- Reconciliation - GCS, negentropy
-- SQLite store, filter matching
-- Policy interpretation, scope and trust graph, quotas
-- Blob transfer, assembly, verification
-
-The shell covers:
-
-- BLE advertise, scan, GATT both roles
-- Keychain / Keystore
-- Background lifecycle, state restoration
-- Paths and data-protection classes
-- Capacitor bridge marshalling
-
-The view covers:
-
-- Editing policy preferences: scope, trust and blocks, discoverability
-- Event parsing (for display), rendering, composition
-- All user interfaces
-
-Calls run one way:
-
-```
-view ──JSON over Capacitor──▶ shell ──uniffi──▶ core ──C FFI──▶ SQLite
-```
+Because gossip has to happen in the background with peers over bluetooth while the user's device is locked and in their pocket, none of it can live in the view. The responsibility for nearly all application logic therefore belongs to the core. This also allows us to avoid duplicating application logic in the `shell`, which is mostly glue code (capacitor plugins, BLE, keychain/keystore), or in the `view`, which is dedicated to UI concerns.
 
 The shell depends on the core at link time, and the core depends on nothing platform-specific. Where the core needs a platform capability it declares a trait and the shell hands it an implementation.
 
 Only one of those boundaries is expensive. SQLite is in-process C, and uniffi passes scalars directly and everything else as a compact binary buffer, so the cost lives at the Capacitor bridge, which marshals as JSON.
 
-The core holds the only store and serves peers autonomously, resolving sync scope from the trust and block lists it already holds. The view keeps no store of its own: a controller layer queries the core over the bridge and caches per use case. See [`storage.md`](./storage.md).
+## Storage
+
+All storage is managed by `core`. Events, provenance, preferences, etc. are all stored in sqlite, while blobs are stored in a blob store managed by `core` and configured by `shell`.
+
+Read more at [`storage.md`](./storage.md)
 
 ## Discovery
 
-The advertisement carries no identity, so identification is always post-connect: a stranger and a close friend are indistinguishable until the handshake has run.
-
-A session climbs a fixed ladder — IDLE, LINKED once GATT connects, SECURED once Noise XX completes, IDENTIFIED once mutual NIP-42 has run and policy has been evaluated, SYNCING, then DRAINING and CLOSED. SECURED means encrypted, not identified: the Noise static key is generated per session, so the handshake establishes a channel and nothing about who is on the other end of it.
-
-Between SECURED and IDENTIFIED sit a recognition exchange and the consent gate. Paired peers are recognised without either side naming anything durable; everyone else needs a discoverable window the user opened earlier. Authenticating discloses a long-term identity and, on a proximity transport, a physical presence at a time and place, so the side that dialled discloses first and the other decides whether to answer.
+Peers are found by a bare presence beacon that carries no identity. A recognition exchange keyed on per-pair secrets identifies peers without naming anything durable.
 
 Read more at [`discovery.md`](./discovery.md)
 
 ## Transport
 
-Bluetooth is the only transport. Every device runs both GATT roles at once, with our own framing over a Noise XX channel.
-
-Measured throughput is 5–15 KB/s. Event sync fits in a drive-by, image previews fit, but originals do not. Increased bandwidth can be obtained by upgrading to an L2CAP channel over the same connection and Noise session.
+Bluetooth is the only transport. Every device runs both GATT roles at once, with our own framing over a Noise XX channel. Increased bandwidth can be obtained by upgrading to an L2CAP channel over the same connection and Noise session.
 
 Read more at [`transport.md`](./transport.md)
 
 ## Keys
 
-Two keypairs with two jobs: a long-term secp256k1 nostr identity, and a Curve25519 Noise static key generated fresh for every session, since the handshake hands it to a peer that has not yet been through the consent gate. Mutual NIP-42 binds the two per session, naming `noise://<static key>`, a channel the handshake established.
+There are two keypairs: a long-term secp256k1 nostr identity, and a Curve25519 Noise static key generated fresh for every session. Mutual NIP-42 binds the two per session, naming `noise://<static key>`, a channel the handshake established.
 
-The app holds the key in platform secure storage, readable while the device is locked. Moving it to a second device runs over the same proximity stack, gated on explicit action at both ends and a short authentication string; the fallback is a file export.
+The app holds the nostr key in platform secure storage, readable while the device is locked. Moving it to a second device runs over the same proximity stack, gated on explicit action at both ends and a short authentication string; the fallback is a file export.
 
 Read more at [`keys.md`](./keys.md)
 
 ## Sync
 
-Each device is a p2p nostr relay and a nostr client at once, reusing the relay protocol in both directions.
+Each device is a p2p nostr relay and a nostr client at once, reusing the relay protocol in both directions. Content events carry an id and no `sig`. At the first hop the authenticated session establishes authorship; the second hop is enabled using authorship proofs which aren't forwardable.
 
-Content events carry an id and no `sig`. At the first hop the authenticated session establishes authorship; passing an event on needs an authorship proof, which convinces one recipient and leaves them nothing to show anyone else. That is what caps reach at two hops without trusting anyone's software.
+Event syncing happens via negentropy; blob syncing is done by sha256 hash. What can be received or sent to a given peer depends on user policy.
 
-Reconciliation runs a one-shot GCS filter on connect and negentropy for as long as the session survives. What can be received or sent to a given peer depends on social graph data — who the user trusts and who they have blocked — as well as specific settings for app behavior, including whether the device is discoverable to strangers at all and whether to gossip second hops.
-
-Read more at [`sync.md`](./sync.md)
+Read more at [`sync.md`](./sync.md) and [`policy.md`](./policy.md).
 
 ## Storage
 
@@ -146,12 +110,6 @@ The core's SQLite is the only store: events, their tags, a full-text index, and 
 Ingest happens once, in the core: id recomputation, proof verification, quota accounting, and the provenance row. Nothing unverified ever reaches the view.
 
 Read more at [`storage.md`](./storage.md)
-
-## Media
-
-Blobs are referenced by hash and transferred on their own channel, separately from events. Three tiers follow from 5–15 KB/s. Tier 0 — blurhash, dimensions, duration, mime — rides inline with the event and makes the timeline render immediately; tier 1 is a preview of at most 32 KB; tier 2 is the full-resolution original, which usually wants an L2CAP upgrade and may take several encounters to arrive. Every blob a stored event references is fetched automatically, previews before originals, with no per-blob decision and no user action involved. Quotas and a disk ceiling bound it. Images added by the user are compressed before they are stored.
-
-Read more at [`media.md`](./media.md)
 
 ## Privacy
 
@@ -165,7 +123,7 @@ Read more at [`privacy.md`](./privacy.md)
 
 shadcn-svelte over bits-ui and Tailwind 4, vendored by CLI rather than taken as a dependency.
 
-Design values live in exactly one file: colour, elevation, motion and radius are Tailwind tokens in `src/app.css`, and the standard scales are redefined rather than supplemented, so the vendored components restyle without being edited. The look is restrained claymorphism.
+Design values live in exactly one file: color, elevation, motion and radius are Tailwind tokens in `src/app.css`, and the standard scales are redefined rather than supplemented, so the vendored components restyle without being edited. The look is restrained claymorphism.
 
 An event kind is a `KindFactory` in `src/lib/kinds/`, a collection of events is a store in `src/lib/data/`, and nothing outside them pokes at tags or opens a query.
 

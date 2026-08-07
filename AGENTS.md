@@ -21,13 +21,13 @@ Each is a decision already made; the linked doc carries the reasoning.
 - **No bridging peers who have not been co-present.** This is what separates the project from bitchat's global-reach path.
 - **Content events are never signed.** They carry an id and no `sig`; authenticity comes from an authorship proof. Do not add one. [`keys.md`](./docs/proofs.md#events-are-not-signed).
 - **Never send the author's signature to anyone but the peer it names.** It is portable evidence, so the second hop gets an authorship proof instead. [`proofs.md`](./docs/proofs.md#authorship-proofs).
-- **Every inbound event is authorised by the session or by a proof, or it is dropped.** If the sender authored it, the authenticated session is enough; otherwise it needs an authorship proof from *the sender*. Checked against the pubkeys the peer authenticated as — a set, not a scalar, since a peer may authenticate as several. No policy flag relaxes it. [`proofs.md`](./docs/proofs.md#authorship-proofs).
+- **Every inbound event is authorized by the session or by a proof, or it is dropped.** If the sender authored it, the authenticated session is enough; otherwise it needs an authorship proof from *the sender*. Checked against the pubkeys the peer authenticated as — a set, not a scalar, since a peer may authenticate as several. No policy flag relaxes it. [`proofs.md`](./docs/proofs.md#authorship-proofs).
 - **Ids are plain NIP-01 hashes.** Nothing app-specific in serialization, so `@welshman/util` is used unmodified. Do not fold the recipient, the partition, or anything else into the id — reconciliation diffs id sets and would stop converging.
 - **The nsec is the only custody model, and the view never signs.** Both signed kinds are produced at encounter time, in a background wake, with no view and maybe no network — so an external signer fails the core loop rather than degrading. Do not add NIP-46 or NIP-55, and do not move signing into TypeScript. [`keys.md`](./docs/keys.md#key-custody).
 - **Key bytes never cross the bridge.** Backup export is written and shared by the core and shell; the view starts the flow and gets back shared or canceled, never the string and never the path. [`keys.md`](./docs/keys.md#backup).
 - **The identity key is readable while the device is locked** — `AfterFirstUnlock` on iOS, no user-auth requirement on Android. Deliberate: a phone that cannot sign cannot authenticate, and a peer that cannot authenticate can neither send nor receive. Do not "harden" this to `WhenUnlocked`; it silently kills pocket-to-pocket gossip. [`keys.md`](./docs/keys.md#signing-happens-in-the-background).
 - **Provenance never leaves the device.** `event_provenance` holds one row per event per peer it has been seen from, written once and never updated; an event's `seen_at` is the earliest of them. Neither is part of an event, and neither is ever served to a peer — together they record the user's movements and who they were with. [`storage.md`](./docs/storage.md#event-provenance), [`storage.md`](./docs/storage.md#event-provenance), [`privacy.md`](./docs/privacy.md).
-- **Nothing that outlives a session is disclosed before the consent gate.** The Noise static key is generated per handshake, and paired peers are recognised by a MAC over the handshake hash keyed on a per-pair secret — never by a stable key, an epoch-derived tag, or anything else a stranger could collect twice. Noise XX completes before the gate runs, so anything durable in the handshake is a device identifier obtainable on demand by anything in radio range. [`transport.md`](./docs/transport.md#the-static-key-is-generated-per-session), [`discovery.md`](./docs/discovery.md#recognition).
+- **Nothing that outlives a session is disclosed before the consent gate.** The Noise static key is generated per handshake, and paired peers are recognized by a MAC over the handshake hash keyed on a per-pair secret — never by a stable key, an epoch-derived tag, or anything else a stranger could collect twice. Noise XX completes before the gate runs, so anything durable in the handshake is a device identifier obtainable on demand by anything in radio range. [`transport.md`](./docs/transport.md#the-static-key-is-generated-per-session), [`discovery.md`](./docs/discovery.md#recognition).
 - **Kind 22242 auth events are the only signed nostr events.** An authorship proof rests on a bare signature over `event_id ‖ recipient_pubkey`, which is not an event. Unlike an authorship proof an auth event is *not* designated-verifier, so it is portable evidence binding a pubkey to a channel, which is why that channel's key must not be durable. [`privacy.md`](./docs/privacy.md#the-auth-event-is-portable-evidence).
 - **Scope is the trust graph, and trust, block and mute are three things.** Author sets come from explicit trust, never from follows. Block is the wire control — dropped on ingest, never served, sessions refused. Mute (kind 10000) is a display filter and never gates propagation, so do not fold the two together. [`policy.md`](./docs/policy.md#social-graph), [`sync.md`](./docs/sync.md#trust-block-and-mute-do-different-jobs).
 - **Never claim posts only reach nearby people.** False under I4 — a second-hop recipient may be anywhere. Say reach is bounded at two hops instead. [`privacy.md`](./docs/privacy.md).
@@ -53,9 +53,9 @@ Peers speak the **nostr relay wire protocol**: `REQ`/`EVENT`/`EOSE`/`CLOSE`/`OK`
 
 shadcn-svelte over bits-ui and Tailwind 4. Read [`ui.md`](./docs/ui.md) before touching the view; most of it is enforced by `just lint`, so a violation is a build failure rather than a review comment.
 
-- **`src/app.css` is the only place a design value lives.** Colour, elevation, motion and radius are Tailwind tokens. Restyle by changing a token, never by adding a value to a component.
+- **`src/app.css` is the only place a design value lives.** Color, elevation, motion and radius are Tailwind tokens. Restyle by changing a token, never by adding a value to a component.
 - **No arbitrary values outside `src/lib/components/`** — `bg-[#3a2f28]`, `w-[13px]`. Feature code composes components; components own the pixels. Arbitrary *variants* (`supports-[…]:`, `[&_svg]:`) are fine. [`ui.md`](./docs/ui.md#the-composition-rule).
-- **Semantic tokens only** — `bg-card`, not `bg-white`. A palette colour is correct in exactly one theme.
+- **Semantic tokens only** — `bg-card`, not `bg-white`. A palette color is correct in exactly one theme.
 - **Runes only in `.svelte` files.** `$state`, `$derived`, `$effect`, `$props` are compiler syntax; in a plain `.ts` module they are an undefined global that fails at runtime. Shared reactive state goes in a welshman store. [`ui.md`](./docs/ui.md#runes-stay-in-components).
 - **No `<style>` blocks in components.** A scoped rule cannot participate in the token system.
 - **`src/lib/components/ui/` is generated** by `just ui <name>`. Prettier ignores it and lint is relaxed there; hand-edit only deliberately, because the next `add` overwrites it. Our components go in `src/lib/components/`.
@@ -103,7 +103,7 @@ The packages in use are listed explicitly in `package.json` rather than resolved
 
 **Used for:** `@welshman/util` (event types, kinds, tags, filters), `@welshman/lib` (standalone helpers), and `@welshman/domain` (typed reader/writer pairs per kind). This is nostr knowledge, consumed unmodified.
 
-**`@welshman/app` is not used.** It assumes an in-memory event store, and there is none. [`ui.md`](./docs/ui.md#organising-against-welshman).
+**`@welshman/app` is not used.** It assumes an in-memory event store, and there is none. [`ui.md`](./docs/ui.md#organizing-against-welshman).
 
 **Not used for the peer protocol, either half.** Sync begins when a peer appears, which the view is not around for, so `@welshman/net` is not on that path — the core reimplements NIP-77 and NIP-42 against the same specifications, taking the negentropy algorithm from `coracle-lib`. [`sync.md`](./docs/sync.md#peers-speak-the-relay-wire-protocol).
 
@@ -124,6 +124,7 @@ The packages in use are listed explicitly in `package.json` rather than resolved
 | [`privacy.md`](./docs/privacy.md) | Threat model, what leaks, what users wrongly assume |
 | [`ui.md`](./docs/ui.md) | Component framework, design tokens, the conventions the linter enforces |
 | [`nip-p2p-auth.md`](./docs/nip-p2p-auth.md) | Peer authentication — the NIP-42 additions covering transports without URLs |
+| [`nip-imeta-blake3.md`](./docs/nip-imeta-blake3.md) | The `imeta` addition carrying a BLAKE3 root, for verified streaming of blobs |
 
 ## Reference materials
 

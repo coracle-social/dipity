@@ -15,7 +15,7 @@
  * `--secondary` (neutral fill) and `--accent` (hover state) are both wired
  * into the vendored components and mean neither of those things.
  *
- * See docs/ui.md#colour. Change values here, never in a component.
+ * See docs/ui.md#color. Change values here, never in a component.
  */
 
 :root {
@@ -61,7 +61,7 @@
    * gloss line, so filled controls get their own softer rim. */
 
   /* Clay elevation primitives. Warm-tinted rather than neutral black, so a
-   * shadow reads as the paper darkening under a surface rather than as grey
+   * shadow reads as the paper darkening under a surface rather than as gray
    * fog over it. `rim` is the lit top edge, `base` the shaded bottom edge —
    * together they give a surface thickness rather than mere separation. */
   --clay-umbra: oklch(0.42 0.03 60 / 0.1);
@@ -241,7 +241,7 @@
   html {
     @apply font-sans;
 
-    /* A webview is not a browser: no double-tap zoom, no grey flash on tap,
+    /* A webview is not a browser: no double-tap zoom, no gray flash on tap,
      * no rubber-banding the whole document behind the app chrome. */
     -webkit-tap-highlight-color: transparent;
     -webkit-text-size-adjust: 100%;

@@ -8,7 +8,7 @@ bitchat's stable 8-byte peer ID rides in the advertisement, so a passive sniffer
 
 ## What an active radio attacker learns
 
-An active attacker connects, or advertises our service UUID and waits to be connected to: a phone running the app, or a small board speaking the handshake. The second costs nothing to operate, because our own [identification budget](./discovery.md#making-identification-cheap) dials strangers on its own initiative — a beacon on a café windowsill is dialled by passers-by.
+An active attacker connects, or advertises our service UUID and waits to be connected to: a phone running the app, or a small board speaking the handshake. The second costs nothing to operate, because our own [identification budget](./discovery.md#making-identification-cheap) dials strangers on its own initiative — a beacon on a café windowsill is dialed by passers-by.
 
 What such an attacker gets:
 
@@ -16,7 +16,7 @@ What such an attacker gets:
 - **A Curve25519 static key that is fresh every session** and links nothing to anything. Noise XX discloses it to an unauthenticated peer before any consent has been established, which is why it is not long-term ([`transport.md`](./transport.md#the-static-key-is-generated-per-session)).
 - **A padded list of recognition tags**, each a MAC over this session's handshake hash, resolvable only by a peer holding the matching pair secret ([`discovery.md`](./discovery.md#recognition)).
 - **Nothing else, outside a discoverable window.** The session stops at SECURED and closes; no pubkey moves in either direction, and nothing the attacker holds will be seen again.
-- **A pubkey, inside a discoverable window** — but only after disclosing one of its own, if it dialled ([`discovery.md`](./discovery.md#the-dialler-authenticates-first)), and only until the [disclosure budget](./policy.md#discoverability) for that window is spent.
+- **A pubkey, inside a discoverable window** — but only after disclosing one of its own, if it dialed ([`discovery.md`](./discovery.md#the-dialer-authenticates-first)), and only until the [disclosure budget](./policy.md#discoverability) for that window is spent.
 
 **No identifier survives a session**, so tracking costs continuous observation or dense sensor coverage rather than a single sighting. That is not untrackability; the residual is in [What we do not defend against](#what-we-do-not-defend-against).
 
@@ -38,7 +38,7 @@ This is the second reason the Noise key is per-session. Against a long-term key,
 
 Nothing, and the reason is entirely NIP-42. A handshake against a per-session static key authenticates nobody, so SECURED means the channel is encrypted, not that anyone is who they claim. The transport binding closes the attack: an auth event names the key of the party that issued the challenge, so an event signed for a middle's channel does not verify on the far side, and a middle can only ever appear as itself. See [`nip-p2p-auth.md`](./nip-p2p-auth.md#the-check-runs-on-both-sides).
 
-The one place this needs care is **login with device**, where the target does not hold the identity key yet and NIP-42 has nothing to check. A short authentication string compared by eye is the whole defence — see [`keys.md`](./keys.md#login-with-device).
+The one place this needs care is **login with device**, where the target does not hold the identity key yet and NIP-42 has nothing to check. A short authentication string compared by eye is the whole defense — see [`keys.md`](./keys.md#login-with-device).
 
 ## Replay across peers
 
@@ -52,7 +52,7 @@ Provenance — which peers an event arrived from — is the same class of data a
 
 ## Unsigned events as leak protection
 
-Content events carry no signature, so a bug that publishes proximity content to the open network produces nothing a relay will keep or a client will render. This is defence in depth behind invariant I1, which is already enforced by transport configuration. See [`sync.md`](./proofs.md#events-are-not-signed).
+Content events carry no signature, so a bug that publishes proximity content to the open network produces nothing a relay will keep or a client will render. This is defense in depth behind invariant I1, which is already enforced by transport configuration. See [`sync.md`](./proofs.md#events-are-not-signed).
 
 ## What an authorship proof discloses
 
@@ -62,7 +62,7 @@ What a second-hop recipient learns is therefore bounded. They learn the forwarde
 
 A proof covers one event and nothing else, so a second-hop recipient learns nothing about anything else the forwarder was given.
 
-One device does hold portable proof that the author wrote the content and handed it over: the peer the signature names. That is unavoidable, since it is the same object that authorises forwarding. It stays one hop from the author and is never transmitted.
+One device does hold portable proof that the author wrote the content and handed it over: the peer the signature names. That is unavoidable, since it is the same object that authorizes forwarding. It stays one hop from the author and is never transmitted.
 
 ## Key custody
 
@@ -78,7 +78,7 @@ The backup file is the weak point in an otherwise device-bound design. Unencrypt
 - **Traffic analysis of payload sizes.** Frames are not padded. A determined observer learns roughly how much is being exchanged and when.
 - **Correlating sessions to each other** by radio fingerprint, timing, co-presence pattern, or simply leaving a receiver in one place. Nothing the protocol discloses outlives a session, so this is what tracking costs here.
 - **A harvester inside a discoverable window.** Whoever the window admits gets your pubkey, and a burner pubkey defeats any per-identity limit, so there is no blocklist that works. The [disclosure budget](./policy.md#discoverability) caps the yield per window; nothing caps the number of distinct attackers. Narrowing the window is the only real control.
-- **An authorised peer leaking.** Anyone entitled to receive your events can do whatever they like with them outside the protocol — screenshot, retype, republish. The two-hop cap bounds what the *protocol* will carry, not what a person will.
+- **An authorized peer leaking.** Anyone entitled to receive your events can do whatever they like with them outside the protocol — screenshot, retype, republish. The two-hop cap bounds what the *protocol* will carry, not what a person will.
 - **Media at rest.** Blobs are written to disk unsealed ([`storage.md`](./storage.md#blobs)). The privacy policy states this plainly.
 - **A compromised device.** Secure storage protects keys from other apps, not from an attacker who controls the OS.
 - **A locked device that has been unlocked since boot.** The identity key is readable to the app from first unlock onward, so the data-protection class is not a barrier to an attacker who can execute code as the app on a seized-but-locked phone. What is left protecting it is the sandbox and whatever exploit getting inside it costs. There is no good recovery: nostr has no revocation, so a stolen identity key stays valid forever and the only remedy is abandoning the pubkey and rebuilding the social graph under a new one. A device passcode and remote wipe are the real mitigations, and both are the platform's rather than ours.

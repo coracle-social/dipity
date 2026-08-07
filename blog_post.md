@@ -113,5 +113,5 @@
 - **Terminology:** the mechanism is *unsigned events + grants + grant proofs*, not "signed data that decays." Decay is still the right hook, but it decays in *provability*, not in readability — the second hop reads fine and simply cannot attest. Never imply content events carry a `sig`; that absence is the whole leak-protection story.
 - **Keepers:** "The wall isn't a rule, it's a missing signature." · "Configuration is the security boundary." · "They differ in trust, not in protocol." · "The knowledge propagates; the receipt does not."
 - **Length:** 1800–2500 words; §3 and §6 carry it.
-- **One diagram:** Alice → Bob → Carol → Dave. Solid arrow A→B labelled *grant*, dashed arrow B→C labelled *proof of grant*, hard stop after Carol. The change in line style is the whole argument.
+- **One diagram:** Alice → Bob → Carol → Dave. Solid arrow A→B labeled *grant*, dashed arrow B→C labeled *proof of grant*, hard stop after Carol. The change in line style is the whole argument.
 - Manyverse is MPL-2.0 — conceptual credit only, no code.

@@ -6,7 +6,7 @@ The nostr identity key: what holds it, what reads it, and how it moves between d
 
 One secp256k1 keypair, long-term and user-facing. It signs kind 22242 auth events and [authorship proofs](./proofs.md#authorship-proofs), and it is the identity users see and follow.
 
-The Noise static key that encrypts the BLE channel is a separate key with a separate job, described in [`transport.md`](./transport.md#channel-security). It is [regenerated every session](./transport.md#the-static-key-is-generated-per-session), so the identity key is the only durable key on the device. Mutual NIP-42 binds the two for the life of one session ([`sync.md`](./sync.md#authentication)).
+The Noise static key that encrypts the BLE channel is a separate key with a separate job, described in [`transport.md`](./transport.md#channel-security). Mutual NIP-42 binds the two for the life of one session.
 
 ### The key is not confined
 
