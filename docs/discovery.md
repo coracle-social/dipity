@@ -77,12 +77,6 @@ tag = HMAC(pair_secret, h)      # h is this session's Noise handshake hash
 
 The sender emits one tag per pair secret it holds; the receiver trial-MACs its own secrets against the list, a few microseconds per entry. A match identifies the relationship, and with it the policy stored against that peer.
 
-**The tag is bound to this session's handshake hash**, which gives it three properties an epoch-derived tag does not have:
-
-- **Fresh every session**, so the tag is not itself an identifier. An epoch-derived tag is stable for the length of its epoch, which moves the tracking window rather than closing it.
-- **Not replayable.** A tag captured from a paired peer proves nothing in another session. The gate's recognised branch discloses a pubkey, so a replayable tag would be a bearer token for that disclosure.
-- **No wall-clock dependency.** Devices here go days without a time source — [`nip-p2p-auth.md`](./nip-p2p-auth.md) widens NIP-42's `created_at` window for the same reason — and under an epoch scheme that drift becomes paired friends silently failing to recognise each other.
-
 **The dialler sends first**, and the peer answers only if a tag resolves or it is inside a discoverable window. A harvester that dials gets a list of random-looking bytes.
 
 **The list is padded to a fixed count**, so its length does not disclose how many peers the device has paired with, and a long history does not put more on the wire. Resolution stays cheap against the full set.

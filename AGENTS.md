@@ -119,7 +119,7 @@ The packages in use are listed explicitly in `package.json` rather than resolved
 | [`sync.md`](./docs/sync.md) | Relay wire protocol as peer protocol, reconciliation, how policy compiles to filters, quotas |
 | [`proofs.md`](./docs/proofs.md) | Unsigned events, session auth, authorship proofs, the two-hop cap |
 | [`storage.md`](./docs/storage.md) | SQLite in the core as source of truth and relay, `seen_at`, provenance, background serving |
-| [`media.md`](./docs/media.md) | Blob tiers, transfer, fetch policy, quotas |
+| [`media.md`](./docs/media.md) | Blob tiers, transfer, quotas |
 | [`keys.md`](./docs/keys.md) | The nostr identity key: custody, storage, login with device, backup |
 | [`privacy.md`](./docs/privacy.md) | Threat model, what leaks, what users wrongly assume |
 | [`ui.md`](./docs/ui.md) | Component framework, design tokens, the conventions the linter enforces |

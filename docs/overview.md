@@ -149,7 +149,7 @@ Read more at [`storage.md`](./storage.md)
 
 ## Media
 
-Blobs are referenced by hash and transferred on their own channel, separately from events. Three tiers follow from 5–15 KB/s. Tier 0 — blurhash, dimensions, duration, mime — rides inline with the event and makes the timeline render immediately; tier 1 is a preview of at most 32 KB, fetched automatically under policy; tier 2 is the full-resolution original, never automatic, and may take several encounters to arrive. Images added by the user are compressed before they are stored.
+Blobs are referenced by hash and transferred on their own channel, separately from events. Three tiers follow from 5–15 KB/s. Tier 0 — blurhash, dimensions, duration, mime — rides inline with the event and makes the timeline render immediately; tier 1 is a preview of at most 32 KB; tier 2 is the full-resolution original, which usually wants an L2CAP upgrade and may take several encounters to arrive. Every blob a stored event references is fetched automatically, previews before originals, with no per-blob decision and no user action involved. Quotas and a disk ceiling bound it. Images added by the user are compressed before they are stored.
 
 Read more at [`media.md`](./media.md)
 

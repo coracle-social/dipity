@@ -51,7 +51,7 @@ At 5–15 KB/s an encounter is measured by what fits in it:
 
 - **Event sync fits.** A one-shot GCS filter is 4–8 KB and covers thousands of events, and events themselves are a few hundred bytes. Someone walking past for eight seconds still exchanges useful data — [`sync.md`](./sync.md#one-shot-first-negentropy-if-the-session-lasts).
 - **Previews fit.** A 32 KB tier-1 preview is 3–7 s.
-- **Originals do not.** A 2 MB photo is 3–7 minutes of link time. Tier 2 is never fetched automatically and may accumulate across several encounters — [`media.md`](./media.md#three-tiers).
+- **Originals do not, on GATT.** A 2 MB photo is 3–7 minutes of link time. They are fetched anyway, behind the previews: transfers resume by offset, so an original accumulates across encounters instead of needing one long enough to hold it — [`media.md`](./media.md#every-referenced-blob-is-fetched). L2CAP is what turns several meetings into one.
 
 ### The L2CAP bandwidth upgrade
 
@@ -60,3 +60,5 @@ More bandwidth stays inside Bluetooth: an **L2CAP connection-oriented channel** 
 It is not free. Real throughput has to be measured on device rather than taken from spec numbers, Android's implementation has device-specific history, and it raises the Android floor to API 29. What makes it cheap next to a second network stack is that the channel carries frames the core already produces, under a session the core already holds open. `iroh-ble-transport` reaches for L2CAP-with-GATT-fallback for the same reason; we passed on that library because it is AGPL-3.0 and this app ships to app stores, not because of its technique.
 
 **It moves byte budgets, not round trips.** Round trips are set by the BLE connection interval, which an L2CAP channel shares, so the reconciliation strategy is unchanged — a drive-by still ends before a multi-round negotiation converges ([`sync.md`](./sync.md#one-shot-first-negentropy-if-the-session-lasts)). Control frames stay on GATT so the heartbeat keeps defining session lifetime ([`discovery.md`](./discovery.md#session-lifecycle)); bulk `EVENT` streams and blob fragments move across.
+
+**Blob transfer is what justifies it**, being the one workload that is purely byte-bound. Every blob a stored event references is fetched ([`media.md`](./media.md#every-referenced-blob-is-fetched)), so the outstanding byte count is usually large. The channel opens once that count justifies the setup round trip, rather than on connect, which a drive-by would not recover. Where it fails to open the same wants are worked over GATT and originals take more encounters, so nothing depends on it ([I2](./overview.md#invariants)).
