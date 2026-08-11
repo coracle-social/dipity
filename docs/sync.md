@@ -2,6 +2,16 @@
 
 What moves between peers, how the two sides agree on what's missing, and what policy governs it.
 
+## Authorship
+
+An event is either signed or unsigned, and the signature is what decides how far it can travel.
+
+**Signed events** are ordinary nostr events. Anyone can verify one, so it survives being forwarded and travels as far as people carry it — bounded by who meets whom and by each device's gossip policy, not by a hop count.
+
+**Unsigned events** carry an id and no `sig`. Their authorship rests on the session: an event whose `pubkey` is one the peer authenticated as is proof of authorship to that peer and to nobody else.
+
+Ingest applies this once, in the core. A signed event verifies on its own; an unsigned one is accepted only from the peer that authored it, tested against the set of pubkeys that peer authenticated as. Everything else drops.
+
 ## Event sync
 
 Once a connection reached `SYNCING` status, each side can initiate synchronization by requesting data it is missing. Event syncing uses the nostr client/relay protocol without modification. Each peer acts as both a client and a relay.
@@ -20,9 +30,9 @@ Accepting gossiped events is an unbounded write from whoever is standing nearby.
 
 ## Blob sync
 
-Blobs follow, on their own channel. They are addressed by the SHA-256 in the event's `imeta` tag and verified against the BLAKE3 root also included in the `imeta` tag ([`nip-imeta-blake3.md`](./nip-imeta-blake3.md)). Content addressing makes transfers resumable, dedupable across peers, and verifiable chunk by chunk as they arrive.
+Blobs follow, on their own channel. They are addressed by the SHA-256 in the event's `imeta` tag and verified against the BLAKE3 root also included in the `imeta` tag ([`nips/imeta-blake3.md`](./nips/imeta-blake3.md)). Content addressing makes transfers resumable, dedupable across peers, and verifiable chunk by chunk as they arrive.
 
-The want list is every hash a stored event references and the device does not hold. There is no per-blob decision: [Accept](./sync.md#scope-is-the-trust-graph) gates ingest against the author of each inbound event, so a stored event has already passed the scope check and its blobs are in scope for the same reason its text is. Previews take precedence over originals.
+The want list is every hash a stored event references and the device does not hold. There is no per-blob decision: [Accept](./policy.md#accept-and-gossip) gates ingest against the author of each inbound event, so a stored event has already passed the scope check and its blobs are in scope for the same reason its text is. Previews take precedence over originals.
 
 Each chunk verifies against the BLAKE3 root as it arrives, so a bad chunk costs one chunk and names the peer that sent it. A forwarder cannot alter the root: it rides in `imeta`, and the event id commits to it.
 

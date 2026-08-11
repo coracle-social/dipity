@@ -1,6 +1,6 @@
 # Transport
 
-One transport: BLE.
+One transport: BLE. Discovery, session establishment, sync and blobs all happen there or not at all, and L2CAP is a bandwidth upgrade within a session BLE already established rather than a second way to reach anyone.
 
 ## BLE
 
@@ -28,7 +28,7 @@ Our own, directly over GATT. The codec is core-side — pure byte manipulation t
 - **Priority-scheduled.** The ATT queue is per-connection, so separate characteristics would not give QoS isolation. The sender interleaves instead: control frames pre-empt bulk fragments, which keeps the heartbeat alive during a media transfer.
 - **Fragmented.** Chunked to `maximumWriteValueLength(for:)` minus header — roughly 500 bytes usable at a 512-byte MTU, often less.
 - **Reliable.** Acknowledged ATT writes give ordered reliable delivery on the control and sync channels. The blob channel uses `writeWithoutResponse` with application-level acking and pacing, at 25–30 ms between fragments to avoid loss.
-- **Resumable.** Blob transfers survive disconnection and resume by chunk. See [`media.md`](./media.md).
+- **Resumable.** Blob transfers survive disconnection and resume by chunk. See [`sync.md`](./sync.md#blob-sync).
 
 ### Throughput
 

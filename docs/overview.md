@@ -14,7 +14,7 @@ It differs from its closest relatives:
 - **bitchat** gets local mesh right but is a chat app, and its "global reach" path bridges distant peers over public relays — precisely what this design excludes.
 - **Briar** is the closest on framing: offline-first, with forums and blogs rather than only chat, syncing over Bluetooth and Wi-Fi. Its escape hatch is Tor rather than public relays, it runs on Android only, and its data model is its own rather than nostr's.
 - **Manyverse** (SSB) gets offline gossip right but bridges freely over rooms and pubs, and its data model is SSB's append-only log rather than nostr's signed events.
-- **Rhizome** (Serval Project) is the unbounded case, and the one I5 is written against: a bundle may end up replicated on every node in the network, and the project's own disclaimer says the app copies shared files to every other device running it, regardless of size, content, or intended recipient.
+- **Rhizome** (Serval Project) is the unbounded case, and the one the reach rules here are written against: a bundle may end up replicated on every node in the network, and the project's own disclaimer says the app copies shared files to every other device running it, regardless of size, content, or intended recipient.
 
 Dip takes Manyverse's sync model, bitchat's transport engineering, nostr's data model, and none of their bridging.
 
@@ -30,24 +30,22 @@ This project is time-biased. It treats distance as something to articulate rathe
 
 ## Principles
 
-1. **Digital localism is structural, not based on policy.** Exclusive use of physical media enforces proximity. Limited device storage enforces ephemerality. Reach is a function of trust, which means amplification reflects communal assent. Cryptography governs verifiability of public speech and protects confidential speech from middlemen.
+1. **Digital localism is structural, not based on policy.** Exclusive use of physical media enforces proximity. Limited device storage enforces ephemerality. Reach is a function of communal assent. Cryptography governs verifiability of public speech.
 
-2. **Trust is explicit.** Peering with an unknown person prompts a introduction ceremony. Only after is that complete can gossip proceed. Users locally maintain contact lists and policies which allow for fine-grained control over what events they receive, transmit, and who they peer with.
+2. **Trust is explicit.** Peering with an unknown person prompts a introduction ceremony. Only after that is complete can gossip proceed. Users locally maintain contact lists and policies which allow for fine-grained control over what events they receive, transmit, and who they peer with.
 
-2. **Forgetting is the default.** If someone does not actively participate in the community, they fall out of it. If content is not repeatedly invoked, it disappears. Reach is a function of communal value, expressed through repeated propagation.
-
-3. **Private speech is deniable; public speech is attributable.** Separate registers, separate cryptographic treatment, and a difference the interface makes obvious. Reach is bounded - an event travels at most two hops from its author.
+3. **Forgetting is the default.** If someone does not actively participate in the community, they fall out of it. If content is not repeatedly invoked, it disappears. Reach is a function of communal value, expressed through repeated propagation.
 
 4. **Communication requires rich content types.** Communication should not be limited to chat. Different types of communication should be presented in different ways.
 
-5. **The wire carries mass; the mesh carries meaning.** Internet transport is used exclusively for emergencies which require space-binding transmission, and for propagation of large files.
+5. **The mesh is the only wire.** Bluetooth carries everything — discovery, sync, and blobs alike. There is no internet path, so nothing reaches a device except through someone who was physically there.
 
 ## Non-goals
 
 - No relay fallback, no hole punching, no global discovery, no DHT.
 - No bridging of peers who have not been co-present.
-- **No unbounded flooding.** Reach is capped at two hops.
-- **No compatibility with public relays.** Content events carry no signature, so relays reject them and no existing client can read them.
+- **No unbounded flooding.** Reach is limited by topology and by policy: an unsigned event never leaves the peer it was handed to, and a signed one travels only as far as people carry it.
+- **No compatibility with public relays.** Nothing here publishes to one, and an unsigned event is not a valid nostr event, so relays reject it and no existing client can read it.
 
 ## Tech stack
 
@@ -63,10 +61,10 @@ This project is time-biased. It treats distance as something to articulate rathe
 - **CoreBluetooth** — iOS dual-role GATT, background modes, state restoration.
 - **`android.bluetooth`** — Android advertiser, scanner, GATT server and client.
 - **BLE GATT** — the transport, with [our own framing](./transport.md#framing) over one characteristic.
-- **`coracle-lib`** — nostr types for the core: NIP-01 serialization, filters, NIP-77 negentropy. Its event hierarchy separates an unsigned `HashedEvent` from a signed `Event`, which is what [unsigned content events](./proofs.md#events-are-not-signed) need; rust-nostr's mandatory signature cannot express it.
+- **`coracle-lib`** — nostr types for the core: NIP-01 serialization, filters, NIP-77 negentropy. Its event hierarchy separates an unsigned `HashedEvent` from a signed `Event`, which is what [unsigned events](./sync.md#authorship) need; rust-nostr's mandatory signature cannot express it.
 - **`snow`** — Noise XX: Curve25519 / ChaCha20-Poly1305 / SHA-256.
 - **`rusqlite`** — durable event store, indexes, NIP-01 filter matching.
-- **`secp256k1`** — signing and verifying authorship proofs and auth events; **`k256`** for the [authorship proof](./proofs.md#authorship-proofs), which needs explicit group arithmetic that the binding does not expose.
+- **`secp256k1`** — signing and verifying [signed events](./sync.md#authorship) and auth events.
 
 ## Architecture
 
@@ -80,7 +78,7 @@ Only one of those boundaries is expensive. SQLite is in-process C, and uniffi pa
 
 ## Storage
 
-All storage is managed by `core`. Events, provenance, preferences, etc. are all stored in sqlite, while blobs are stored in a blob store managed by `core` and configured by `shell`.
+All storage is managed by `core`. Events, provenance, preferences, etc. are all stored in sqlite, while blobs are stored in a blob store managed by `core` and configured by `shell`. Only keys are stored using native APIs.
 
 Read more at [`storage.md`](./storage.md)
 
@@ -106,25 +104,17 @@ Read more at [`keys.md`](./keys.md)
 
 ## Sync
 
-Each device is a p2p nostr relay and a nostr client at once, reusing the relay protocol in both directions. Content events carry an id and no `sig`. At the first hop the authenticated session establishes authorship; the second hop is enabled using authorship proofs which aren't forwardable.
+Each device is a p2p nostr relay and a nostr client at once, reusing the relay protocol in both directions. An event is either signed, and travels as far as people carry it, or unsigned, in which case the authenticated session is the only thing establishing authorship and it goes no further than the peer it was handed to.
 
 Event syncing happens via negentropy; blob syncing is done by sha256 hash. What can be received or sent to a given peer depends on user policy.
 
 Read more at [`sync.md`](./sync.md) and [`policy.md`](./policy.md).
 
-## Storage
-
-The core's SQLite is the only store: events, their tags, a full-text index, and provenance: one row per event per peer it has been seen from. It answers peers with the relay protocol, and the view with a live query method built for the store. The view holds caches for what it reads synchronously.
-
-Ingest happens once, in the core: id recomputation, proof verification, quota accounting, and the provenance row. Nothing unverified ever reaches the view.
-
-Read more at [`storage.md`](./storage.md)
-
 ## Privacy
 
 A passive radio observer learns only that some device running this app is nearby. An active one can always complete a handshake, so nothing that handshake discloses outlives the session, and outside a discoverable window no pubkey moves at all. A peer who completes a session learns the user's pubkey, that they were physically present at a time and place, and whatever the gossip scope serves — which is why the consent gate sits before authentication.
 
-`seen_at` and provenance are records of the user's movements, so they never leave the device. An authorship proof convinces its recipient and nobody else, so a second-hop recipient knows where an event came from and cannot prove it.
+`seen_at` and provenance are records of the user's movements, so they never leave the device. An unsigned event convinces the peer it was handed to and nobody else, so what the user says in that register leaves no evidence anyone can carry away.
 
 Read more at [`privacy.md`](./privacy.md)
 

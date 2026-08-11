@@ -4,7 +4,7 @@ User and app-defined settings which determine what content gets replicated where
 
 ## Hard limits
 
-Content can never be propagated more than two hops away due to how [authorship proofs](./proofs.md) and [transport](./transport.md) are structured. Data will always flow over a local bluetooth connection, and is never valid unless accompanied by a cryptographic proof of authorship.
+Data always flows over a local bluetooth connection, so nothing reaches a device except through someone who was physically there. How far it goes from the author is set by [the signature](./sync.md#authorship): an unsigned event stops at the peer it was handed to, since a forwarder has nothing to show; a signed one travels as far as people carry it, bounded by each device's gossip policy rather than by a hop count.
 
 ## Discoverability
 
@@ -16,7 +16,7 @@ Otherwise, the user has a few preferences they can set for controlling backgroun
 
 - Cool-off window - when the app is foregrounded, it begins accepting connections. This cool-off period determines how long the app will continue accepting unknown connections after the app is backgrounded. 10 minutes by default.
 - Discoverable times - times of day, in the device's local timezone, when the user is willing to be passively discoverable. Empty by default.
-- Disclosure budget - the number of new pubkeys the device will disclose to per discoverable window. Bounds what a harvester camped in a busy place collects, without needing to know who anyone is; nothing else can, since a burner pubkey defeats any per-identity limit. See [the disclosure budget](./discovery.md#the-disclosure-budget).
+- Disclosure budget - the number of new pubkeys the device will disclose to per discoverable window. Bounds what a harvester camped in a busy place collects, without needing to know who anyone is; nothing else can, since a burner pubkey defeats any per-identity limit. See [the consent gate](./discovery.md#the-consent-gate).
 
 An unknown peer is admitted if either of the first two preferences allows it and the budget has not been spent.
 
@@ -35,7 +35,7 @@ Every setting below is expressed on the same tiers, applied either to the peer o
 - **Trusted** - people the user explicitly trusts.
 - **Network** - people the user transitively trusts, two hops out.
 - **Lenient** - anyone who connects, except blocked pubkeys.
-- **Public** - anyone; [proofs are generated](./proofs.md) for whatever the setting covers. Visibility settings only.
+- **Public** - anyone; whatever the setting covers is [signed](./sync.md#authorship) so it can travel. Visibility settings only.
 
 ## Visibility
 
@@ -56,5 +56,5 @@ How much of other people's content the device takes in, and how much of it goes 
 | Accept | what the device stores from a peer | `lenient` |
 | Gossip | what the device relays onward | `network` |
 
-Gossip takes one extra value, **Nothing**, which shares only the user's own content. How both compile onto the wire is in [`sync.md`](./sync.md#sync-policy).
+Gossip takes one extra value, **Nothing**, which shares only the user's own content. How both compile onto the wire is in [`sync.md`](./sync.md#event-sync).
 

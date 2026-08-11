@@ -5,3 +5,4 @@ android
 dist
 ios
 target
+dip-ffi

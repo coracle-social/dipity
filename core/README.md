@@ -42,6 +42,6 @@ Each shell references the artifacts once, from the Capacitor plugin.
 
 ## Adding a dependency
 
-Heavy dependencies go in `[workspace.dependencies]`, added when the module that needs them arrives so version choices stay in one place: `coracle-lib` for nostr types and negentropy, `rusqlite` for the store, `secp256k1` for grant and auth signing, `k256` for the grant proof's explicit group arithmetic, `snow` for Noise XX.
+Heavy dependencies go in `[workspace.dependencies]`, added when the module that needs them arrives so version choices stay in one place: `coracle-lib` for nostr types and negentropy, `rusqlite` for the store, `secp256k1` for event and auth signing, `snow` for Noise XX.
 
 `coracle-lib` comes from `coracle-rust` on gitea as a git dependency pinned to a rev, never a path dependency — a path resolves on one machine and `just sync` has to build in CI. Its `src/` is tangled from `book/`, so anything we need upstream is a chapter edit rather than a patch, and hand-editing the vendored source is lost on the next tangle.

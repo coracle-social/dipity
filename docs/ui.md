@@ -21,7 +21,7 @@ The view layer: component framework, design tokens, and the conventions a linter
 
 The cost: nothing updates itself. A fix upstream reaches us only if someone re-runs the CLI, and any local edit to a vendored file is a merge conflict waiting to happen. Hence [the vendored seam](#the-vendored-seam).
 
-**Fonts are bundled, never fetched.** `@fontsource-variable/figtree` resolves to woff2 files Vite emits into `dist/`. A Google Fonts `@import` would put a network request on first paint, which fails exactly where this app is supposed to work — see [I3](./overview.md#invariants). The same rule covers icons, which is why Lucide is an npm package and not a sprite sheet on a CDN.
+**Fonts are bundled, never fetched.** `@fontsource-variable/figtree` resolves to woff2 files Vite emits into `dist/`. A Google Fonts `@import` would put a network request on first paint, which fails exactly where this app is supposed to work — nothing in the gossip path may require the network. The same rule covers icons, which is why Lucide is an npm package and not a sprite sheet on a CDN.
 
 ## Where things live
 
@@ -184,7 +184,7 @@ Styling happens in Tailwind utilities, or in the theme. A component-scoped rule 
 - **`tv()` for variants, not conditionals.** If a component has more than two visual states, it gets a variant table.
 - **Semantic HTML before ARIA.** bits-ui handles the wiring for anything interactive; hand-rolled `role` attributes are a sign the wrong primitive was used.
 - **The UI owns no durable state.** The view is suspended in the background, so anything that must survive that lives in the plugin. UI state is view state.
-- **Never claim posts only reach nearby people.** False under [I4](./overview.md#invariants), and copy is where that lie is easiest to tell. Say reach is bounded at two hops.
+- **Never claim posts only reach nearby people.** Sync is store-and-forward, so a signed post travels as far as people carry it — and copy is where that lie is easiest to tell. Say what limits reach: a signature, or the lack of one.
 
 ## Organizing against welshman
 
