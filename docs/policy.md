@@ -4,7 +4,7 @@ User and app-defined settings which determine what content gets replicated where
 
 ## Hard limits
 
-Data always flows over a local bluetooth connection, so nothing reaches a device except through someone who was physically there. How far it goes from the author is set by [the signature](./sync.md#authorship): an unsigned event stops at the peer it was handed to, since a forwarder has nothing to show; a signed one travels as far as people carry it, bounded by each device's gossip policy rather than by a hop count.
+Content can never be propagated more than two hops away due to how [authorship proofs](./proofs.md) and [transport](./transport.md) are structured. Data always flows over a local bluetooth connection, and is never valid unless authorship is established — by the authenticated session at the first hop, by a designated-verifier proof at the second. No policy setting extends that.
 
 ## Discoverability
 
@@ -35,7 +35,7 @@ Every setting below is expressed on the same tiers, applied either to the peer o
 - **Trusted** - people the user explicitly trusts.
 - **Network** - people the user transitively trusts, two hops out.
 - **Lenient** - anyone who connects, except blocked pubkeys.
-- **Public** - anyone; whatever the setting covers is [signed](./sync.md#authorship) so it can travel. Visibility settings only.
+- **Public** - anyone; [proofs are generated](./proofs.md) for whatever the setting covers. Visibility settings only.
 
 ## Visibility
 

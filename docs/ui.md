@@ -184,7 +184,7 @@ Styling happens in Tailwind utilities, or in the theme. A component-scoped rule 
 - **`tv()` for variants, not conditionals.** If a component has more than two visual states, it gets a variant table.
 - **Semantic HTML before ARIA.** bits-ui handles the wiring for anything interactive; hand-rolled `role` attributes are a sign the wrong primitive was used.
 - **The UI owns no durable state.** The view is suspended in the background, so anything that must survive that lives in the plugin. UI state is view state.
-- **Never claim posts only reach nearby people.** Sync is store-and-forward, so a signed post travels as far as people carry it — and copy is where that lie is easiest to tell. Say what limits reach: a signature, or the lack of one.
+- **Never claim posts only reach nearby people.** A second-hop recipient may be anywhere. Say reach is bounded at two hops.
 
 ## Organizing against welshman
 

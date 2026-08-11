@@ -4,13 +4,13 @@ What moves between peers, how the two sides agree on what's missing, and what po
 
 ## Authorship
 
-An event is either signed or unsigned, and the signature is what decides how far it can travel.
+Content events carry an id and no `sig`, so what authenticates an event is what decides how far it travels. There are two registers.
 
-**Signed events** are ordinary nostr events. Anyone can verify one, so it survives being forwarded and travels as far as people carry it — bounded by who meets whom and by each device's gossip policy, not by a hop count.
+**The session** carries the first hop. An event whose `pubkey` is one the peer authenticated as is proof of authorship to that peer and to nobody else.
 
-**Unsigned events** carry an id and no `sig`. Their authorship rests on the session: an event whose `pubkey` is one the peer authenticated as is proof of authorship to that peer and to nobody else.
+**An authorship proof** carries the second. The author may choose to hand the first recipient a signature over the event id and that recipient's pubkey. The recipient can then forward the event with a designated-verifier proof of holding it. The mechanism and its limits are in [`proofs.md`](./proofs.md).
 
-Ingest applies this once, in the core. A signed event verifies on its own; an unsigned one is accepted only from the peer that authored it, tested against the set of pubkeys that peer authenticated as. Everything else drops.
+Ingest applies this once, in the core. An event is accepted from the peer that authored it, tested against the set of pubkeys that peer authenticated as, or from a forwarder presenting a proof designated to this device. Everything else gets dropped.
 
 ## Event sync
 
@@ -44,7 +44,7 @@ We then request each group individually using `GET /<sha256>` with `accept-range
 
 There is no HTTP on a BLE link, so all messages are wrapped as `["BLOSSOM", <id>, <method>, <path>, <headers>, <body>]`.
 
-When an event references a blob, we save a record to the `blobs` table which maps the sha256 to the blob's metadata - including everything in the `imeta` tag, as well as the id of the event the blob was first referred to (by `seen_at`, not `created_at`), and whether the blob is a `preview` or an `original`. Blobs inherit the permissions of this event.
+When an event references a blob, we save a record to the `blob` table which maps the sha256 to the blob's metadata - including everything in the `imeta` tag, as well as the id of the event the blob was first referred to (by `seen_at`, not `created_at`), and whether the blob is a `preview` or an `original`. Blobs inherit the permissions of this event.
 
 ### Quotas
 

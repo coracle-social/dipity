@@ -4,7 +4,7 @@ The nostr identity key: what holds it, what reads it, and how it moves between d
 
 ## The nostr identity
 
-One secp256k1 keypair, long-term and user-facing. It signs kind 22242 auth events and [the content that carries a signature](./sync.md#authorship), and it is the identity users see and follow.
+One secp256k1 keypair, long-term and user-facing. It signs kind 22242 auth events and [authorship signatures](./proofs.md#the-authors-signature-stays-with-the-peer-it-names), and it is the identity users see and follow.
 
 The Noise static key that encrypts the BLE channel is a separate key with a separate job, described in [`transport.md`](./transport.md#channel-security). Mutual NIP-42 binds the two for the life of one session.
 
@@ -20,7 +20,7 @@ Whether generated on device or imported, the nostr key is kept in platform secur
 
 ### Signing happens in the background
 
-The key signs during encounters — auth events, and content the user publishes signed — which may happen while the app is backgrounded or the device is locked. What this implies for the accessibility class:
+The key signs during encounters — auth events and authorship signatures — which may happen while the app is backgrounded or the device is locked. What this implies for the accessibility class:
 
 - **iOS: `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`.** Readable from the moment the user first unlocks after boot, including while locked afterwards. `ThisDeviceOnly` keeps it out of iCloud Keychain and encrypted device backups — moving the identity to another device is [an explicit flow](#login-with-device), not an implicit sync.
 - **Android: a Keystore-wrapped key with no `setUserAuthenticationRequired`.** The default already behaves this way; the thing to avoid is an auth-gated key, which would fail in the background for the same reason.

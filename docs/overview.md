@@ -44,8 +44,8 @@ This project is time-biased. It treats distance as something to articulate rathe
 
 - No relay fallback, no hole punching, no global discovery, no DHT.
 - No bridging of peers who have not been co-present.
-- **No unbounded flooding.** Reach is limited by topology and by policy: an unsigned event never leaves the peer it was handed to, and a signed one travels only as far as people carry it.
-- **No compatibility with public relays.** Nothing here publishes to one, and an unsigned event is not a valid nostr event, so relays reject it and no existing client can read it.
+- **No unbounded flooding.** Reach is capped at two hops by construction, not by a policy each device is trusted to apply. See [`proofs.md`](./proofs.md#authorship-proofs).
+- **No compatibility with public relays.** Content events carry no signature, so relays reject them and no existing client can read them. See [`proofs.md`](./proofs.md#events-are-not-signed).
 
 ## Tech stack
 
@@ -61,10 +61,10 @@ This project is time-biased. It treats distance as something to articulate rathe
 - **CoreBluetooth** — iOS dual-role GATT, background modes, state restoration.
 - **`android.bluetooth`** — Android advertiser, scanner, GATT server and client.
 - **BLE GATT** — the transport, with [our own framing](./transport.md#framing) over one characteristic.
-- **`coracle-lib`** — nostr types for the core: NIP-01 serialization, filters, NIP-77 negentropy. Its event hierarchy separates an unsigned `HashedEvent` from a signed `Event`, which is what [unsigned events](./sync.md#authorship) need; rust-nostr's mandatory signature cannot express it.
+- **`coracle-lib`** — nostr types for the core: NIP-01 serialization, filters, NIP-77 negentropy. Its event hierarchy separates an unsigned `HashedEvent` from a signed `Event`, which is what [unsigned content events](./proofs.md#events-are-not-signed) need; rust-nostr's mandatory signature cannot express it.
 - **`snow`** — Noise XX: Curve25519 / ChaCha20-Poly1305 / SHA-256.
 - **`rusqlite`** — durable event store, indexes, NIP-01 filter matching.
-- **`secp256k1`** — signing and verifying [signed events](./sync.md#authorship) and auth events.
+- **`secp256k1`** — signing and verifying authorship signatures and auth events; **`k256`** for the [authorship proof](./proofs.md#authorship-proofs), which needs explicit group arithmetic that the binding does not expose.
 
 ## Architecture
 
@@ -104,7 +104,7 @@ Read more at [`keys.md`](./keys.md)
 
 ## Sync
 
-Each device is a p2p nostr relay and a nostr client at once, reusing the relay protocol in both directions. An event is either signed, and travels as far as people carry it, or unsigned, in which case the authenticated session is the only thing establishing authorship and it goes no further than the peer it was handed to.
+Each device is a p2p nostr relay and a nostr client at once, reusing the relay protocol in both directions. Content events carry an id and no `sig`. At the first hop the authenticated session establishes authorship; the second hop is enabled using authorship proofs, which aren't forwardable.
 
 Event syncing happens via negentropy; blob syncing is done by sha256 hash. What can be received or sent to a given peer depends on user policy.
 
@@ -114,7 +114,7 @@ Read more at [`sync.md`](./sync.md) and [`policy.md`](./policy.md).
 
 A passive radio observer learns only that some device running this app is nearby. An active one can always complete a handshake, so nothing that handshake discloses outlives the session, and outside a discoverable window no pubkey moves at all. A peer who completes a session learns the user's pubkey, that they were physically present at a time and place, and whatever the gossip scope serves — which is why the consent gate sits before authentication.
 
-`seen_at` and provenance are records of the user's movements, so they never leave the device. An unsigned event convinces the peer it was handed to and nobody else, so what the user says in that register leaves no evidence anyone can carry away.
+`seen_at` and provenance are records of the user's movements, so they never leave the device. An authorship proof convinces its recipient and nobody else, so a second-hop recipient knows where an event came from and cannot prove it — though the peer the author handed it to holds a signature that does, which is where that guarantee stops.
 
 Read more at [`privacy.md`](./privacy.md)
 

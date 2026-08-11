@@ -4,14 +4,13 @@ Where events live, who can answer a query, and what happens while the app is asl
 
 ## The schema
 
-Six tables in the core's SQLite:
-
 | Table | Holds |
 | --- | --- |
 | `event` | The events themselves. |
 | `event_fts` | Full-text index over content, for search. |
 | `event_tag` | One row per tag, so NIP-01 tag filters are an index lookup. |
 | `event_seen` | `event_id`, `seen_at`, `peer_pubkey`. Unique on (`event_id`, `peer_pubkey`). |
+| `proof` | `event_id`, `recipient_pubkey`, `sig`. Unique on (`event_id`, `recipient_pubkey`). The author's signature naming a recipient, held by the peer it names. |
 | `pref` | A key/value store for storing app policies and ui preferences. |
 | `blob` | A mapping of blob sha256 metadata extracted from the first event seen that referenced it. |
 
@@ -27,15 +26,15 @@ On iOS the shell also sets the database's data-protection class, and SQLite's `-
 
 ## The event store
 
-The event store handles processing deletions, addressable events, syncing tags/fts tables and tracking provenance. This is just a CRUD layer that enforces invariants between event related tables.
+The event store handles processing deletions, addressable events, syncing tags/fts tables, tracking provenance, and storing/retrieving authorship signatures. This is just a CRUD layer that enforces invariants between event related tables.
 
 ## The preference store
 
-This is a think kv layer around the `prefs` table.
+This is a think kv layer around the `pref` table.
 
 ## The relay store
 
-An in-memory p2p relay implementation implementing the relay side of the [`sync.md`](./sync.md) protocol accesses the event store, interprets the relay protocol, and enforces authentication, policy, validation, and so on.
+An in-memory p2p relay implementation implementing the relay side of the [`sync.md`](./sync.md) protocol accesses the event store, interprets the relay protocol, and enforces authentication, policy, validation, authorship proofs, and so on.
 
 ## The view store
 
