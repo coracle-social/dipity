@@ -18,27 +18,34 @@ It differs from its closest relatives:
 
 Dip takes Manyverse's sync model, bitchat's transport engineering, nostr's data model, and none of their bridging.
 
-## Invariants
+## Background
 
-These are load-bearing.
+James Carey distinguished two views of communication. The transmission view understands communication as the movement of messages across space for the purpose of control. The ritual view understands communication as the maintenance of a society in time — the shared ceremony, the repeated act, the drawing of people into fellowship.
 
-**I1 — Proximity.** A peer connection is only ever established with a device that is currently physically nearby. Enforced structurally, not by runtime policy: the only way to learn how to reach a peer is to have been in Bluetooth range of them.
+Space-binding media are light and portable, and they favor expansion, administration, and empire because they make it possible to govern distant things from a center. Time-binding media are heavy, durable, and local, and they favor continuity, community, and memory, because they make it possible for a place to persist as itself.
 
-**I2 — Progressive enhancement.** Bluetooth is the floor and always works. Any transport above it is an optimization for bandwidth. See [`transport.md`](./transport.md).
+General-purpose digital networks tend to be aggressively space-binding. The marginal cost of moving a message one meter and ten thousand kilometers is identical, and the economics built on that fact reward the annihilation of distance and the aggregation of attention at a center. A culture that relies too heavily on a space-binding medium suffers from extraction by third parties, is displaced by its representation, its context collapses, and its activity is instrumentalized.
 
-**I3 — Offline-first gossip.** No part of the gossip protocol requires internet: discovery, session establishment, sync, storage, signing and forwarding all work with no network. The app has direct access to the user's key ([`keys.md`](./keys.md#key-custody)), so no network is needed for signing.
+This project is time-biased. It treats distance as something to articulate rather than eliminate.
 
-**I4 — Data outlives connections.** Sync is store-and-forward. Tearing down a link does not discard what was synced over it, and events propagate transitively through people who move. This means I1 constrains *connections*, not *information* — see [`privacy.md`](./privacy.md).
+## Principles
 
-**I5 — Bounded reach.** An event travels at most two hops from its author: to someone the author met, and one step beyond. Enforced cryptographically by authorship proofs ([`proofs.md`](./proofs.md#authorship-proofs)), not by policy.
+1. **Digital localism is structural, not based on policy.** Exclusive use of physical media enforces proximity. Limited device storage enforces ephemerality. Reach is a function of trust, which means amplification reflects communal assent. Cryptography governs verifiability of public speech and protects confidential speech from middlemen.
+
+2. **Forgetting is the default.** If someone does not actively participate in the community, they fall out of it. If content is not repeatedly invoked, it disappears. Reach is a function of communal value, expressed through repeated propagation.
+
+3. **Private speech is deniable; public speech is attributable.** Separate registers, separate cryptographic treatment, and a difference the interface makes obvious. Reach is bounded - an event travels at most two hops from its author.
+
+4. **Communication requires rich content types.** Communication should not be limited to chat. Different types of communication should be presented in different ways.
+
+5. **The wire carries mass; the mesh carries meaning.** Internet transport is used exclusively for emergencies which require space-binding transmission, and for propagation of large files.
 
 ## Non-goals
 
 - No relay fallback, no hole punching, no global discovery, no DHT.
 - No bridging of peers who have not been co-present.
-- **No unbounded flooding.** Reach is capped at two hops by construction, not by a policy each device is trusted to apply. See [`sync.md`](./proofs.md#authorship-proofs).
-- **No compatibility with public relays.** Content events carry no signature, so relays reject them and no existing client can read them. See [`proofs.md`](./proofs.md#events-are-not-signed). Only that compatibility is given up: kinds and serialization stay nostr's, and the extensions this design needs — authorship proofs, [transport identities](./nip-p2p-auth.md), the [`imeta` BLAKE3 root](./nip-imeta-blake3.md) — are meant to land in the protocol rather than stay here.
-- Not a chat app. Rich nostr event types, including media, are first-class.
+- **No unbounded flooding.** Reach is capped at two hops.
+- **No compatibility with public relays.** Content events carry no signature, so relays reject them and no existing client can read them.
 
 ## Tech stack
 
