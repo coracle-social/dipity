@@ -32,6 +32,8 @@ This project is time-biased. It treats distance as something to articulate rathe
 
 1. **Digital localism is structural, not based on policy.** Exclusive use of physical media enforces proximity. Limited device storage enforces ephemerality. Reach is a function of trust, which means amplification reflects communal assent. Cryptography governs verifiability of public speech and protects confidential speech from middlemen.
 
+2. **Trust is explicit.** Peering with an unknown person prompts a introduction ceremony. Only after is that complete can gossip proceed. Users locally maintain contact lists and policies which allow for fine-grained control over what events they receive, transmit, and who they peer with.
+
 2. **Forgetting is the default.** If someone does not actively participate in the community, they fall out of it. If content is not repeatedly invoked, it disappears. Reach is a function of communal value, expressed through repeated propagation.
 
 3. **Private speech is deniable; public speech is attributable.** Separate registers, separate cryptographic treatment, and a difference the interface makes obvious. Reach is bounded - an event travels at most two hops from its author.
