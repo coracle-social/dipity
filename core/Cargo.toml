@@ -13,6 +13,26 @@ publish = false
 dip = { path = "dip" }
 uniffi = "0.32"
 
+# Nostr types and stateless utilities: events, keys, tags, filters, kinds,
+# addresses, NIP-77 negentropy. See ../docs/overview.md.
+#
+# A path dependency, and temporary: `coracle-lib` does not build from a git rev,
+# because its `src/` is tangled from `book/` and gitignored upstream. So the
+# core builds only where that checkout exists and has been tangled. Swap this
+# line for `{ git = "…", rev = "…" }` once coracle-lib ships a release — which
+# has to happen before this app does. See README.md.
+coracle-lib = { path = "../../coracle-rust/coracle-lib" }
+hex = "0.4"
+
+# The store. Bundled amalgamation so both platforms run one pinned SQLite
+# rather than whatever the OS shipped — see docs/storage.md.
+rusqlite = { version = "0.39", features = ["bundled"] }
+# Broadcast channels for reactive reads. `sync` only: no runtime, no reactor.
+tokio = { version = "1", features = ["sync"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
 [workspace.lints.rust]
 missing_docs = "warn"
 

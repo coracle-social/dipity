@@ -16,7 +16,7 @@ Otherwise, the user has a few preferences they can set for controlling backgroun
 
 - Cool-off window - when the app is foregrounded, it begins accepting connections. This cool-off period determines how long the app will continue accepting unknown connections after the app is backgrounded. 10 minutes by default.
 - Discoverable times - times of day, in the device's local timezone, when the user is willing to be passively discoverable. Empty by default.
-- Disclosure budget - the number of new pubkeys the device will disclose to per discoverable window. Bounds what a harvester camped in a busy place collects, without needing to know who anyone is; nothing else can, since a burner pubkey defeats any per-identity limit. See [the consent gate](./discovery.md#the-consent-gate).
+- Disclosure budget - the number of new pubkeys the device will disclose to per discoverable window. 10 by default. Bounds what a harvester camped in a busy place collects, without needing to know who anyone is; nothing else can, since a burner pubkey defeats any per-identity limit. See [the consent gate](./discovery.md#the-consent-gate).
 
 An unknown peer is admitted if either of the first two preferences allows it and the budget has not been spent.
 

@@ -1,0 +1,3 @@
+--ignore-dir=ref
+--ignore-dir=core/target
+--ignore-file=match:.prettierignore

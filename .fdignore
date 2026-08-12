@@ -6,3 +6,4 @@ dist
 ios
 target
 dip-ffi
+tests
