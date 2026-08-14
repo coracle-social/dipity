@@ -6,8 +6,7 @@ use rusqlite::{Row, params, params_from_iter};
 
 use crate::db::Tx;
 use crate::db::sql::{bytes_from_sql, pubkey_from_sql};
-
-use super::model::Proof;
+use crate::model::Proof;
 
 /// The signature over an event naming a particular recipient.
 pub fn get(tx: &Tx<'_>, event_id: &str, recipient_pubkey: &PublicKey) -> Result<Option<Proof>> {

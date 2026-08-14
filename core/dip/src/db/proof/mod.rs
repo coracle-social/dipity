@@ -6,5 +6,4 @@
 
 pub mod command;
 pub mod events;
-pub mod model;
 pub mod query;

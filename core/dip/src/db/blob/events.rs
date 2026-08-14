@@ -8,8 +8,7 @@ use std::sync::LazyLock;
 use tokio::sync::broadcast::{self, Receiver, Sender};
 
 use crate::db::Tx;
-
-use super::model::Blob;
+use crate::model::Blob;
 
 /// How far a subscriber may fall behind. Progress is reported per group of
 /// chunks rather than per chunk, so this is not the busy channel it looks like.

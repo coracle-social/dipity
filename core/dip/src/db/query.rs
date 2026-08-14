@@ -7,7 +7,7 @@
 //!
 //! Every question about events is [`list_events`], because what separates the
 //! feed from a peer's `REQ` is which constraints an
-//! [`EventFilter`](crate::domain::event::model::EventFilter) carries rather
+//! [`EventFilter`](crate::model::EventFilter) carries rather
 //! than which function is called. [`with_details`] is the follow-up read for a
 //! caller that wants what the store knows about an event beyond the event.
 
@@ -16,12 +16,10 @@ use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::PublicKey;
 
 use super::read;
-use crate::domain::blob::model::{Blob, BlobRole};
-use crate::domain::blob::query as blob;
-use crate::domain::event::model::{EventFilter, Provenance};
-use crate::domain::event::query as event;
-use crate::domain::pref::model::{Policy, Pref};
-use crate::domain::pref::query as pref;
+use crate::db::blob::query as blob;
+use crate::db::event::query as event;
+use crate::db::pref::query as pref;
+use crate::model::{Blob, BlobRole, EventFilter, Policy, Pref, Provenance};
 
 // ============================================================================
 // Policy and preferences

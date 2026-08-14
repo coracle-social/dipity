@@ -10,8 +10,7 @@ use coracle_lib::keys::PublicKey;
 use tokio::sync::broadcast::{self, Receiver, Sender};
 
 use crate::db::Tx;
-
-use super::model::Proof;
+use crate::model::Proof;
 
 /// How far a subscriber may fall behind. Signatures arrive one per event per
 /// recipient, so this tracks the event channel's traffic at a lower rate.

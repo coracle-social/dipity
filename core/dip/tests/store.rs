@@ -16,11 +16,9 @@ use coracle_lib::keys::{PublicKey, SecretKey};
 use coracle_lib::sync::{Item, SyncSet};
 use coracle_lib::tags::Tags;
 
+use dip::db::event::events::{self, EventChange};
 use dip::db::{self, command, query};
-use dip::domain::blob::model::BlobRole;
-use dip::domain::event::events::{self, EventChange};
-use dip::domain::event::model::{EventFilter, Order, Registers};
-use dip::domain::pref::model::{Scope, keys};
+use dip::model::{BlobRole, EventFilter, Order, Registers, Scope, keys};
 
 fn database_directory() -> PathBuf {
     std::env::temp_dir().join(format!("dip-store-test-{}", std::process::id()))

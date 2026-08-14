@@ -15,11 +15,10 @@ use rusqlite::{Row, params};
 use serde::de::DeserializeOwned;
 
 use crate::db::Tx;
-use crate::domain::event::model::KIND_MUTE;
-use crate::domain::event::query as event;
-
-use super::model::{
-    DEFAULT_COOL_OFF_MINUTES, DEFAULT_DISCLOSURE_BUDGET, Graph, Policy, Pref, Scope, keys,
+use crate::db::event::query as event;
+use crate::model::{
+    DEFAULT_COOL_OFF_MINUTES, DEFAULT_DISCLOSURE_BUDGET, Graph, KIND_MUTE, Policy, Pref, Scope,
+    keys,
 };
 
 /// One preference's raw JSON value, or `None` if it has never been written —
@@ -84,7 +83,7 @@ pub fn all(tx: &Tx<'_>) -> Result<Vec<Pref>> {
 /// Everything the user has said about who gets what, ready to apply.
 ///
 /// Read once per session and bound to a peer with
-/// [`Policy::for_peer`](super::model::Policy::for_peer), rather than re-read
+/// [`Policy::for_peer`](crate::model::Policy::for_peer), rather than re-read
 /// per event: a session asks the same questions of the same peer many times,
 /// and the answers cannot change under it while it runs.
 ///
@@ -160,11 +159,11 @@ mod tests {
     use super::*;
     use coracle_lib::tags::Tags;
 
+    use crate::db::event::command as event_command;
     use crate::db::open_in_memory;
-    use crate::domain::event::command as event_command;
-    use crate::domain::event::fixtures::{author, event, peer};
-    use crate::domain::pref::command as pref_command;
-    use crate::domain::pref::model::Standing;
+    use crate::db::pref::command as pref_command;
+    use crate::fixtures::{author, event, peer};
+    use crate::model::Standing;
 
     #[test]
     fn an_unwritten_policy_is_the_documents_defaults() {

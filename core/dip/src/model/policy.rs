@@ -1,16 +1,16 @@
-//! Stored preferences, and the policy the core reads back out of them.
+//! Everything the user has said about who gets what.
 //!
-//! [`Pref`] is one stored key. [`Policy`] is `docs/policy.md` in full — every
-//! preference the document defines, plus the trust graph its tiers are measured
-//! against — and it is what the rest of the core asks rather than reading keys
-//! one at a time.
+//! [`Policy`] is `docs/policy.md` in full — every preference the document
+//! defines, plus the trust graph its tiers are measured against — and it is
+//! what the rest of the core asks rather than reading preference keys one at a
+//! time.
 //!
 //! Bind it to the peer on the other end of a session with [`Policy::for_peer`]
 //! and the questions a session asks have answers:
 //!
 //! ```
 //! use coracle_lib::keys::SecretKey;
-//! use dip::domain::pref::model::Policy;
+//! use dip::model::Policy;
 //!
 //! let identity = SecretKey::generate().public_key();
 //! let peer = SecretKey::generate().public_key();
@@ -19,210 +19,11 @@
 //! assert!(!policy.is_blocked());
 //! ```
 
-use std::collections::BTreeSet;
-
 use coracle_lib::events::{HasKind, HasPubkey};
 use coracle_lib::keys::PublicKey;
-use serde::{Deserialize, Serialize};
 
-use crate::domain::event::model::{KIND_MUTE, KIND_PROFILE};
+use crate::model::{Authors, EventCategory, Graph, Scope, Standing};
 use crate::util::Window;
-
-/// One stored preference.
-///
-/// Values are JSON documents, so a preference can grow from a scalar into a
-/// structure without a migration, and so the view and the core agree on what a
-/// value means without a per-key encoding.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Pref {
-    /// The key, dotted by area.
-    pub key: String,
-    /// The value, as a JSON document.
-    pub value: String,
-    /// When it was last written.
-    pub updated_at: i64,
-}
-
-/// The keys defined for user preferences.
-pub mod keys {
-    /// How long the device keeps accepting unknown peers after the app is backgrounded.
-    pub const COOL_OFF_MINUTES: &str = "policy.cool_off_minutes";
-
-    /// Times of day, in the device's local timezone, when the user is passively discoverable.
-    pub const DISCOVERABLE_TIMES: &str = "policy.discoverable_times";
-
-    /// How many new pubkeys the device will disclose to per discoverable window.
-    pub const DISCLOSURE_BUDGET: &str = "policy.disclosure_budget";
-
-    /// Who can see the user's profile. Default `public`.
-    pub const PROFILE_VISIBILITY: &str = "policy.visibility.profile";
-
-    /// Who can see the user's content. Default `public`.
-    pub const CONTENT_VISIBILITY: &str = "policy.visibility.content";
-
-    /// Who can see the user's trust, block and mute lists. Default `trusted`.
-    pub const METADATA_VISIBILITY: &str = "policy.visibility.metadata";
-
-    /// Whose events the device stores from a peer. Default `lenient`.
-    pub const ACCEPT: &str = "policy.accept";
-
-    /// Whose events the device relays onward. Default `network`.
-    pub const GOSSIP: &str = "policy.gossip";
-}
-
-/// Where a pubkey stands in the user's graph.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Standing {
-    /// Blocked. Dropped on ingest, never served, sessions refused.
-    Blocked,
-    /// Explicitly trusted.
-    Trusted,
-    /// Transitively trusted, two hops out.
-    Network,
-    /// Everyone else.
-    Stranger,
-}
-
-/// The user's trust graph: the tiers, as sets of pubkeys.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Graph {
-    /// People the user explicitly trusts.
-    pub trusted: BTreeSet<PublicKey>,
-    /// People a trusted person trusts, which is as far as the graph reaches.
-    pub network: BTreeSet<PublicKey>,
-    /// People the user has blocked.
-    pub blocked: BTreeSet<PublicKey>,
-    /// People the user has muted.
-    pub muted: BTreeSet<PublicKey>,
-}
-
-impl Graph {
-    /// Where `pubkey` stands.
-    #[must_use]
-    pub fn standing(&self, pubkey: &PublicKey) -> Standing {
-        if self.blocked.contains(pubkey) {
-            Standing::Blocked
-        } else if self.trusted.contains(pubkey) {
-            Standing::Trusted
-        } else if self.network.contains(pubkey) {
-            Standing::Network
-        } else {
-            Standing::Stranger
-        }
-    }
-
-    /// Whether the user has muted `pubkey`.
-    #[must_use]
-    pub fn is_muted(&self, pubkey: &PublicKey) -> bool {
-        self.muted.contains(pubkey)
-    }
-}
-
-/// The authors admitted for a resolved standing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Authors {
-    /// Every author.
-    Any,
-    /// Only these. An empty set admits nobody.
-    Only(BTreeSet<PublicKey>),
-    /// Everyone but these. An empty set excludes nobody.
-    Except(BTreeSet<PublicKey>),
-}
-
-/// The tiers every policy setting is expressed on, narrowest first.
-///
-/// Ordered, so a wider scope admits everyone a narrower one does and
-/// [`admits`](Self::admits) is a comparison rather than a table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Scope {
-    /// Nobody. Gossip only, where it means the device shares the user's own
-    /// content and relays nothing.
-    Nothing,
-    /// People the user explicitly trusts.
-    Trusted,
-    /// People the user transitively trusts, two hops out.
-    Network,
-    /// Anyone who connects, except blocked pubkeys.
-    Lenient,
-    /// Anyone. Visibility settings only.
-    Public,
-}
-
-impl Scope {
-    /// Whether a pubkey standing here falls inside this scope.
-    #[must_use]
-    pub fn admits(self, standing: Standing) -> bool {
-        match standing {
-            Standing::Blocked => false,
-            Standing::Trusted => self >= Self::Trusted,
-            Standing::Network => self >= Self::Network,
-            Standing::Stranger => self >= Self::Lenient,
-        }
-    }
-
-    /// Which authors this scope admits, resolved against `graph`.
-    #[must_use]
-    pub fn authors(self, graph: &Graph) -> Authors {
-        match self {
-            Self::Nothing => Authors::Only(BTreeSet::new()),
-            Self::Trusted => Authors::Only(graph.trusted.clone()),
-            Self::Network => Authors::Only(
-                graph
-                    .trusted
-                    .union(&graph.network)
-                    .copied()
-                    .collect::<BTreeSet<_>>(),
-            ),
-            Self::Lenient => Authors::Except(graph.blocked.clone()),
-            Self::Public => Authors::Any,
-        }
-    }
-}
-
-/// Which visibility setting governs an event the user wrote.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EventCategory {
-    /// The user's profile.
-    Profile,
-    /// The user's trust, block and mute lists.
-    Metadata,
-    /// Everything else the user writes.
-    Content,
-}
-
-impl EventCategory {
-    /// Every category, so a caller can ask about each in turn.
-    pub const ALL: [Self; 3] = [Self::Profile, Self::Metadata, Self::Content];
-
-    /// The kinds a category other than [`Content`](Self::Content) names.
-    const NAMED: [(Self, u16); 2] = [(Self::Profile, KIND_PROFILE), (Self::Metadata, KIND_MUTE)];
-
-    /// Which category governs an event of this kind.
-    #[must_use]
-    pub fn of(kind: u16) -> Self {
-        Self::NAMED
-            .iter()
-            .find(|(_, named)| *named == kind)
-            .map_or(Self::Content, |(category, _)| *category)
-    }
-
-    /// Every kind some category other than [`Content`](Self::Content) names.
-    #[must_use]
-    pub fn named_kinds() -> Vec<u16> {
-        Self::NAMED.iter().map(|(_, kind)| *kind).collect()
-    }
-
-    /// The kinds this category names.
-    #[must_use]
-    pub fn kinds(self) -> Vec<u16> {
-        Self::NAMED
-            .iter()
-            .filter(|(category, _)| *category == self)
-            .map(|(_, kind)| *kind)
-            .collect()
-    }
-}
 
 /// How long the device keeps accepting unknown peers after backgrounding.
 pub const DEFAULT_COOL_OFF_MINUTES: i64 = 10;
@@ -234,8 +35,9 @@ pub const DEFAULT_DISCLOSURE_BUDGET: u32 = 10;
 ///
 /// The preference keys of `docs/policy.md`, read back with their defaults, plus
 /// the [`Graph`] the tiers are measured against. Assembled once per session by
-/// [`query::policy`](super::query::policy) rather than re-read per event, since
-/// a session answers the same questions of the same peer many times over.
+/// [`query::policy`](crate::db::pref::query::policy) rather than re-read per
+/// event, since a session answers the same questions of the same peer many
+/// times over.
 ///
 /// `identity` is the device's own pubkey, which is what makes an event the
 /// user's own and so governed by a visibility setting rather than by gossip.
@@ -429,7 +231,9 @@ mod tests {
     use super::*;
     use coracle_lib::tags::Tags;
 
-    use crate::domain::event::fixtures::{author, event};
+    use crate::fixtures::{author, event};
+    use crate::model::graph::tests::graph;
+    use crate::model::{KIND_MUTE, KIND_PROFILE};
 
     /// The device whose policy is under test.
     fn us() -> PublicKey {
@@ -437,117 +241,18 @@ mod tests {
     }
 
     fn policy() -> Policy {
-        let mut policy = Policy::new(us());
-
-        policy.graph.trusted.insert(author(2));
-        policy.graph.network.insert(author(3));
-        policy.graph.blocked.insert(author(4));
-        policy.graph.muted.insert(author(5));
-
-        policy
+        Policy {
+            graph: graph(),
+            ..Policy::new(us())
+        }
     }
 
     #[test]
-    fn block_wins_over_trust() {
-        let mut graph = Graph::default();
-
-        graph.trusted.insert(author(2));
-        graph.blocked.insert(author(2));
-
-        assert_eq!(graph.standing(&author(2)), Standing::Blocked);
-    }
-
-    #[test]
-    fn standing_reads_the_graph_in_tiers() {
+    fn muting_is_read_through_to_the_graph() {
         let policy = policy();
 
-        assert_eq!(policy.graph.standing(&author(2)), Standing::Trusted);
-        assert_eq!(policy.graph.standing(&author(3)), Standing::Network);
-        assert_eq!(policy.graph.standing(&author(4)), Standing::Blocked);
-        assert_eq!(policy.graph.standing(&author(9)), Standing::Stranger);
-
-        // Muting is not a tier: a muted author still gossips normally.
-        assert_eq!(policy.graph.standing(&author(5)), Standing::Stranger);
         assert!(policy.is_muted(&author(5)));
         assert!(!policy.is_muted(&author(2)));
-    }
-
-    #[test]
-    fn a_wider_scope_admits_everyone_a_narrower_one_does() {
-        for standing in [Standing::Trusted, Standing::Network, Standing::Stranger] {
-            let admitted: Vec<bool> = [
-                Scope::Nothing,
-                Scope::Trusted,
-                Scope::Network,
-                Scope::Lenient,
-                Scope::Public,
-            ]
-            .into_iter()
-            .map(|scope| scope.admits(standing))
-            .collect();
-
-            assert!(
-                admitted.windows(2).all(|pair| pair[0] <= pair[1]),
-                "{standing:?} fell out of a scope it was in: {admitted:?}"
-            );
-        }
-
-        // Block is not a tier, so it is outside even the widest scope.
-        assert!(!Scope::Public.admits(Standing::Blocked));
-        assert!(Scope::Trusted.admits(Standing::Trusted));
-        assert!(!Scope::Trusted.admits(Standing::Network));
-        assert!(Scope::Network.admits(Standing::Network));
-        assert!(!Scope::Network.admits(Standing::Stranger));
-        assert!(Scope::Lenient.admits(Standing::Stranger));
-        assert!(!Scope::Nothing.admits(Standing::Trusted));
-    }
-
-    #[test]
-    fn a_scope_is_stored_as_the_word_the_document_uses() {
-        assert_eq!(
-            serde_json::to_string(&Scope::Lenient).unwrap(),
-            r#""lenient""#
-        );
-        assert_eq!(
-            serde_json::from_str::<Scope>(r#""network""#).unwrap(),
-            Scope::Network
-        );
-        assert!(serde_json::from_str::<Scope>(r#""whatever""#).is_err());
-    }
-
-    #[test]
-    fn a_scope_resolves_to_the_authors_it_admits() {
-        let policy = policy();
-
-        assert_eq!(
-            Scope::Nothing.authors(&policy.graph),
-            Authors::Only(BTreeSet::new())
-        );
-        assert_eq!(
-            Scope::Trusted.authors(&policy.graph),
-            Authors::Only([author(2)].into())
-        );
-        assert_eq!(
-            Scope::Network.authors(&policy.graph),
-            Authors::Only([author(2), author(3)].into())
-        );
-        assert_eq!(
-            Scope::Lenient.authors(&policy.graph),
-            Authors::Except([author(4)].into())
-        );
-        assert_eq!(Scope::Public.authors(&policy.graph), Authors::Any);
-    }
-
-    #[test]
-    fn a_category_is_the_kinds_it_names() {
-        assert_eq!(EventCategory::of(KIND_PROFILE), EventCategory::Profile);
-        assert_eq!(EventCategory::of(KIND_MUTE), EventCategory::Metadata);
-        assert_eq!(EventCategory::of(1), EventCategory::Content);
-
-        assert_eq!(EventCategory::Profile.kinds(), [KIND_PROFILE]);
-        assert_eq!(EventCategory::Metadata.kinds(), [KIND_MUTE]);
-        assert!(EventCategory::Content.kinds().is_empty());
-        assert_eq!(EventCategory::named_kinds(), [KIND_PROFILE, KIND_MUTE]);
     }
 
     #[test]

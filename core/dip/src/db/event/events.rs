@@ -13,8 +13,7 @@ use tokio::sync::broadcast::{self, Receiver, Sender};
 use coracle_lib::events::HashedEvent;
 
 use crate::db::Tx;
-
-use super::model::Provenance;
+use crate::model::Provenance;
 
 /// How far a subscriber may fall behind before it starts missing changes.
 ///

@@ -4,9 +4,9 @@ use anyhow::{Context, Result};
 use rusqlite::params;
 
 use crate::db::Tx;
+use crate::model::Blob;
 
 use super::events::{self, BlobChange};
-use super::model::Blob;
 
 /// Record a blob a stored event references. Returns whether it was new.
 ///
@@ -154,11 +154,11 @@ mod tests {
     use super::*;
     use coracle_lib::tags::{Tag, Tags};
 
+    use crate::db::blob::query;
+    use crate::db::event::command as event_command;
     use crate::db::open_in_memory;
-    use crate::domain::blob::model::BlobRole;
-    use crate::domain::blob::query;
-    use crate::domain::event::command as event_command;
-    use crate::domain::event::fixtures::{author, id, note, peer};
+    use crate::fixtures::{author, id, note, peer};
+    use crate::model::BlobRole;
 
     /// Store an event to anchor blobs against, and return its id.
     fn store_event(tx: &Tx<'_>, content: &str) -> String {

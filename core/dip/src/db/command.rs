@@ -10,14 +10,13 @@ use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::PublicKey;
 
 use super::{Tx, write};
-use crate::domain::blob::command as blob;
-use crate::domain::blob::model::{Blob, BlobRole};
-use crate::domain::blob::query as blob_query;
-use crate::domain::event::command as event;
-use crate::domain::event::query as event_query;
-use crate::domain::pref::command as pref;
-use crate::domain::proof::command as proof;
-use crate::domain::proof::model::Proof;
+use crate::db::blob::command as blob;
+use crate::db::blob::query as blob_query;
+use crate::db::event::command as event;
+use crate::db::event::query as event_query;
+use crate::db::pref::command as pref;
+use crate::db::proof::command as proof;
+use crate::model::{Blob, BlobRole, Proof};
 
 /// Take in an event from a peer, with whatever came alongside it.
 ///

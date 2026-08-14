@@ -18,9 +18,9 @@ use coracle_lib::kinds::is_ephemeral;
 use rusqlite::params;
 
 use crate::db::Tx;
+use crate::model::{KIND_DELETE, Provenance, is_indexed_tag};
 
 use super::events::{self, EventChange};
-use super::model::{KIND_DELETE, Provenance, is_indexed_tag};
 use super::query;
 
 /// Store an event seen from `peer_pubkey` at `seen_at`, and record the
@@ -269,8 +269,8 @@ mod tests {
     use coracle_lib::tags::Tags;
 
     use crate::db::open_in_memory;
-    use crate::domain::event::fixtures::{author, event, id, note, peer};
-    use crate::domain::event::model::{EventFilter, Seen};
+    use crate::fixtures::{author, event, id, note, peer};
+    use crate::model::{EventFilter, Seen};
 
     /// A query narrowed by a NIP-01 filter and nothing else.
     fn matching(filter: Filter) -> EventFilter {

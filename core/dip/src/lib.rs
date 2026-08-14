@@ -5,9 +5,11 @@
 //!
 //! # The store
 //!
-//! [`db`] owns one SQLite connection for the process and the migrations behind
-//! it. [`domain`] holds the models, one module per model, each with its tables,
-//! its reads, its writes and the channel its writes announce on.
+//! [`db`] owns one SQLite connection for the process, the migrations behind it,
+//! and one module per group of tables holding that group's reads, its writes
+//! and the channel its writes announce on. [`model`] holds the types those
+//! answers are expressed in, organized by what they mean rather than by which
+//! table holds them.
 //!
 //! Nostr's own types are `coracle-lib`'s, not this crate's: events, keys, tags,
 //! kinds, addresses, filters and NIP-77 items. They have to agree byte for byte
@@ -16,15 +18,15 @@
 //!
 //! [`db::query`] and [`db::command`] are the way in, and they are the only way
 //! in: one function per question asked and per thing that happens, each opening
-//! a transaction and threading it through however many domains the answer
-//! takes. Nothing outside them holds a transaction, so a change that spans
-//! models cannot half-happen and a caller cannot assemble an answer in the
-//! wrong order.
+//! a transaction and threading it through however many tables the answer takes.
+//! Nothing outside them holds a transaction, so a change that spans tables
+//! cannot half-happen and a caller cannot assemble an answer in the wrong
+//! order.
 //!
 //! Which peer may be served what is not a second way in either: it rides on the
-//! query, as an [`EventFilter`](domain::event::model::EventFilter) carrying the
-//! [`Policy`](domain::pref::model::Policy) the user set and the authorship
-//! registers `docs/proofs.md` requires.
+//! query, as an [`EventFilter`](model::EventFilter) carrying the
+//! [`Policy`](model::Policy) the user set and the authorship registers
+//! `docs/proofs.md` requires.
 //!
 //! ```no_run
 //! # fn main() -> anyhow::Result<()> {
@@ -32,7 +34,7 @@
 //! # let (peer, identity): (&coracle_lib::keys::PublicKey, &coracle_lib::keys::PublicKey) = todo!();
 //! # let signature = None;
 //! use coracle_lib::filters::Filter;
-//! use dip::domain::event::model::{EventFilter, Order, Registers};
+//! use dip::model::{EventFilter, Order, Registers};
 //!
 //! dip::db::configure("/path/the/shell/provides")?;
 //!
@@ -62,8 +64,11 @@
 #![forbid(unsafe_code)]
 
 pub mod db;
-pub mod domain;
+pub mod model;
 pub mod util;
+
+#[cfg(test)]
+pub(crate) mod fixtures;
 
 /// The core's version, as compiled.
 #[must_use]

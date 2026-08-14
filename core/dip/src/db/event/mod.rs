@@ -5,13 +5,9 @@
 //! provenance, which never leaves the device.
 //!
 //! The event type is `coracle-lib`'s
-//! [`HashedEvent`](coracle_lib::events::HashedEvent) — see [`model`] for why
-//! that stage and not [`Event`](coracle_lib::events::Event).
+//! [`HashedEvent`](coracle_lib::events::HashedEvent) — see [`crate::model`] for
+//! why that stage and not [`Event`](coracle_lib::events::Event).
 
 pub mod command;
 pub mod events;
-pub mod model;
 pub mod query;
-
-#[cfg(test)]
-pub(crate) mod fixtures;

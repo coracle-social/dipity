@@ -5,9 +5,9 @@ use rusqlite::params;
 use serde::Serialize;
 
 use crate::db::Tx;
+use crate::model::Pref;
 
 use super::events::{self, PrefChange};
-use super::model::Pref;
 
 /// Write a preference, replacing whatever was there.
 ///
@@ -65,8 +65,8 @@ pub fn remove(tx: &Tx<'_>, key: &str) -> Result<bool> {
 mod tests {
     use super::*;
     use crate::db::open_in_memory;
-    use crate::domain::pref::model::keys;
-    use crate::domain::pref::query;
+    use crate::db::pref::query;
+    use crate::model::keys;
 
     #[test]
     fn a_preference_round_trips() {

@@ -1,5 +1,5 @@
-//! Events and keys for tests, shared by every domain whose tables hang off
-//! `event`.
+//! Events and keys for tests, shared by every model and every table that hangs
+//! off `event`.
 //!
 //! Keys are real points on the curve, because `PublicKey` will not hold
 //! anything else, and ids are real hashes, because building an event through

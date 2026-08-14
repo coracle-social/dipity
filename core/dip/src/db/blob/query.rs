@@ -4,8 +4,7 @@ use anyhow::{Context, Result};
 use rusqlite::{Row, params};
 
 use crate::db::Tx;
-
-use super::model::{Blob, BlobRole};
+use crate::model::{Blob, BlobRole};
 
 /// The blob columns, in the order [`to_blob`] reads them.
 const COLUMNS: &str = "sha256, event_id, role, url, mime_type, size, dim, blurhash, alt, blake3,

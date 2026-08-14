@@ -9,8 +9,7 @@ use std::sync::LazyLock;
 use tokio::sync::broadcast::{self, Receiver, Sender};
 
 use crate::db::Tx;
-
-use super::model::Pref;
+use crate::model::Pref;
 
 /// How far a subscriber may fall behind. Preferences change at human speed.
 const CAPACITY: usize = 64;

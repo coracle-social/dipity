@@ -15,9 +15,9 @@ use rusqlite::{Row, params, params_from_iter};
 use crate::db::Tx;
 use crate::db::condition::{Conditions, text};
 use crate::db::sql::{bytes_from_sql, pubkey_from_sql};
-use crate::domain::pref::model::{Authors, EventCategory, PeerPolicy};
-
-use super::model::{EventFilter, Order, Provenance, Register, Registers, Seen};
+use crate::model::{
+    Authors, EventCategory, EventFilter, Order, PeerPolicy, Provenance, Register, Registers, Seen,
+};
 
 /// The event columns, in the order [`to_event`] reads them.
 const COLUMNS: &str = "e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content";
@@ -487,13 +487,11 @@ mod tests {
     use super::*;
     use coracle_lib::events::HasId;
 
+    use crate::db::event::command;
     use crate::db::open_in_memory;
-    use crate::domain::event::command;
-    use crate::domain::event::fixtures::{author, event, id, note, peer};
-    use crate::domain::event::model::{KIND_MUTE, KIND_PROFILE};
-    use crate::domain::pref::model::{Policy, Scope};
-    use crate::domain::proof::command as proof;
-    use crate::domain::proof::model::Proof;
+    use crate::db::proof::command as proof;
+    use crate::fixtures::{author, event, id, note, peer};
+    use crate::model::{KIND_MUTE, KIND_PROFILE, Policy, Proof, Scope};
 
     /// A query narrowed by a NIP-01 filter and nothing else.
     fn matching(filter: Filter) -> EventFilter {

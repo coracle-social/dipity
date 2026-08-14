@@ -1,18 +1,11 @@
 //! Blob metadata: what a stored event says about a file, and how much of that
-//! file this device holds.
-//!
-//! The bytes themselves live outside the database, keyed by SHA-256. What is
-//! here is the `imeta` tag of the first event seen to reference the hash, plus
-//! the progress of any transfer.
+//! file this device holds. The bytes themselves live outside the database,
+//! keyed by SHA-256.
 
 use coracle_lib::tags::Tag;
 use serde::{Deserialize, Serialize};
 
 /// Whether a blob is the small version or the full one.
-///
-/// Previews are kept as long as the events referencing them; originals are a
-/// cache with a byte ceiling, evicted least-recently-used. Previews take
-/// precedence when both are wanted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BlobRole {
     /// A downscaled stand-in, cheap enough to move over BLE unconditionally.
@@ -45,8 +38,7 @@ impl BlobRole {
 /// A blob this device knows about, whether or not it holds the bytes.
 ///
 /// The row is anchored to the event that first referenced the hash, ordered by
-/// seen time rather than `created_at`, and inherits that event's permissions:
-/// ingest already decided the event was in scope, so its blobs are too.
+/// seen time rather than `created_at`, and inherits that event's permissions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Blob {
     /// SHA-256 of the whole file, lowercase hex. The address it is fetched by.
@@ -55,13 +47,11 @@ pub struct Blob {
     pub event_id: String,
     /// Preview or original.
     pub role: BlobRole,
-    /// Where the author said it could be fetched. Not used on the gossip path,
-    /// which fetches from the peer standing in front of it.
+    /// Where the author said it could be fetched.
     pub url: Option<String>,
     /// MIME type, as claimed by `imeta`.
     pub mime_type: Option<String>,
-    /// Size in bytes, as claimed by `imeta`. A claim until the bytes arrive;
-    /// [`stored_bytes`](Self::stored_bytes) is what is actually on disk.
+    /// Size in bytes, as claimed by `imeta`.
     pub size: Option<i64>,
     /// `<width>x<height>`, as claimed by `imeta`.
     pub dim: Option<String>,
@@ -69,23 +59,13 @@ pub struct Blob {
     pub blurhash: Option<String>,
     /// Alt text.
     pub alt: Option<String>,
-    /// BLAKE3 root, lowercase hex. What each chunk verifies against as it
-    /// arrives, so a bad chunk costs one chunk and names the peer that sent it.
-    /// See `docs/nips/imeta-blake3.md`.
+    /// BLAKE3 root, lowercase hex. Used to verify each chunk as it arrives.
     pub blake3: Option<String>,
-    /// The `imeta` tag as it arrived, minus the tag name: one `key value`
-    /// string per entry, in tag order.
-    ///
-    /// The fields above are the keys this build reads. This is everything the
-    /// event carried, so a key that is not modeled here — a NIP-92 addition, or
-    /// something a peer's build knows and ours does not — is still readable
-    /// through [`imeta_value`](Self::imeta_value) rather than being discarded
-    /// at the point the event was parsed, where it is unrecoverable.
+    /// The `imeta` tag as it arrived, minus the tag name.
     pub imeta: Vec<String>,
     /// How many bytes are on disk.
     pub stored_bytes: i64,
-    /// Bitmap of verified chunks, so a transfer interrupted on BLE resumes
-    /// rather than restarting. `None` before the first chunk arrives.
+    /// Bitmap of verified chunks, so we can resume interrupted sync.
     pub chunks: Option<Vec<u8>>,
     /// Whether the whole file is held and verified.
     pub complete: bool,
@@ -119,9 +99,7 @@ impl Blob {
     /// Read a NIP-92 `imeta` tag into a blob.
     ///
     /// `None` when the tag carries no `x`, since a blob with no hash cannot be
-    /// addressed, fetched or verified. Every entry is kept in
-    /// [`imeta`](Self::imeta), whether or not this build has a field for it —
-    /// which is what lets `imeta` grow, as it did for `blake3`.
+    /// addressed, fetched or verified.
     #[must_use]
     pub fn from_imeta(tag: &Tag, event_id: &str, role: BlobRole) -> Option<Self> {
         let mut blob = Self::new(String::new(), event_id, role);
@@ -152,8 +130,6 @@ impl Blob {
     }
 
     /// The value of an `imeta` key, whether or not this build models it.
-    ///
-    /// The first entry wins, as NIP-92 has no meaning for a repeated key.
     #[must_use]
     pub fn imeta_value(&self, key: &str) -> Option<&str> {
         self.imeta.iter().find_map(|entry| {

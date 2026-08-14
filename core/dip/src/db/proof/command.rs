@@ -9,9 +9,9 @@ use coracle_lib::keys::PublicKey;
 use rusqlite::params;
 
 use crate::db::Tx;
+use crate::model::Proof;
 
 use super::events::{self, ProofChange};
-use super::model::Proof;
 
 /// Store a signature. Returns whether it was new.
 ///
@@ -84,10 +84,10 @@ mod tests {
     use super::*;
     use coracle_lib::tags::Tags;
 
+    use crate::db::event::command as event_command;
     use crate::db::open_in_memory;
-    use crate::domain::event::command as event_command;
-    use crate::domain::event::fixtures::{author, id, note, peer};
-    use crate::domain::proof::query;
+    use crate::db::proof::query;
+    use crate::fixtures::{author, id, note, peer};
 
     fn us() -> PublicKey {
         author(9)
