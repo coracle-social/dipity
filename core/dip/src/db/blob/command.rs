@@ -1,6 +1,7 @@
 //! Writes over `blob`.
 
 use anyhow::{Context, Result};
+use coracle_lib::events::EventId;
 use rusqlite::params;
 
 use crate::db::Tx;
@@ -31,7 +32,7 @@ pub fn record(tx: &Tx<'_>, blob: &Blob) -> Result<bool> {
         )?
         .execute(params![
             blob.sha256,
-            blob.event_id,
+            blob.event_id.to_hex(),
             blob.role.as_str(),
             blob.url,
             blob.mime_type,
@@ -121,10 +122,10 @@ pub fn touch(tx: &Tx<'_>, sha256: &str, at: i64) -> Result<bool> {
 /// # Errors
 ///
 /// If the write fails, including when the new anchor is not stored.
-pub fn reanchor(tx: &Tx<'_>, sha256: &str, event_id: &str) -> Result<bool> {
+pub fn reanchor(tx: &Tx<'_>, sha256: &str, event_id: &EventId) -> Result<bool> {
     let written = tx
         .prepare_cached("UPDATE blob SET event_id = ?2 WHERE sha256 = ?1")?
-        .execute(params![sha256, event_id])
+        .execute(params![sha256, event_id.to_hex()])
         .with_context(|| format!("reanchoring blob {sha256} to {event_id}"))?;
 
     Ok(written > 0)
@@ -161,7 +162,7 @@ mod tests {
     use crate::model::BlobRole;
 
     /// Store an event to anchor blobs against, and return its id.
-    fn store_event(tx: &Tx<'_>, content: &str) -> String {
+    fn store_event(tx: &Tx<'_>, content: &str) -> EventId {
         let event = note(author(1), 100, content, Tags::new());
 
         event_command::save(tx, &event, &peer(), 10).unwrap();
@@ -177,8 +178,8 @@ mod tests {
         let first = store_event(&tx, "first");
         let second = store_event(&tx, "second");
 
-        assert!(record(&tx, &Blob::new("hash", &first, BlobRole::Original)).unwrap());
-        assert!(!record(&tx, &Blob::new("hash", &second, BlobRole::Original)).unwrap());
+        assert!(record(&tx, &Blob::new("hash", first, BlobRole::Original)).unwrap());
+        assert!(!record(&tx, &Blob::new("hash", second, BlobRole::Original)).unwrap());
 
         assert_eq!(query::get(&tx, "hash").unwrap().unwrap().event_id, first);
     }
@@ -201,10 +202,10 @@ mod tests {
             ("bbb", &second),
             ("ddd", &second),
         ] {
-            record(&tx, &Blob::new(sha256, event_id, BlobRole::Original)).unwrap();
+            record(&tx, &Blob::new(sha256, *event_id, BlobRole::Original)).unwrap();
         }
 
-        let ids = [first.clone(), second.clone(), bare.clone()];
+        let ids = [first, second, bare];
         let batched = query::list_for_events(&tx, &ids).unwrap();
 
         for id in &ids {
@@ -237,7 +238,7 @@ mod tests {
 
         let event_id = store_event(&tx, "with media");
         let tag = Tag::new("imeta", ["x hash", "m image/jpeg", "service nostr.build"]);
-        let blob = Blob::from_imeta(&tag, &event_id, BlobRole::Original).unwrap();
+        let blob = Blob::from_imeta(&tag, event_id, BlobRole::Original).unwrap();
 
         record(&tx, &blob).unwrap();
 
@@ -255,7 +256,7 @@ mod tests {
         let tx = Tx::begin_write(&mut connection).unwrap();
 
         let event_id = store_event(&tx, "with media");
-        record(&tx, &Blob::new("hash", &event_id, BlobRole::Original)).unwrap();
+        record(&tx, &Blob::new("hash", event_id, BlobRole::Original)).unwrap();
 
         assert!(record_progress(&tx, "hash", 4_096, Some(&[0b0000_0111])).unwrap());
 
@@ -273,7 +274,7 @@ mod tests {
         let tx = Tx::begin_write(&mut connection).unwrap();
 
         let event_id = store_event(&tx, "with media");
-        record(&tx, &Blob::new("hash", &event_id, BlobRole::Original)).unwrap();
+        record(&tx, &Blob::new("hash", event_id, BlobRole::Original)).unwrap();
 
         assert_eq!(query::wanted(&tx, 10).unwrap().len(), 1);
         assert!(mark_complete(&tx, "hash", 8_192, 100).unwrap());
@@ -295,14 +296,10 @@ mod tests {
         let event_id = store_event(&tx, "with media");
         record(
             &tx,
-            &Blob::new("original-hash", &event_id, BlobRole::Original),
+            &Blob::new("original-hash", event_id, BlobRole::Original),
         )
         .unwrap();
-        record(
-            &tx,
-            &Blob::new("preview-hash", &event_id, BlobRole::Preview),
-        )
-        .unwrap();
+        record(&tx, &Blob::new("preview-hash", event_id, BlobRole::Preview)).unwrap();
 
         let wanted = query::wanted(&tx, 10).unwrap();
 
@@ -318,7 +315,7 @@ mod tests {
         let event_id = store_event(&tx, "with media");
 
         for hash in ["a", "b"] {
-            record(&tx, &Blob::new(hash, &event_id, BlobRole::Original)).unwrap();
+            record(&tx, &Blob::new(hash, event_id, BlobRole::Original)).unwrap();
             mark_complete(&tx, hash, 1_024, 100).unwrap();
         }
 
@@ -342,7 +339,7 @@ mod tests {
 
         let first = store_event(&tx, "first");
         let second = store_event(&tx, "second");
-        record(&tx, &Blob::new("hash", &first, BlobRole::Original)).unwrap();
+        record(&tx, &Blob::new("hash", first, BlobRole::Original)).unwrap();
 
         // Unless something else still references it, which is what reanchoring
         // is for — the bytes are on disk either way.

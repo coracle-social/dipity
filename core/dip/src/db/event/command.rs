@@ -5,12 +5,13 @@
 
 use anyhow::{Context, Result};
 use coracle_lib::addresses::{Address, EventExtensionAddress};
-use coracle_lib::events::HashedEvent;
+use coracle_lib::events::{EventId, HashedEvent};
 use coracle_lib::keys::PublicKey;
 use coracle_lib::kinds::is_ephemeral;
 use rusqlite::params;
 
 use crate::db::Tx;
+use crate::db::sql::event_id_from_sql;
 use crate::model::{KIND_DELETE, Provenance};
 
 use super::events::{self, EventChange};
@@ -35,10 +36,10 @@ pub fn save(
         return Ok(false);
     }
 
-    let id = hex::encode(event.id);
+    let id = event.id.to_hex();
 
-    if query::exists(tx, &id)? {
-        record_seen(tx, &id, peer_pubkey, seen_at)?;
+    if query::exists(tx, &event.id)? {
+        record_seen(tx, &event.id, peer_pubkey, seen_at)?;
         return Ok(false);
     }
 
@@ -54,7 +55,7 @@ pub fn save(
 
     insert(tx, event, &id, seen_at)?;
     events::notify(tx, EventChange::Stored(Box::new(event.clone())));
-    record_seen(tx, &id, peer_pubkey, seen_at)?;
+    record_seen(tx, &event.id, peer_pubkey, seen_at)?;
 
     if event.kind == KIND_DELETE {
         apply_deletion(tx, event)?;
@@ -70,7 +71,7 @@ pub fn save(
 /// is kept at the earliest of them.
 pub fn record_seen(
     tx: &Tx<'_>,
-    event_id: &str,
+    event_id: &EventId,
     peer_pubkey: &PublicKey,
     seen_at: i64,
 ) -> Result<bool> {
@@ -79,7 +80,7 @@ pub fn record_seen(
             "INSERT OR IGNORE INTO event_seen (event_id, peer_pubkey, seen_at)
              VALUES (?1, ?2, ?3)",
         )?
-        .execute(params![event_id, peer_pubkey.to_hex(), seen_at])
+        .execute(params![event_id.to_hex(), peer_pubkey.to_hex(), seen_at])
         .with_context(|| format!("recording {event_id} seen from {peer_pubkey}"))?;
 
     if written == 0 {
@@ -91,13 +92,13 @@ pub fn record_seen(
     // move the arrival time forward, and leave the column disagreeing with the
     // rows it stands for.
     tx.prepare_cached("UPDATE event SET seen_at = ?2 WHERE id = ?1 AND seen_at > ?2")?
-        .execute(params![event_id, seen_at])
+        .execute(params![event_id.to_hex(), seen_at])
         .with_context(|| format!("recording the arrival of {event_id}"))?;
 
     events::notify(
         tx,
         EventChange::Seen(Provenance {
-            event_id: event_id.to_string(),
+            event_id: *event_id,
             peer_pubkey: *peer_pubkey,
             seen_at,
         }),
@@ -110,14 +111,14 @@ pub fn record_seen(
 ///
 /// The tag, provenance, signature and blob rows go by cascade; the full-text row is
 /// deleted by hand, since a virtual table has no foreign keys.
-pub fn delete(tx: &Tx<'_>, id: &str) -> Result<bool> {
+pub fn delete(tx: &Tx<'_>, id: &EventId) -> Result<bool> {
     tx.prepare_cached("DELETE FROM event_fts WHERE event_id = ?1")?
-        .execute(params![id])
+        .execute(params![id.to_hex()])
         .with_context(|| format!("removing {id} from the search index"))?;
 
     let removed = tx
         .prepare_cached("DELETE FROM event WHERE id = ?1")?
-        .execute(params![id])
+        .execute(params![id.to_hex()])
         .with_context(|| format!("deleting event {id}"))?;
 
     if removed == 0 {
@@ -134,7 +135,9 @@ pub fn forget_seen_before(tx: &Tx<'_>, cutoff: i64) -> Result<usize> {
     let mut prepared = tx.prepare("SELECT id FROM event WHERE seen_at < ?1")?;
 
     let stale = prepared
-        .query_map(params![cutoff], |row| row.get::<_, String>(0))?
+        .query_map(params![cutoff], |row| {
+            event_id_from_sql(&row.get::<_, String>(0)?, 0)
+        })?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("finding events to forget")?;
 
@@ -160,7 +163,7 @@ fn replaces_current(tx: &Tx<'_>, event: &HashedEvent, address: &Address) -> Resu
         || (event.created_at == current.created_at && event.id < current.id);
 
     if supersedes {
-        delete(tx, &hex::encode(current.id))?;
+        delete(tx, &current.id)?;
     }
 
     Ok(supersedes)
@@ -226,12 +229,15 @@ fn insert(tx: &Tx<'_>, event: &HashedEvent, id: &str, seen_at: i64) -> Result<()
 /// Apply a kind 5, deleting the events it names that its author wrote.
 fn apply_deletion(tx: &Tx<'_>, deletion: &HashedEvent) -> Result<()> {
     for id in deletion.tags.values("e") {
-        let Some(target) = query::get(tx, id)? else {
+        let Ok(id) = EventId::from_hex(id) else {
+            continue;
+        };
+        let Some(target) = query::get(tx, &id)? else {
             continue;
         };
 
         if target.pubkey == deletion.pubkey {
-            delete(tx, &hex::encode(target.id))?;
+            delete(tx, &target.id)?;
         }
     }
 
@@ -245,7 +251,7 @@ fn apply_deletion(tx: &Tx<'_>, deletion: &HashedEvent) -> Result<()> {
         };
 
         if target.pubkey == deletion.pubkey && target.created_at <= deletion.created_at {
-            delete(tx, &hex::encode(target.id))?;
+            delete(tx, &target.id)?;
         }
     }
 
@@ -409,7 +415,9 @@ mod tests {
             KIND_DELETE,
             200,
             "",
-            Tags::new().add("e", [id(&mine)]).add("e", [id(&theirs)]),
+            Tags::new()
+                .add("e", [id(&mine).to_hex()])
+                .add("e", [id(&theirs).to_hex()]),
         );
         save(&tx, &deletion, &peer(), 20).unwrap();
 
@@ -455,7 +463,7 @@ mod tests {
             KIND_DELETE,
             200,
             "",
-            Tags::new().add("e", [id(&subject)]),
+            Tags::new().add("e", [id(&subject).to_hex()]),
         );
 
         save(&tx, &deletion, &peer(), 10).unwrap();
@@ -516,7 +524,7 @@ mod tests {
         let cached = || {
             tx.query_row(
                 "SELECT seen_at FROM event WHERE id = ?1",
-                [&stored],
+                [stored.to_hex()],
                 |row| row.get::<_, Option<i64>>(0),
             )
             .unwrap()
@@ -524,7 +532,7 @@ mod tests {
         let earliest = || {
             tx.query_row(
                 "SELECT MIN(seen_at) FROM event_seen WHERE event_id = ?1",
-                [&stored],
+                [stored.to_hex()],
                 |row| row.get::<_, Option<i64>>(0),
             )
             .unwrap()

@@ -6,6 +6,7 @@
 
 use std::sync::LazyLock;
 
+use coracle_lib::events::EventId;
 use coracle_lib::keys::PublicKey;
 use tokio::sync::broadcast::{self, Receiver, Sender};
 
@@ -22,7 +23,7 @@ pub enum RecipientSignatureChange {
     /// A signature was stored.
     Stored(Box<RecipientSignature>),
     /// A signature was removed, by event id and recipient.
-    Removed(String, PublicKey),
+    Removed(EventId, PublicKey),
 }
 
 /// The channel.

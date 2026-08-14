@@ -13,13 +13,14 @@
 use std::collections::BTreeSet;
 
 use anyhow::Result;
-use coracle_lib::events::HashedEvent;
+use coracle_lib::events::{EventId, HashedEvent};
 use coracle_lib::keys::PublicKey;
 
 use super::read;
 use crate::db::blob::query as blob;
 use crate::db::event::query as event;
 use crate::db::pref::query as pref;
+use crate::db::sql::hex_key;
 use crate::model::{Blob, BlobRole, Policy, Pref, Provenance, Query};
 
 // ============================================================================
@@ -67,9 +68,9 @@ pub fn list_events(query: &Query) -> Result<Vec<HashedEvent>> {
 /// rendering a feed, and asking per event made the cost of showing a screen
 /// scale with how much of it is on screen.
 pub fn with_details(events: Vec<HashedEvent>) -> Result<Vec<EventDetail>> {
-    let ids: Vec<String> = events
+    let ids: Vec<EventId> = events
         .iter()
-        .map(|event| hex::encode(event.id))
+        .map(|event| event.id)
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
@@ -81,7 +82,7 @@ pub fn with_details(events: Vec<HashedEvent>) -> Result<Vec<EventDetail>> {
         Ok(events
             .into_iter()
             .map(|event| {
-                let id = hex::encode(event.id);
+                let id = event.id;
 
                 EventDetail {
                     blobs: blobs.get(&id).cloned().unwrap_or_default(),
@@ -104,7 +105,9 @@ pub fn wanted_blobs(limit: usize) -> Result<Vec<Blob>> {
 
 /// One blob's metadata and transfer progress.
 pub fn get_blob(sha256: &str) -> Result<Option<Blob>> {
-    read(|tx| blob::get(tx, sha256))
+    let sha256 = hex_key(sha256)?;
+
+    read(|tx| blob::get(tx, &sha256))
 }
 
 /// How many bytes of held originals the cache is carrying, which is what the

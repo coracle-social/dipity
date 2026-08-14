@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use coracle_lib::events::EventId;
 use coracle_lib::keys::PublicKey;
 
 use crate::util::Bare;
@@ -20,8 +21,8 @@ use crate::util::Bare;
 /// key, so the two cannot disagree.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RecipientSignature {
-    /// The event the signature commits to, as a lowercase hex id.
-    pub event_id: String,
+    /// The event the signature commits to.
+    pub event_id: EventId,
     /// The author whose signature this is, and the event's own pubkey.
     pub author_pubkey: PublicKey,
     /// The pubkey the signature names.
@@ -35,10 +36,7 @@ impl fmt::Debug for RecipientSignature {
         // Enough of the id to correlate a line with an event, and not the whole
         // of it: what is being debugged here is which signature, not which
         // event, and the rest is a record of who this device has been near.
-        let event_id = match self.event_id.get(..8) {
-            Some(prefix) => format!("{prefix}…"),
-            None => self.event_id.clone(),
-        };
+        let event_id = format!("{}…", &self.event_id.to_hex()[..8]);
 
         // Hex, rather than `PublicKey`'s own derive, which prints the internal
         // secp256k1 representation and is unreadable next to anything else.
@@ -62,7 +60,7 @@ mod tests {
 
     fn signature() -> RecipientSignature {
         RecipientSignature {
-            event_id: "e".repeat(64),
+            event_id: EventId::new([0xee; 32]),
             author_pubkey: author(1),
             recipient_pubkey: author(2),
             sig: [7u8; 64],
@@ -82,7 +80,7 @@ mod tests {
         let printed = format!("{:?}", signature());
 
         assert!(printed.contains("eeeeeeee…"));
-        assert!(!printed.contains(&"e".repeat(64)));
+        assert!(!printed.contains(&"ee".repeat(32)));
     }
 
     #[test]
@@ -95,15 +93,9 @@ mod tests {
         assert!(printed.contains(&author(2).to_hex()));
     }
 
-    #[test]
-    fn a_short_event_id_is_printed_whole() {
-        // Not a real id, so there is nothing to abbreviate and nothing that
-        // would panic on a slice that is not a character boundary.
-        let mut signature = signature();
-        signature.event_id = "hé".to_string();
-
-        assert!(format!("{signature:?}").contains("hé"));
-    }
+    // There is no test for a short or non-hex event id. `EventId` renders 64
+    // lowercase hex characters or does not exist, so the slice this used to
+    // guard cannot be out of bounds or off a character boundary.
 
     #[test]
     fn a_secret_key_is_redacted_too() {

@@ -49,6 +49,7 @@
 //! device makes ever verifies, and nothing local notices.
 
 use anyhow::{Context, Result, anyhow, bail};
+use coracle_lib::events::EventId;
 use coracle_lib::keys::{PublicKey, SecretKey};
 use k256::elliptic_curve::ops::Reduce;
 use k256::elliptic_curve::point::{AffineCoordinates, DecompressPoint};
@@ -95,7 +96,7 @@ const STATEMENT_BYTES: usize = 32 + 32 + 32 + 32 + 32 + 33;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AuthorshipClaim {
     /// The event the proof is about.
-    pub event_id: [u8; 32],
+    pub event_id: EventId,
     /// The pubkey the event names as its author. `A`.
     pub author: PublicKey,
     /// The peer forwarding the event, which holds the author's signature. `B`.
@@ -110,13 +111,14 @@ impl AuthorshipClaim {
     /// Everything but the verifier comes off the signature: the holder is the
     /// recipient it names, since a signature naming anyone else is one this
     /// device cannot prove anything with, and the author is the one it is by.
-    pub fn from_signature(signature: &RecipientSignature, verifier: PublicKey) -> Result<Self> {
-        Ok(Self {
-            event_id: event_id_bytes(&signature.event_id)?,
+    #[must_use]
+    pub fn from_signature(signature: &RecipientSignature, verifier: PublicKey) -> Self {
+        Self {
+            event_id: signature.event_id,
             author: signature.author_pubkey,
             holder: signature.recipient_pubkey,
             verifier,
-        })
+        }
     }
 }
 
@@ -154,7 +156,7 @@ impl AuthorshipProof {
     /// arithmetic it is about to run on, so a proof that would be rejected by
     /// the peer is refused here instead.
     pub fn prove(signature: &RecipientSignature, verifier: PublicKey) -> Result<Self> {
-        let claim = AuthorshipClaim::from_signature(signature, verifier)?;
+        let claim = AuthorshipClaim::from_signature(signature, verifier);
 
         // R.x is public; the scalar beside it is the whole capability, so it is
         // wrapped rather than dropped by hand — every path out of here from the
@@ -209,11 +211,6 @@ impl AuthorshipProof {
 
     /// Whether this proof establishes `claim` to the device the claim
     /// designates.
-    ///
-    /// Malformed input — a scalar out of range, a nonce point off the curve, a
-    /// commitment at infinity — is rejected before any arithmetic runs, and is
-    /// indistinguishable from a proof that simply does not verify. Both are the
-    /// same outcome: the event is dropped.
     #[must_use]
     pub fn verifies(&self, claim: &AuthorshipClaim) -> bool {
         self.check(claim).is_ok()
@@ -259,10 +256,7 @@ impl AuthorshipProof {
         bytes
     }
 
-    /// Read a proof off the wire.
-    ///
-    /// Nothing is checked here; the values are five opaque field-widths until
-    /// [`verifies`](Self::verifies) looks at them.
+    /// Read a proof off the wire without verification.
     #[must_use]
     pub fn from_bytes(bytes: &[u8; Self::BYTES]) -> Self {
         let field = |start: usize| {
@@ -325,7 +319,7 @@ impl Statement {
             encode_point(&signature_point).context("the signature names the point at infinity")?;
 
         let mut prefix = [0u8; STATEMENT_BYTES];
-        prefix[..32].copy_from_slice(&claim.event_id);
+        prefix[..32].copy_from_slice(claim.event_id.as_bytes());
         prefix[32..64].copy_from_slice(&claim.author.as_bytes());
         prefix[64..96].copy_from_slice(&claim.holder.as_bytes());
         prefix[96..128].copy_from_slice(&claim.verifier.as_bytes());
@@ -479,12 +473,12 @@ impl RecipientSignature {
     /// per event per peer, and that is one read from the Keychain or Keystore,
     /// not hundreds.
     #[must_use]
-    pub fn sign(author: &SecretKey, event_id: &[u8; 32], recipient: PublicKey) -> Self {
+    pub fn sign(author: &SecretKey, event_id: EventId, recipient: PublicKey) -> Self {
         Self {
-            event_id: hex::encode(event_id),
+            event_id,
             author_pubkey: author.public_key(),
             recipient_pubkey: recipient,
-            sig: author.sign(&signature_message(event_id, &recipient)),
+            sig: author.sign(&signature_message(&event_id, &recipient)),
         }
     }
 
@@ -496,9 +490,6 @@ impl RecipientSignature {
     /// write — check that too, or this answers a question nobody asked.
     #[must_use]
     pub fn verifies(&self) -> bool {
-        let Ok(event_id) = event_id_bytes(&self.event_id) else {
-            return false;
-        };
         let Ok(signature) = secp256k1::schnorr::Signature::from_slice(&self.sig) else {
             return false;
         };
@@ -507,8 +498,10 @@ impl RecipientSignature {
             return false;
         };
 
-        let message =
-            secp256k1::Message::from_digest(signature_message(&event_id, &self.recipient_pubkey));
+        let message = secp256k1::Message::from_digest(signature_message(
+            &self.event_id,
+            &self.recipient_pubkey,
+        ));
 
         secp256k1::SECP256K1
             .verify_schnorr(&signature, &message, &pubkey)
@@ -517,8 +510,8 @@ impl RecipientSignature {
 }
 
 /// The 32 bytes A signs: the event and the recipient, and nothing else.
-fn signature_message(event_id: &[u8; 32], recipient: &PublicKey) -> [u8; 32] {
-    tagged_hash(SIGNATURE_TAG, &[event_id, &recipient.as_bytes()])
+fn signature_message(event_id: &EventId, recipient: &PublicKey) -> [u8; 32] {
+    tagged_hash(SIGNATURE_TAG, &[event_id.as_bytes(), &recipient.as_bytes()])
 }
 
 /// The scalar whose base multiple is `lift_x` of the verifier's key.
@@ -611,14 +604,6 @@ fn other(branch: Branch) -> Branch {
     }
 }
 
-/// An event id as the store keys it, back to the bytes the crypto is over.
-fn event_id_bytes(event_id: &str) -> Result<[u8; 32]> {
-    hex::decode(event_id)
-        .ok()
-        .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
-        .ok_or_else(|| anyhow!("{event_id} is not a 32-byte event id"))
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -643,12 +628,12 @@ mod tests {
         secret(3)
     }
 
-    fn event_id() -> [u8; 32] {
+    fn event_id() -> EventId {
         note(a().public_key(), 100, "forwarded", Tags::new()).id
     }
 
     fn signature() -> RecipientSignature {
-        RecipientSignature::sign(&a(), &event_id(), b().public_key())
+        RecipientSignature::sign(&a(), event_id(), b().public_key())
     }
 
     fn claim() -> AuthorshipClaim {
@@ -684,7 +669,7 @@ mod tests {
     #[test]
     fn a_signature_does_not_carry_to_another_event() {
         let mut signature = signature();
-        signature.event_id = hex::encode([9u8; 32]);
+        signature.event_id = EventId::new([9u8; 32]);
 
         assert!(!signature.verifies());
     }
@@ -695,7 +680,7 @@ mod tests {
         // the order of the two values it covers — a peer running the other
         // platform's build just fails to verify anything, quietly — so the
         // bytes are pinned here rather than left to agree by inspection.
-        let event_id = [0xabu8; 32];
+        let event_id = EventId::new([0xabu8; 32]);
 
         assert_eq!(
             hex::encode(signature_message(&event_id, &b().public_key())),
@@ -710,8 +695,8 @@ mod tests {
         // tag, the layout, and that signing goes through `sign_schnorr` with no
         // aux randomness. Changing any of them is a cross-platform break, and
         // this is what says so.
-        let event_id = [0xabu8; 32];
-        let signature = RecipientSignature::sign(&a(), &event_id, b().public_key());
+        let event_id = EventId::new([0xabu8; 32]);
+        let signature = RecipientSignature::sign(&a(), event_id, b().public_key());
 
         assert_eq!(
             a().public_key().to_hex(),
@@ -780,7 +765,7 @@ mod tests {
     fn a_proof_over_the_wrong_event_is_rejected() {
         let proof = proof();
         let mut claim = claim();
-        claim.event_id = [9u8; 32];
+        claim.event_id = EventId::new([9u8; 32]);
 
         assert!(!proof.verifies(&claim));
     }
@@ -894,14 +879,9 @@ mod tests {
         assert!(!with_nonce_point(x_of(1)).verifies(&claim()));
     }
 
-    #[test]
-    fn a_malformed_event_id_is_rejected() {
-        let mut signature = signature();
-        signature.event_id = "not hex".to_string();
-
-        assert!(!signature.verifies());
-        assert!(AuthorshipProof::prove(&signature, c().public_key()).is_err());
-    }
+    // There is no test for a malformed event id. `EventId` cannot hold one, so
+    // the case it covered — a signature whose id is not 32 bytes of hex — is
+    // now unrepresentable rather than rejected at runtime.
 
     // ------------------------------------------------------ zero knowledge
 

@@ -6,7 +6,7 @@
 //! models commits/notifies atomically.
 
 use anyhow::Result;
-use coracle_lib::events::HashedEvent;
+use coracle_lib::events::{EventId, HashedEvent};
 use coracle_lib::keys::PublicKey;
 
 use super::{Tx, write};
@@ -16,6 +16,7 @@ use crate::db::event::command as event;
 use crate::db::event::query as event_query;
 use crate::db::pref::command as pref;
 use crate::db::recipient_signature::command as signature;
+use crate::db::sql::hex_key;
 use crate::model::{Blob, BlobRole, RecipientSignature};
 
 /// Take in an event from a peer, with whatever came alongside it.
@@ -42,20 +43,19 @@ pub fn receive_event(
     seen_at: i64,
 ) -> Result<bool> {
     write(|tx| {
-        let id = hex::encode(event.id);
         let stored = event::save(tx, event, from_peer, seen_at)?;
 
         if stored {
-            record_media(tx, event, &id)?;
+            record_media(tx, event, event.id)?;
         }
 
         if let Some(sig) = author_signature
-            && event_query::exists(tx, &id)?
+            && event_query::exists(tx, &event.id)?
         {
             signature::save(
                 tx,
                 &RecipientSignature {
-                    event_id: id,
+                    event_id: event.id,
                     author_pubkey: event.pubkey,
                     recipient_pubkey: *identity,
                     sig: *sig,
@@ -76,7 +76,7 @@ pub fn publish_event(event: &HashedEvent, identity: &PublicKey, at: i64) -> Resu
         let stored = event::save(tx, event, identity, at)?;
 
         if stored {
-            record_media(tx, event, &hex::encode(event.id))?;
+            record_media(tx, event, event.id)?;
         }
 
         Ok(stored)
@@ -90,7 +90,7 @@ pub fn publish_event(event: &HashedEvent, identity: &PublicKey, at: i64) -> Resu
 /// The author comes off the stored event rather than from the caller: it is the
 /// only party whose signature over that event means anything, so there is
 /// nothing for a caller to get wrong.
-pub fn receive_signature(event_id: &str, sig: &[u8; 64], identity: &PublicKey) -> Result<bool> {
+pub fn receive_signature(event_id: &EventId, sig: &[u8; 64], identity: &PublicKey) -> Result<bool> {
     write(|tx| {
         let Some(event) = event_query::get(tx, event_id)? else {
             return Ok(false);
@@ -99,7 +99,7 @@ pub fn receive_signature(event_id: &str, sig: &[u8; 64], identity: &PublicKey) -
         signature::save(
             tx,
             &RecipientSignature {
-                event_id: event_id.to_string(),
+                event_id: *event_id,
                 author_pubkey: event.pubkey,
                 recipient_pubkey: *identity,
                 sig: *sig,
@@ -118,18 +118,24 @@ pub fn record_blob_progress(
     stored_bytes: i64,
     chunks: Option<&[u8]>,
 ) -> Result<bool> {
-    write(|tx| blob::record_progress(tx, sha256, stored_bytes, chunks))
+    let sha256 = hex_key(sha256)?;
+
+    write(|tx| blob::record_progress(tx, &sha256, stored_bytes, chunks))
 }
 
 /// Mark a blob whole: every chunk arrived and verified. Returns whether this
 /// completed it, and `false` if it was already complete.
 pub fn complete_blob(sha256: &str, stored_bytes: i64, at: i64) -> Result<bool> {
-    write(|tx| blob::mark_complete(tx, sha256, stored_bytes, at))
+    let sha256 = hex_key(sha256)?;
+
+    write(|tx| blob::mark_complete(tx, &sha256, stored_bytes, at))
 }
 
 /// Note that a blob was read, which is what eviction orders on.
 pub fn touch_blob(sha256: &str, at: i64) -> Result<bool> {
-    write(|tx| blob::touch(tx, sha256, at))
+    let sha256 = hex_key(sha256)?;
+
+    write(|tx| blob::touch(tx, &sha256, at))
 }
 
 /// Write a preference. `value` is a JSON document.
@@ -180,7 +186,7 @@ pub fn evict_originals(ceiling_bytes: i64) -> Result<Vec<String>> {
 // ============================================================================
 
 /// Record the media an event references using imeta.
-fn record_media(tx: &Tx<'_>, event: &HashedEvent, id: &str) -> Result<()> {
+fn record_media(tx: &Tx<'_>, event: &HashedEvent, id: EventId) -> Result<()> {
     for tag in event.tags.find_all("imeta") {
         if let Some(media) = Blob::from_imeta(tag, id, BlobRole::Original) {
             blob::record(tx, &media)?;

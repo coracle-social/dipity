@@ -6,7 +6,7 @@
 //! the pipeline computes one. Both are derived from a seed, so a fixture is
 //! reproducible and two seeds never collide.
 
-use coracle_lib::events::{EventContent, HashedEvent};
+use coracle_lib::events::{EventContent, EventId, HashedEvent};
 use coracle_lib::keys::{PublicKey, SecretKey};
 use coracle_lib::tags::Tags;
 
@@ -47,7 +47,8 @@ pub(crate) fn event(
         .with_id()
 }
 
-/// An event's id, as the store keys it.
-pub(crate) fn id(event: &HashedEvent) -> String {
-    hex::encode(event.id)
+/// An event's id. Trivial now that the id is a type — kept so a fixture reads
+/// the same as it did when the store keyed on hex.
+pub(crate) fn id(event: &HashedEvent) -> EventId {
+    event.id
 }

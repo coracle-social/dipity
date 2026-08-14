@@ -6,6 +6,7 @@
 //! names — both of which the composite foreign key enforces.
 
 use anyhow::{Context, Result};
+use coracle_lib::events::EventId;
 use coracle_lib::keys::PublicKey;
 use rusqlite::params;
 
@@ -27,7 +28,7 @@ pub fn save(tx: &Tx<'_>, signature: &RecipientSignature) -> Result<bool> {
              VALUES (?1, ?2, ?3, ?4)",
         )?
         .execute(params![
-            signature.event_id,
+            signature.event_id.to_hex(),
             signature.author_pubkey.to_hex(),
             signature.recipient_pubkey.to_hex(),
             hex::encode(signature.sig),
@@ -47,12 +48,12 @@ pub fn save(tx: &Tx<'_>, signature: &RecipientSignature) -> Result<bool> {
 }
 
 /// Remove one signature. Returns whether it was there.
-pub fn remove(tx: &Tx<'_>, event_id: &str, recipient_pubkey: &PublicKey) -> Result<bool> {
+pub fn remove(tx: &Tx<'_>, event_id: &EventId, recipient_pubkey: &PublicKey) -> Result<bool> {
     let removed = tx
         .prepare_cached(
             "DELETE FROM recipient_signature WHERE event_id = ?1 AND recipient_pubkey = ?2",
         )?
-        .execute(params![event_id, recipient_pubkey.to_hex()])
+        .execute(params![event_id.to_hex(), recipient_pubkey.to_hex()])
         .with_context(|| format!("removing the signature over {event_id}"))?;
 
     if removed == 0 {
@@ -61,7 +62,7 @@ pub fn remove(tx: &Tx<'_>, event_id: &str, recipient_pubkey: &PublicKey) -> Resu
 
     events::notify(
         tx,
-        RecipientSignatureChange::Removed(event_id.to_string(), *recipient_pubkey),
+        RecipientSignatureChange::Removed(*event_id, *recipient_pubkey),
     );
 
     Ok(true)
@@ -71,7 +72,7 @@ pub fn remove(tx: &Tx<'_>, event_id: &str, recipient_pubkey: &PublicKey) -> Resu
 ///
 /// Deleting the event does this by cascade; this is for dropping the capability
 /// to forward while keeping the event readable.
-pub fn remove_for_event(tx: &Tx<'_>, event_id: &str) -> Result<usize> {
+pub fn remove_for_event(tx: &Tx<'_>, event_id: &EventId) -> Result<usize> {
     let stored = super::query::list_for_event(tx, event_id)?;
     let mut removed = 0;
 
@@ -98,7 +99,7 @@ mod tests {
         author(9)
     }
 
-    fn store_note(tx: &Tx<'_>, content: &str) -> String {
+    fn store_note(tx: &Tx<'_>, content: &str) -> EventId {
         let event = note(author(1), 100, content, Tags::new());
 
         event_command::save(tx, &event, &peer(), 10).unwrap();
@@ -106,9 +107,9 @@ mod tests {
         id(&event)
     }
 
-    fn signature(event_id: &str) -> RecipientSignature {
+    fn signature(event_id: EventId) -> RecipientSignature {
         RecipientSignature {
-            event_id: event_id.to_string(),
+            event_id,
             author_pubkey: author(1),
             recipient_pubkey: us(),
             sig: [7u8; 64],
@@ -122,13 +123,13 @@ mod tests {
 
         let event_id = store_note(&tx, "signed");
 
-        assert!(save(&tx, &signature(&event_id)).unwrap());
-        assert!(!save(&tx, &signature(&event_id)).unwrap());
+        assert!(save(&tx, &signature(event_id)).unwrap());
+        assert!(!save(&tx, &signature(event_id)).unwrap());
         assert_eq!(query::list_for_event(&tx, &event_id).unwrap().len(), 1);
         assert!(query::exists(&tx, &event_id, &us()).unwrap());
         assert_eq!(
             query::get(&tx, &event_id, &us()).unwrap().unwrap(),
-            signature(&event_id)
+            signature(event_id)
         );
     }
 
@@ -138,7 +139,7 @@ mod tests {
         let tx = Tx::begin_write(&mut connection).unwrap();
 
         let event_id = store_note(&tx, "signed");
-        save(&tx, &signature(&event_id)).unwrap();
+        save(&tx, &signature(event_id)).unwrap();
 
         event_command::delete(&tx, &event_id).unwrap();
 
@@ -154,7 +155,7 @@ mod tests {
         let tx = Tx::begin_write(&mut connection).unwrap();
 
         let event_id = store_note(&tx, "signed");
-        let mut signature = signature(&event_id);
+        let mut signature = signature(event_id);
         signature.author_pubkey = author(4);
 
         assert!(save(&tx, &signature).is_err());
@@ -165,7 +166,7 @@ mod tests {
         let mut connection = open_in_memory().unwrap();
         let tx = Tx::begin_write(&mut connection).unwrap();
 
-        assert!(save(&tx, &signature(&hex::encode([0u8; 32]))).is_err());
+        assert!(save(&tx, &signature(EventId::new([0u8; 32]))).is_err());
     }
 
     #[test]
@@ -175,9 +176,9 @@ mod tests {
 
         let signed = store_note(&tx, "signed");
         let unsigned = store_note(&tx, "unsigned");
-        save(&tx, &signature(&signed)).unwrap();
+        save(&tx, &signature(signed)).unwrap();
 
-        let ids = [signed.clone(), unsigned];
+        let ids = [signed, unsigned];
 
         assert_eq!(query::forwardable(&tx, &ids, &us()).unwrap(), [signed]);
         assert!(

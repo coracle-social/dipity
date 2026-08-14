@@ -6,7 +6,9 @@ use anyhow::{Context, Result};
 use rusqlite::{Row, params, params_from_iter};
 
 use crate::db::Tx;
-use crate::db::sql::placeholders;
+use coracle_lib::events::EventId;
+
+use crate::db::sql::{event_id_from_sql, placeholders};
 use crate::model::{Blob, BlobRole};
 
 /// The blob columns, in the order [`to_blob`] reads them.
@@ -39,13 +41,13 @@ pub fn is_complete(tx: &Tx<'_>, sha256: &str) -> Result<bool> {
 }
 
 /// Every blob a stored event references.
-pub fn list_for_event(tx: &Tx<'_>, event_id: &str) -> Result<Vec<Blob>> {
+pub fn list_for_event(tx: &Tx<'_>, event_id: &EventId) -> Result<Vec<Blob>> {
     let mut prepared = tx.prepare_cached(&format!(
         "SELECT {COLUMNS} FROM blob WHERE event_id = ?1 ORDER BY sha256 ASC"
     ))?;
 
     let blobs = prepared
-        .query_map(params![event_id], to_blob)?
+        .query_map(params![event_id.to_hex()], to_blob)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .with_context(|| format!("listing blobs for {event_id}"))?;
 
@@ -57,7 +59,7 @@ pub fn list_for_event(tx: &Tx<'_>, event_id: &str) -> Result<Vec<Blob>> {
 /// One query rather than one per event, because the view asks this of a whole
 /// page at a time. An event with no blobs is absent from the map rather than
 /// present and empty.
-pub fn list_for_events(tx: &Tx<'_>, event_ids: &[String]) -> Result<HashMap<String, Vec<Blob>>> {
+pub fn list_for_events(tx: &Tx<'_>, event_ids: &[EventId]) -> Result<HashMap<EventId, Vec<Blob>>> {
     if event_ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -69,14 +71,17 @@ pub fn list_for_events(tx: &Tx<'_>, event_ids: &[String]) -> Result<HashMap<Stri
 
     // Ordered by hash across the whole set, so each event's blobs come out in
     // the order `list_for_event` gives them.
-    let mut blobs: HashMap<String, Vec<Blob>> = HashMap::new();
+    let mut blobs: HashMap<EventId, Vec<Blob>> = HashMap::new();
 
     for blob in prepared
-        .query_map(params_from_iter(event_ids), to_blob)?
+        .query_map(
+            params_from_iter(event_ids.iter().map(EventId::to_hex)),
+            to_blob,
+        )?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("listing blobs for a page of events")?
     {
-        blobs.entry(blob.event_id.clone()).or_default().push(blob);
+        blobs.entry(blob.event_id).or_default().push(blob);
     }
 
     Ok(blobs)
@@ -144,7 +149,7 @@ fn to_blob(row: &Row<'_>) -> rusqlite::Result<Blob> {
 
     Ok(Blob {
         sha256: row.get("sha256")?,
-        event_id: row.get("event_id")?,
+        event_id: event_id_from_sql(&row.get::<_, String>("event_id")?, 1)?,
         role: BlobRole::parse(&role).ok_or_else(|| {
             rusqlite::Error::FromSqlConversionFailure(
                 2,

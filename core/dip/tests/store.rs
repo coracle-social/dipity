@@ -10,7 +10,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use coracle_lib::events::{EventContent, HashedEvent};
+use coracle_lib::events::{EventContent, EventId, HashedEvent};
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::{PublicKey, SecretKey};
 use coracle_lib::sync::{Item, SyncSet};
@@ -19,6 +19,13 @@ use coracle_lib::tags::Tags;
 use dip::db::event::events::{self, EventChange};
 use dip::db::{self, command, query};
 use dip::model::{BlobRole, Order, Query, Registers, Scope, keys};
+
+/// The blob the event below references.
+///
+/// Shaped like a real sha256 rather than being the word "hash": the store keys
+/// blobs on one and checks the shape on the way in, so a placeholder that could
+/// never name a row would be testing the wrong thing.
+const BLOB: &str = "b10bb10bb10bb10bb10bb10bb10bb10bb10bb10bb10bb10bb10bb10bb10bb10b";
 
 fn database_directory() -> PathBuf {
     std::env::temp_dir().join(format!("dip-store-test-{}", std::process::id()))
@@ -54,8 +61,8 @@ fn note(author: PublicKey, created_at: i64, content: &str, tags: Tags) -> Hashed
         .with_id()
 }
 
-fn id(event: &HashedEvent) -> String {
-    hex::encode(event.id)
+fn id(event: &HashedEvent) -> EventId {
+    event.id
 }
 
 /// Everything this device could put on the wire, whoever were asking.
@@ -84,7 +91,12 @@ fn the_store_serves_its_use_cases() {
         "hello neighbor",
         Tags::new().add(
             "imeta",
-            ["x hash", "m image/jpeg", "size 2048", "blake3 root"],
+            [
+                format!("x {BLOB}"),
+                "m image/jpeg".into(),
+                "size 2048".into(),
+                "blake3 root".into(),
+            ],
         ),
     );
     let signature = [7u8; 64];
@@ -109,7 +121,7 @@ fn the_store_serves_its_use_cases() {
     assert_eq!(feed.len(), 1);
     assert_eq!(feed[0].event, with_media);
     assert_eq!(feed[0].blobs.len(), 1);
-    assert_eq!(feed[0].blobs[0].sha256, "hash");
+    assert_eq!(feed[0].blobs[0].sha256, BLOB);
     assert_eq!(feed[0].blobs[0].size, Some(2048));
     assert_eq!(feed[0].blobs[0].blake3.as_deref(), Some("root"));
 
@@ -142,9 +154,23 @@ fn the_store_serves_its_use_cases() {
         vec![with_media.clone()]
     );
 
-    // Until the signature arrives on a later encounter.
+    // Until the signature arrives on a later encounter. The id is an `EventId`
+    // rather than a string, so there is no spelling of it that reaches the
+    // store as a row that is not there.
     assert!(command::receive_signature(&id(&unsigned), &[9u8; 64], &us()).unwrap());
     assert_eq!(query::list_events(&offerable()).unwrap().len(), 2);
+
+    // Blob hashes are still strings — a sha256 of a file is not an event id —
+    // so they keep their check: a key that could not name a row is an error
+    // rather than a shrug.
+    assert!(query::get_blob("not a hash").is_err());
+    assert_eq!(
+        query::get_blob(&BLOB.to_uppercase())
+            .unwrap()
+            .unwrap()
+            .sha256,
+        BLOB
+    );
 
     // Our own events need no signature: the authenticated session establishes
     // authorship at the first hop.
@@ -172,19 +198,16 @@ fn the_store_serves_its_use_cases() {
     assert_eq!(wanted.len(), 1);
     assert_eq!(wanted[0].role, BlobRole::Original);
 
-    assert!(command::record_blob_progress("hash", 1_024, Some(&[0b0000_0011])).unwrap());
-    assert_eq!(
-        query::get_blob("hash").unwrap().unwrap().stored_bytes,
-        1_024
-    );
+    assert!(command::record_blob_progress(BLOB, 1_024, Some(&[0b0000_0011])).unwrap());
+    assert_eq!(query::get_blob(BLOB).unwrap().unwrap().stored_bytes, 1_024);
     assert_eq!(query::wanted_blobs(10).unwrap().len(), 1);
 
-    assert!(command::complete_blob("hash", 2_048, 400).unwrap());
+    assert!(command::complete_blob(BLOB, 2_048, 400).unwrap());
     assert!(query::wanted_blobs(10).unwrap().is_empty());
     assert_eq!(query::cached_bytes().unwrap(), 2_048);
 
     assert!(command::evict_originals(4_096).unwrap().is_empty());
-    assert_eq!(command::evict_originals(1_024).unwrap(), ["hash"]);
+    assert_eq!(command::evict_originals(1_024).unwrap(), [BLOB]);
     assert_eq!(query::cached_bytes().unwrap(), 0);
 
     // Preferences. A use case that fails leaves nothing behind: bare text is

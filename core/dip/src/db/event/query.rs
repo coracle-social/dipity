@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use anyhow::{Context, Result};
 use coracle_lib::addresses::{Address, EventExtensionAddress};
-use coracle_lib::events::HashedEvent;
+use coracle_lib::events::{EventId, HashedEvent};
 use coracle_lib::filters::{Filter, TagMatch};
 use coracle_lib::keys::PublicKey;
 use coracle_lib::search::SearchQuery;
@@ -14,7 +14,7 @@ use rusqlite::{Row, params, params_from_iter};
 
 use crate::db::Tx;
 use crate::db::condition::{Conditions, text};
-use crate::db::sql::{bytes_from_sql, placeholders, pubkey_from_sql};
+use crate::db::sql::{event_id_from_sql, placeholders, pubkey_from_sql};
 use crate::model::{
     Authors, Order, PeerPolicy, Provenance, ProvenanceFilter, Query, Register, Registers, Scope,
 };
@@ -23,10 +23,10 @@ use crate::model::{
 const COLUMNS: &str = "e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content";
 
 /// One event by id.
-pub fn get(tx: &Tx<'_>, id: &str) -> Result<Option<HashedEvent>> {
+pub fn get(tx: &Tx<'_>, id: &EventId) -> Result<Option<HashedEvent>> {
     let event = tx
         .prepare_cached(&format!("SELECT {COLUMNS} FROM event e WHERE e.id = ?1"))?
-        .query_row(params![id], to_event)
+        .query_row(params![id.to_hex()], to_event)
         .map(Some)
         .or_else(none_if_missing)
         .with_context(|| format!("loading event {id}"))?;
@@ -35,10 +35,10 @@ pub fn get(tx: &Tx<'_>, id: &str) -> Result<Option<HashedEvent>> {
 }
 
 /// Whether an event is stored, without loading it. The hot path on ingest.
-pub fn exists(tx: &Tx<'_>, id: &str) -> Result<bool> {
+pub fn exists(tx: &Tx<'_>, id: &EventId) -> Result<bool> {
     let exists = tx
         .prepare_cached("SELECT EXISTS (SELECT 1 FROM event WHERE id = ?1)")?
-        .query_row(params![id], |row| row.get::<_, bool>(0))
+        .query_row(params![id.to_hex()], |row| row.get::<_, bool>(0))
         .with_context(|| format!("checking for event {id}"))?;
 
     Ok(exists)
@@ -101,10 +101,10 @@ pub fn by_address(tx: &Tx<'_>, address: &Address) -> Result<Option<HashedEvent>>
 }
 
 /// When an event was first seen. `None` for an event this device does not hold.
-pub fn seen_at(tx: &Tx<'_>, id: &str) -> Result<Option<i64>> {
+pub fn seen_at(tx: &Tx<'_>, id: &EventId) -> Result<Option<i64>> {
     let seen_at = tx
         .prepare_cached("SELECT seen_at FROM event WHERE id = ?1")?
-        .query_row(params![id], |row| row.get::<_, i64>(0))
+        .query_row(params![id.to_hex()], |row| row.get::<_, i64>(0))
         .map(Some)
         .or_else(none_if_missing)
         .with_context(|| format!("reading seen time for {id}"))?;
@@ -113,7 +113,7 @@ pub fn seen_at(tx: &Tx<'_>, id: &str) -> Result<Option<i64>> {
 }
 
 /// Every sighting of an event, earliest first.
-pub fn provenance(tx: &Tx<'_>, id: &str) -> Result<Vec<Provenance>> {
+pub fn provenance(tx: &Tx<'_>, id: &EventId) -> Result<Vec<Provenance>> {
     let mut prepared = tx.prepare_cached(
         "SELECT event_id, peer_pubkey, seen_at FROM event_seen
          WHERE event_id = ?1
@@ -121,7 +121,7 @@ pub fn provenance(tx: &Tx<'_>, id: &str) -> Result<Vec<Provenance>> {
     )?;
 
     let provenance = prepared
-        .query_map(params![id], to_provenance)?
+        .query_map(params![id.to_hex()], to_provenance)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .with_context(|| format!("reading provenance for {id}"))?;
 
@@ -132,7 +132,7 @@ pub fn provenance(tx: &Tx<'_>, id: &str) -> Result<Vec<Provenance>> {
 ///
 /// One query rather than one per event, because the view asks this of a whole
 /// page at a time. An event this device does not hold is absent from the map.
-pub fn provenance_for(tx: &Tx<'_>, ids: &[String]) -> Result<HashMap<String, Vec<Provenance>>> {
+pub fn provenance_for(tx: &Tx<'_>, ids: &[EventId]) -> Result<HashMap<EventId, Vec<Provenance>>> {
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -146,15 +146,18 @@ pub fn provenance_for(tx: &Tx<'_>, ids: &[String]) -> Result<HashMap<String, Vec
 
     // Ordered across the whole set, so each event's sightings come out in the
     // order `provenance` gives them.
-    let mut sightings: HashMap<String, Vec<Provenance>> = HashMap::new();
+    let mut sightings: HashMap<EventId, Vec<Provenance>> = HashMap::new();
 
     for sighting in prepared
-        .query_map(params_from_iter(ids), to_provenance)?
+        .query_map(
+            params_from_iter(ids.iter().map(EventId::to_hex)),
+            to_provenance,
+        )?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("reading provenance for a page of events")?
     {
         sightings
-            .entry(sighting.event_id.clone())
+            .entry(sighting.event_id)
             .or_default()
             .push(sighting);
     }
@@ -163,7 +166,7 @@ pub fn provenance_for(tx: &Tx<'_>, ids: &[String]) -> Result<HashMap<String, Vec
 }
 
 /// Which peers an event has been seen from.
-pub fn seen_from(tx: &Tx<'_>, id: &str) -> Result<Vec<PublicKey>> {
+pub fn seen_from(tx: &Tx<'_>, id: &EventId) -> Result<Vec<PublicKey>> {
     Ok(provenance(tx, id)?
         .into_iter()
         .map(|sighting| sighting.peer_pubkey)
@@ -172,7 +175,7 @@ pub fn seen_from(tx: &Tx<'_>, id: &str) -> Result<Vec<PublicKey>> {
 
 /// Whether the author has already asked for this event to be deleted.
 pub fn is_deleted(tx: &Tx<'_>, event: &HashedEvent) -> Result<bool> {
-    let id = hex::encode(event.id);
+    let id = event.id.to_hex();
     let deleted = tx
         .prepare_cached(
             "SELECT EXISTS (
@@ -247,7 +250,7 @@ fn conditions(query: &Query) -> Conditions {
 /// Compile a NIP-01 filter.
 fn push_filter(conditions: &mut Conditions, filter: &Filter) {
     if let Some(ids) = &filter.ids {
-        conditions.push_set("e.id", ids.iter().map(|id| text(hex::encode(id))).collect());
+        conditions.push_set("e.id", ids.iter().map(|id| text(id.to_hex())).collect());
     }
 
     if let Some(authors) = &filter.authors {
@@ -501,7 +504,7 @@ fn fts_query(search: &str) -> Option<String> {
 /// Read a row into one sighting.
 fn to_provenance(row: &Row<'_>) -> rusqlite::Result<Provenance> {
     Ok(Provenance {
-        event_id: row.get("event_id")?,
+        event_id: event_id_from_sql(&row.get::<_, String>("event_id")?, 0)?,
         peer_pubkey: pubkey_from_sql(&row.get::<_, String>("peer_pubkey")?, 1)?,
         seen_at: row.get("seen_at")?,
     })
@@ -512,7 +515,7 @@ fn to_event(row: &Row<'_>) -> rusqlite::Result<HashedEvent> {
     let tags: String = row.get("tags")?;
 
     Ok(HashedEvent {
-        id: bytes_from_sql(&row.get::<_, String>("id")?, 0)?,
+        id: event_id_from_sql(&row.get::<_, String>("id")?, 0)?,
         pubkey: pubkey_from_sql(&row.get::<_, String>("pubkey")?, 1)?,
         created_at: row.get("created_at")?,
         kind: row.get("kind")?,
@@ -970,13 +973,13 @@ mod tests {
                 };
 
                 let bound = policy.for_peer(them);
-                let admitted: BTreeSet<String> = events
+                let admitted: BTreeSet<EventId> = events
                     .iter()
                     .filter(|held| held.pubkey != us || bound.is_visible(*held))
                     .map(id)
                     .collect();
 
-                let served: BTreeSet<String> = list(&tx, &everything().with_policy(bound.clone()))
+                let served: BTreeSet<EventId> = list(&tx, &everything().with_policy(bound.clone()))
                     .unwrap()
                     .iter()
                     .map(id)
@@ -1029,7 +1032,7 @@ mod tests {
         command::save(&tx, &carried, &author(4), 600).unwrap();
 
         let missing = id(&note(author(1), 300, "never stored", Tags::new()));
-        let ids = [id(&carried), id(&once), missing.clone()];
+        let ids = [id(&carried), id(&once), missing];
         let batched = provenance_for(&tx, &ids).unwrap();
 
         for id in &ids {

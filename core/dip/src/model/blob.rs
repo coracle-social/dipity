@@ -2,6 +2,7 @@
 //! file this device holds. The bytes themselves live outside the database,
 //! keyed by SHA-256.
 
+use coracle_lib::events::EventId;
 use coracle_lib::tags::Tag;
 use serde::{Deserialize, Serialize};
 
@@ -44,7 +45,7 @@ pub struct Blob {
     /// SHA-256 of the whole file, lowercase hex. The address it is fetched by.
     pub sha256: String,
     /// The event this blob's permissions come from.
-    pub event_id: String,
+    pub event_id: EventId,
     /// Preview or original.
     pub role: BlobRole,
     /// Where the author said it could be fetched.
@@ -76,10 +77,10 @@ pub struct Blob {
 impl Blob {
     /// A blob known only by hash, with no metadata yet.
     #[must_use]
-    pub fn new(sha256: impl Into<String>, event_id: impl Into<String>, role: BlobRole) -> Self {
+    pub fn new(sha256: impl Into<String>, event_id: EventId, role: BlobRole) -> Self {
         Self {
             sha256: sha256.into(),
-            event_id: event_id.into(),
+            event_id,
             role,
             url: None,
             mime_type: None,
@@ -101,7 +102,7 @@ impl Blob {
     /// `None` when the tag carries no `x`, since a blob with no hash cannot be
     /// addressed, fetched or verified.
     #[must_use]
-    pub fn from_imeta(tag: &Tag, event_id: &str, role: BlobRole) -> Option<Self> {
+    pub fn from_imeta(tag: &Tag, event_id: EventId, role: BlobRole) -> Option<Self> {
         let mut blob = Self::new(String::new(), event_id, role);
         let imeta = tag.values().to_vec();
 
@@ -162,7 +163,7 @@ mod tests {
                 "alt a dog, asleep",
                 "unknown whatever",
             ]),
-            "event",
+            EventId::new([1u8; 32]),
             BlobRole::Original,
         )
         .unwrap();
@@ -186,10 +187,27 @@ mod tests {
     }
 
     #[test]
+    fn a_blob_survives_a_json_round_trip() {
+        // The event id is a type now, and it serializes as the hex the column
+        // holds, so a Blob is still a plain JSON object.
+        let blob = Blob::from_imeta(
+            &tag(&["x abc123", "m image/jpeg", "size 2048"]),
+            EventId::new([1u8; 32]),
+            BlobRole::Original,
+        )
+        .unwrap();
+
+        let json = serde_json::to_string(&blob).unwrap();
+
+        assert!(json.contains(&blob.event_id.to_hex()));
+        assert_eq!(serde_json::from_str::<Blob>(&json).unwrap(), blob);
+    }
+
+    #[test]
     fn imeta_without_a_hash_is_not_a_blob() {
         let tag = tag(&["url https://example.com/x.jpg", "m image/jpeg"]);
 
-        assert!(Blob::from_imeta(&tag, "event", BlobRole::Original).is_none());
+        assert!(Blob::from_imeta(&tag, EventId::new([1u8; 32]), BlobRole::Original).is_none());
     }
 
     #[test]
