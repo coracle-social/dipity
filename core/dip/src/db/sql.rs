@@ -12,6 +12,19 @@ use coracle_lib::keys::PublicKey;
 use rusqlite::Error::FromSqlConversionFailure;
 use rusqlite::types::Type;
 
+/// `?1, ?2, …` for `count` parameters, the first of them numbered `from`.
+///
+/// For an `IN` over a set whose size is only known at runtime, which is what a
+/// read batched over a page of events is. Empty in, empty out — and `IN ()` is
+/// not valid SQL, so a caller that can be handed an empty set answers for it
+/// before building a statement.
+pub(crate) fn placeholders(from: usize, count: usize) -> String {
+    (from..from + count)
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// A fixed-size byte array — an id or a signature — coming back out of the
 /// `column`th column.
 pub(crate) fn bytes_from_sql<const N: usize>(

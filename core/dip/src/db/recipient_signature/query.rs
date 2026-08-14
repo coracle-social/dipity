@@ -5,7 +5,7 @@ use coracle_lib::keys::PublicKey;
 use rusqlite::{Row, params, params_from_iter};
 
 use crate::db::Tx;
-use crate::db::sql::{bytes_from_sql, pubkey_from_sql};
+use crate::db::sql::{bytes_from_sql, placeholders, pubkey_from_sql};
 use crate::model::RecipientSignature;
 
 /// The signature over an event naming a particular recipient.
@@ -78,11 +78,8 @@ pub fn forwardable(
         return Ok(Vec::new());
     }
 
-    let placeholders = (2..2 + event_ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-
+    // Numbered from 2, since the recipient binds first.
+    let placeholders = placeholders(2, event_ids.len());
     let mut prepared = tx.prepare(&format!(
         "SELECT event_id FROM recipient_signature
          WHERE recipient_pubkey = ?1 AND event_id IN ({placeholders})"

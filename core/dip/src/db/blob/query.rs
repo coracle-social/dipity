@@ -1,9 +1,12 @@
 //! Reads over `blob`.
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
-use rusqlite::{Row, params};
+use rusqlite::{Row, params, params_from_iter};
 
 use crate::db::Tx;
+use crate::db::sql::placeholders;
 use crate::model::{Blob, BlobRole};
 
 /// The blob columns, in the order [`to_blob`] reads them.
@@ -45,6 +48,36 @@ pub fn list_for_event(tx: &Tx<'_>, event_id: &str) -> Result<Vec<Blob>> {
         .query_map(params![event_id], to_blob)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .with_context(|| format!("listing blobs for {event_id}"))?;
+
+    Ok(blobs)
+}
+
+/// Every blob referenced by any of `event_ids`, grouped by the event.
+///
+/// One query rather than one per event, because the view asks this of a whole
+/// page at a time. An event with no blobs is absent from the map rather than
+/// present and empty.
+pub fn list_for_events(tx: &Tx<'_>, event_ids: &[String]) -> Result<HashMap<String, Vec<Blob>>> {
+    if event_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = placeholders(1, event_ids.len());
+    let mut prepared = tx.prepare(&format!(
+        "SELECT {COLUMNS} FROM blob WHERE event_id IN ({placeholders}) ORDER BY sha256 ASC"
+    ))?;
+
+    // Ordered by hash across the whole set, so each event's blobs come out in
+    // the order `list_for_event` gives them.
+    let mut blobs: HashMap<String, Vec<Blob>> = HashMap::new();
+
+    for blob in prepared
+        .query_map(params_from_iter(event_ids), to_blob)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("listing blobs for a page of events")?
+    {
+        blobs.entry(blob.event_id.clone()).or_default().push(blob);
+    }
 
     Ok(blobs)
 }

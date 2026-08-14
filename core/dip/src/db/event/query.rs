@@ -1,6 +1,6 @@
 //! Reads over `event`, `event_tag`, `event_fts` and `event_seen`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use anyhow::{Context, Result};
 use coracle_lib::addresses::{Address, EventExtensionAddress};
@@ -14,7 +14,7 @@ use rusqlite::{Row, params, params_from_iter};
 
 use crate::db::Tx;
 use crate::db::condition::{Conditions, text};
-use crate::db::sql::{bytes_from_sql, pubkey_from_sql};
+use crate::db::sql::{bytes_from_sql, placeholders, pubkey_from_sql};
 use crate::model::{
     Authors, Order, PeerPolicy, Provenance, ProvenanceFilter, Query, Register, Registers, Scope,
 };
@@ -121,17 +121,45 @@ pub fn provenance(tx: &Tx<'_>, id: &str) -> Result<Vec<Provenance>> {
     )?;
 
     let provenance = prepared
-        .query_map(params![id], |row| {
-            Ok(Provenance {
-                event_id: row.get("event_id")?,
-                peer_pubkey: pubkey_from_sql(&row.get::<_, String>("peer_pubkey")?, 1)?,
-                seen_at: row.get("seen_at")?,
-            })
-        })?
+        .query_map(params![id], to_provenance)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .with_context(|| format!("reading provenance for {id}"))?;
 
     Ok(provenance)
+}
+
+/// Every sighting of any of `ids`, grouped by the event.
+///
+/// One query rather than one per event, because the view asks this of a whole
+/// page at a time. An event this device does not hold is absent from the map.
+pub fn provenance_for(tx: &Tx<'_>, ids: &[String]) -> Result<HashMap<String, Vec<Provenance>>> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = placeholders(1, ids.len());
+    let mut prepared = tx.prepare(&format!(
+        "SELECT event_id, peer_pubkey, seen_at FROM event_seen
+         WHERE event_id IN ({placeholders})
+         ORDER BY seen_at ASC, peer_pubkey ASC"
+    ))?;
+
+    // Ordered across the whole set, so each event's sightings come out in the
+    // order `provenance` gives them.
+    let mut sightings: HashMap<String, Vec<Provenance>> = HashMap::new();
+
+    for sighting in prepared
+        .query_map(params_from_iter(ids), to_provenance)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("reading provenance for a page of events")?
+    {
+        sightings
+            .entry(sighting.event_id.clone())
+            .or_default()
+            .push(sighting);
+    }
+
+    Ok(sightings)
 }
 
 /// Which peers an event has been seen from.
@@ -468,6 +496,15 @@ fn fts_query(search: &str) -> Option<String> {
         .collect();
 
     (!terms.is_empty()).then(|| terms.join(" AND "))
+}
+
+/// Read a row into one sighting.
+fn to_provenance(row: &Row<'_>) -> rusqlite::Result<Provenance> {
+    Ok(Provenance {
+        event_id: row.get("event_id")?,
+        peer_pubkey: pubkey_from_sql(&row.get::<_, String>("peer_pubkey")?, 1)?,
+        seen_at: row.get("seen_at")?,
+    })
 }
 
 /// Read a row into an event, parsing the tags column back into an array.
@@ -971,6 +1008,49 @@ mod tests {
         }
 
         orders
+    }
+
+    /// The batched read has to answer exactly what the per-event one does,
+    /// including the order within an event and the events that have nothing.
+    #[test]
+    fn provenance_batches_without_changing_the_answer() {
+        let mut connection = open_in_memory().unwrap();
+        let tx = Tx::begin_write(&mut connection).unwrap();
+
+        let carried = note(author(1), 100, "carried around", Tags::new());
+        let once = note(author(1), 200, "seen once", Tags::new());
+
+        // Sightings recorded out of time order, so grouping by event cannot be
+        // passing on the order the rows were written in.
+        command::save(&tx, &carried, &author(5), 900).unwrap();
+        command::save(&tx, &once, &peer(), 400).unwrap();
+        command::save(&tx, &carried, &author(3), 300).unwrap();
+        command::save(&tx, &carried, &author(4), 600).unwrap();
+
+        let missing = id(&note(author(1), 300, "never stored", Tags::new()));
+        let ids = [id(&carried), id(&once), missing.clone()];
+        let batched = provenance_for(&tx, &ids).unwrap();
+
+        for id in &ids {
+            assert_eq!(
+                batched.get(id).cloned().unwrap_or_default(),
+                provenance(&tx, id).unwrap(),
+                "batched provenance for {id} differs from the per-event read"
+            );
+        }
+
+        // Earliest first within the event, and an event we hold nothing for is
+        // simply absent.
+        assert_eq!(
+            batched[&id(&carried)]
+                .iter()
+                .map(|sighting| sighting.seen_at)
+                .collect::<Vec<_>>(),
+            [300, 600, 900]
+        );
+        assert!(!batched.contains_key(&missing));
+
+        assert!(provenance_for(&tx, &[]).unwrap().is_empty());
     }
 
     #[test]

@@ -10,6 +10,8 @@
 //! than which function is called. [`with_details`] is the follow-up read for a
 //! caller that wants what the store knows about an event beyond the event.
 
+use std::collections::BTreeSet;
+
 use anyhow::Result;
 use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::PublicKey;
@@ -60,20 +62,34 @@ pub fn list_events(query: &Query) -> Result<Vec<HashedEvent>> {
 }
 
 /// Attach each event's media and provenance to it.
+///
+/// Two reads for the page rather than two per event: the caller is the view
+/// rendering a feed, and asking per event made the cost of showing a screen
+/// scale with how much of it is on screen.
 pub fn with_details(events: Vec<HashedEvent>) -> Result<Vec<EventDetail>> {
+    let ids: Vec<String> = events
+        .iter()
+        .map(|event| hex::encode(event.id))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
     read(|tx| {
-        events
+        let blobs = blob::list_for_events(tx, &ids)?;
+        let sightings = event::provenance_for(tx, &ids)?;
+
+        Ok(events
             .into_iter()
             .map(|event| {
                 let id = hex::encode(event.id);
 
-                Ok(EventDetail {
-                    blobs: blob::list_for_event(tx, &id)?,
-                    sightings: event::provenance(tx, &id)?,
+                EventDetail {
+                    blobs: blobs.get(&id).cloned().unwrap_or_default(),
+                    sightings: sightings.get(&id).cloned().unwrap_or_default(),
                     event,
-                })
+                }
             })
-            .collect()
+            .collect())
     })
 }
 

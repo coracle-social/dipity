@@ -183,6 +183,53 @@ mod tests {
         assert_eq!(query::get(&tx, "hash").unwrap().unwrap().event_id, first);
     }
 
+    /// The batched read has to answer exactly what the per-event one does,
+    /// including the order within an event and the events that have nothing.
+    #[test]
+    fn a_batched_read_answers_what_the_per_event_one_does() {
+        let mut connection = open_in_memory().unwrap();
+        let tx = Tx::begin_write(&mut connection).unwrap();
+
+        let first = store_event(&tx, "two blobs");
+        let second = store_event(&tx, "one blob");
+        let bare = store_event(&tx, "no blobs at all");
+
+        // Recorded out of hash order, so grouping cannot be passing by accident.
+        for (sha256, event_id) in [
+            ("ccc", &first),
+            ("aaa", &first),
+            ("bbb", &second),
+            ("ddd", &second),
+        ] {
+            record(&tx, &Blob::new(sha256, event_id, BlobRole::Original)).unwrap();
+        }
+
+        let ids = [first.clone(), second.clone(), bare.clone()];
+        let batched = query::list_for_events(&tx, &ids).unwrap();
+
+        for id in &ids {
+            let one = query::list_for_event(&tx, id).unwrap();
+
+            assert_eq!(
+                batched.get(id).cloned().unwrap_or_default(),
+                one,
+                "batched blobs for {id} differ from the per-event read"
+            );
+        }
+
+        // Sorted within the event, and an event with nothing is simply absent.
+        assert_eq!(
+            batched[&first]
+                .iter()
+                .map(|blob| blob.sha256.as_str())
+                .collect::<Vec<_>>(),
+            ["aaa", "ccc"]
+        );
+        assert!(!batched.contains_key(&bare));
+
+        assert!(query::list_for_events(&tx, &[]).unwrap().is_empty());
+    }
+
     #[test]
     fn the_whole_imeta_tag_survives_the_round_trip() {
         let mut connection = open_in_memory().unwrap();
