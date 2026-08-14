@@ -28,14 +28,8 @@ pub mod keys {
     /// How many new pubkeys the device will disclose to per discoverable window.
     pub const DISCLOSURE_BUDGET: &str = "policy.disclosure_budget";
 
-    /// Who can see the user's profile. Default `public`.
-    pub const PROFILE_VISIBILITY: &str = "policy.visibility.profile";
-
-    /// Who can see the user's content. Default `public`.
-    pub const CONTENT_VISIBILITY: &str = "policy.visibility.content";
-
-    /// Who can see the user's trust, block and mute lists. Default `trusted`.
-    pub const METADATA_VISIBILITY: &str = "policy.visibility.metadata";
+    /// Who can see what the user publishes, as ordered rules and a default.
+    pub const VISIBILITY: &str = "policy.visibility";
 
     /// Whose events the device stores from a peer. Default `lenient`.
     pub const ACCEPT: &str = "policy.accept";

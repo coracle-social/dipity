@@ -18,7 +18,7 @@ use crate::db::Tx;
 use crate::db::event::query as event;
 use crate::model::{
     DEFAULT_COOL_OFF_MINUTES, DEFAULT_DISCLOSURE_BUDGET, Graph, KIND_MUTE, Policy, Pref, Scope,
-    keys,
+    Visibility, keys,
 };
 
 /// One preference's raw JSON value, or `None` if it has never been written —
@@ -98,9 +98,7 @@ pub fn policy(tx: &Tx<'_>, identity: &PublicKey) -> Result<Policy> {
         cool_off_minutes: get_or(tx, keys::COOL_OFF_MINUTES, DEFAULT_COOL_OFF_MINUTES)?,
         discoverable_times: get_or(tx, keys::DISCOVERABLE_TIMES, Vec::new())?,
         disclosure_budget: get_or(tx, keys::DISCLOSURE_BUDGET, DEFAULT_DISCLOSURE_BUDGET)?,
-        profile_visibility: get_or(tx, keys::PROFILE_VISIBILITY, Scope::Public)?,
-        content_visibility: get_or(tx, keys::CONTENT_VISIBILITY, Scope::Public)?,
-        metadata_visibility: get_or(tx, keys::METADATA_VISIBILITY, Scope::Trusted)?,
+        visibility: get_or(tx, keys::VISIBILITY, Visibility::default())?,
         accept: get_or(tx, keys::ACCEPT, Scope::Lenient)?,
         gossip: get_or(tx, keys::GOSSIP, Scope::Network)?,
         graph: graph(tx, identity)?,
@@ -176,9 +174,7 @@ mod tests {
         assert_eq!(policy.cool_off_minutes, DEFAULT_COOL_OFF_MINUTES);
         assert_eq!(policy.disclosure_budget, DEFAULT_DISCLOSURE_BUDGET);
         assert!(policy.discoverable_times.is_empty());
-        assert_eq!(policy.profile_visibility, Scope::Public);
-        assert_eq!(policy.content_visibility, Scope::Public);
-        assert_eq!(policy.metadata_visibility, Scope::Trusted);
+        assert_eq!(policy.visibility, Visibility::default());
         assert_eq!(policy.accept, Scope::Lenient);
         assert_eq!(policy.gossip, Scope::Network);
         assert_eq!(policy.graph, Graph::default());

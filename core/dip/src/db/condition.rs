@@ -67,6 +67,28 @@ impl Conditions {
             .join(", ")
     }
 
+    /// Compile whatever `f` adds into one parenthesized clause, and return it
+    /// rather than adding it — so a caller can negate it, or name it in more
+    /// than one clause.
+    ///
+    /// Parameters bind into the same list, so the placeholders inside keep
+    /// their numbers and stay valid however many times the clause is used.
+    /// `1` when `f` constrains nothing, since a constraint that names nothing
+    /// matches everything — the mirror of [`push_never`](Self::push_never).
+    pub(crate) fn group(&mut self, f: impl FnOnce(&mut Self)) -> String {
+        let outer = std::mem::take(&mut self.clauses);
+
+        f(self);
+
+        let inner = std::mem::replace(&mut self.clauses, outer);
+
+        if inner.is_empty() {
+            return "1".to_string();
+        }
+
+        format!("({})", inner.join(" AND "))
+    }
+
     /// Add a finished clause, whose placeholders are already bound.
     pub(crate) fn push(&mut self, clause: impl Into<String>) {
         self.clauses.push(clause.into());

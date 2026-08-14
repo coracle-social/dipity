@@ -19,10 +19,10 @@
 //! assert!(!policy.is_blocked());
 //! ```
 
-use coracle_lib::events::{HasKind, HasPubkey};
+use coracle_lib::events::{HasCreatedAt, HasId, HasKind, HasPubkey, HasTags};
 use coracle_lib::keys::PublicKey;
 
-use crate::model::{Authors, EventCategory, Graph, Scope, Standing};
+use crate::model::{Authors, Graph, Scope, Standing, Visibility};
 use crate::util::Window;
 
 /// How long the device keeps accepting unknown peers after backgrounding.
@@ -52,12 +52,8 @@ pub struct Policy {
     /// How many new pubkeys the device will disclose to per discoverable
     /// window.
     pub disclosure_budget: u32,
-    /// Who can see the user's profile.
-    pub profile_visibility: Scope,
-    /// Who can see the user's content.
-    pub content_visibility: Scope,
-    /// Who can see the user's trust, block and mute lists.
-    pub metadata_visibility: Scope,
+    /// Who can see what the user publishes.
+    pub visibility: Visibility,
     /// Whose events the device stores from a peer.
     pub accept: Scope,
     /// Whose events the device relays onward.
@@ -75,9 +71,7 @@ impl Policy {
             cool_off_minutes: DEFAULT_COOL_OFF_MINUTES,
             discoverable_times: Vec::new(),
             disclosure_budget: DEFAULT_DISCLOSURE_BUDGET,
-            profile_visibility: Scope::Public,
-            content_visibility: Scope::Public,
-            metadata_visibility: Scope::Trusted,
+            visibility: Visibility::default(),
             accept: Scope::Lenient,
             gossip: Scope::Network,
             graph: Graph::default(),
@@ -152,10 +146,18 @@ impl PeerPolicy {
         self.standing == Standing::Blocked
     }
 
-    /// Whether the peer may see the user's own events of this category.
+    /// Whether the peer may see this event of the user's own.
     #[must_use]
-    pub fn sees(&self, category: EventCategory) -> bool {
-        !self.is_blocked() && self.visibility(category).admits(self.standing)
+    pub fn is_visible<E>(&self, event: &E) -> bool
+    where
+        E: HasId + HasKind + HasPubkey + HasTags + HasCreatedAt,
+    {
+        !self.is_blocked()
+            && self
+                .policy
+                .visibility
+                .scope_for(event)
+                .admits(self.standing)
     }
 
     /// Whether an event this peer offered is one to store.
@@ -174,13 +176,16 @@ impl PeerPolicy {
 
     /// Whether an event may be shared with this peer.
     #[must_use]
-    pub fn should_gossip<E: HasPubkey + HasKind>(&self, event: &E) -> bool {
+    pub fn should_gossip<E>(&self, event: &E) -> bool
+    where
+        E: HasId + HasKind + HasPubkey + HasTags + HasCreatedAt,
+    {
         if self.is_blocked() {
             return false;
         }
 
         if event.pubkey() == self.identity() {
-            return self.sees(EventCategory::of(event.kind()));
+            return self.is_visible(event);
         }
 
         self.policy
@@ -214,15 +219,6 @@ impl PeerPolicy {
     #[must_use]
     pub fn accept_authors(&self) -> Authors {
         self.policy.accept.authors(&self.policy.graph)
-    }
-
-    /// The visibility setting governing a category of the user's own events.
-    fn visibility(&self, category: EventCategory) -> Scope {
-        match category {
-            EventCategory::Profile => self.policy.profile_visibility,
-            EventCategory::Metadata => self.policy.metadata_visibility,
-            EventCategory::Content => self.policy.content_visibility,
-        }
     }
 }
 
@@ -303,16 +299,20 @@ mod tests {
     }
 
     #[test]
-    fn visibility_governs_the_users_own_events_by_category() {
+    fn visibility_governs_the_users_own_events() {
         let policy = policy();
         let stranger = policy.clone().for_peer(author(9));
         let trusted = policy.clone().for_peer(author(2));
 
-        // The defaults: profile and content public, metadata trusted.
-        assert!(stranger.sees(EventCategory::Profile));
-        assert!(stranger.sees(EventCategory::Content));
-        assert!(!stranger.sees(EventCategory::Metadata));
-        assert!(trusted.sees(EventCategory::Metadata));
+        let profile = event(us(), KIND_PROFILE, 1, "", Tags::new());
+        let note = event(us(), 1, 1, "", Tags::new());
+        let mutes = event(us(), KIND_MUTE, 1, "", Tags::new());
+
+        // The defaults: the mute list to trusted peers, everything else public.
+        assert!(stranger.is_visible(&profile));
+        assert!(stranger.is_visible(&note));
+        assert!(!stranger.is_visible(&mutes));
+        assert!(trusted.is_visible(&mutes));
 
         assert!(stranger.should_gossip(&event(us(), KIND_PROFILE, 1, "", Tags::new())));
         assert!(stranger.should_gossip(&event(us(), 1, 1, "", Tags::new())));
@@ -360,6 +360,9 @@ mod tests {
         assert!(blocked.is_blocked());
         assert!(!blocked.should_gossip(&event(us(), 1, 1, "", Tags::new())));
         assert!(!blocked.should_accept(&event(author(2), 1, 1, "", Tags::new())));
-        assert!(!blocked.sees(EventCategory::Profile));
+
+        // Blocked outranks every rule, including one this peer would otherwise
+        // fall inside.
+        assert!(!blocked.is_visible(&event(us(), KIND_PROFILE, 1, "", Tags::new())));
     }
 }

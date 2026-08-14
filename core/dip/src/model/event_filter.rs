@@ -2,17 +2,14 @@
 
 use coracle_lib::filters::Filter;
 
-use crate::model::{Order, PeerPolicy, Registers, Seen};
+use crate::model::{Order, PeerPolicy, ProvenanceFilter, Registers};
 
 /// Everything a query over stored events can be narrowed by.
-///
-/// Four constraints, kept apart because they are answerable by different
-/// parties and only the first may ever be shown to one:
 ///
 /// | Field | Is | Comes from |
 /// | --- | --- | --- |
 /// | [`filter`](Self::filter) | a NIP-01 filter | the caller, or a peer's `REQ` |
-/// | [`seen`](Self::seen) | local arrival criteria | the view |
+/// | [`provenance`](Self::provenance) | where it came from | the view |
 /// | [`registers`](Self::registers) | how far the event may travel | `docs/proofs.md` |
 /// | [`policy`](Self::policy) | who may be served what | the user's preferences |
 ///
@@ -22,8 +19,8 @@ use crate::model::{Order, PeerPolicy, Registers, Seen};
 pub struct EventFilter {
     /// The NIP-01 filter: the half of the criteria that may go on the wire.
     pub filter: Filter,
-    /// Local arrival criteria: the half that must not.
-    pub seen: Seen,
+    /// Criteria over where the event came from: the half that must not.
+    pub provenance: ProvenanceFilter,
     /// Which authorship registers qualify. `None` is no constraint, which is
     /// right for a local read and wrong for anything being sent.
     pub registers: Option<Registers>,
@@ -48,17 +45,17 @@ impl EventFilter {
         self
     }
 
-    /// Narrow by local arrival criteria.
+    /// Narrow by where the event came from.
     #[must_use]
-    pub fn with_seen(mut self, seen: Seen) -> Self {
-        self.seen = seen;
+    pub fn with_provenance(mut self, provenance: ProvenanceFilter) -> Self {
+        self.provenance = provenance;
         self
     }
 
     /// Restrict to events first seen at or after `since`.
     #[must_use]
     pub fn add_seen_since(mut self, since: i64) -> Self {
-        self.seen = self.seen.add_since(since);
+        self.provenance = self.provenance.add_since(since);
         self
     }
 
@@ -87,7 +84,7 @@ impl EventFilter {
     #[must_use]
     pub fn matches_nothing(&self) -> bool {
         self.filter.matches_nothing()
-            || self.seen.matches_nothing()
+            || self.provenance.matches_nothing()
             || self
                 .registers
                 .as_ref()
@@ -115,7 +112,7 @@ mod tests {
         );
         assert!(
             EventFilter::new()
-                .with_seen(Seen::new().add_peers([]))
+                .with_provenance(ProvenanceFilter::new().add_peers([]))
                 .matches_nothing()
         );
         assert!(

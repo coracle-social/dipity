@@ -12,13 +12,13 @@
 //! kinds, addresses and filters. They have to agree byte for byte with a peer
 //! running the other platform's build, so there is one definition of each and
 //! it is not here. What is here is what the store adds — where an event came
-//! from ([`Provenance`], [`Seen`]), how far it may travel ([`Register`]), who
+//! from ([`Provenance`], [`ProvenanceFilter`]), how far it may travel
+//! ([`Register`]), who
 //! may be served it ([`Policy`]), and the metadata for the files it references
 //! ([`Blob`]).
 
 mod authors;
 mod blob;
-mod event_category;
 mod event_filter;
 mod graph;
 mod kind;
@@ -29,12 +29,11 @@ mod proof;
 mod provenance;
 mod registers;
 mod scope;
-mod seen;
 mod tag;
+mod visibility;
 
 pub use authors::Authors;
 pub use blob::{Blob, BlobRole};
-pub use event_category::EventCategory;
 pub use event_filter::EventFilter;
 pub use graph::{Graph, Standing};
 pub use kind::{KIND_DELETE, KIND_MUTE, KIND_PROFILE};
@@ -42,11 +41,11 @@ pub use order::Order;
 pub use policy::{DEFAULT_COOL_OFF_MINUTES, DEFAULT_DISCLOSURE_BUDGET, PeerPolicy, Policy};
 pub use pref::{Pref, keys};
 pub use proof::Proof;
-pub use provenance::Provenance;
+pub use provenance::{Provenance, ProvenanceFilter};
 pub use registers::{Register, Registers};
 pub use scope::Scope;
-pub use seen::Seen;
 pub use tag::is_indexed_tag;
+pub use visibility::{Visibility, VisibilityRule};
 
 #[cfg(test)]
 mod tests {

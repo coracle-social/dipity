@@ -16,7 +16,8 @@ use crate::db::Tx;
 use crate::db::condition::{Conditions, text};
 use crate::db::sql::{bytes_from_sql, pubkey_from_sql};
 use crate::model::{
-    Authors, EventCategory, EventFilter, Order, PeerPolicy, Provenance, Register, Registers, Seen,
+    Authors, EventFilter, Order, PeerPolicy, Provenance, ProvenanceFilter, Register, Registers,
+    Scope,
 };
 
 /// The event columns, in the order [`to_event`] reads them.
@@ -204,7 +205,7 @@ fn conditions(filter: &EventFilter) -> Conditions {
     let mut conditions = Conditions::new();
 
     push_filter(&mut conditions, &filter.filter);
-    push_seen(&mut conditions, &filter.seen);
+    push_provenance(&mut conditions, &filter.provenance);
 
     if let Some(registers) = &filter.registers {
         push_registers(&mut conditions, registers);
@@ -328,23 +329,23 @@ fn push_tag(conditions: &mut Conditions, key: &str, values: &BTreeSet<String>) {
     }
 }
 
-/// Compile the local seen criteria. Time bounds read the earliest sighting;
+/// Compile the provenance criteria. Time bounds read the earliest sighting;
 /// the peer constraint reads any of them, since seeing an event from someone
 /// later is still having seen it from them.
-fn push_seen(conditions: &mut Conditions, seen: &Seen) {
-    if let Some(since) = seen.since {
+fn push_provenance(conditions: &mut Conditions, provenance: &ProvenanceFilter) {
+    if let Some(since) = provenance.since {
         let index = conditions.bind(Value::Integer(since));
 
         conditions.push(format!("{SEEN_AT} >= ?{index}"));
     }
 
-    if let Some(until) = seen.until {
+    if let Some(until) = provenance.until {
         let index = conditions.bind(Value::Integer(until));
 
         conditions.push(format!("{SEEN_AT} <= ?{index}"));
     }
 
-    if let Some(peers) = &seen.peers {
+    if let Some(peers) = &provenance.peers {
         if peers.is_empty() {
             conditions.push_never();
             return;
@@ -405,41 +406,58 @@ fn push_policy(conditions: &mut Conditions, policy: &PeerPolicy) {
         }
     }
 
-    for category in EventCategory::ALL {
-        if !policy.sees(category) {
-            push_hidden(conditions, policy.identity(), category);
+    push_visibility(conditions, policy);
+}
+
+/// Exclude the user's own events this peer may not see.
+fn push_visibility(conditions: &mut Conditions, policy: &PeerPolicy) {
+    let visibility = &policy.policy().visibility;
+    let standing = policy.standing();
+    let hides = |scope: Scope| !scope.admits(standing);
+
+    let depth = if hides(visibility.default) {
+        visibility.rules.len()
+    } else {
+        visibility
+            .rules
+            .iter()
+            .rposition(|rule| hides(rule.scope))
+            .map_or(0, |last| last + 1)
+    };
+
+    let mut unmatched: Vec<String> = Vec::new();
+
+    for rule in &visibility.rules[..depth] {
+        let matched = conditions.group(|conditions| push_filter(conditions, &rule.filter));
+
+        if hides(rule.scope) {
+            let mut reached = unmatched.clone();
+
+            reached.push(matched.clone());
+            push_hidden(conditions, policy.identity(), &reached);
         }
+
+        unmatched.push(format!("NOT {matched}"));
+    }
+
+    if hides(visibility.default) {
+        push_hidden(conditions, policy.identity(), &unmatched);
     }
 }
 
-/// Exclude the user's own events of a category this peer may not see.
-fn push_hidden(conditions: &mut Conditions, identity: &PublicKey, category: EventCategory) {
-    let complement = category == EventCategory::Content;
-    let kinds = if complement {
-        EventCategory::named_kinds()
-    } else {
-        category.kinds()
-    };
-
-    if kinds.is_empty() && !complement {
-        return;
-    }
-
+/// Exclude the user's own events that reach a rule hiding them from this peer,
+/// which is those matching every one of `reached`.
+fn push_hidden(conditions: &mut Conditions, identity: &PublicKey, reached: &[String]) {
     let index = conditions.bind(text(identity.to_hex()));
 
-    // Every kind is named by another category, so the complement is empty and
-    // the whole of the user's own output is hidden.
-    if kinds.is_empty() {
+    if reached.is_empty() {
         conditions.push(format!("e.pubkey <> ?{index}"));
         return;
     }
 
-    let placeholders =
-        conditions.bind_all(kinds.into_iter().map(|kind| Value::Integer(kind.into())));
-    let membership = if complement { "NOT IN" } else { "IN" };
-
     conditions.push(format!(
-        "NOT (e.pubkey = ?{index} AND e.kind {membership} ({placeholders}))"
+        "NOT (e.pubkey = ?{index} AND {})",
+        reached.join(" AND ")
     ));
 }
 
@@ -491,7 +509,7 @@ mod tests {
     use crate::db::open_in_memory;
     use crate::db::proof::command as proof;
     use crate::fixtures::{author, event, id, note, peer};
-    use crate::model::{KIND_MUTE, KIND_PROFILE, Policy, Proof, Scope};
+    use crate::model::{KIND_MUTE, KIND_PROFILE, Policy, Proof, Scope, Visibility, VisibilityRule};
 
     /// A query narrowed by a NIP-01 filter and nothing else.
     fn matching(filter: Filter) -> EventFilter {
@@ -662,7 +680,8 @@ mod tests {
         assert!(
             list(
                 &tx,
-                &everything().with_seen(Seen::new().add_since(200).add_until(100))
+                &everything()
+                    .with_provenance(ProvenanceFilter::new().add_since(200).add_until(100))
             )
             .unwrap()
             .is_empty()
@@ -817,7 +836,7 @@ mod tests {
         // A blocked peer is served nothing at all.
         assert!(served(policy.clone(), author(4)).is_empty());
 
-        // Nothing gossips only the user's own, still by category.
+        // Nothing gossips only the user's own, still governed by visibility.
         let mut silent = policy.clone();
         silent.gossip = Scope::Nothing;
         assert_eq!(served(silent, author(9)), [id(&profile), id(&ours)].into());
@@ -830,15 +849,128 @@ mod tests {
             [id(&profile), id(&ours), id(&trusted), id(&stranger)].into()
         );
 
-        // Hiding content leaves the user's other categories alone, and touches
-        // nobody else's events.
+        // A rule hiding the user's ordinary notes leaves what earlier rules
+        // matched alone, and touches nobody else's events. The profile rule
+        // sits above the catch-all, so it survives being hidden by it.
         let mut private = policy;
-        private.content_visibility = Scope::Nothing;
+        private.visibility = Visibility {
+            rules: vec![
+                VisibilityRule {
+                    filter: Filter::new().add_kinds([KIND_PROFILE]),
+                    scope: Scope::Public,
+                },
+                VisibilityRule {
+                    filter: Filter::new(),
+                    scope: Scope::Nothing,
+                },
+            ],
+            default: Scope::Public,
+        };
         private.gossip = Scope::Lenient;
         assert_eq!(
             served(private, author(9)),
             [id(&profile), id(&trusted), id(&stranger)].into()
         );
+    }
+
+    /// The SQL walk in [`push_visibility`] and the walk in
+    /// [`Visibility::scope_for`] are the same rules read by two engines, and
+    /// only one of them is reachable from a test that asks about an event. So
+    /// this asks both about every event under every ordering of a rule set
+    /// built to make order matter.
+    #[test]
+    fn the_compiled_rules_serve_exactly_what_the_rules_admit() {
+        let mut connection = open_in_memory().unwrap();
+        let tx = Tx::begin_write(&mut connection).unwrap();
+
+        let us = author(1);
+        let them = author(9);
+
+        let events = [
+            event(us, KIND_PROFILE, 100, "", Tags::new()),
+            event(us, KIND_MUTE, 200, "", Tags::new()),
+            event(us, 1, 300, "plain", Tags::new()),
+            event(us, 1, 400, "tagged", Tags::new().add("t", ["work"])),
+            event(us, 30_023, 500, "long", Tags::new().add("d", ["post"])),
+            // Someone else's, which visibility never governs.
+            note(author(2), 600, "theirs", Tags::new()),
+        ];
+
+        for held in &events {
+            command::save(&tx, held, &peer(), held.created_at).unwrap();
+        }
+
+        let rules = [
+            VisibilityRule {
+                filter: Filter::new().add_kinds([KIND_PROFILE]),
+                scope: Scope::Public,
+            },
+            VisibilityRule {
+                filter: Filter::new().add_tag(TagMatch::Any, "t", "work"),
+                scope: Scope::Nothing,
+            },
+            VisibilityRule {
+                filter: Filter::new().add_kinds([1, 30_023]),
+                scope: Scope::Trusted,
+            },
+            VisibilityRule {
+                filter: Filter::new(),
+                scope: Scope::Lenient,
+            },
+        ];
+
+        // Every ordering of the four, so a rule shadowing another is covered
+        // as well as the orders in which none does.
+        for order in permutations(rules.len()) {
+            for default in [Scope::Nothing, Scope::Public] {
+                let mut policy = Policy::new(us);
+
+                policy.gossip = Scope::Lenient;
+                policy.visibility = Visibility {
+                    rules: order.iter().map(|index| rules[*index].clone()).collect(),
+                    default,
+                };
+
+                let bound = policy.for_peer(them);
+                let admitted: BTreeSet<String> = events
+                    .iter()
+                    .filter(|held| held.pubkey != us || bound.is_visible(*held))
+                    .map(id)
+                    .collect();
+
+                let served: BTreeSet<String> = list(&tx, &everything().with_policy(bound.clone()))
+                    .unwrap()
+                    .iter()
+                    .map(id)
+                    .collect();
+
+                assert_eq!(
+                    served, admitted,
+                    "rule order {order:?} with default {default:?} was compiled to a \
+                     query disagreeing with the rules it came from"
+                );
+            }
+        }
+    }
+
+    /// Every ordering of `n` indexes.
+    fn permutations(n: usize) -> Vec<Vec<usize>> {
+        if n == 0 {
+            return vec![Vec::new()];
+        }
+
+        let mut orders = Vec::new();
+
+        for shorter in permutations(n - 1) {
+            for position in 0..n {
+                let mut order = shorter.clone();
+
+                order.insert(position, n - 1);
+                orders.push(order);
+            }
+        }
+
+        orders
     }
 
     #[test]

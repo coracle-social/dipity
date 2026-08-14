@@ -37,16 +37,6 @@ Every setting below is expressed on the same tiers, applied either to the peer o
 - **Lenient** - anyone who connects, except blocked pubkeys.
 - **Public** - anyone; [proofs are generated](./proofs.md) for whatever the setting covers. Visibility settings only.
 
-## Visibility
-
-Who can see what the user publishes:
-
-| Setting | Governs | Default |
-| --- | --- | --- |
-| Profile visibility | the user's profile | `public` |
-| Content visibility | the user's content | `public` |
-| Metadata visibility | the user's trust, block and mute lists | `trusted` |
-
 ## Accept and gossip
 
 How much of other people's content the device takes in, and how much of it goes on to the next peer:
@@ -58,3 +48,6 @@ How much of other people's content the device takes in, and how much of it goes 
 
 Gossip takes one extra value, **Nothing**, which shares only the user's own content. How both compile onto the wire is in [`sync.md`](./sync.md#event-sync).
 
+## Visibility
+
+Who can see what the user publishes. By default social graph metadata is only shared with `trusted` peers, while everything else a user publishes is `public`.

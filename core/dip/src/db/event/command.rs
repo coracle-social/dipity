@@ -270,7 +270,7 @@ mod tests {
 
     use crate::db::open_in_memory;
     use crate::fixtures::{author, event, id, note, peer};
-    use crate::model::{EventFilter, Seen};
+    use crate::model::{EventFilter, ProvenanceFilter};
 
     /// A query narrowed by a NIP-01 filter and nothing else.
     fn matching(filter: Filter) -> EventFilter {
@@ -519,7 +519,7 @@ mod tests {
 
         let from_peer = query::list(
             &tx,
-            &everything().with_seen(Seen::new().add_peers([peer()])),
+            &everything().with_provenance(ProvenanceFilter::new().add_peers([peer()])),
         )
         .unwrap();
         assert_eq!(from_peer, vec![early.clone()]);
