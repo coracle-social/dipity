@@ -11,7 +11,7 @@
 //! tables the answer takes.
 //!
 //! Below them sits one module per group of tables — [`blob`], [`event`],
-//! [`pref`], [`proof`] — each holding three files:
+//! [`pref`], [`recipient_signature`] — each holding three files:
 //!
 //! | File | Holds |
 //! | --- | --- |
@@ -37,7 +37,7 @@ pub mod query;
 pub mod blob;
 pub mod event;
 pub mod pref;
-pub mod proof;
+pub mod recipient_signature;
 
 pub(crate) mod condition;
 mod core;

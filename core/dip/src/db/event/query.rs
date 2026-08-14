@@ -16,8 +16,7 @@ use crate::db::Tx;
 use crate::db::condition::{Conditions, text};
 use crate::db::sql::{bytes_from_sql, pubkey_from_sql};
 use crate::model::{
-    Authors, EventFilter, Order, PeerPolicy, Provenance, ProvenanceFilter, Register, Registers,
-    Scope,
+    Authors, Order, PeerPolicy, Provenance, ProvenanceFilter, Query, Register, Registers, Scope,
 };
 
 /// The event columns, in the order [`to_event`] reads them.
@@ -48,18 +47,18 @@ pub fn exists(tx: &Tx<'_>, id: &str) -> Result<bool> {
     Ok(exists)
 }
 
-/// Events matching every constraint on `filter`.
-pub fn list(tx: &Tx<'_>, filter: &EventFilter) -> Result<Vec<HashedEvent>> {
-    if filter.matches_nothing() {
+/// Events matching every constraint on `query`.
+pub fn list(tx: &Tx<'_>, query: &Query) -> Result<Vec<HashedEvent>> {
+    if query.matches_nothing() {
         return Ok(Vec::new());
     }
 
-    let mut conditions = conditions(filter);
-    let tail = match filter.order {
+    let mut conditions = conditions(query);
+    let tail = match query.order {
         Order::CreatedAt => "ORDER BY e.created_at DESC, e.id ASC".to_string(),
         Order::SeenAt => format!("ORDER BY {SEEN_AT} DESC, e.id ASC"),
     };
-    let sql = statement(COLUMNS, &mut conditions, &tail, filter.filter.limit);
+    let sql = statement(COLUMNS, &mut conditions, &tail, query.filter.limit);
 
     let mut prepared = tx.prepare(&sql)?;
     let events = prepared
@@ -71,12 +70,12 @@ pub fn list(tx: &Tx<'_>, filter: &EventFilter) -> Result<Vec<HashedEvent>> {
 }
 
 /// How many events match.
-pub fn count(tx: &Tx<'_>, filter: &EventFilter) -> Result<usize> {
-    if filter.matches_nothing() {
+pub fn count(tx: &Tx<'_>, query: &Query) -> Result<usize> {
+    if query.matches_nothing() {
         return Ok(0);
     }
 
-    let mut conditions = conditions(filter);
+    let mut conditions = conditions(query);
     let sql = statement("COUNT(*)", &mut conditions, "", None);
 
     let count: i64 = tx
@@ -200,18 +199,18 @@ fn statement(
     .join(" ")
 }
 
-/// Compile every constraint on an [`EventFilter`] into SQL.
-fn conditions(filter: &EventFilter) -> Conditions {
+/// Compile every constraint on a [`Query`] into SQL.
+fn conditions(query: &Query) -> Conditions {
     let mut conditions = Conditions::new();
 
-    push_filter(&mut conditions, &filter.filter);
-    push_provenance(&mut conditions, &filter.provenance);
+    push_filter(&mut conditions, &query.filter);
+    push_provenance(&mut conditions, &query.provenance);
 
-    if let Some(registers) = &filter.registers {
+    if let Some(registers) = &query.registers {
         push_registers(&mut conditions, registers);
     }
 
-    if let Some(policy) = &filter.policy {
+    if let Some(policy) = &query.policy {
         push_policy(&mut conditions, policy);
     }
 
@@ -370,7 +369,7 @@ fn push_registers(conditions: &mut Conditions, registers: &Registers) {
     let index = conditions.bind(text(registers.identity.to_hex()));
 
     let signed = format!(
-        "EXISTS (SELECT 1 FROM proof p WHERE p.event_id = e.id AND p.recipient_pubkey = ?{index})"
+        "EXISTS (SELECT 1 FROM recipient_signature p WHERE p.event_id = e.id AND p.recipient_pubkey = ?{index})"
     );
 
     let disjuncts = registers
@@ -507,18 +506,20 @@ mod tests {
 
     use crate::db::event::command;
     use crate::db::open_in_memory;
-    use crate::db::proof::command as proof;
+    use crate::db::recipient_signature::command as signature;
     use crate::fixtures::{author, event, id, note, peer};
-    use crate::model::{KIND_MUTE, KIND_PROFILE, Policy, Proof, Scope, Visibility, VisibilityRule};
+    use crate::model::{
+        KIND_MUTE, KIND_PROFILE, Policy, RecipientSignature, Scope, Visibility, VisibilityRule,
+    };
 
     /// A query narrowed by a NIP-01 filter and nothing else.
-    fn matching(filter: Filter) -> EventFilter {
-        EventFilter::new().with_filter(filter)
+    fn matching(filter: Filter) -> Query {
+        Query::new().with_filter(filter)
     }
 
     /// Everything the store holds.
-    fn everything() -> EventFilter {
-        EventFilter::new()
+    fn everything() -> Query {
+        Query::new()
     }
 
     fn store(tx: &Tx<'_>, seed: u8, created_at: i64, tags: Tags) {
@@ -531,9 +532,9 @@ mod tests {
     /// what puts it in the forwardable register.
     fn store_signed(tx: &Tx<'_>, event: &HashedEvent, recipient: &PublicKey) {
         command::save(tx, event, &peer(), event.created_at).unwrap();
-        proof::save(
+        signature::save(
             tx,
-            &Proof {
+            &RecipientSignature {
                 event_id: id(event),
                 recipient_pubkey: *recipient,
                 sig: [7u8; 64],

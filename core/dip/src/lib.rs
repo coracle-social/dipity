@@ -24,9 +24,8 @@
 //! order.
 //!
 //! Which peer may be served what is not a second way in either: it rides on the
-//! query, as an [`EventFilter`](model::EventFilter) carrying the
-//! [`Policy`](model::Policy) the user set and the authorship registers
-//! `docs/proofs.md` requires.
+//! query, as a [`Query`](model::Query) carrying the [`Policy`](model::Policy)
+//! the user set and the authorship registers `docs/proofs.md` requires.
 //!
 //! ```no_run
 //! # fn main() -> anyhow::Result<()> {
@@ -34,7 +33,7 @@
 //! # let (peer, identity): (&coracle_lib::keys::PublicKey, &coracle_lib::keys::PublicKey) = todo!();
 //! # let signature = None;
 //! use coracle_lib::filters::Filter;
-//! use dip::model::{EventFilter, Order, Registers};
+//! use dip::model::{Query, Order, Registers};
 //!
 //! dip::db::configure("/path/the/shell/provides")?;
 //!
@@ -45,7 +44,7 @@
 //! // The user's feed: by arrival, since a note handed over today is new to
 //! // them whatever its author stamped it.
 //! let feed = dip::db::query::with_details(dip::db::query::list_events(
-//!     &EventFilter::new()
+//!     &Query::new()
 //!         .with_filter(Filter::new().add_kinds([1]).add_limit(50))
 //!         .with_order(Order::SeenAt),
 //! )?)?;
@@ -53,7 +52,7 @@
 //! // What that peer may be handed, which is the same query under the
 //! // constraints they are owed.
 //! let offerable = dip::db::query::list_events(
-//!     &EventFilter::new()
+//!     &Query::new()
 //!         .with_registers(Registers::offerable(*identity))
 //!         .with_policy(dip::db::query::policy(identity)?.for_peer(*peer)),
 //! )?;

@@ -76,14 +76,14 @@ CREATE INDEX event_seen_peer ON event_seen (peer_pubkey, seen_at DESC);
 -- The author's signature over `event_id ‖ recipient_pubkey`, held by the peer
 -- it names. It is portable evidence, so it is never served to anyone: a second
 -- hop gets an authorship proof derived from it instead. See docs/proofs.md.
-CREATE TABLE proof (
+CREATE TABLE recipient_signature (
     event_id         TEXT NOT NULL REFERENCES event (id) ON DELETE CASCADE,
     recipient_pubkey TEXT NOT NULL,
     sig              TEXT NOT NULL,
     PRIMARY KEY (event_id, recipient_pubkey)
 ) STRICT;
 
-CREATE INDEX proof_recipient ON proof (recipient_pubkey);
+CREATE INDEX recipient_signature_recipient ON recipient_signature (recipient_pubkey);
 
 -- Key/value store for app policy and UI preferences. Values are JSON so a
 -- preference can grow structure without a migration.

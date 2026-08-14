@@ -5,20 +5,13 @@ use std::collections::BTreeSet;
 use coracle_lib::keys::PublicKey;
 
 /// Which authorship register an event sits in, from one device's point of view.
-///
-/// The two `docs/proofs.md` names, plus everything in neither. What separates
-/// them is how far the event can travel, so this is the constraint the sending
-/// side puts on a query and the one no policy setting relaxes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Register {
-    /// Authored by this device. Its own authenticated session establishes
-    /// authorship at the first hop, so nothing else is needed.
+    /// Authored by this device.
     Own,
-    /// Authored by someone else, with the author's signature naming this
-    /// device — the witness a designated-verifier proof is built from, and so
-    /// the second hop.
+    /// Authored by someone else.
     Forwardable,
-    /// Neither. Held for the user, and goes no further.
+    /// Neither.
     Held,
 }
 
@@ -26,14 +19,12 @@ pub enum Register {
 /// measured from.
 ///
 /// The identity is part of the constraint because both registers are relative
-/// to it — an event is this device's own, or carries a signature naming this
-/// device — and the answer changes entirely under another one.
+/// to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Registers {
     /// The device asking.
     pub identity: PublicKey,
-    /// The registers admitted. An empty set admits nothing, as it does on a
-    /// filter.
+    /// The registers admitted. An empty set admits nothing.
     pub registers: BTreeSet<Register>,
 }
 

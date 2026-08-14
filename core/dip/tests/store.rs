@@ -18,7 +18,7 @@ use coracle_lib::tags::Tags;
 
 use dip::db::event::events::{self, EventChange};
 use dip::db::{self, command, query};
-use dip::model::{BlobRole, EventFilter, Order, Registers, Scope, keys};
+use dip::model::{BlobRole, Order, Query, Registers, Scope, keys};
 
 fn database_directory() -> PathBuf {
     std::env::temp_dir().join(format!("dip-store-test-{}", std::process::id()))
@@ -59,8 +59,8 @@ fn id(event: &HashedEvent) -> String {
 }
 
 /// Everything this device could put on the wire, whoever were asking.
-fn offerable() -> EventFilter {
-    EventFilter::new().with_registers(Registers::offerable(us()))
+fn offerable() -> Query {
+    Query::new().with_registers(Registers::offerable(us()))
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn the_store_serves_its_use_cases() {
     // The feed reads the event and its media back together.
     let feed = query::with_details(
         query::list_events(
-            &EventFilter::new()
+            &Query::new()
                 .with_filter(Filter::new().add_kinds([1]).add_limit(50))
                 .with_order(Order::SeenAt),
         )
@@ -114,10 +114,8 @@ fn the_store_serves_its_use_cases() {
     assert_eq!(feed[0].blobs[0].blake3.as_deref(), Some("root"));
 
     let search = |text: &str| {
-        query::list_events(
-            &EventFilter::new().with_filter(Filter::new().add_search(text).add_limit(50)),
-        )
-        .unwrap()
+        query::list_events(&Query::new().with_filter(Filter::new().add_search(text).add_limit(50)))
+            .unwrap()
     };
 
     assert_eq!(search("neighbor").len(), 1);
@@ -126,8 +124,7 @@ fn the_store_serves_its_use_cases() {
     // Provenance is a detail of the event, and stays a separate read: it is
     // never part of what a peer is served.
     let detail = query::with_details(
-        query::list_events(&EventFilter::new().with_filter(Filter::new().add_id(with_media.id)))
-            .unwrap(),
+        query::list_events(&Query::new().with_filter(Filter::new().add_id(with_media.id))).unwrap(),
     )
     .unwrap();
     assert_eq!(detail.len(), 1);
@@ -221,9 +218,9 @@ fn the_store_serves_its_use_cases() {
 
     // Forgetting is by arrival, and takes the event's rows with it.
     assert_eq!(command::forget_events_before(250).unwrap(), 2);
-    assert_eq!(query::list_events(&EventFilter::new()).unwrap().len(), 1);
+    assert_eq!(query::list_events(&Query::new()).unwrap().len(), 1);
     assert!(
-        query::list_events(&EventFilter::new().with_filter(Filter::new().add_id(with_media.id)))
+        query::list_events(&Query::new().with_filter(Filter::new().add_id(with_media.id)))
             .unwrap()
             .is_empty()
     );

@@ -120,7 +120,7 @@ pub fn record_seen(
 
 /// Remove an event and everything hanging off it. Returns whether it was there.
 ///
-/// The tag, provenance, proof and blob rows go by cascade; the full-text row is
+/// The tag, provenance, signature and blob rows go by cascade; the full-text row is
 /// deleted by hand, since a virtual table has no foreign keys.
 pub fn delete(tx: &Tx<'_>, id: &str) -> Result<bool> {
     tx.prepare_cached("DELETE FROM event_fts WHERE event_id = ?1")?
@@ -270,16 +270,16 @@ mod tests {
 
     use crate::db::open_in_memory;
     use crate::fixtures::{author, event, id, note, peer};
-    use crate::model::{EventFilter, ProvenanceFilter};
+    use crate::model::{ProvenanceFilter, Query};
 
     /// A query narrowed by a NIP-01 filter and nothing else.
-    fn matching(filter: Filter) -> EventFilter {
-        EventFilter::new().with_filter(filter)
+    fn matching(filter: Filter) -> Query {
+        Query::new().with_filter(filter)
     }
 
     /// Everything the store holds.
-    fn everything() -> EventFilter {
-        EventFilter::new()
+    fn everything() -> Query {
+        Query::new()
     }
 
     #[test]

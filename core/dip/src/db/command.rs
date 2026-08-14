@@ -15,8 +15,8 @@ use crate::db::blob::query as blob_query;
 use crate::db::event::command as event;
 use crate::db::event::query as event_query;
 use crate::db::pref::command as pref;
-use crate::db::proof::command as proof;
-use crate::model::{Blob, BlobRole, Proof};
+use crate::db::recipient_signature::command as signature;
+use crate::model::{Blob, BlobRole, RecipientSignature};
 
 /// Take in an event from a peer, with whatever came alongside it.
 ///
@@ -52,9 +52,9 @@ pub fn receive_event(
         if let Some(sig) = author_signature
             && event_query::exists(tx, &id)?
         {
-            proof::save(
+            signature::save(
                 tx,
-                &Proof {
+                &RecipientSignature {
                     event_id: id,
                     recipient_pubkey: *identity,
                     sig: *sig,
@@ -91,9 +91,9 @@ pub fn receive_signature(event_id: &str, sig: &[u8; 64], identity: &PublicKey) -
             return Ok(false);
         }
 
-        proof::save(
+        signature::save(
             tx,
-            &Proof {
+            &RecipientSignature {
                 event_id: event_id.to_string(),
                 recipient_pubkey: *identity,
                 sig: *sig,

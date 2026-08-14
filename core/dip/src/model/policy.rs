@@ -32,15 +32,6 @@ pub const DEFAULT_COOL_OFF_MINUTES: i64 = 10;
 pub const DEFAULT_DISCLOSURE_BUDGET: u32 = 10;
 
 /// Everything the user has said about who gets what, ready to apply.
-///
-/// The preference keys of `docs/policy.md`, read back with their defaults, plus
-/// the [`Graph`] the tiers are measured against. Assembled once per session by
-/// [`query::policy`](crate::db::pref::query::policy) rather than re-read per
-/// event, since a session answers the same questions of the same peer many
-/// times over.
-///
-/// `identity` is the device's own pubkey, which is what makes an event the
-/// user's own and so governed by a visibility setting rather than by gossip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Policy {
     /// This device's pubkey.

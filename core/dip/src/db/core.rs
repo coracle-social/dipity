@@ -277,7 +277,7 @@ mod tests {
             "event_tag",
             "event_fts",
             "event_seen",
-            "proof",
+            "recipient_signature",
             "pref",
             "blob",
         ] {

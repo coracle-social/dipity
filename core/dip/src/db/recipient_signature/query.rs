@@ -1,4 +1,4 @@
-//! Reads over `proof`.
+//! Reads over `recipient_signature`.
 
 use anyhow::{Context, Result};
 use coracle_lib::keys::PublicKey;
@@ -6,16 +6,20 @@ use rusqlite::{Row, params, params_from_iter};
 
 use crate::db::Tx;
 use crate::db::sql::{bytes_from_sql, pubkey_from_sql};
-use crate::model::Proof;
+use crate::model::RecipientSignature;
 
 /// The signature over an event naming a particular recipient.
-pub fn get(tx: &Tx<'_>, event_id: &str, recipient_pubkey: &PublicKey) -> Result<Option<Proof>> {
-    let proof = tx
+pub fn get(
+    tx: &Tx<'_>,
+    event_id: &str,
+    recipient_pubkey: &PublicKey,
+) -> Result<Option<RecipientSignature>> {
+    let signature = tx
         .prepare_cached(
-            "SELECT event_id, recipient_pubkey, sig FROM proof
+            "SELECT event_id, recipient_pubkey, sig FROM recipient_signature
              WHERE event_id = ?1 AND recipient_pubkey = ?2",
         )?
-        .query_row(params![event_id, recipient_pubkey.to_hex()], to_proof)
+        .query_row(params![event_id, recipient_pubkey.to_hex()], to_signature)
         .map(Some)
         .or_else(|error| match error {
             rusqlite::Error::QueryReturnedNoRows => Ok(None),
@@ -23,7 +27,7 @@ pub fn get(tx: &Tx<'_>, event_id: &str, recipient_pubkey: &PublicKey) -> Result<
         })
         .with_context(|| format!("loading the signature over {event_id} for {recipient_pubkey}"))?;
 
-    Ok(proof)
+    Ok(signature)
 }
 
 /// Whether a signature over this event names this recipient.
@@ -34,7 +38,7 @@ pub fn exists(tx: &Tx<'_>, event_id: &str, recipient_pubkey: &PublicKey) -> Resu
     let exists = tx
         .prepare_cached(
             "SELECT EXISTS (
-                 SELECT 1 FROM proof WHERE event_id = ?1 AND recipient_pubkey = ?2
+                 SELECT 1 FROM recipient_signature WHERE event_id = ?1 AND recipient_pubkey = ?2
              )",
         )?
         .query_row(params![event_id, recipient_pubkey.to_hex()], |row| {
@@ -46,19 +50,19 @@ pub fn exists(tx: &Tx<'_>, event_id: &str, recipient_pubkey: &PublicKey) -> Resu
 }
 
 /// Every signature stored over an event.
-pub fn list_for_event(tx: &Tx<'_>, event_id: &str) -> Result<Vec<Proof>> {
+pub fn list_for_event(tx: &Tx<'_>, event_id: &str) -> Result<Vec<RecipientSignature>> {
     let mut prepared = tx.prepare_cached(
-        "SELECT event_id, recipient_pubkey, sig FROM proof
+        "SELECT event_id, recipient_pubkey, sig FROM recipient_signature
          WHERE event_id = ?1
          ORDER BY recipient_pubkey ASC",
     )?;
 
-    let proofs = prepared
-        .query_map(params![event_id], to_proof)?
+    let signatures = prepared
+        .query_map(params![event_id], to_signature)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .with_context(|| format!("listing signatures over {event_id}"))?;
 
-    Ok(proofs)
+    Ok(signatures)
 }
 
 /// Which of `event_ids` this device holds a signature for, naming `recipient`.
@@ -80,7 +84,7 @@ pub fn forwardable(
         .join(", ");
 
     let mut prepared = tx.prepare(&format!(
-        "SELECT event_id FROM proof
+        "SELECT event_id FROM recipient_signature
          WHERE recipient_pubkey = ?1 AND event_id IN ({placeholders})"
     ))?;
 
@@ -94,8 +98,8 @@ pub fn forwardable(
     Ok(ids)
 }
 
-fn to_proof(row: &Row<'_>) -> rusqlite::Result<Proof> {
-    Ok(Proof {
+fn to_signature(row: &Row<'_>) -> rusqlite::Result<RecipientSignature> {
+    Ok(RecipientSignature {
         event_id: row.get("event_id")?,
         recipient_pubkey: pubkey_from_sql(&row.get::<_, String>("recipient_pubkey")?, 1)?,
         sig: bytes_from_sql(&row.get::<_, String>("sig")?, 2)?,

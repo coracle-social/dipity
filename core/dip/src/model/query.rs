@@ -1,10 +1,10 @@
-//! Everything a query over stored events can be narrowed by.
+//! A question asked of the stored events.
 
 use coracle_lib::filters::Filter;
 
 use crate::model::{Order, PeerPolicy, ProvenanceFilter, Registers};
 
-/// Everything a query over stored events can be narrowed by.
+/// Everything a read of stored events can be narrowed and ordered by.
 ///
 /// | Field | Is | Comes from |
 /// | --- | --- | --- |
@@ -16,7 +16,7 @@ use crate::model::{Order, PeerPolicy, ProvenanceFilter, Registers};
 /// A query for the user's own screen sets the first two and leaves the rest
 /// alone. A query answering a peer sets all four.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct EventFilter {
+pub struct Query {
     /// The NIP-01 filter: the half of the criteria that may go on the wire.
     pub filter: Filter,
     /// Criteria over where the event came from: the half that must not.
@@ -31,7 +31,7 @@ pub struct EventFilter {
     pub order: Order,
 }
 
-impl EventFilter {
+impl Query {
     /// Everything the store holds, newest by `created_at` first.
     #[must_use]
     pub fn new() -> Self {
@@ -102,21 +102,21 @@ mod tests {
 
     #[test]
     fn every_part_of_a_query_answers_for_itself() {
-        assert!(!EventFilter::new().matches_nothing());
+        assert!(!Query::new().matches_nothing());
 
         // Whichever part of the criteria is unsatisfiable, the whole is.
         assert!(
-            EventFilter::new()
+            Query::new()
                 .with_filter(Filter::new().add_authors([]))
                 .matches_nothing()
         );
         assert!(
-            EventFilter::new()
+            Query::new()
                 .with_provenance(ProvenanceFilter::new().add_peers([]))
                 .matches_nothing()
         );
         assert!(
-            EventFilter::new()
+            Query::new()
                 .with_registers(Registers::new(author(1), []))
                 .matches_nothing()
         );
@@ -125,12 +125,12 @@ mod tests {
         policy.graph.blocked.insert(author(2));
 
         assert!(
-            EventFilter::new()
+            Query::new()
                 .with_policy(policy.clone().for_peer(author(2)))
                 .matches_nothing()
         );
         assert!(
-            !EventFilter::new()
+            !Query::new()
                 .with_policy(policy.for_peer(author(3)))
                 .matches_nothing()
         );

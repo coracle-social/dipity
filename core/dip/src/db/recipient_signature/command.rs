@@ -1,4 +1,4 @@
-//! Writes over `proof`.
+//! Writes over `recipient_signature`.
 //!
 //! Verification is not here. A signature is checked against the event id and
 //! the recipient before it reaches this point; the store's job is to keep it
@@ -9,9 +9,9 @@ use coracle_lib::keys::PublicKey;
 use rusqlite::params;
 
 use crate::db::Tx;
-use crate::model::Proof;
+use crate::model::RecipientSignature;
 
-use super::events::{self, ProofChange};
+use super::events::{self, RecipientSignatureChange};
 
 /// Store a signature. Returns whether it was new.
 ///
@@ -22,23 +22,26 @@ use super::events::{self, ProofChange};
 /// # Errors
 ///
 /// If the write fails, including when the event it names is not stored.
-pub fn save(tx: &Tx<'_>, proof: &Proof) -> Result<bool> {
+pub fn save(tx: &Tx<'_>, signature: &RecipientSignature) -> Result<bool> {
     let written = tx
         .prepare_cached(
-            "INSERT OR IGNORE INTO proof (event_id, recipient_pubkey, sig) VALUES (?1, ?2, ?3)",
+            "INSERT OR IGNORE INTO recipient_signature (event_id, recipient_pubkey, sig) VALUES (?1, ?2, ?3)",
         )?
         .execute(params![
-            proof.event_id,
-            proof.recipient_pubkey.to_hex(),
-            hex::encode(proof.sig),
+            signature.event_id,
+            signature.recipient_pubkey.to_hex(),
+            hex::encode(signature.sig),
         ])
-        .with_context(|| format!("storing the signature over {}", proof.event_id))?;
+        .with_context(|| format!("storing the signature over {}", signature.event_id))?;
 
     if written == 0 {
         return Ok(false);
     }
 
-    events::notify(tx, ProofChange::Stored(Box::new(proof.clone())));
+    events::notify(
+        tx,
+        RecipientSignatureChange::Stored(Box::new(signature.clone())),
+    );
 
     Ok(true)
 }
@@ -46,7 +49,9 @@ pub fn save(tx: &Tx<'_>, proof: &Proof) -> Result<bool> {
 /// Remove one signature. Returns whether it was there.
 pub fn remove(tx: &Tx<'_>, event_id: &str, recipient_pubkey: &PublicKey) -> Result<bool> {
     let removed = tx
-        .prepare_cached("DELETE FROM proof WHERE event_id = ?1 AND recipient_pubkey = ?2")?
+        .prepare_cached(
+            "DELETE FROM recipient_signature WHERE event_id = ?1 AND recipient_pubkey = ?2",
+        )?
         .execute(params![event_id, recipient_pubkey.to_hex()])
         .with_context(|| format!("removing the signature over {event_id}"))?;
 
@@ -56,7 +61,7 @@ pub fn remove(tx: &Tx<'_>, event_id: &str, recipient_pubkey: &PublicKey) -> Resu
 
     events::notify(
         tx,
-        ProofChange::Removed(event_id.to_string(), *recipient_pubkey),
+        RecipientSignatureChange::Removed(event_id.to_string(), *recipient_pubkey),
     );
 
     Ok(true)
@@ -70,8 +75,8 @@ pub fn remove_for_event(tx: &Tx<'_>, event_id: &str) -> Result<usize> {
     let stored = super::query::list_for_event(tx, event_id)?;
     let mut removed = 0;
 
-    for proof in stored {
-        if remove(tx, event_id, &proof.recipient_pubkey)? {
+    for signature in stored {
+        if remove(tx, event_id, &signature.recipient_pubkey)? {
             removed += 1;
         }
     }
@@ -86,7 +91,7 @@ mod tests {
 
     use crate::db::event::command as event_command;
     use crate::db::open_in_memory;
-    use crate::db::proof::query;
+    use crate::db::recipient_signature::query;
     use crate::fixtures::{author, id, note, peer};
 
     fn us() -> PublicKey {
@@ -101,8 +106,8 @@ mod tests {
         id(&event)
     }
 
-    fn proof(event_id: &str) -> Proof {
-        Proof {
+    fn signature(event_id: &str) -> RecipientSignature {
+        RecipientSignature {
             event_id: event_id.to_string(),
             recipient_pubkey: us(),
             sig: [7u8; 64],
@@ -116,13 +121,13 @@ mod tests {
 
         let event_id = store_note(&tx, "signed");
 
-        assert!(save(&tx, &proof(&event_id)).unwrap());
-        assert!(!save(&tx, &proof(&event_id)).unwrap());
+        assert!(save(&tx, &signature(&event_id)).unwrap());
+        assert!(!save(&tx, &signature(&event_id)).unwrap());
         assert_eq!(query::list_for_event(&tx, &event_id).unwrap().len(), 1);
         assert!(query::exists(&tx, &event_id, &us()).unwrap());
         assert_eq!(
             query::get(&tx, &event_id, &us()).unwrap().unwrap(),
-            proof(&event_id)
+            signature(&event_id)
         );
     }
 
@@ -132,7 +137,7 @@ mod tests {
         let tx = Tx::begin_write(&mut connection).unwrap();
 
         let event_id = store_note(&tx, "signed");
-        save(&tx, &proof(&event_id)).unwrap();
+        save(&tx, &signature(&event_id)).unwrap();
 
         event_command::delete(&tx, &event_id).unwrap();
 
@@ -144,7 +149,7 @@ mod tests {
         let mut connection = open_in_memory().unwrap();
         let tx = Tx::begin_write(&mut connection).unwrap();
 
-        assert!(save(&tx, &proof(&hex::encode([0u8; 32]))).is_err());
+        assert!(save(&tx, &signature(&hex::encode([0u8; 32]))).is_err());
     }
 
     #[test]
@@ -154,7 +159,7 @@ mod tests {
 
         let signed = store_note(&tx, "signed");
         let unsigned = store_note(&tx, "unsigned");
-        save(&tx, &proof(&signed)).unwrap();
+        save(&tx, &signature(&signed)).unwrap();
 
         let ids = [signed.clone(), unsigned];
 

@@ -6,8 +6,7 @@
 //! half-consistent answer assembled from two of them.
 //!
 //! Every question about events is [`list_events`], because what separates the
-//! feed from a peer's `REQ` is which constraints an
-//! [`EventFilter`](crate::model::EventFilter) carries rather
+//! feed from a peer's `REQ` is which constraints a [`Query`] carries rather
 //! than which function is called. [`with_details`] is the follow-up read for a
 //! caller that wants what the store knows about an event beyond the event.
 
@@ -19,7 +18,7 @@ use super::read;
 use crate::db::blob::query as blob;
 use crate::db::event::query as event;
 use crate::db::pref::query as pref;
-use crate::model::{Blob, BlobRole, EventFilter, Policy, Pref, Provenance};
+use crate::model::{Blob, BlobRole, Policy, Pref, Provenance, Query};
 
 // ============================================================================
 // Policy and preferences
@@ -55,9 +54,9 @@ pub struct EventDetail {
     pub sightings: Vec<Provenance>,
 }
 
-/// Events matching every constraint on `filter`.
-pub fn list_events(filter: &EventFilter) -> Result<Vec<HashedEvent>> {
-    read(|tx| event::list(tx, filter))
+/// Events matching every constraint on `query`.
+pub fn list_events(query: &Query) -> Result<Vec<HashedEvent>> {
+    read(|tx| event::list(tx, query))
 }
 
 /// Attach each event's media and provenance to it.
