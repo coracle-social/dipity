@@ -28,7 +28,6 @@ mod query;
 mod recipient_signature;
 mod registers;
 mod scope;
-mod tag;
 mod visibility;
 
 pub use authors::Authors;
@@ -43,7 +42,6 @@ pub use query::Query;
 pub use recipient_signature::RecipientSignature;
 pub use registers::{Register, Registers};
 pub use scope::Scope;
-pub use tag::is_indexed_tag;
 pub use visibility::{Visibility, VisibilityRule};
 
 #[cfg(test)]

@@ -1,14 +1,7 @@
 //! Writes over `event`, `event_tag`, `event_fts` and `event_seen`.
 //!
 //! [`save`] is the whole of ingest below the policy layer: it enforces what the
-//! tables mean to each other — that the tag and full-text indexes match the
-//! event, that a replaceable event has one row per address, that a deletion the
-//! author already published is not undone by the next peer to offer the event,
-//! and that every sighting is recorded whether or not the event was new.
-//!
-//! Authorization is not here. An event reaches this point already accepted by
-//! the authenticated session or by an authorship proof; a peer that cannot
-//! establish authorship never gets as far as a write. See `docs/proofs.md`.
+//! tables mean to each other
 
 use anyhow::{Context, Result};
 use coracle_lib::addresses::{Address, EventExtensionAddress};
@@ -18,7 +11,7 @@ use coracle_lib::kinds::is_ephemeral;
 use rusqlite::params;
 
 use crate::db::Tx;
-use crate::model::{KIND_DELETE, Provenance, is_indexed_tag};
+use crate::model::{KIND_DELETE, Provenance};
 
 use super::events::{self, EventChange};
 use super::query;
@@ -31,21 +24,13 @@ use super::query;
 ///
 /// Nothing is stored when the event is ephemeral, when its author has already
 /// deleted it, or when a newer event holds its address. A sighting is still
-/// recorded for an event already stored, because who handed it over and when is
-/// the point of provenance.
-///
-/// # Errors
-///
-/// If any of the writes fail, in which case the caller's transaction rolls back
-/// and the tables stay consistent with each other.
+/// recorded for an event already stored.
 pub fn save(
     tx: &Tx<'_>,
     event: &HashedEvent,
     peer_pubkey: &PublicKey,
     seen_at: i64,
 ) -> Result<bool> {
-    // Ephemeral kinds are relayed, never stored. Kind 22242 auth events are the
-    // ones this app produces, and they belong to a session, not to a store.
     if is_ephemeral(event.kind) {
         return Ok(false);
     }
@@ -80,14 +65,6 @@ pub fn save(
 
 /// Record that an event was seen from a peer, if that pair is not already
 /// recorded. Returns whether this was a new sighting.
-///
-/// Provenance rows are written once and never updated: an event's seen time is
-/// the earliest of them, so a later sighting from the same peer changes
-/// nothing. This never leaves the device — see `docs/privacy.md`.
-///
-/// # Errors
-///
-/// If the write fails, including when no such event is stored.
 pub fn record_seen(
     tx: &Tx<'_>,
     event_id: &str,
@@ -164,8 +141,6 @@ pub fn forget_seen_before(tx: &Tx<'_>, cutoff: i64) -> Result<usize> {
 
 /// Whether `event` supersedes whatever currently holds its address, removing
 /// the current one if so.
-///
-/// NIP-01's rule: the later `created_at` wins, and the lower id breaks a tie.
 fn replaces_current(tx: &Tx<'_>, event: &HashedEvent, address: &Address) -> Result<bool> {
     let Some(current) = query::by_address(tx, address)? else {
         return Ok(true);
@@ -205,7 +180,13 @@ fn insert(tx: &Tx<'_>, event: &HashedEvent, id: &str) -> Result<()> {
     )?;
 
     for (position, tag) in event.tags.iter().enumerate() {
-        if !is_indexed_tag(tag.name()) || tag.len() < 2 {
+        // Single-letter alphanumeric names are the ones a NIP-01 filter can
+        // name, so they are the set worth indexing. Everything else is read
+        // back from the event's own tags.
+        let name = tag.name();
+        let indexed = name.len() == 1 && name.chars().all(|c| c.is_ascii_alphanumeric());
+
+        if !indexed || tag.len() < 2 {
             continue;
         }
 
@@ -229,10 +210,6 @@ fn insert(tx: &Tx<'_>, event: &HashedEvent, id: &str) -> Result<()> {
 }
 
 /// Apply a kind 5, deleting the events it names that its author wrote.
-///
-/// An author can only delete their own work, so both branches test the deleting
-/// event's pubkey. Addressable targets are only deleted up to the deletion's
-/// own timestamp, so a republished address survives its own tombstone.
 fn apply_deletion(tx: &Tx<'_>, deletion: &HashedEvent) -> Result<()> {
     for id in deletion.tags.values("e") {
         let Some(target) = query::get(tx, id)? else {
@@ -245,7 +222,6 @@ fn apply_deletion(tx: &Tx<'_>, deletion: &HashedEvent) -> Result<()> {
     }
 
     for value in deletion.tags.values("a") {
-        // A tag value this device cannot parse names nothing it can hold.
         let Ok(address) = value.parse::<Address>() else {
             continue;
         };
@@ -289,6 +265,9 @@ mod tests {
 
         let tags = Tags::new()
             .add("t", ["town"])
+            .add("A", ["upper"])
+            // Single character, but not alphanumeric, so not filterable.
+            .add("-", ["protected"])
             .add("imeta", ["url https://example.com/x.jpg"]);
         let subject = note(author(1), 100, "hello neighbor", tags);
 
@@ -304,12 +283,16 @@ mod tests {
         let by_search = query::list(&tx, &matching(Filter::new().add_search("neighbor"))).unwrap();
         assert_eq!(by_search, vec![subject.clone()]);
 
-        // Multi-character tags are not filterable under NIP-01, so they stay
-        // out of the index and are read back from the event itself.
-        let indexed: i64 = tx
-            .query_row("SELECT COUNT(*) FROM event_tag", [], |row| row.get(0))
+        // Only `t` and `A` are filterable under NIP-01. The rest stay out of
+        // the index and are read back from the event itself.
+        let indexed: Vec<String> = tx
+            .prepare("SELECT name FROM event_tag ORDER BY name")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
             .unwrap();
-        assert_eq!(indexed, 1);
+        assert_eq!(indexed, ["A", "t"]);
         assert_eq!(
             query::get(&tx, &id(&subject)).unwrap().unwrap().tags,
             subject.tags

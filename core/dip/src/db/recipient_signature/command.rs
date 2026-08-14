@@ -18,10 +18,6 @@ use super::events::{self, RecipientSignatureChange};
 /// Signatures are immutable — BIP-340 signing is deterministic, so the same
 /// author, event and recipient produce the same 64 bytes — so a repeat is
 /// ignored rather than overwritten.
-///
-/// # Errors
-///
-/// If the write fails, including when the event it names is not stored.
 pub fn save(tx: &Tx<'_>, signature: &RecipientSignature) -> Result<bool> {
     let written = tx
         .prepare_cached(
