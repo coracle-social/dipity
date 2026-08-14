@@ -572,6 +572,7 @@ mod tests {
             tx,
             &RecipientSignature {
                 event_id: id(event),
+                author_pubkey: event.pubkey,
                 recipient_pubkey: *recipient,
                 sig: [7u8; 64],
             },

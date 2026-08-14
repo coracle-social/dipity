@@ -17,6 +17,7 @@
 //! files it references ([`Blob`]).
 
 mod authors;
+mod authorship_proof;
 mod blob;
 mod graph;
 mod kind;
@@ -31,6 +32,7 @@ mod scope;
 mod visibility;
 
 pub use authors::Authors;
+pub use authorship_proof::{AuthorshipClaim, AuthorshipProof};
 pub use blob::{Blob, BlobRole};
 pub use graph::{Graph, Standing};
 pub use kind::{KIND_DELETE, KIND_MUTE, KIND_PROFILE};

@@ -56,6 +56,7 @@ pub fn receive_event(
                 tx,
                 &RecipientSignature {
                     event_id: id,
+                    author_pubkey: event.pubkey,
                     recipient_pubkey: *identity,
                     sig: *sig,
                 },
@@ -85,16 +86,21 @@ pub fn publish_event(event: &HashedEvent, identity: &PublicKey, at: i64) -> Resu
 /// Store the author's signature over an event this device already holds.
 ///
 /// For the case where the two arrive separately. Returns whether it was stored.
+///
+/// The author comes off the stored event rather than from the caller: it is the
+/// only party whose signature over that event means anything, so there is
+/// nothing for a caller to get wrong.
 pub fn receive_signature(event_id: &str, sig: &[u8; 64], identity: &PublicKey) -> Result<bool> {
     write(|tx| {
-        if !event_query::exists(tx, event_id)? {
+        let Some(event) = event_query::get(tx, event_id)? else {
             return Ok(false);
-        }
+        };
 
         signature::save(
             tx,
             &RecipientSignature {
                 event_id: event_id.to_string(),
+                author_pubkey: event.pubkey,
                 recipient_pubkey: *identity,
                 sig: *sig,
             },

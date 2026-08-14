@@ -37,6 +37,12 @@ CREATE INDEX event_created_at ON event (created_at DESC);
 CREATE INDEX event_address ON event (address, created_at DESC) WHERE address IS NOT NULL;
 CREATE INDEX event_arrival ON event (seen_at DESC, id ASC);
 
+-- Redundant on its own — `id` is already the primary key — and here only so
+-- `recipient_signature` can name (id, pubkey) as a composite foreign key. That
+-- is what makes a signature's author the event's author by construction rather
+-- than by convention; SQLite requires the parent columns be uniquely indexed.
+CREATE UNIQUE INDEX event_id_author ON event (id, pubkey);
+
 -- One row per tag, so a NIP-01 tag filter is an index lookup. Only
 -- single-letter tags are indexed, which is exactly the set NIP-01 filters can
 -- name; everything else is read from `event.tags`.
@@ -84,11 +90,19 @@ CREATE INDEX event_seen_peer ON event_seen (peer_pubkey, seen_at DESC);
 -- The author's signature over `event_id ‖ recipient_pubkey`, held by the peer
 -- it names. It is portable evidence, so it is never served to anyone: a second
 -- hop gets an authorship proof derived from it instead. See docs/proofs.md.
+--
+-- The author is carried rather than joined for: a signature is unverifiable
+-- without the key it is by, so the row is the whole witness or it is a fragment
+-- that needs a second lookup to mean anything. The composite foreign key is
+-- what keeps the copy honest — an author that is not the event's is a write
+-- failure, the same way a signature cannot outlive its event.
 CREATE TABLE recipient_signature (
-    event_id         TEXT NOT NULL REFERENCES event (id) ON DELETE CASCADE,
+    event_id         TEXT NOT NULL,
+    author_pubkey    TEXT NOT NULL,
     recipient_pubkey TEXT NOT NULL,
     sig              TEXT NOT NULL,
-    PRIMARY KEY (event_id, recipient_pubkey)
+    PRIMARY KEY (event_id, recipient_pubkey),
+    FOREIGN KEY (event_id, author_pubkey) REFERENCES event (id, pubkey) ON DELETE CASCADE
 ) STRICT;
 
 CREATE INDEX recipient_signature_recipient ON recipient_signature (recipient_pubkey);

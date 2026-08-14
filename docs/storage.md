@@ -10,7 +10,7 @@ Where events live, who can answer a query, and what happens while the app is asl
 | `event_fts` | Full-text index over content, for search. |
 | `event_tag` | One row per tag, so NIP-01 tag filters are an index lookup. |
 | `event_seen` | `event_id`, `seen_at`, `peer_pubkey`. Unique on (`event_id`, `peer_pubkey`). |
-| `recipient_signature` | `event_id`, `recipient_pubkey`, `sig`. Unique on (`event_id`, `recipient_pubkey`). The author's signature naming a recipient, held by the peer it names. It is the witness an [authorship proof](./proofs.md#authorship-proofs) is built from, never the proof itself, and it is never served to a peer. |
+| `recipient_signature` | `event_id`, `author_pubkey`, `recipient_pubkey`, `sig`. Unique on (`event_id`, `recipient_pubkey`). The author's signature naming a recipient, held by the peer it names. It is the witness an [authorship proof](./proofs.md#authorship-proofs) is built from, never the proof itself, and it is never served to a peer. The author is carried rather than joined, since a signature without the key it is by neither verifies nor proves; a composite foreign key onto `event (id, pubkey)` is what keeps the copy honest. |
 | `pref` | A key/value store for storing app policies and ui preferences. |
 | `blob` | A mapping of blob sha256 metadata extracted from the first event seen that referenced it. |
 

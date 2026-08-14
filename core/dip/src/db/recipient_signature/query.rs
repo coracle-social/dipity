@@ -16,7 +16,7 @@ pub fn get(
 ) -> Result<Option<RecipientSignature>> {
     let signature = tx
         .prepare_cached(
-            "SELECT event_id, recipient_pubkey, sig FROM recipient_signature
+            "SELECT event_id, author_pubkey, recipient_pubkey, sig FROM recipient_signature
              WHERE event_id = ?1 AND recipient_pubkey = ?2",
         )?
         .query_row(params![event_id, recipient_pubkey.to_hex()], to_signature)
@@ -52,7 +52,7 @@ pub fn exists(tx: &Tx<'_>, event_id: &str, recipient_pubkey: &PublicKey) -> Resu
 /// Every signature stored over an event.
 pub fn list_for_event(tx: &Tx<'_>, event_id: &str) -> Result<Vec<RecipientSignature>> {
     let mut prepared = tx.prepare_cached(
-        "SELECT event_id, recipient_pubkey, sig FROM recipient_signature
+        "SELECT event_id, author_pubkey, recipient_pubkey, sig FROM recipient_signature
          WHERE event_id = ?1
          ORDER BY recipient_pubkey ASC",
     )?;
@@ -98,7 +98,8 @@ pub fn forwardable(
 fn to_signature(row: &Row<'_>) -> rusqlite::Result<RecipientSignature> {
     Ok(RecipientSignature {
         event_id: row.get("event_id")?,
-        recipient_pubkey: pubkey_from_sql(&row.get::<_, String>("recipient_pubkey")?, 1)?,
-        sig: bytes_from_sql(&row.get::<_, String>("sig")?, 2)?,
+        author_pubkey: pubkey_from_sql(&row.get::<_, String>("author_pubkey")?, 1)?,
+        recipient_pubkey: pubkey_from_sql(&row.get::<_, String>("recipient_pubkey")?, 2)?,
+        sig: bytes_from_sql(&row.get::<_, String>("sig")?, 3)?,
     })
 }

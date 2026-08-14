@@ -24,6 +24,22 @@ uniffi = "0.32"
 coracle-lib = { path = "../../coracle-rust/coracle-lib" }
 hex = "0.4"
 
+# Signing and signature verification, on the audited binding — pinned to the
+# version `coracle-lib` wraps so one libsecp256k1 is linked, not two.
+secp256k1 = { version = "0.29", features = ["global-context"] }
+# The authorship proof's explicit scalars and points, which the secp256k1
+# binding deliberately does not expose. Nothing here signs or verifies a
+# signature; that stays above. See docs/proofs.md#implementation.
+k256 = { version = "0.13", default-features = false, features = [
+  "arithmetic",
+  "precomputed-tables",
+  "std",
+] }
+sha2 = "0.10"
+# Auxiliary randomness for the proof nonce, and nothing else. The derivation is
+# safe without it — see docs/proofs.md#nonce-derivation.
+getrandom = "0.2"
+
 # The store. Bundled amalgamation so both platforms run one pinned SQLite
 # rather than whatever the OS shipped — see docs/storage.md.
 rusqlite = { version = "0.39", features = ["bundled"] }

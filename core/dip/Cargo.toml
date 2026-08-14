@@ -10,10 +10,14 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 coracle-lib.workspace = true
+getrandom.workspace = true
 hex.workspace = true
+k256.workspace = true
 rusqlite.workspace = true
+secp256k1.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 
 [lints]

@@ -11,8 +11,10 @@ Mutual NIP-42 proves the party on the other end of the Noise channel holds a giv
 For B to convince anyone, A has to have committed to that specific event in a form B can carry. That commitment is the author's signature over the event id and the recipient:
 
 ```
-sig_A( event_id ‖ recipient_pubkey )
+sig_A( m )          m = tagged_hash("dip/authorship-signature", event_id ‖ recipient_pubkey)
 ```
+
+The pair is hashed rather than signed directly because BIP-340 takes a message of any length and the audited binding takes 32 bytes. A tagged hash binds the same two values, and the alternative is hand-rolling the signing.
 
 This signature must never leave B's device, since it is verifiable by anyone. Only peers who can be trusted not to leak a signature should receive one.
 
@@ -20,13 +22,15 @@ This signature must never leave B's device, since it is verifiable by anyone. On
 
 To prove A's authorship, B constructs an **authorship proof** instead of sharing the signature: B proves to C, designated to C, that B holds A's signature over this event and B's own pubkey.
 
-The signature is BIP-340 Schnorr `(R, s)` over the message `event_id ‖ B_pubkey`, verifying as
+The signature is BIP-340 Schnorr `(R, s)` over that message, verifying as
 
 ```
-s·G = R + e·A          e = tagged_hash(R.x ‖ A.x ‖ event_id ‖ B_pubkey)
+s·G = R + e·A          e = tagged_hash("BIP0340/challenge", R.x ‖ A.x ‖ m)
 ```
 
-`R`, `e` and `A` are public, and C reconstructs the signed message itself from the event id and the pubkeys B authenticated as. So C can compute the point `S = s·G` without knowing `s`. Holding the signature means knowing `s`, the discrete log of `S`. B proves exactly that, OR-composed with knowledge of C's private key:
+The challenge tag is BIP-340's own and not ours to pick: `e` has to be the value the binding computed, or `S` is not the point the signature is over.
+
+`e` and `A` are public, `R` travels with the proof — half a signature, and inert without the other half — and C reconstructs `m` itself from the event id and the pubkeys B authenticated as. So C can compute the point `S = s·G` without knowing `s`. Holding the signature means knowing `s`, the discrete log of `S`. B proves exactly that, OR-composed with knowledge of C's private key:
 
 ```
 know dlog(S)   OR   know dlog(C_pubkey)
