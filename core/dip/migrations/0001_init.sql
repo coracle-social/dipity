@@ -23,13 +23,19 @@ CREATE TABLE event (
     -- `kind:pubkey:d` for addressable events and `kind:pubkey:` for plain
     -- replaceable ones, NULL for the rest. Supersession is then one lookup
     -- rather than a kind test plus a tag join.
-    address    TEXT
+    address    TEXT,
+    -- When this device first saw the event: the earliest row in `event_seen`,
+    -- kept here because that aggregate cannot be indexed and arrival order is
+    -- how the feed reads. Provenance, so it is never part of an event and
+    -- never served.
+    seen_at    INTEGER NOT NULL
 ) STRICT;
 
 CREATE INDEX event_author ON event (pubkey, created_at DESC);
 CREATE INDEX event_kind ON event (kind, created_at DESC);
 CREATE INDEX event_created_at ON event (created_at DESC);
 CREATE INDEX event_address ON event (address, created_at DESC) WHERE address IS NOT NULL;
+CREATE INDEX event_arrival ON event (seen_at DESC, id ASC);
 
 -- One row per tag, so a NIP-01 tag filter is an index lookup. Only
 -- single-letter tags are indexed, which is exactly the set NIP-01 filters can
@@ -57,9 +63,10 @@ CREATE VIRTUAL TABLE event_fts USING fts5 (
 );
 
 -- Provenance: one row per event per peer it has been seen from, written once
--- and never updated. An event's seen_at is the earliest of them. This never
--- leaves the device and is never served to a peer — together the rows record
--- the user's movements and who they were with. See docs/privacy.md.
+-- and never updated. An event's seen_at is the earliest of them, which
+-- `event.seen_at` carries so it can be indexed. This never leaves the device
+-- and is never served to a peer — together the rows record the user's movements
+-- and who they were with. See docs/privacy.md.
 --
 -- Locally authored events carry one row naming the author's own pubkey, so
 -- every stored event has a seen time and the column stays NOT NULL.
@@ -70,7 +77,8 @@ CREATE TABLE event_seen (
     PRIMARY KEY (event_id, peer_pubkey)
 ) STRICT;
 
-CREATE INDEX event_seen_at ON event_seen (seen_at DESC);
+-- No index on seen_at alone: reads by time go through `event.seen_at`, and the
+-- sightings of one event are a primary key lookup.
 CREATE INDEX event_seen_peer ON event_seen (peer_pubkey, seen_at DESC);
 
 -- The author's signature over `event_id ‖ recipient_pubkey`, held by the peer

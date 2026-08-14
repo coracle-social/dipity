@@ -52,7 +52,7 @@ pub fn save(
         return Ok(false);
     }
 
-    insert(tx, event, &id)?;
+    insert(tx, event, &id, seen_at)?;
     events::notify(tx, EventChange::Stored(Box::new(event.clone())));
     record_seen(tx, &id, peer_pubkey, seen_at)?;
 
@@ -65,6 +65,9 @@ pub fn save(
 
 /// Record that an event was seen from a peer, if that pair is not already
 /// recorded. Returns whether this was a new sighting.
+///
+/// The one place a sighting is written, so it is the one place `event.seen_at`
+/// is kept at the earliest of them.
 pub fn record_seen(
     tx: &Tx<'_>,
     event_id: &str,
@@ -82,6 +85,14 @@ pub fn record_seen(
     if written == 0 {
         return Ok(false);
     }
+
+    // Lowers, never sets. The row is born with the sighting it arrived on, so
+    // this only fires for one recorded out of order — which would otherwise
+    // move the arrival time forward, and leave the column disagreeing with the
+    // rows it stands for.
+    tx.prepare_cached("UPDATE event SET seen_at = ?2 WHERE id = ?1 AND seen_at > ?2")?
+        .execute(params![event_id, seen_at])
+        .with_context(|| format!("recording the arrival of {event_id}"))?;
 
     events::notify(
         tx,
@@ -120,8 +131,7 @@ pub fn delete(tx: &Tx<'_>, id: &str) -> Result<bool> {
 
 /// Forget events first seen before `cutoff`. Returns how many went.
 pub fn forget_seen_before(tx: &Tx<'_>, cutoff: i64) -> Result<usize> {
-    let mut prepared =
-        tx.prepare("SELECT event_id FROM event_seen GROUP BY event_id HAVING MIN(seen_at) < ?1")?;
+    let mut prepared = tx.prepare("SELECT id FROM event WHERE seen_at < ?1")?;
 
     let stale = prepared
         .query_map(params![cutoff], |row| row.get::<_, String>(0))?
@@ -157,12 +167,15 @@ fn replaces_current(tx: &Tx<'_>, event: &HashedEvent, address: &Address) -> Resu
 }
 
 /// Write the event and the two indexes over it.
-fn insert(tx: &Tx<'_>, event: &HashedEvent, id: &str) -> Result<()> {
+///
+/// `seen_at` is the sighting this event arrived on, which is its earliest by
+/// construction — [`record_seen`] lowers it if one ever turns up before it.
+fn insert(tx: &Tx<'_>, event: &HashedEvent, id: &str, seen_at: i64) -> Result<()> {
     let tags = serde_json::to_string(&event.tags).context("serializing tags")?;
 
     tx.prepare_cached(
-        "INSERT INTO event (id, pubkey, created_at, kind, tags, content, address)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO event (id, pubkey, created_at, kind, tags, content, address, seen_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
     )?
     .execute(params![
         id,
@@ -172,6 +185,7 @@ fn insert(tx: &Tx<'_>, event: &HashedEvent, id: &str) -> Result<()> {
         tags,
         event.content,
         event.address().map(|address| address.to_string()),
+        seen_at,
     ])
     .with_context(|| format!("storing event {id}"))?;
 
@@ -486,6 +500,55 @@ mod tests {
         assert_eq!(forget_seen_before(&tx, 500).unwrap(), 1);
         assert!(query::get(&tx, &id(&old_but_fresh)).unwrap().is_some());
         assert!(query::get(&tx, &id(&new_but_stale)).unwrap().is_none());
+    }
+
+    /// `event.seen_at` is a cache of the earliest row in `event_seen`, and the
+    /// two are read by different queries — so nothing catches them disagreeing
+    /// except asking both.
+    #[test]
+    fn an_events_arrival_time_is_the_earliest_of_its_sightings() {
+        let mut connection = open_in_memory().unwrap();
+        let tx = Tx::begin_write(&mut connection).unwrap();
+
+        let subject = note(author(1), 100, "carried around", Tags::new());
+        let stored = id(&subject);
+
+        let cached = || {
+            tx.query_row(
+                "SELECT seen_at FROM event WHERE id = ?1",
+                [&stored],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .unwrap()
+        };
+        let earliest = || {
+            tx.query_row(
+                "SELECT MIN(seen_at) FROM event_seen WHERE event_id = ?1",
+                [&stored],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .unwrap()
+        };
+
+        save(&tx, &subject, &author(2), 500).unwrap();
+        assert_eq!(cached(), Some(500));
+
+        // A later sighting leaves the arrival time alone.
+        save(&tx, &subject, &author(3), 900).unwrap();
+        assert_eq!(cached(), Some(500));
+
+        // One that arrives out of order lowers it, so the cache and the rows it
+        // came from cannot part company.
+        save(&tx, &subject, &author(4), 200).unwrap();
+        assert_eq!(cached(), Some(200));
+
+        // Recording the same pair twice changes neither.
+        record_seen(&tx, &stored, &author(4), 50).unwrap();
+        assert_eq!(cached(), Some(200));
+
+        assert_eq!(cached(), earliest());
+        assert_eq!(query::seen_at(&tx, &stored).unwrap(), Some(200));
+        assert_eq!(query::provenance(&tx, &stored).unwrap().len(), 3);
     }
 
     #[test]

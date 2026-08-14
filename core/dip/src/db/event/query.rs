@@ -22,9 +22,6 @@ use crate::model::{
 /// The event columns, in the order [`to_event`] reads them.
 const COLUMNS: &str = "e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content";
 
-/// The subquery for an event's seen time: the earliest sighting of it.
-const SEEN_AT: &str = "(SELECT MIN(s.seen_at) FROM event_seen s WHERE s.event_id = e.id)";
-
 /// One event by id.
 pub fn get(tx: &Tx<'_>, id: &str) -> Result<Option<HashedEvent>> {
     let event = tx
@@ -55,10 +52,10 @@ pub fn list(tx: &Tx<'_>, query: &Query) -> Result<Vec<HashedEvent>> {
 
     let mut conditions = conditions(query);
     let tail = match query.order {
-        Order::CreatedAt => "ORDER BY e.created_at DESC, e.id ASC".to_string(),
-        Order::SeenAt => format!("ORDER BY {SEEN_AT} DESC, e.id ASC"),
+        Order::CreatedAt => "ORDER BY e.created_at DESC, e.id ASC",
+        Order::SeenAt => "ORDER BY e.seen_at DESC, e.id ASC",
     };
-    let sql = statement(COLUMNS, &mut conditions, &tail, query.filter.limit);
+    let sql = statement(COLUMNS, &mut conditions, tail, query.filter.limit);
 
     let mut prepared = tx.prepare(&sql)?;
     let events = prepared
@@ -103,11 +100,13 @@ pub fn by_address(tx: &Tx<'_>, address: &Address) -> Result<Option<HashedEvent>>
     Ok(event)
 }
 
-/// When an event was first seen.
+/// When an event was first seen. `None` for an event this device does not hold.
 pub fn seen_at(tx: &Tx<'_>, id: &str) -> Result<Option<i64>> {
     let seen_at = tx
-        .prepare_cached("SELECT MIN(seen_at) FROM event_seen WHERE event_id = ?1")?
-        .query_row(params![id], |row| row.get::<_, Option<i64>>(0))
+        .prepare_cached("SELECT seen_at FROM event WHERE id = ?1")?
+        .query_row(params![id], |row| row.get::<_, i64>(0))
+        .map(Some)
+        .or_else(none_if_missing)
         .with_context(|| format!("reading seen time for {id}"))?;
 
     Ok(seen_at)
@@ -335,13 +334,13 @@ fn push_provenance(conditions: &mut Conditions, provenance: &ProvenanceFilter) {
     if let Some(since) = provenance.since {
         let index = conditions.bind(Value::Integer(since));
 
-        conditions.push(format!("{SEEN_AT} >= ?{index}"));
+        conditions.push(format!("e.seen_at >= ?{index}"));
     }
 
     if let Some(until) = provenance.until {
         let index = conditions.bind(Value::Integer(until));
 
-        conditions.push(format!("{SEEN_AT} <= ?{index}"));
+        conditions.push(format!("e.seen_at <= ?{index}"));
     }
 
     if let Some(peers) = &provenance.peers {

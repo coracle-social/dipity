@@ -6,7 +6,7 @@ Where events live, who can answer a query, and what happens while the app is asl
 
 | Table | Holds |
 | --- | --- |
-| `event` | The events themselves. |
+| `event` | The events themselves, plus earliest `seen_at`: the earliest sighting in `event_seen`, cached on the row because the aggregate cannot be indexed and arrival order is how the feed reads. It is provenance, so it is never part of an event and never served. |
 | `event_fts` | Full-text index over content, for search. |
 | `event_tag` | One row per tag, so NIP-01 tag filters are an index lookup. |
 | `event_seen` | `event_id`, `seen_at`, `peer_pubkey`. Unique on (`event_id`, `peer_pubkey`). |
