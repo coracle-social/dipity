@@ -690,6 +690,46 @@ mod tests {
     }
 
     #[test]
+    fn the_signed_message_is_pinned() {
+        // A known-answer vector over `m`. Nothing enforces the tag string or
+        // the order of the two values it covers — a peer running the other
+        // platform's build just fails to verify anything, quietly — so the
+        // bytes are pinned here rather than left to agree by inspection.
+        let event_id = [0xabu8; 32];
+
+        assert_eq!(
+            hex::encode(signature_message(&event_id, &b().public_key())),
+            "382bbaa762f2d34a065ce30062d6e9456e6dbef75b068834a34e5b2dacb7808d"
+        );
+    }
+
+    #[test]
+    fn a_signature_is_pinned() {
+        // The same vector carried through the binding. BIP-340 signing is
+        // deterministic, so this is stable, and it covers the whole path: the
+        // tag, the layout, and that signing goes through `sign_schnorr` with no
+        // aux randomness. Changing any of them is a cross-platform break, and
+        // this is what says so.
+        let event_id = [0xabu8; 32];
+        let signature = RecipientSignature::sign(&a(), &event_id, b().public_key());
+
+        assert_eq!(
+            a().public_key().to_hex(),
+            "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+        );
+        assert_eq!(
+            b().public_key().to_hex(),
+            "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+        );
+        assert_eq!(
+            hex::encode(signature.sig),
+            "3bd36911826271b82475bb6cea09351713c2ac6d8153f2a3e40f0fb9d38d9aeb\
+             f7c17cee89f095c0dfa8b8dff9449c014fc88ca1cc01abdcde76fbf842c2c684"
+        );
+        assert!(signature.verifies());
+    }
+
+    #[test]
     fn the_challenge_agrees_with_the_binding() {
         // The one place this implementation has to match libsecp256k1 byte for
         // byte: `e`. If it drifts, `S` is not the point the signature is over,
@@ -814,14 +854,44 @@ mod tests {
         }
     }
 
+    /// A proof identical to a real one but for the nonce point it names.
+    fn with_nonce_point(x: [u8; 32]) -> AuthorshipProof {
+        AuthorshipProof {
+            nonce_point: x,
+            ..proof()
+        }
+    }
+
+    /// An x-coordinate as 32 big-endian bytes.
+    fn x_of(value: u8) -> [u8; 32] {
+        let mut x = [0u8; 32];
+        x[31] = value;
+
+        x
+    }
+
+    #[test]
+    fn a_nonce_point_above_the_field_prime_is_rejected() {
+        // All-ones exceeds p, so it is not a field element at all and never
+        // reaches the curve equation. The half of "malformed points" that a
+        // coordinate off the curve does not cover.
+        assert!(!with_nonce_point([0xff; 32]).verifies(&claim()));
+    }
+
     #[test]
     fn a_nonce_point_off_the_curve_is_rejected() {
-        let mut proof = proof();
-        // No point on secp256k1 has x = 1.
-        proof.nonce_point = [0u8; 32];
-        proof.nonce_point[31] = 1;
+        // x = 5 is a perfectly good field element with no y to go with it:
+        // 5³ + 7 is not a square mod p. x = 1, 2 and 3 all are, which is why
+        // this is 5 — a valid point would test something else entirely.
+        assert!(!with_nonce_point(x_of(5)).verifies(&claim()));
+    }
 
-        assert!(!proof.verifies(&claim()));
+    #[test]
+    fn a_nonce_point_that_is_not_the_signature_is_rejected() {
+        // On the curve, so it lifts, and wrong, so it names a point whose
+        // discrete log nobody knows. Rejected for a different reason than the
+        // two above, which is worth keeping separate.
+        assert!(!with_nonce_point(x_of(1)).verifies(&claim()));
     }
 
     #[test]
@@ -880,29 +950,137 @@ mod tests {
         assert_ne!(real.author_response, simulated.author_response);
     }
 
+    /// Both commitments a proof implies, recovered the way the verifier does.
+    fn commitments(statement: &Statement, proof: &AuthorshipProof) -> ([u8; 33], [u8; 33]) {
+        let recover = |challenge: &[u8; 32], response: &[u8; 32], point: ProjectivePoint| {
+            let challenge = scalar_from_bytes(challenge).unwrap();
+            let response = scalar_from_bytes(response).unwrap();
+
+            encode_point(&(ProjectivePoint::GENERATOR * response - point * challenge)).unwrap()
+        };
+
+        (
+            recover(
+                &proof.author_challenge,
+                &proof.author_response,
+                statement.signature_point,
+            ),
+            recover(
+                &proof.verifier_challenge,
+                &proof.verifier_response,
+                statement.verifier_point,
+            ),
+        )
+    }
+
     #[test]
     fn no_two_proofs_of_one_statement_share_a_commitment() {
         // The nonce is derived, not sampled, so a bug here is a nonce that
         // holds still while the challenge moves — which hands over the witness
         // and the two-hop bound with it. Distinct commitments is the visible
         // consequence of getting it right.
+        //
+        // Both branches of both producers, in one set. The simulator mixes
+        // auxiliary randomness through the same derivation, so it has to come
+        // out just as fresh: a simulated proof that repeated would be a proof
+        // C could be caught having made.
         let signature = signature();
-        let statement =
-            Statement::assemble(&claim(), &signature.sig[..32].try_into().unwrap()).unwrap();
+        let nonce_point: [u8; 32] = signature.sig[..32].try_into().unwrap();
+        let statement = Statement::assemble(&claim(), &nonce_point).unwrap();
 
-        let mut commitments = HashSet::new();
+        let mut seen = HashSet::new();
 
-        for _ in 0..64 {
-            let proof = AuthorshipProof::prove(&signature, c().public_key()).unwrap();
+        for round in 0..32 {
+            let proofs = [
+                AuthorshipProof::prove(&signature, c().public_key()).unwrap(),
+                AuthorshipProof::simulate(&claim(), &nonce_point, &c()).unwrap(),
+            ];
 
-            let challenge = scalar_from_bytes(&proof.author_challenge).unwrap();
-            let response = scalar_from_bytes(&proof.author_response).unwrap();
-            let commitment =
-                ProjectivePoint::GENERATOR * response - statement.signature_point * challenge;
+            for proof in proofs {
+                let (author, verifier) = commitments(&statement, &proof);
+
+                assert!(
+                    seen.insert(author),
+                    "an author commitment repeated at {round}"
+                );
+                assert!(
+                    seen.insert(verifier),
+                    "a verifier commitment repeated at {round}"
+                );
+            }
+        }
+    }
+
+    /// One of a proof's four scalars, picked out for measuring.
+    type Field = fn(&AuthorshipProof) -> [u8; 32];
+
+    /// The fraction of bits set across one field of many proofs.
+    fn bit_frequency(
+        proofs: &[AuthorshipProof],
+        field: impl Fn(&AuthorshipProof) -> [u8; 32],
+    ) -> f64 {
+        let set: u32 = proofs
+            .iter()
+            .map(|proof| {
+                field(proof)
+                    .iter()
+                    .map(|byte| byte.count_ones())
+                    .sum::<u32>()
+            })
+            .sum();
+
+        f64::from(set) / (proofs.len() * 256) as f64
+    }
+
+    #[test]
+    fn real_and_simulated_proofs_are_drawn_alike() {
+        // The distributional half of the simulator property. Both populations
+        // are uniform subject to one constraint — the challenge shares summing
+        // to the transcript hash — so no field of either should look like
+        // anything but coin flips, and no field should tell the two apart.
+        //
+        // A soundness bug shows up as a proof that fails. This is the other
+        // kind: a proof that verifies every time while a field holds still, or
+        // tracks the witness, or says which branch was real. Verification
+        // cannot see any of that, so nothing above would catch it.
+        const SAMPLES: usize = 64;
+        // 64 x 256 bits a field, so one standard error is about 0.004 and this
+        // is a seven-sigma band: it will not flake, and nothing degenerate
+        // enough to matter fits inside it.
+        const TOLERANCE: f64 = 0.03;
+
+        let signature = signature();
+        let nonce_point: [u8; 32] = signature.sig[..32].try_into().unwrap();
+
+        let real: Vec<_> = (0..SAMPLES)
+            .map(|_| AuthorshipProof::prove(&signature, c().public_key()).unwrap())
+            .collect();
+        let simulated: Vec<_> = (0..SAMPLES)
+            .map(|_| AuthorshipProof::simulate(&claim(), &nonce_point, &c()).unwrap())
+            .collect();
+
+        let fields: [(&str, Field); 4] = [
+            ("author_challenge", |proof| proof.author_challenge),
+            ("author_response", |proof| proof.author_response),
+            ("verifier_challenge", |proof| proof.verifier_challenge),
+            ("verifier_response", |proof| proof.verifier_response),
+        ];
+
+        for (name, field) in fields {
+            let from_prove = bit_frequency(&real, field);
+            let from_simulate = bit_frequency(&simulated, field);
 
             assert!(
-                commitments.insert(encode_point(&commitment).unwrap()),
-                "a commitment repeated across proofs of one statement"
+                (from_prove - 0.5).abs() < TOLERANCE,
+                "{name} is not uniform when proved: {from_prove}"
+            );
+            assert!(
+                (from_simulate - 0.5).abs() < TOLERANCE,
+                "{name} is not uniform when simulated: {from_simulate}"
+            );
+            assert!(
+                (from_prove - from_simulate).abs() < TOLERANCE,
+                "{name} separates the two: {from_prove} proved against {from_simulate} simulated"
             );
         }
     }
