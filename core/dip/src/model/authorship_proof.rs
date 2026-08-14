@@ -54,7 +54,7 @@ use k256::elliptic_curve::ops::Reduce;
 use k256::elliptic_curve::point::{AffineCoordinates, DecompressPoint};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::elliptic_curve::subtle::{Choice, ConditionallySelectable};
-use k256::elliptic_curve::zeroize::Zeroize;
+use k256::elliptic_curve::zeroize::Zeroizing;
 use k256::elliptic_curve::{Group, PrimeField};
 use k256::{AffinePoint, FieldBytes, ProjectivePoint, Scalar, U256};
 use sha2::{Digest, Sha256};
@@ -156,29 +156,30 @@ impl AuthorshipProof {
     pub fn prove(signature: &RecipientSignature, verifier: PublicKey) -> Result<Self> {
         let claim = AuthorshipClaim::from_signature(signature, verifier)?;
 
+        // R.x is public; the scalar beside it is the whole capability, so it is
+        // wrapped rather than dropped by hand — every path out of here from the
+        // next line on is an early return.
         let mut nonce_point = [0u8; 32];
-        let mut response = [0u8; 32];
         nonce_point.copy_from_slice(&signature.sig[..32]);
+
+        let mut response = Zeroizing::new([0u8; 32]);
         response.copy_from_slice(&signature.sig[32..]);
 
-        let mut witness = scalar_from_bytes(&response)
-            .context("the signature's scalar is not in range for the curve")?;
+        let witness = Zeroizing::new(
+            scalar_from_bytes(&response)
+                .context("the signature's scalar is not in range for the curve")?,
+        );
 
         let statement = Statement::assemble(&claim, &nonce_point)?;
 
-        if ProjectivePoint::GENERATOR * witness != statement.signature_point {
-            witness.zeroize();
+        if ProjectivePoint::GENERATOR * *witness != statement.signature_point {
             bail!("the signature is not over this event, recipient and author");
         }
 
         // Which branch is real is not a secret — B is forwarding, so B proves
         // the signature branch and simulates the verifier's. Only the transcript
         // has to hide it, and it does: the branches are ordered by role.
-        let proof = statement.assemble_proof(Branch::Author, &witness, nonce_point);
-
-        witness.zeroize();
-
-        proof
+        statement.assemble_proof(Branch::Author, &witness, nonce_point)
     }
 
     /// Fabricate a proof for a claim designating this device, from its own key.
@@ -201,13 +202,9 @@ impl AuthorshipProof {
         }
 
         let statement = Statement::assemble(claim, nonce_point)?;
-        let mut witness = verifier_witness(verifier)?;
+        let witness = verifier_witness(verifier)?;
 
-        let proof = statement.assemble_proof(Branch::Verifier, &witness, *nonce_point);
-
-        witness.zeroize();
-
-        proof
+        statement.assemble_proof(Branch::Verifier, &witness, *nonce_point)
     }
 
     /// Whether this proof establishes `claim` to the device the claim
@@ -362,14 +359,14 @@ impl Statement {
         witness: &Scalar,
         nonce_point: [u8; 32],
     ) -> Result<AuthorshipProof> {
-        let (mut nonce, simulated_challenge, simulated_response) =
+        let (nonce, simulated_challenge, simulated_response) =
             self.nonces(witness).context("deriving the proof nonce")?;
 
         // The simulated branch picks its challenge and response and solves for
         // the commitment; the real one commits first and answers afterwards.
         let simulated_commitment = ProjectivePoint::GENERATOR * simulated_response
             - self.point(other(branch)) * simulated_challenge;
-        let real_commitment = ProjectivePoint::GENERATOR * nonce;
+        let real_commitment = ProjectivePoint::GENERATOR * *nonce;
 
         let (author_commitment, verifier_commitment) = match branch {
             Branch::Author => (real_commitment, simulated_commitment),
@@ -378,9 +375,7 @@ impl Statement {
 
         let challenge = self.challenge(&author_commitment, &verifier_commitment)?;
         let real_challenge = challenge - simulated_challenge;
-        let real_response = nonce + real_challenge * witness;
-
-        nonce.zeroize();
+        let real_response = *nonce + real_challenge * witness;
 
         let (author, verifier) = match branch {
             Branch::Author => (
@@ -429,24 +424,27 @@ impl Statement {
     /// input while another varies. Auxiliary randomness is mixed in on top: it
     /// makes repeat proofs distinct, and a failing OS RNG degrades to the
     /// deterministic case rather than to a repeated nonce.
-    fn nonces(&self, witness: &Scalar) -> Result<(Scalar, Scalar, Scalar)> {
-        let mut aux = [0u8; 32];
-        let _ = getrandom::getrandom(&mut aux);
+    /// Everything on the way to the nonce reconstructs the witness given one
+    /// other value, so all of it is wrapped: `aux` and `mask` recover it from
+    /// `masked`, and `seed` and the nonce give it up alongside a second proof.
+    /// Only the two simulated values are safe to hand back bare, because they
+    /// go on the wire.
+    fn nonces(&self, witness: &Scalar) -> Result<(Zeroizing<Scalar>, Scalar, Scalar)> {
+        let mut aux = Zeroizing::new([0u8; 32]);
+        let _ = getrandom::getrandom(&mut *aux);
 
-        let mask = tagged_hash(AUX_TAG, &[&aux]);
-        let mut masked = scalar_bytes(witness);
-        for (byte, mask) in masked.iter_mut().zip(mask) {
+        let mask = Zeroizing::new(tagged_hash(AUX_TAG, &[&*aux]));
+        let mut masked = Zeroizing::new(scalar_bytes(witness));
+        for (byte, mask) in masked.iter_mut().zip(*mask) {
             *byte ^= mask;
         }
 
-        let mut seed = tagged_hash(NONCE_TAG, &[&masked, &self.prefix]);
-        masked.zeroize();
+        let seed = Zeroizing::new(tagged_hash(NONCE_TAG, &[&*masked, &self.prefix]));
 
-        let derive = |index: u8| scalar_from_hash(&tagged_hash(DERIVE_TAG, &[&seed, &[index]]));
-        let nonce = derive(0);
+        let derive = |index: u8| scalar_from_hash(&tagged_hash(DERIVE_TAG, &[&*seed, &[index]]));
+        let nonce = Zeroizing::new(derive(0));
         let challenge = derive(1);
         let response = derive(2);
-        seed.zeroize();
 
         if bool::from(nonce.is_zero()) {
             bail!("the derived nonce was zero");
@@ -522,21 +520,26 @@ fn signature_message(event_id: &[u8; 32], recipient: &PublicKey) -> [u8; 32] {
 /// is only reachable from [`AuthorshipProof::simulate`] and never from
 /// [`AuthorshipProof::prove`].
 ///
-/// `to_hex` is the one way key bytes leave a `SecretKey`, and it hands back a
-/// `String` this cannot scrub. Another reason for this to stay off every path
-/// the app actually runs.
-fn verifier_witness(verifier: &SecretKey) -> Result<Scalar> {
-    let mut bytes: [u8; 32] = hex::decode(verifier.to_hex())
-        .ok()
-        .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
-        .ok_or_else(|| anyhow!("the verifier's key is not 32 bytes of hex"))?;
-    let scalar = scalar_from_bytes(&bytes).context("the verifier's key is out of range");
-    bytes.zeroize();
+/// `to_hex` is the one way key bytes leave a `SecretKey`, and it is a
+/// three-copy escape — the hex, the decoded bytes, the scalar — so each lands
+/// somewhere that scrubs itself on the way out.
+fn verifier_witness(verifier: &SecretKey) -> Result<Zeroizing<Scalar>> {
+    let hex = Zeroizing::new(verifier.to_hex());
+    let decoded = Zeroizing::new(hex::decode(&*hex).context("the verifier's key is not hex")?);
+    let bytes = Zeroizing::new(
+        <[u8; 32]>::try_from(&decoded[..])
+            .map_err(|_| anyhow!("the verifier's key is not 32 bytes"))?,
+    );
 
-    let scalar = scalar?;
-    let odd = (ProjectivePoint::GENERATOR * scalar).to_affine().y_is_odd();
+    let scalar =
+        Zeroizing::new(scalar_from_bytes(&bytes).context("the verifier's key is out of range")?);
+    let odd = (ProjectivePoint::GENERATOR * *scalar)
+        .to_affine()
+        .y_is_odd();
 
-    Ok(Scalar::conditional_select(&scalar, &-scalar, odd))
+    Ok(Zeroizing::new(Scalar::conditional_select(
+        &scalar, &-*scalar, odd,
+    )))
 }
 
 /// BIP-340's tagged hash: `sha256(sha256(tag) ‖ sha256(tag) ‖ parts)`.
