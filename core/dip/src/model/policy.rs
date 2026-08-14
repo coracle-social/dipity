@@ -5,8 +5,8 @@
 //! what the rest of the core asks rather than reading preference keys one at a
 //! time.
 //!
-//! Bind it to the peer on the other end of a session with [`Policy::for_peer`]
-//! and the questions a session asks have answers:
+//! Bind it to the pubkey on the other end of a session with
+//! [`Policy::for_pubkey`] and the questions a session asks have answers:
 //!
 //! ```
 //! use coracle_lib::keys::SecretKey;
@@ -14,7 +14,7 @@
 //!
 //! let identity = SecretKey::generate().public_key();
 //! let peer = SecretKey::generate().public_key();
-//! let policy = Policy::new(identity).for_peer(peer);
+//! let policy = Policy::new(identity).for_pubkey(peer);
 //!
 //! assert!(!policy.is_blocked());
 //! ```
@@ -84,38 +84,38 @@ impl Policy {
             .any(|window| window.contains(minute))
     }
 
-    /// Bind this policy to the peer on the other end of a session.
+    /// Bind this policy to a pubkey the peer proved.
     #[must_use]
-    pub fn for_peer(self, peer: PublicKey) -> PeerPolicy {
-        let standing = self.graph.standing(&peer);
+    pub fn for_pubkey(self, pubkey: PublicKey) -> PubkeyPolicy {
+        let standing = self.graph.standing(&pubkey);
 
-        PeerPolicy {
+        PubkeyPolicy {
             policy: self,
-            peer,
+            pubkey,
             standing,
         }
     }
 }
 
-/// A [`Policy`] bound to the peer on the other end of a session.
+/// A [`Policy`] bound to one pubkey a peer proved.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PeerPolicy {
+pub struct PubkeyPolicy {
     policy: Policy,
-    peer: PublicKey,
+    pubkey: PublicKey,
     standing: Standing,
 }
 
-impl PeerPolicy {
+impl PubkeyPolicy {
     /// The policy this was bound from.
     #[must_use]
     pub fn policy(&self) -> &Policy {
         &self.policy
     }
 
-    /// The peer it is bound to.
+    /// The pubkey it is bound to.
     #[must_use]
-    pub fn peer(&self) -> &PublicKey {
-        &self.peer
+    pub fn pubkey(&self) -> &PublicKey {
+        &self.pubkey
     }
 
     /// This device's own pubkey.
@@ -124,20 +124,20 @@ impl PeerPolicy {
         &self.policy.identity
     }
 
-    /// Where the peer stands in the user's graph.
+    /// Where the pubkey stands in the user's graph.
     #[must_use]
     pub fn standing(&self) -> Standing {
         self.standing
     }
 
-    /// Whether the peer is blocked, in which case nothing passes in either
+    /// Whether the pubkey is blocked, in which case nothing passes in either
     /// direction and the session should not have been accepted at all.
     #[must_use]
     pub fn is_blocked(&self) -> bool {
         self.standing == Standing::Blocked
     }
 
-    /// Whether the peer may see this event of the user's own.
+    /// Whether this pubkey may see an event of the user's own.
     #[must_use]
     pub fn is_visible<E>(&self, event: &E) -> bool
     where
@@ -269,13 +269,13 @@ mod tests {
 
         policy.gossip = Scope::Nothing;
         assert_eq!(
-            policy.clone().for_peer(author(2)).gossip_authors(),
+            policy.clone().for_pubkey(author(2)).gossip_authors(),
             Authors::Only([us()].into())
         );
 
         policy.gossip = Scope::Network;
         assert_eq!(
-            policy.clone().for_peer(author(2)).gossip_authors(),
+            policy.clone().for_pubkey(author(2)).gossip_authors(),
             Authors::Only([us(), author(2), author(3)].into())
         );
 
@@ -284,7 +284,7 @@ mod tests {
         policy.gossip = Scope::Lenient;
         policy.graph.blocked.insert(us());
         assert_eq!(
-            policy.for_peer(author(2)).gossip_authors(),
+            policy.for_pubkey(author(2)).gossip_authors(),
             Authors::Except([author(4)].into())
         );
     }
@@ -292,8 +292,8 @@ mod tests {
     #[test]
     fn visibility_governs_the_users_own_events() {
         let policy = policy();
-        let stranger = policy.clone().for_peer(author(9));
-        let trusted = policy.clone().for_peer(author(2));
+        let stranger = policy.clone().for_pubkey(author(9));
+        let trusted = policy.clone().for_pubkey(author(2));
 
         let profile = event(us(), KIND_PROFILE, 1, "", Tags::new());
         let note = event(us(), 1, 1, "", Tags::new());
@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn gossip_measures_other_peoples_events_against_their_author() {
         let policy = policy();
-        let stranger = policy.clone().for_peer(author(9));
+        let stranger = policy.clone().for_pubkey(author(9));
 
         // Default gossip is network, so a stranger's note goes no further
         // however trusted the peer asking for it is.
@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn accept_measures_an_inbound_event_against_its_author() {
         let policy = policy();
-        let peer = policy.clone().for_peer(author(9));
+        let peer = policy.clone().for_pubkey(author(9));
 
         // Default accept is lenient: anyone but a blocked author.
         assert!(peer.should_accept(&event(author(9), 1, 1, "", Tags::new())));
@@ -339,14 +339,14 @@ mod tests {
         strict.accept = Scope::Nothing;
         assert!(
             strict
-                .for_peer(author(9))
+                .for_pubkey(author(9))
                 .should_accept(&event(us(), 1, 1, "", Tags::new()))
         );
     }
 
     #[test]
     fn a_blocked_peer_is_served_nothing_and_offers_nothing() {
-        let blocked = policy().for_peer(author(4));
+        let blocked = policy().for_pubkey(author(4));
 
         assert!(blocked.is_blocked());
         assert!(!blocked.should_gossip(&event(us(), 1, 1, "", Tags::new())));

@@ -27,6 +27,7 @@ Each is a decision already made; the linked doc carries the reasoning.
 - **Scope is the trust graph, and trust, block and mute are three things.** Author sets come from explicit trust, never from follows. Block is the wire control — dropped on ingest, never served, sessions refused. Mute (kind 10000) is a display filter and never gates propagation, so do not fold the two together. [`policy.md`](./docs/policy.md#social-graph), [`sync.md`](./docs/sync.md#event-sync).
 - **Never claim posts only reach nearby people.** Sync is store-and-forward, so a second-hop recipient may be anywhere. Say reach is bounded at two hops instead. [`privacy.md`](./docs/privacy.md).
 - **Never claim the app is untrackable.** An active attacker can always complete a handshake; what is true is that no identifier survives a session, so tracking costs continuous observation rather than a single sighting. Inside a discoverable window the user does disclose to strangers, by design. [`privacy.md`](./docs/privacy.md#what-an-active-radio-attacker-learns).
+- **Comments should be a single line.** Unless at the top of a module, or documenting exceptionally complex behavior, comments should always be limited to a single line.
 
 ## The plugin boundary
 

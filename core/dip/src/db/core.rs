@@ -324,7 +324,7 @@ mod tests {
         let connection = in_memory().unwrap();
 
         let orphan = connection.execute(
-            "INSERT INTO event_seen (event_id, peer_pubkey, seen_at) VALUES ('nope', 'peer', 1)",
+            "INSERT INTO event_seen (event_id, pubkey, seen_at) VALUES ('nope', 'peer', 1)",
             [],
         );
 

@@ -102,7 +102,7 @@ mod tests {
     fn store_note(tx: &Tx<'_>, content: &str) -> EventId {
         let event = note(author(1), 100, content, Tags::new());
 
-        event_command::save(tx, &event, &peer(), 10).unwrap();
+        event_command::save(tx, &event, &[peer()], 10).unwrap();
 
         id(&event)
     }

@@ -42,10 +42,6 @@ pub fn get(tx: &Tx<'_>, key: &str) -> Result<Option<String>> {
 /// A value that does not decode is an error rather than a default: it means an
 /// older build wrote a shape this one does not understand, and silently
 /// substituting a default would quietly loosen a policy the user set.
-///
-/// # Errors
-///
-/// If the query fails or the stored value does not decode into `T`.
 pub fn get_as<T: DeserializeOwned>(tx: &Tx<'_>, key: &str) -> Result<Option<T>> {
     let Some(value) = get(tx, key)? else {
         return Ok(None);
@@ -59,10 +55,6 @@ pub fn get_as<T: DeserializeOwned>(tx: &Tx<'_>, key: &str) -> Result<Option<T>> 
 
 /// One preference, decoded, falling back to `default` when it has never been
 /// written.
-///
-/// # Errors
-///
-/// If the query fails or the stored value does not decode into `T`.
 pub fn get_or<T: DeserializeOwned>(tx: &Tx<'_>, key: &str, default: T) -> Result<T> {
     Ok(get_as(tx, key)?.unwrap_or(default))
 }
@@ -82,16 +74,10 @@ pub fn all(tx: &Tx<'_>) -> Result<Vec<Pref>> {
 
 /// Everything the user has said about who gets what, ready to apply.
 ///
-/// Read once per session and bound to a peer with
-/// [`Policy::for_peer`](crate::model::Policy::for_peer), rather than re-read
+/// Read once per session and bound to each pubkey a peer proved with
+/// [`Policy::for_pubkey`](crate::model::Policy::for_pubkey), rather than re-read
 /// per event: a session asks the same questions of the same peer many times,
 /// and the answers cannot change under it while it runs.
-///
-/// # Errors
-///
-/// If a query fails, or a stored preference does not decode into the shape this
-/// build expects — which means an older build wrote it, and substituting a
-/// default would quietly loosen a policy the user set.
 pub fn policy(tx: &Tx<'_>, identity: &PublicKey) -> Result<Policy> {
     Ok(Policy {
         identity: *identity,
@@ -224,7 +210,7 @@ mod tests {
                 .add("p", ["nonsense"]),
         );
 
-        event_command::save(&tx, &mutes, &us, 100).unwrap();
+        event_command::save(&tx, &mutes, &[us], 100).unwrap();
 
         let ours = policy(&tx, &us).unwrap();
 
@@ -243,7 +229,7 @@ mod tests {
             Tags::new().add("p", [author(3).to_hex()]),
         );
 
-        event_command::save(&tx, &theirs, &peer(), 200).unwrap();
+        event_command::save(&tx, &theirs, &[peer()], 200).unwrap();
 
         assert_eq!(policy(&tx, &us).unwrap().graph.muted, [author(2)].into());
     }

@@ -1,7 +1,7 @@
 //! Small types that belong to no model.
 //!
-//! Nostr's own primitives are `coracle-lib`'s, and `coracle_lib::util` holds
-//! the clock. What is here is the handful of shapes this crate needs that are
+//! Nostr's own primitives are `coracle-lib`'s, and [`crate::clock`] holds the
+//! clock. What is here is the handful of shapes this crate needs that are
 //! neither nostr's nor any one domain's.
 
 use std::fmt;

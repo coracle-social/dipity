@@ -15,10 +15,6 @@ use super::channel::{self, BlobChange};
 /// events arrive in — anchors it, and a later reference changes nothing. The
 /// anchor is what the blob's permissions come from, so moving it on every
 /// mention would let a later event widen who can fetch an earlier one's media.
-///
-/// # Errors
-///
-/// If the write fails, including when the anchoring event is not stored.
 pub fn record(tx: &Tx<'_>, blob: &Blob) -> Result<bool> {
     let imeta = serde_json::to_string(&blob.imeta)
         .with_context(|| format!("serializing the imeta tag for blob {}", blob.sha256))?;
@@ -118,10 +114,6 @@ pub fn touch(tx: &Tx<'_>, sha256: &str, at: i64) -> Result<bool> {
 /// For the case where the anchoring event is deleted while something else still
 /// references the hash: without this the record goes with it, by cascade, and
 /// the bytes on disk are orphaned.
-///
-/// # Errors
-///
-/// If the write fails, including when the new anchor is not stored.
 pub fn reanchor(tx: &Tx<'_>, sha256: &str, event_id: &EventId) -> Result<bool> {
     let written = tx
         .prepare_cached("UPDATE blob SET event_id = ?2 WHERE sha256 = ?1")?
@@ -165,7 +157,7 @@ mod tests {
     fn store_event(tx: &Tx<'_>, content: &str) -> EventId {
         let event = note(author(1), 100, content, Tags::new());
 
-        event_command::save(tx, &event, &peer(), 10).unwrap();
+        event_command::save(tx, &event, &[peer()], 10).unwrap();
 
         id(&event)
     }

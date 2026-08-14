@@ -16,7 +16,7 @@ use crate::db::Tx;
 use crate::db::condition::{Conditions, text};
 use crate::db::sql::{event_id_from_sql, placeholders, pubkey_from_sql};
 use crate::model::{
-    Authors, Order, PeerPolicy, Provenance, ProvenanceFilter, Query, Register, Registers, Scope,
+    Authors, Order, Provenance, ProvenanceFilter, PubkeyPolicy, Query, Register, Registers, Scope,
 };
 
 /// The event columns, in the order [`to_event`] reads them.
@@ -115,9 +115,9 @@ pub fn seen_at(tx: &Tx<'_>, id: &EventId) -> Result<Option<i64>> {
 /// Every sighting of an event, earliest first.
 pub fn provenance(tx: &Tx<'_>, id: &EventId) -> Result<Vec<Provenance>> {
     let mut prepared = tx.prepare_cached(
-        "SELECT event_id, peer_pubkey, seen_at FROM event_seen
+        "SELECT event_id, pubkey, seen_at FROM event_seen
          WHERE event_id = ?1
-         ORDER BY seen_at ASC, peer_pubkey ASC",
+         ORDER BY seen_at ASC, pubkey ASC",
     )?;
 
     let provenance = prepared
@@ -139,9 +139,9 @@ pub fn provenance_for(tx: &Tx<'_>, ids: &[EventId]) -> Result<HashMap<EventId, V
 
     let placeholders = placeholders(1, ids.len());
     let mut prepared = tx.prepare(&format!(
-        "SELECT event_id, peer_pubkey, seen_at FROM event_seen
+        "SELECT event_id, pubkey, seen_at FROM event_seen
          WHERE event_id IN ({placeholders})
-         ORDER BY seen_at ASC, peer_pubkey ASC"
+         ORDER BY seen_at ASC, pubkey ASC"
     ))?;
 
     // Ordered across the whole set, so each event's sightings come out in the
@@ -169,7 +169,7 @@ pub fn provenance_for(tx: &Tx<'_>, ids: &[EventId]) -> Result<HashMap<EventId, V
 pub fn seen_from(tx: &Tx<'_>, id: &EventId) -> Result<Vec<PublicKey>> {
     Ok(provenance(tx, id)?
         .into_iter()
-        .map(|sighting| sighting.peer_pubkey)
+        .map(|sighting| sighting.pubkey)
         .collect())
 }
 
@@ -374,17 +374,17 @@ fn push_provenance(conditions: &mut Conditions, provenance: &ProvenanceFilter) {
         conditions.push(format!("e.seen_at <= ?{index}"));
     }
 
-    if let Some(peers) = &provenance.peers {
-        if peers.is_empty() {
+    if let Some(pubkeys) = &provenance.pubkeys {
+        if pubkeys.is_empty() {
             conditions.push_never();
             return;
         }
 
-        let placeholders = conditions.bind_all(peers.iter().map(|peer| text(peer.to_hex())));
+        let placeholders = conditions.bind_all(pubkeys.iter().map(|pubkey| text(pubkey.to_hex())));
 
         conditions.push(format!(
             "EXISTS (SELECT 1 FROM event_seen s
-                     WHERE s.event_id = e.id AND s.peer_pubkey IN ({placeholders}))"
+                     WHERE s.event_id = e.id AND s.pubkey IN ({placeholders}))"
         ));
     }
 }
@@ -417,7 +417,7 @@ fn push_registers(conditions: &mut Conditions, registers: &Registers) {
 }
 
 /// Compile the policy governing the peer being answered.
-fn push_policy(conditions: &mut Conditions, policy: &PeerPolicy) {
+fn push_policy(conditions: &mut Conditions, policy: &PubkeyPolicy) {
     if policy.is_blocked() {
         conditions.push_never();
         return;
@@ -439,7 +439,7 @@ fn push_policy(conditions: &mut Conditions, policy: &PeerPolicy) {
 }
 
 /// Exclude the user's own events this peer may not see.
-fn push_visibility(conditions: &mut Conditions, policy: &PeerPolicy) {
+fn push_visibility(conditions: &mut Conditions, policy: &PubkeyPolicy) {
     let visibility = &policy.policy().visibility;
     let standing = policy.standing();
     let hides = |scope: Scope| !scope.admits(standing);
@@ -505,7 +505,7 @@ fn fts_query(search: &str) -> Option<String> {
 fn to_provenance(row: &Row<'_>) -> rusqlite::Result<Provenance> {
     Ok(Provenance {
         event_id: event_id_from_sql(&row.get::<_, String>("event_id")?, 0)?,
-        peer_pubkey: pubkey_from_sql(&row.get::<_, String>("peer_pubkey")?, 1)?,
+        pubkey: pubkey_from_sql(&row.get::<_, String>("pubkey")?, 1)?,
         seen_at: row.get("seen_at")?,
     })
 }
@@ -564,13 +564,13 @@ mod tests {
     fn store(tx: &Tx<'_>, seed: u8, created_at: i64, tags: Tags) {
         let event = note(author(seed), created_at, "note", tags);
 
-        command::save(tx, &event, &peer(), created_at).unwrap();
+        command::save(tx, &event, &[peer()], created_at).unwrap();
     }
 
     /// Store an event and the author's signature naming `recipient`, which is
     /// what puts it in the forwardable register.
     fn store_signed(tx: &Tx<'_>, event: &HashedEvent, recipient: &PublicKey) {
-        command::save(tx, event, &peer(), event.created_at).unwrap();
+        command::save(tx, event, &[peer()], event.created_at).unwrap();
         signature::save(
             tx,
             &RecipientSignature {
@@ -737,7 +737,7 @@ mod tests {
         command::save(
             &tx,
             &note(author(1), 100, "hello neighbor", Tags::new()),
-            &peer(),
+            &[peer()],
             100,
         )
         .unwrap();
@@ -772,9 +772,9 @@ mod tests {
         let signed = note(author(2), 200, "signed over to us", Tags::new());
         let held = note(author(3), 300, "no signature came with this", Tags::new());
 
-        command::save(&tx, &mine, &us, 100).unwrap();
+        command::save(&tx, &mine, &[us], 100).unwrap();
         store_signed(&tx, &signed, &us);
-        command::save(&tx, &held, &peer(), 300).unwrap();
+        command::save(&tx, &held, &[peer()], 300).unwrap();
 
         let ids = |registers: Registers| {
             list(&tx, &everything().with_registers(registers))
@@ -817,7 +817,7 @@ mod tests {
         // Three events this device cannot forward, newer than the one it can.
         // A constraint applied to the page rather than to the query would
         // return nothing and call it the end of the set.
-        command::save(&tx, &note(us, 100, "mine", Tags::new()), &us, 100).unwrap();
+        command::save(&tx, &note(us, 100, "mine", Tags::new()), &[us], 100).unwrap();
 
         for created_at in [200, 300, 400] {
             store(&tx, 2, created_at, Tags::new());
@@ -852,11 +852,11 @@ mod tests {
         let blocked = note(author(4), 600, "blocked", Tags::new());
 
         for held in [&profile, &mutes, &ours, &trusted, &stranger, &blocked] {
-            command::save(&tx, held, &peer(), held.created_at).unwrap();
+            command::save(&tx, held, &[peer()], held.created_at).unwrap();
         }
 
         let served = |policy: Policy, to: PublicKey| {
-            list(&tx, &everything().with_policy(policy.for_peer(to)))
+            list(&tx, &everything().with_policy(policy.for_pubkey(to)))
                 .unwrap()
                 .iter()
                 .map(id)
@@ -938,7 +938,7 @@ mod tests {
         ];
 
         for held in &events {
-            command::save(&tx, held, &peer(), held.created_at).unwrap();
+            command::save(&tx, held, &[peer()], held.created_at).unwrap();
         }
 
         let rules = [
@@ -972,7 +972,7 @@ mod tests {
                     default,
                 };
 
-                let bound = policy.for_peer(them);
+                let bound = policy.for_pubkey(them);
                 let admitted: BTreeSet<EventId> = events
                     .iter()
                     .filter(|held| held.pubkey != us || bound.is_visible(*held))
@@ -1026,10 +1026,10 @@ mod tests {
 
         // Sightings recorded out of time order, so grouping by event cannot be
         // passing on the order the rows were written in.
-        command::save(&tx, &carried, &author(5), 900).unwrap();
-        command::save(&tx, &once, &peer(), 400).unwrap();
-        command::save(&tx, &carried, &author(3), 300).unwrap();
-        command::save(&tx, &carried, &author(4), 600).unwrap();
+        command::save(&tx, &carried, &[author(5)], 900).unwrap();
+        command::save(&tx, &once, &[peer()], 400).unwrap();
+        command::save(&tx, &carried, &[author(3)], 300).unwrap();
+        command::save(&tx, &carried, &[author(4)], 600).unwrap();
 
         let missing = id(&note(author(1), 300, "never stored", Tags::new()));
         let ids = [id(&carried), id(&once), missing];
@@ -1067,8 +1067,8 @@ mod tests {
         let stale = note(author(1), 100, "stale", Tags::new());
         let fresh = note(author(2), 900, "fresh", Tags::new());
 
-        command::save(&tx, &fresh, &peer(), 10).unwrap();
-        command::save(&tx, &stale, &peer(), 20).unwrap();
+        command::save(&tx, &fresh, &[peer()], 10).unwrap();
+        command::save(&tx, &stale, &[peer()], 20).unwrap();
 
         let by_claim = list(&tx, &everything()).unwrap();
         assert_eq!(by_claim[0].id, *fresh.id());

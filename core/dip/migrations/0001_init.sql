@@ -78,14 +78,14 @@ CREATE VIRTUAL TABLE event_fts USING fts5 (
 -- every stored event has a seen time and the column stays NOT NULL.
 CREATE TABLE event_seen (
     event_id    TEXT    NOT NULL REFERENCES event (id) ON DELETE CASCADE,
-    peer_pubkey TEXT    NOT NULL,
+    pubkey      TEXT    NOT NULL,
     seen_at     INTEGER NOT NULL,
-    PRIMARY KEY (event_id, peer_pubkey)
+    PRIMARY KEY (event_id, pubkey)
 ) STRICT;
 
 -- No index on seen_at alone: reads by time go through `event.seen_at`, and the
 -- sightings of one event are a primary key lookup.
-CREATE INDEX event_seen_peer ON event_seen (peer_pubkey, seen_at DESC);
+CREATE INDEX event_seen_pubkey ON event_seen (pubkey, seen_at DESC);
 
 -- The author's signature over `event_id ‖ recipient_pubkey`, held by the peer
 -- it names. It is portable evidence, so it is never served to anyone: a second

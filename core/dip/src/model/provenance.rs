@@ -5,13 +5,13 @@ use std::collections::BTreeSet;
 use coracle_lib::events::EventId;
 use coracle_lib::keys::PublicKey;
 
-/// One sighting: an event, a peer it was seen from, and when.
+/// One sighting: an event, a pubkey it was seen from, and when.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Provenance {
     /// The event seen.
     pub event_id: EventId,
-    /// The peer it came from.
-    pub peer_pubkey: PublicKey,
+    /// The pubkey of the peer it came from.
+    pub pubkey: PublicKey,
     /// When it arrived, by the local clock.
     pub seen_at: i64,
 }
@@ -29,8 +29,8 @@ pub struct ProvenanceFilter {
     pub since: Option<i64>,
     /// Upper bound on the event's seen time, inclusive.
     pub until: Option<i64>,
-    /// Restrict to events seen from at least one of these peers.
-    pub peers: Option<BTreeSet<PublicKey>>,
+    /// Restrict to events seen from at least one of these pubkeys.
+    pub pubkeys: Option<BTreeSet<PublicKey>>,
 }
 
 impl ProvenanceFilter {
@@ -54,20 +54,22 @@ impl ProvenanceFilter {
         self
     }
 
-    /// Restrict to events seen from any of `peers`. An empty set matches
+    /// Restrict to events seen from any of `pubkeys`. An empty set matches
     /// nothing, as it does on a filter.
     #[must_use]
-    pub fn add_peers(mut self, peers: impl IntoIterator<Item = PublicKey>) -> Self {
-        self.peers.get_or_insert_with(BTreeSet::new).extend(peers);
+    pub fn add_pubkeys(mut self, pubkeys: impl IntoIterator<Item = PublicKey>) -> Self {
+        self.pubkeys
+            .get_or_insert_with(BTreeSet::new)
+            .extend(pubkeys);
         self
     }
 
     /// Whether these criteria are unsatisfiable, the way
     /// [`Filter::matches_nothing`](coracle_lib::filters::Filter::matches_nothing)
-    /// is: an empty peer set, or a window that ends before it starts.
+    /// is: an empty pubkey set, or a window that ends before it starts.
     #[must_use]
     pub fn matches_nothing(&self) -> bool {
-        self.peers.as_ref().is_some_and(BTreeSet::is_empty)
+        self.pubkeys.as_ref().is_some_and(BTreeSet::is_empty)
             || matches!((self.since, self.until), (Some(s), Some(u)) if s > u)
     }
 }
@@ -91,6 +93,6 @@ mod tests {
                 .add_until(100)
                 .matches_nothing()
         );
-        assert!(ProvenanceFilter::new().add_peers([]).matches_nothing());
+        assert!(ProvenanceFilter::new().add_pubkeys([]).matches_nothing());
     }
 }

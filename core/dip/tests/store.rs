@@ -100,7 +100,7 @@ fn the_store_serves_its_use_cases() {
     let signature = [7u8; 64];
 
     assert!(
-        command::receive_event(&db, &with_media, &peer(), Some(&signature), &us(), 100).unwrap()
+        command::receive_event(&db, &with_media, &[peer()], Some(&signature), &us(), 100).unwrap()
     );
 
     match changes.try_recv() {
@@ -151,13 +151,13 @@ fn the_store_serves_its_use_cases() {
     .unwrap();
     assert_eq!(detail.len(), 1);
     assert_eq!(detail[0].sightings.len(), 1);
-    assert_eq!(detail[0].sightings[0].peer_pubkey, peer());
+    assert_eq!(detail[0].sightings[0].pubkey, peer());
     assert_eq!(detail[0].sightings[0].seen_at, 100);
 
     // Holding the author's signature is what makes an event forwardable; an
     // event received without one is held for the user and goes no further.
     let unsigned = note(author(), 2_000, "no signature came with this", Tags::new());
-    assert!(command::receive_event(&db, &unsigned, &peer(), None, &us(), 200).unwrap());
+    assert!(command::receive_event(&db, &unsigned, &[peer()], None, &us(), 200).unwrap());
 
     assert_eq!(
         query::list_events(&db, &offerable()).unwrap(),
@@ -240,7 +240,7 @@ fn the_store_serves_its_use_cases() {
     assert_eq!(policy.gossip, Scope::Network);
     assert_eq!(policy.cool_off_minutes, 10);
     assert!(policy.discoverable_times.is_empty());
-    assert!(!policy.for_peer(peer()).is_blocked());
+    assert!(!policy.for_pubkey(peer()).is_blocked());
 
     command::set_preference(&db, keys::GOSSIP, r#""nothing""#, 500).unwrap();
     assert_eq!(query::policy(&db, &us()).unwrap().gossip, Scope::Nothing);
@@ -287,7 +287,7 @@ fn two_stores_in_one_process_share_nothing() {
 
     // A write to one store is announced on that store's channel and no other's.
     let note = note(author(), 1_000, "from alice", Tags::new());
-    assert!(command::receive_event(&alice, &note, &peer(), None, &us(), 100).unwrap());
+    assert!(command::receive_event(&alice, &note, &[peer()], None, &us(), 100).unwrap());
 
     match alice_hears.try_recv() {
         Ok(EventChange::Stored(stored)) => assert_eq!(stored.id, note.id),
@@ -305,7 +305,7 @@ fn two_stores_in_one_process_share_nothing() {
     );
     assert!(query::list_events(&bob, &Query::new()).unwrap().is_empty());
 
-    assert!(command::receive_event(&bob, &note, &peer(), None, &us(), 200).unwrap());
+    assert!(command::receive_event(&bob, &note, &[peer()], None, &us(), 200).unwrap());
     assert!(matches!(bob_hears.try_recv(), Ok(EventChange::Stored(_))));
 
     fs::remove_dir_all(&hers).unwrap();

@@ -15,7 +15,7 @@
 //! Nostr's own types are `coracle-lib`'s, not this crate's: events, keys, tags,
 //! kinds, addresses, filters and NIP-77 items. They have to agree byte for byte
 //! with a peer running the other platform's build, so there is one definition
-//! of each and it is not here. `coracle_lib::util::now()` is the clock.
+//! of each and it is not here.
 //!
 //! [`db::query`] and [`db::command`] are the way in, and they are the only way
 //! in: one function per question asked and per thing that happens, each opening
@@ -40,7 +40,7 @@
 //! let db = Db::open("/path/the/shell/provides")?;
 //!
 //! let stored = dip::db::command::receive_event(
-//!     &db, &incoming, peer, signature, identity, coracle_lib::util::now(),
+//!     &db, &incoming, &[*peer], signature, identity, coracle_lib::util::now(),
 //! )?;
 //!
 //! // The user's feed: by arrival, since a note handed over today is new to
@@ -58,7 +58,7 @@
 //!     &db,
 //!     &Query::new()
 //!         .with_registers(Registers::offerable(*identity))
-//!         .with_policy(dip::db::query::policy(&db, identity)?.for_peer(*peer)),
+//!         .with_policy(dip::db::query::policy(&db, identity)?.for_pubkey(*peer)),
 //! )?;
 //! # Ok(())
 //! # }
@@ -66,9 +66,18 @@
 
 #![forbid(unsafe_code)]
 
+pub mod clock;
 pub mod db;
+pub mod link;
 pub mod model;
+pub mod node;
+pub mod session;
+pub mod sync;
+pub mod transport;
 pub mod util;
+
+pub use link::{LinkId, PeripheralId, Role};
+pub use node::{Action, Node};
 
 #[cfg(test)]
 pub(crate) mod fixtures;

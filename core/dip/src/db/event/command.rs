@@ -17,21 +17,18 @@ use crate::model::{KIND_DELETE, Provenance};
 use super::channel::{self, EventChange};
 use super::query;
 
-/// Store an event seen from `peer_pubkey` at `seen_at`, and record the
-/// sighting. Returns whether the event is new to this device.
+/// Store an event, and record a sighting of it from each pubkey in `from`.
+/// Returns whether the event is new to this device.
 ///
-/// A locally authored event goes through here too, naming the author's own
-/// pubkey as the peer, so every stored event has provenance and a seen time.
+/// Both come from the same session: a peer may prove more than one identity,
+/// and each of them is a true sighting. A locally authored event goes through
+/// here too, naming the author's own pubkey in `from`, so every stored event
+/// has provenance and a seen time.
 ///
 /// Nothing is stored when the event is ephemeral, when its author has already
 /// deleted it, or when a newer event holds its address. A sighting is still
 /// recorded for an event already stored.
-pub fn save(
-    tx: &Tx<'_>,
-    event: &HashedEvent,
-    peer_pubkey: &PublicKey,
-    seen_at: i64,
-) -> Result<bool> {
+pub fn save(tx: &Tx<'_>, event: &HashedEvent, from: &[PublicKey], seen_at: i64) -> Result<bool> {
     if is_ephemeral(event.kind) {
         return Ok(false);
     }
@@ -39,7 +36,7 @@ pub fn save(
     let id = event.id.to_hex();
 
     if query::exists(tx, &event.id)? {
-        record_seen(tx, &event.id, peer_pubkey, seen_at)?;
+        record_seen_all(tx, &event.id, from, seen_at)?;
         return Ok(false);
     }
 
@@ -55,13 +52,27 @@ pub fn save(
 
     insert(tx, event, &id, seen_at)?;
     channel::notify(tx, EventChange::Stored(Box::new(event.clone())));
-    record_seen(tx, &event.id, peer_pubkey, seen_at)?;
+    record_seen_all(tx, &event.id, from, seen_at)?;
 
     if event.kind == KIND_DELETE {
         apply_deletion(tx, event)?;
     }
 
     Ok(true)
+}
+
+/// Record a sighting of an event per pubkey a peer proved on one session.
+fn record_seen_all(
+    tx: &Tx<'_>,
+    event_id: &EventId,
+    from: &[PublicKey],
+    seen_at: i64,
+) -> Result<()> {
+    for pubkey in from {
+        record_seen(tx, event_id, pubkey, seen_at)?;
+    }
+
+    Ok(())
 }
 
 /// Record that an event was seen from a peer, if that pair is not already
@@ -72,16 +83,16 @@ pub fn save(
 pub fn record_seen(
     tx: &Tx<'_>,
     event_id: &EventId,
-    peer_pubkey: &PublicKey,
+    pubkey: &PublicKey,
     seen_at: i64,
 ) -> Result<bool> {
     let written = tx
         .prepare_cached(
-            "INSERT OR IGNORE INTO event_seen (event_id, peer_pubkey, seen_at)
+            "INSERT OR IGNORE INTO event_seen (event_id, pubkey, seen_at)
              VALUES (?1, ?2, ?3)",
         )?
-        .execute(params![event_id.to_hex(), peer_pubkey.to_hex(), seen_at])
-        .with_context(|| format!("recording {event_id} seen from {peer_pubkey}"))?;
+        .execute(params![event_id.to_hex(), pubkey.to_hex(), seen_at])
+        .with_context(|| format!("recording {event_id} seen from {pubkey}"))?;
 
     if written == 0 {
         return Ok(false);
@@ -99,7 +110,7 @@ pub fn record_seen(
         tx,
         EventChange::Seen(Provenance {
             event_id: *event_id,
-            peer_pubkey: *peer_pubkey,
+            pubkey: *pubkey,
             seen_at,
         }),
     );
@@ -291,7 +302,7 @@ mod tests {
             .add("imeta", ["url https://example.com/x.jpg"]);
         let subject = note(author(1), 100, "hello neighbor", tags);
 
-        assert!(save(&tx, &subject, &peer(), 10).unwrap());
+        assert!(save(&tx, &subject, &[peer()], 10).unwrap());
 
         let by_tag = query::list(
             &tx,
@@ -327,9 +338,9 @@ mod tests {
         let subject = note(author(1), 100, "note", Tags::new());
         let other = author(3);
 
-        assert!(save(&tx, &subject, &peer(), 10).unwrap());
-        assert!(!save(&tx, &subject, &other, 20).unwrap());
-        assert!(!save(&tx, &subject, &other, 30).unwrap());
+        assert!(save(&tx, &subject, &[peer()], 10).unwrap());
+        assert!(!save(&tx, &subject, &[other], 20).unwrap());
+        assert!(!save(&tx, &subject, &[other], 30).unwrap());
 
         assert_eq!(query::count(&tx, &everything()).unwrap(), 1);
         assert_eq!(
@@ -348,7 +359,7 @@ mod tests {
 
         let auth = event(author(1), 22_242, 100, "", Tags::new());
 
-        assert!(!save(&tx, &auth, &peer(), 10).unwrap());
+        assert!(!save(&tx, &auth, &[peer()], 10).unwrap());
         assert_eq!(query::count(&tx, &everything()).unwrap(), 0);
     }
 
@@ -360,15 +371,15 @@ mod tests {
         let older = event(author(1), 0, 100, "{}", Tags::new());
         let newer = event(author(1), 0, 200, "{\"name\":\"me\"}", Tags::new());
 
-        assert!(save(&tx, &older, &peer(), 10).unwrap());
-        assert!(save(&tx, &newer, &peer(), 20).unwrap());
+        assert!(save(&tx, &older, &[peer()], 10).unwrap());
+        assert!(save(&tx, &newer, &[peer()], 20).unwrap());
 
         assert_eq!(query::count(&tx, &everything()).unwrap(), 1);
         assert!(query::get(&tx, &id(&newer)).unwrap().is_some());
 
         // An older version arriving afterwards does not resurrect itself.
         let oldest = event(author(1), 0, 50, "{\"name\":\"old\"}", Tags::new());
-        assert!(!save(&tx, &oldest, &peer(), 30).unwrap());
+        assert!(!save(&tx, &oldest, &[peer()], 30).unwrap());
         assert_eq!(query::count(&tx, &everything()).unwrap(), 1);
     }
 
@@ -380,8 +391,8 @@ mod tests {
         let first = event(author(1), 30_023, 100, "one", Tags::new().add("d", ["one"]));
         let second = event(author(1), 30_023, 200, "two", Tags::new().add("d", ["two"]));
 
-        save(&tx, &first, &peer(), 10).unwrap();
-        save(&tx, &second, &peer(), 20).unwrap();
+        save(&tx, &first, &[peer()], 10).unwrap();
+        save(&tx, &second, &[peer()], 20).unwrap();
 
         // Different identifiers, so neither replaces the other.
         assert_eq!(query::count(&tx, &everything()).unwrap(), 2);
@@ -393,7 +404,7 @@ mod tests {
             "again",
             Tags::new().add("d", ["one"]),
         );
-        save(&tx, &replacement, &peer(), 30).unwrap();
+        save(&tx, &replacement, &[peer()], 30).unwrap();
 
         assert_eq!(query::count(&tx, &everything()).unwrap(), 2);
         assert!(query::get(&tx, &id(&first)).unwrap().is_none());
@@ -407,8 +418,8 @@ mod tests {
         let mine = note(author(1), 100, "mine", Tags::new());
         let theirs = note(author(2), 100, "theirs", Tags::new());
 
-        save(&tx, &mine, &peer(), 10).unwrap();
-        save(&tx, &theirs, &peer(), 10).unwrap();
+        save(&tx, &mine, &[peer()], 10).unwrap();
+        save(&tx, &theirs, &[peer()], 10).unwrap();
 
         let deletion = event(
             author(1),
@@ -419,7 +430,7 @@ mod tests {
                 .add("e", [id(&mine).to_hex()])
                 .add("e", [id(&theirs).to_hex()]),
         );
-        save(&tx, &deletion, &peer(), 20).unwrap();
+        save(&tx, &deletion, &[peer()], 20).unwrap();
 
         assert!(query::get(&tx, &id(&mine)).unwrap().is_none());
         assert!(query::get(&tx, &id(&theirs)).unwrap().is_some());
@@ -437,7 +448,7 @@ mod tests {
             "draft",
             Tags::new().add("d", ["slug"]),
         );
-        save(&tx, &article, &peer(), 10).unwrap();
+        save(&tx, &article, &[peer()], 10).unwrap();
 
         let address = article.address().unwrap().to_string();
         let deletion = event(
@@ -447,7 +458,7 @@ mod tests {
             "",
             Tags::new().add("a", [address]),
         );
-        save(&tx, &deletion, &peer(), 20).unwrap();
+        save(&tx, &deletion, &[peer()], 20).unwrap();
 
         assert!(query::get(&tx, &id(&article)).unwrap().is_none());
     }
@@ -466,11 +477,11 @@ mod tests {
             Tags::new().add("e", [id(&subject).to_hex()]),
         );
 
-        save(&tx, &deletion, &peer(), 10).unwrap();
+        save(&tx, &deletion, &[peer()], 10).unwrap();
 
         // The deletion arrived first, which is ordinary here: two peers hand
         // over what they have in whatever order they meet.
-        assert!(!save(&tx, &subject, &peer(), 20).unwrap());
+        assert!(!save(&tx, &subject, &[peer()], 20).unwrap());
         assert!(query::get(&tx, &id(&subject)).unwrap().is_none());
     }
 
@@ -481,7 +492,7 @@ mod tests {
 
         let subject = note(author(1), 100, "note", Tags::new().add("t", ["town"]));
 
-        save(&tx, &subject, &peer(), 10).unwrap();
+        save(&tx, &subject, &[peer()], 10).unwrap();
         assert!(delete(&tx, &id(&subject)).unwrap());
 
         for table in ["event_tag", "event_seen", "event_fts"] {
@@ -502,8 +513,8 @@ mod tests {
         let old_but_fresh = note(author(1), 1, "old news, just in", Tags::new());
         let new_but_stale = note(author(1), 10_000, "yesterday's future", Tags::new());
 
-        save(&tx, &old_but_fresh, &peer(), 900).unwrap();
-        save(&tx, &new_but_stale, &peer(), 100).unwrap();
+        save(&tx, &old_but_fresh, &[peer()], 900).unwrap();
+        save(&tx, &new_but_stale, &[peer()], 100).unwrap();
 
         assert_eq!(forget_seen_before(&tx, 500).unwrap(), 1);
         assert!(query::get(&tx, &id(&old_but_fresh)).unwrap().is_some());
@@ -538,16 +549,16 @@ mod tests {
             .unwrap()
         };
 
-        save(&tx, &subject, &author(2), 500).unwrap();
+        save(&tx, &subject, &[author(2)], 500).unwrap();
         assert_eq!(cached(), Some(500));
 
         // A later sighting leaves the arrival time alone.
-        save(&tx, &subject, &author(3), 900).unwrap();
+        save(&tx, &subject, &[author(3)], 900).unwrap();
         assert_eq!(cached(), Some(500));
 
         // One that arrives out of order lowers it, so the cache and the rows it
         // came from cannot part company.
-        save(&tx, &subject, &author(4), 200).unwrap();
+        save(&tx, &subject, &[author(4)], 200).unwrap();
         assert_eq!(cached(), Some(200));
 
         // Recording the same pair twice changes neither.
@@ -568,15 +579,15 @@ mod tests {
         let late = note(author(1), 100, "late", Tags::new());
         let other = author(3);
 
-        save(&tx, &early, &peer(), 100).unwrap();
-        save(&tx, &late, &other, 200).unwrap();
+        save(&tx, &early, &[peer()], 100).unwrap();
+        save(&tx, &late, &[other], 200).unwrap();
 
-        let from_peer = query::list(
+        let seen_from = query::list(
             &tx,
-            &everything().with_provenance(ProvenanceFilter::new().add_peers([peer()])),
+            &everything().with_provenance(ProvenanceFilter::new().add_pubkeys([peer()])),
         )
         .unwrap();
-        assert_eq!(from_peer, vec![early.clone()]);
+        assert_eq!(seen_from, vec![early.clone()]);
 
         let recent = query::list(&tx, &everything().add_seen_since(150)).unwrap();
         assert_eq!(recent, vec![late.clone()]);
@@ -593,7 +604,7 @@ mod tests {
 
         let tx = db.begin_write().unwrap();
         let subject = note(author(1), 100, "announced", Tags::new());
-        save(&tx, &subject, &peer(), 10).unwrap();
+        save(&tx, &subject, &[peer()], 10).unwrap();
 
         assert!(changes.try_recv().is_err(), "notified before the commit");
 

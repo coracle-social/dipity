@@ -2,7 +2,7 @@
 
 use coracle_lib::filters::Filter;
 
-use crate::model::{Order, PeerPolicy, ProvenanceFilter, Registers};
+use crate::model::{Order, ProvenanceFilter, PubkeyPolicy, Registers};
 
 /// Everything a read of stored events can be narrowed and ordered by.
 ///
@@ -26,7 +26,7 @@ pub struct Query {
     pub registers: Option<Registers>,
     /// The policy governing the peer being answered. `None` when the answer is
     /// for the user rather than for a peer.
-    pub policy: Option<PeerPolicy>,
+    pub policy: Option<PubkeyPolicy>,
     /// What the result is ordered by.
     pub order: Order,
 }
@@ -68,7 +68,7 @@ impl Query {
 
     /// Apply the policy governing the peer being answered.
     #[must_use]
-    pub fn with_policy(mut self, policy: PeerPolicy) -> Self {
+    pub fn with_policy(mut self, policy: PubkeyPolicy) -> Self {
         self.policy = Some(policy);
         self
     }
@@ -89,7 +89,7 @@ impl Query {
                 .registers
                 .as_ref()
                 .is_some_and(Registers::matches_nothing)
-            || self.policy.as_ref().is_some_and(PeerPolicy::is_blocked)
+            || self.policy.as_ref().is_some_and(PubkeyPolicy::is_blocked)
     }
 }
 
@@ -112,7 +112,7 @@ mod tests {
         );
         assert!(
             Query::new()
-                .with_provenance(ProvenanceFilter::new().add_peers([]))
+                .with_provenance(ProvenanceFilter::new().add_pubkeys([]))
                 .matches_nothing()
         );
         assert!(
@@ -126,12 +126,12 @@ mod tests {
 
         assert!(
             Query::new()
-                .with_policy(policy.clone().for_peer(author(2)))
+                .with_policy(policy.clone().for_pubkey(author(2)))
                 .matches_nothing()
         );
         assert!(
             !Query::new()
-                .with_policy(policy.for_peer(author(3)))
+                .with_policy(policy.for_pubkey(author(3)))
                 .matches_nothing()
         );
     }

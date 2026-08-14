@@ -28,23 +28,20 @@ use crate::model::{Blob, BlobRole, RecipientSignature};
 /// and the media the event references. `identity` is this device's own pubkey —
 /// the party a signature has to name for a proof to be built from it later.
 ///
-/// The signature is stored even when the event is not new, since the two arrive
-/// independently.
-///
-/// # Errors
-///
-/// If any of the writes fail, in which case nothing is written and nothing is
-/// announced.
+/// `seen_from` is every pubkey the peer proved on the session, so a peer
+/// holding more than one identity is recorded from all of them rather than
+/// arbitrarily from one. The signature is stored even when the event is not
+/// new, since the two arrive independently.
 pub fn receive_event(
     db: &Db,
     event: &HashedEvent,
-    from_peer: &PublicKey,
+    seen_from: &[PublicKey],
     author_signature: Option<&[u8; 64]>,
     identity: &PublicKey,
     seen_at: i64,
 ) -> Result<bool> {
     db.write(|tx| {
-        let stored = event::save(tx, event, from_peer, seen_at)?;
+        let stored = event::save(tx, event, seen_from, seen_at)?;
 
         if stored {
             record_media(tx, event, event.id)?;
@@ -74,7 +71,7 @@ pub fn receive_event(
 /// event has provenance and a seen time.
 pub fn publish_event(db: &Db, event: &HashedEvent, identity: &PublicKey, at: i64) -> Result<bool> {
     db.write(|tx| {
-        let stored = event::save(tx, event, identity, at)?;
+        let stored = event::save(tx, event, &[*identity], at)?;
 
         if stored {
             record_media(tx, event, event.id)?;
