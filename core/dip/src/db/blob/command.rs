@@ -7,7 +7,7 @@ use rusqlite::params;
 use crate::db::Tx;
 use crate::model::Blob;
 
-use super::events::{self, BlobChange};
+use super::channel::{self, BlobChange};
 
 /// Record a blob a stored event references. Returns whether it was new.
 ///
@@ -53,7 +53,7 @@ pub fn record(tx: &Tx<'_>, blob: &Blob) -> Result<bool> {
         return Ok(false);
     }
 
-    events::notify(tx, BlobChange::Recorded(Box::new(blob.clone())));
+    channel::notify(tx, BlobChange::Recorded(Box::new(blob.clone())));
 
     Ok(true)
 }
@@ -78,7 +78,7 @@ pub fn record_progress(
         return Ok(false);
     }
 
-    events::notify(tx, BlobChange::Progressed(sha256.to_string(), stored_bytes));
+    channel::notify(tx, BlobChange::Progressed(sha256.to_string(), stored_bytes));
 
     Ok(true)
 }
@@ -98,7 +98,7 @@ pub fn mark_complete(tx: &Tx<'_>, sha256: &str, stored_bytes: i64, at: i64) -> R
         return Ok(false);
     }
 
-    events::notify(tx, BlobChange::Completed(sha256.to_string()));
+    channel::notify(tx, BlobChange::Completed(sha256.to_string()));
 
     Ok(true)
 }
@@ -145,7 +145,7 @@ pub fn remove(tx: &Tx<'_>, sha256: &str) -> Result<bool> {
         return Ok(false);
     }
 
-    events::notify(tx, BlobChange::Removed(sha256.to_string()));
+    channel::notify(tx, BlobChange::Removed(sha256.to_string()));
 
     Ok(true)
 }
@@ -155,9 +155,9 @@ mod tests {
     use super::*;
     use coracle_lib::tags::{Tag, Tags};
 
+    use crate::db::Db;
     use crate::db::blob::query;
     use crate::db::event::command as event_command;
-    use crate::db::open_in_memory;
     use crate::fixtures::{author, id, note, peer};
     use crate::model::BlobRole;
 
@@ -172,8 +172,8 @@ mod tests {
 
     #[test]
     fn the_first_event_to_reference_a_hash_anchors_it() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let first = store_event(&tx, "first");
         let second = store_event(&tx, "second");
@@ -188,8 +188,8 @@ mod tests {
     /// including the order within an event and the events that have nothing.
     #[test]
     fn a_batched_read_answers_what_the_per_event_one_does() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let first = store_event(&tx, "two blobs");
         let second = store_event(&tx, "one blob");
@@ -233,8 +233,8 @@ mod tests {
 
     #[test]
     fn the_whole_imeta_tag_survives_the_round_trip() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let event_id = store_event(&tx, "with media");
         let tag = Tag::new("imeta", ["x hash", "m image/jpeg", "service nostr.build"]);
@@ -252,8 +252,8 @@ mod tests {
 
     #[test]
     fn a_partial_transfer_is_resumable() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let event_id = store_event(&tx, "with media");
         record(&tx, &Blob::new("hash", event_id, BlobRole::Original)).unwrap();
@@ -270,8 +270,8 @@ mod tests {
 
     #[test]
     fn completing_takes_a_blob_off_the_want_list() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let event_id = store_event(&tx, "with media");
         record(&tx, &Blob::new("hash", event_id, BlobRole::Original)).unwrap();
@@ -290,8 +290,8 @@ mod tests {
 
     #[test]
     fn previews_are_wanted_before_originals() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let event_id = store_event(&tx, "with media");
         record(
@@ -309,8 +309,8 @@ mod tests {
 
     #[test]
     fn eviction_order_is_least_recently_read() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let event_id = store_event(&tx, "with media");
 
@@ -334,8 +334,8 @@ mod tests {
 
     #[test]
     fn a_blob_record_dies_with_the_event_that_anchors_it() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let first = store_event(&tx, "first");
         let second = store_event(&tx, "second");

@@ -7,7 +7,7 @@ use serde::Serialize;
 use crate::db::Tx;
 use crate::model::Pref;
 
-use super::events::{self, PrefChange};
+use super::channel::{self, PrefChange};
 
 /// Write a preference, replacing whatever was there.
 ///
@@ -25,7 +25,7 @@ pub fn set(tx: &Tx<'_>, key: &str, value: &str, updated_at: i64) -> Result<()> {
     .execute(params![key, value, updated_at])
     .with_context(|| format!("writing preference {key}"))?;
 
-    events::notify(
+    channel::notify(
         tx,
         PrefChange::Set(Pref {
             key: key.to_string(),
@@ -56,7 +56,7 @@ pub fn remove(tx: &Tx<'_>, key: &str) -> Result<bool> {
         return Ok(false);
     }
 
-    events::notify(tx, PrefChange::Removed(key.to_string()));
+    channel::notify(tx, PrefChange::Removed(key.to_string()));
 
     Ok(true)
 }
@@ -64,14 +64,14 @@ pub fn remove(tx: &Tx<'_>, key: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::open_in_memory;
+    use crate::db::Db;
     use crate::db::pref::query;
     use crate::model::keys;
 
     #[test]
     fn a_preference_round_trips() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         set_as(&tx, keys::ACCEPT, &"lenient", 10).unwrap();
 
@@ -89,8 +89,8 @@ mod tests {
 
     #[test]
     fn an_unwritten_preference_is_its_default() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         assert_eq!(query::get(&tx, keys::GOSSIP).unwrap(), None);
         assert_eq!(
@@ -101,8 +101,8 @@ mod tests {
 
     #[test]
     fn writing_again_replaces_the_value() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         set_as(&tx, keys::DISCLOSURE_BUDGET, &3_i64, 10).unwrap();
         set_as(&tx, keys::DISCLOSURE_BUDGET, &5_i64, 20).unwrap();
@@ -116,8 +116,8 @@ mod tests {
 
     #[test]
     fn a_value_that_is_not_json_is_refused() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         // Bare text is the mistake to catch: it reads fine and decodes into
         // nothing, so the policy it names would silently fall back to a default.
@@ -127,8 +127,8 @@ mod tests {
 
     #[test]
     fn removing_restores_the_default() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         set_as(&tx, keys::ACCEPT, &"trusted", 10).unwrap();
 

@@ -4,13 +4,11 @@
 //! forwarding side listens here: an event that could not be relayed to anyone
 //! becomes relayable the moment its signature arrives.
 
-use std::sync::LazyLock;
-
 use coracle_lib::events::EventId;
 use coracle_lib::keys::PublicKey;
 use tokio::sync::broadcast::{self, Receiver, Sender};
 
-use crate::db::Tx;
+use crate::db::{Db, Tx};
 use crate::model::RecipientSignature;
 
 /// How far a subscriber may fall behind. Signatures arrive one per event per
@@ -26,19 +24,22 @@ pub enum RecipientSignatureChange {
     Removed(EventId, PublicKey),
 }
 
-/// The channel.
-static CHANGES: LazyLock<Sender<RecipientSignatureChange>> =
-    LazyLock::new(|| broadcast::channel(CAPACITY).0);
+/// This group's channel, one per store.
+pub(crate) fn new() -> Sender<RecipientSignatureChange> {
+    broadcast::channel(CAPACITY).0
+}
 
-/// Listen for changes to stored signatures.
+/// Listen for changes to stored signatures in `db`.
 #[must_use]
-pub fn subscribe() -> Receiver<RecipientSignatureChange> {
-    CHANGES.subscribe()
+pub fn subscribe(db: &Db) -> Receiver<RecipientSignatureChange> {
+    db.channels().recipient_signature.subscribe()
 }
 
 /// Announce a change once `tx` commits.
 pub(crate) fn notify(tx: &Tx<'_>, change: RecipientSignatureChange) {
+    let sender = tx.channels().recipient_signature.clone();
+
     tx.after_commit(move || {
-        let _ = CHANGES.send(change);
+        let _ = sender.send(change);
     });
 }

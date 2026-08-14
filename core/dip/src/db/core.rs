@@ -1,4 +1,4 @@
-//! The connection, the migration runner, and [`Tx`].
+//! The store instance, the migration runner, and [`Tx`].
 //!
 //! Private: what the rest of the core uses is re-exported by [`super`], which
 //! is where the overview lives.
@@ -6,11 +6,13 @@
 use std::cell::RefCell;
 use std::fs;
 use std::ops::Deref;
-use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::path::Path;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, Transaction, TransactionBehavior};
+
+use crate::db::channels::Channels;
 
 /// A schema step, applied in order and recorded in SQLite's `user_version`.
 struct Migration {
@@ -31,95 +33,126 @@ const MIGRATIONS: &[Migration] = &[Migration {
 /// The database file's name inside the directory the shell provides.
 const FILENAME: &str = "dip.sqlite";
 
-/// Where the database lives, set once by [`configure`] before first use.
-static DIRECTORY: OnceLock<PathBuf> = OnceLock::new();
-
-/// The connection. Opened and migrated on first access, and behind a mutex
-/// because SQLite connections are not `Sync` and one file wants one writer.
-static DATABASE: LazyLock<Mutex<Connection>> = LazyLock::new(|| {
-    let directory = DIRECTORY
-        .get()
-        .expect("db::configure must be called before the database is used");
-    let mut connection = open(&directory.join(FILENAME)).expect("failed to open the database");
-
-    migrate(&mut connection).expect("failed to migrate the database");
-
-    Mutex::new(connection)
-});
-
-/// Point the database at `directory`, which the shell owns and passes in at
-/// startup. Must happen before the first query or command; the connection opens
-/// lazily on first use and the path cannot change after that.
+/// One open store: its connection, and the channels its writes announce on.
 ///
-/// # Errors
-///
-/// If the directory cannot be created, or if a different one was already set.
-pub fn configure(directory: impl AsRef<Path>) -> Result<()> {
-    let directory = directory.as_ref();
+/// Instanced rather than global so we can use multiple in tests. `Send + Sync`,
+/// because the shell holds one across the FFI while the session layer reads it
+/// on whatever thread the radio called in on. The connection is behind a mutex:
+/// SQLite connections are not `Sync`, and one file wants one writer.
+pub struct Db {
+    /// The connection, locked for the life of one transaction.
+    connection: Mutex<Connection>,
+    /// What this store's writes announce on.
+    channels: Channels,
+}
 
-    fs::create_dir_all(directory)
-        .with_context(|| format!("creating database directory {}", directory.display()))?;
+impl Db {
+    /// Open the store in `directory`, which the shell owns and passes in at
+    /// startup, creating and migrating it if it is not already there.
+    ///
+    /// Idempotent: the shell may open the same directory on a background
+    /// relaunch as well as at startup.
+    pub fn open(directory: impl AsRef<Path>) -> Result<Self> {
+        let directory = directory.as_ref();
 
-    match DIRECTORY.set(directory.to_path_buf()) {
-        Ok(()) => Ok(()),
-        Err(_) if DIRECTORY.get().is_some_and(|set| set == directory) => Ok(()),
-        Err(rejected) => bail!(
-            "database directory is already {}, refusing to move it to {}",
-            DIRECTORY
-                .get()
-                .map(|set| set.display().to_string())
-                .unwrap_or_default(),
-            rejected.display()
-        ),
+        fs::create_dir_all(directory)
+            .with_context(|| format!("creating database directory {}", directory.display()))?;
+
+        let path = directory.join(FILENAME);
+        let mut connection =
+            Connection::open(&path).with_context(|| format!("opening {}", path.display()))?;
+
+        configure_connection(&connection)?;
+        migrate(&mut connection)?;
+
+        Ok(Self::new(connection))
+    }
+
+    /// A migrated in-memory store, sharing neither tables nor channels with any
+    /// other. For tests and tooling.
+    pub fn open_in_memory() -> Result<Self> {
+        Ok(Self::new(in_memory()?))
+    }
+
+    /// Wrap a connection that is already open, configured and migrated.
+    fn new(connection: Connection) -> Self {
+        Self {
+            connection: Mutex::new(connection),
+            channels: Channels::default(),
+        }
+    }
+
+    /// Run `f` inside a read transaction against this store.
+    pub(crate) fn read<T>(&self, f: impl FnOnce(&Tx<'_>) -> Result<T>) -> Result<T> {
+        let mut connection = self.lock();
+        let tx = Tx::begin(
+            &mut connection,
+            &self.channels,
+            TransactionBehavior::Deferred,
+        )?;
+
+        f(&tx)
+    }
+
+    /// Run `f` inside a write transaction against this store and commit it.
+    pub(crate) fn write<T>(&self, f: impl FnOnce(&Tx<'_>) -> Result<T>) -> Result<T> {
+        let mut connection = self.lock();
+        let tx = Tx::begin(
+            &mut connection,
+            &self.channels,
+            TransactionBehavior::Immediate,
+        )?;
+        let value = f(&tx)?;
+
+        tx.commit()?;
+
+        Ok(value)
+    }
+
+    /// What this store's writes announce on. Used by the domain `channel`
+    /// modules to subscribe; nothing else should need it.
+    pub(crate) fn channels(&self) -> &Channels {
+        &self.channels
+    }
+
+    /// Lock the connection, for the life of one transaction.
+    ///
+    /// Private, and taken in exactly two places, because this mutex is not
+    /// reentrant: a second transaction opened while one is live deadlocks
+    /// rather than failing. Composing domain functions inside one
+    /// [`read`](Self::read) or [`write`](Self::write) is what them taking a
+    /// [`Tx`] is for.
+    ///
+    /// A panic inside a transaction poisons the mutex but leaves SQLite
+    /// consistent — the transaction rolls back on drop — so the poison is
+    /// recovered from rather than propagated, which would brick the store for
+    /// the rest of the run.
+    fn lock(&self) -> MutexGuard<'_, Connection> {
+        self.connection
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Begin a write transaction directly, for the tests down the tree that
+    /// exercise one group's queries and commands against a store of their own.
+    ///
+    /// Takes `&mut self` and skips the lock, so it cannot be reached through
+    /// the shared handle the rest of the core holds. [`read`](Self::read) and
+    /// [`write`](Self::write) are the way in.
+    #[cfg(test)]
+    pub(crate) fn begin_write(&mut self) -> Result<Tx<'_>> {
+        let Self {
+            connection,
+            channels,
+        } = self;
+        let connection = connection.get_mut().unwrap_or_else(PoisonError::into_inner);
+
+        Tx::begin(connection, channels, TransactionBehavior::Immediate)
     }
 }
 
-/// Run `f` inside a read transaction against the store.
-///
-/// The transaction rolls back when `f` returns, so nothing written inside one
-/// survives; [`write`] is for that.
-///
-/// Crate-private, because a transaction is not something the store hands out:
-/// its public surface is the named use cases in [`crate::db::query`] and
-/// [`crate::db::command`], and those are the only callers here.
-pub(crate) fn read<T>(f: impl FnOnce(&Tx<'_>) -> Result<T>) -> Result<T> {
-    let mut connection = lock();
-    let tx = Tx::begin_read(&mut connection)?;
-
-    f(&tx)
-}
-
-/// Run `f` inside a write transaction against the store and commit it.
-///
-/// An error from `f` rolls the whole transaction back, queued notifications
-/// included, so the tables and everything listening to them stay consistent.
-pub(crate) fn write<T>(f: impl FnOnce(&Tx<'_>) -> Result<T>) -> Result<T> {
-    let mut connection = lock();
-    let tx = Tx::begin_write(&mut connection)?;
-    let value = f(&tx)?;
-
-    tx.commit()?;
-
-    Ok(value)
-}
-
-/// Lock the connection, for the life of one transaction.
-///
-/// Private, and taken in exactly two places, because this mutex is not
-/// reentrant: a second transaction opened while one is live deadlocks rather
-/// than failing. Composing domain functions inside one [`read`] or [`write`] is
-/// what them taking a [`Tx`] is for.
-///
-/// A panic inside a transaction poisons the mutex but leaves SQLite consistent —
-/// the transaction rolls back on drop — so the poison is recovered from rather
-/// than propagated, which would brick the store for the rest of the run.
-fn lock() -> MutexGuard<'static, Connection> {
-    DATABASE.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-/// Open a migrated in-memory database. For tests and tooling: it shares nothing
-/// with the singleton, so each one starts empty and they do not contend.
-pub fn open_in_memory() -> Result<Connection> {
+/// Open a migrated in-memory database.
+fn in_memory() -> Result<Connection> {
     let mut connection = Connection::open_in_memory().context("opening an in-memory database")?;
 
     configure_connection(&connection)?;
@@ -129,11 +162,6 @@ pub fn open_in_memory() -> Result<Connection> {
 }
 
 /// Apply every migration the database has not seen yet.
-///
-/// # Errors
-///
-/// If a migration fails, in which case that migration's statements are rolled
-/// back and `user_version` still names the last one that succeeded.
 pub fn migrate(connection: &mut Connection) -> Result<()> {
     let applied: usize = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -161,16 +189,6 @@ pub fn migrate(connection: &mut Connection) -> Result<()> {
     Ok(())
 }
 
-/// Open the file and put it in the state the rest of the core assumes.
-fn open(path: &Path) -> Result<Connection> {
-    let connection =
-        Connection::open(path).with_context(|| format!("opening {}", path.display()))?;
-
-    configure_connection(&connection)?;
-
-    Ok(connection)
-}
-
 /// The pragmas, in one place so an in-memory test database behaves like the
 /// real one. Foreign keys are the load-bearing one: the event tables hang off
 /// `event` by cascade, and SQLite leaves enforcement off by default.
@@ -183,57 +201,60 @@ fn configure_connection(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// A transaction, plus the notifications its writes queued.
+/// A transaction, plus the notifications its writes queued and the channels
+/// they go out on.
 ///
-/// Commands announce their writes through their domain's `events` module, which
+/// Commands announce their writes through their domain's `channel` module, which
 /// registers the send here rather than firing it. Draining happens in
 /// [`commit`](Tx::commit), so a subscriber never hears about a row that a later
 /// error rolled back, and a reactive read always finds what it was told about.
+///
+/// The channels come from the [`Db`] the transaction was opened on, so a write
+/// is announced to that store's subscribers and to no other's.
 ///
 /// Derefs to [`rusqlite::Transaction`], so `tx.prepare(…)` and `tx.execute(…)`
 /// work as they would on a bare connection.
 pub struct Tx<'a> {
     inner: Transaction<'a>,
+    channels: &'a Channels,
     on_commit: RefCell<Vec<Box<dyn FnOnce()>>>,
 }
 
 impl<'a> Tx<'a> {
-    /// Begin a read transaction on a connection of the caller's own. Deferred,
-    /// so it takes no write lock and a reader never blocks a writer under WAL.
+    /// Begin a transaction on `connection`, announcing on `channels`.
     ///
-    /// [`read`] is how the store is read; this is for a connection from
-    /// [`open_in_memory`], which is what the domain tests use.
-    pub fn begin_read(connection: &'a mut Connection) -> Result<Self> {
-        Self::begin(connection, TransactionBehavior::Deferred)
-    }
-
-    /// Begin a write transaction on a connection of the caller's own.
-    /// Immediate, so the write lock is taken up front and a busy database fails
-    /// here rather than halfway through.
-    pub fn begin_write(connection: &'a mut Connection) -> Result<Self> {
-        Self::begin(connection, TransactionBehavior::Immediate)
-    }
-
-    fn begin(connection: &'a mut Connection, behavior: TransactionBehavior) -> Result<Self> {
+    /// Deferred takes no write lock, so a reader never blocks a writer under
+    /// WAL; Immediate takes it up front, so a busy database fails here rather
+    /// than halfway through.
+    fn begin(
+        connection: &'a mut Connection,
+        channels: &'a Channels,
+        behavior: TransactionBehavior,
+    ) -> Result<Self> {
         Ok(Self {
             inner: Transaction::new(connection, behavior)?,
+            channels,
             on_commit: RefCell::new(Vec::new()),
         })
     }
 
+    /// The channels this transaction's writes announce on. Used by the domain
+    /// `channel` modules; nothing else should need it.
+    pub(crate) fn channels(&self) -> &Channels {
+        self.channels
+    }
+
     /// Queue `f` to run once this transaction commits. Used by the domain
-    /// `events` modules to defer a broadcast; nothing else should need it.
-    pub fn after_commit(&self, f: impl FnOnce() + 'static) {
+    /// `channel` modules to defer a broadcast; nothing else should need it.
+    pub(crate) fn after_commit(&self, f: impl FnOnce() + 'static) {
         self.on_commit.borrow_mut().push(Box::new(f));
     }
 
     /// Commit, then run whatever the writes queued, in the order they happened.
-    ///
-    /// # Errors
-    ///
-    /// If the commit fails, in which case the queue is dropped unrun.
     pub fn commit(self) -> Result<()> {
-        let Self { inner, on_commit } = self;
+        let Self {
+            inner, on_commit, ..
+        } = self;
 
         inner.commit()?;
 
@@ -259,7 +280,7 @@ mod tests {
 
     #[test]
     fn migrations_create_every_table() {
-        let connection = open_in_memory().unwrap();
+        let connection = in_memory().unwrap();
 
         let mut names: Vec<String> = connection
             .prepare("SELECT name FROM sqlite_master WHERE type IN ('table', 'view')")
@@ -287,7 +308,7 @@ mod tests {
 
     #[test]
     fn migrating_twice_is_a_no_op() {
-        let mut connection = open_in_memory().unwrap();
+        let mut connection = in_memory().unwrap();
 
         migrate(&mut connection).unwrap();
 
@@ -300,7 +321,7 @@ mod tests {
 
     #[test]
     fn foreign_keys_are_enforced() {
-        let connection = open_in_memory().unwrap();
+        let connection = in_memory().unwrap();
 
         let orphan = connection.execute(
             "INSERT INTO event_seen (event_id, peer_pubkey, seen_at) VALUES ('nope', 'peer', 1)",
@@ -314,10 +335,10 @@ mod tests {
     fn commit_runs_queued_notifications() {
         use std::rc::Rc;
 
-        let mut connection = open_in_memory().unwrap();
+        let mut db = Db::open_in_memory().unwrap();
         let ran = Rc::new(RefCell::new(false));
 
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let tx = db.begin_write().unwrap();
         tx.after_commit({
             let ran = Rc::clone(&ran);
             move || *ran.borrow_mut() = true
@@ -334,11 +355,11 @@ mod tests {
     fn rollback_drops_queued_notifications() {
         use std::rc::Rc;
 
-        let mut connection = open_in_memory().unwrap();
+        let mut db = Db::open_in_memory().unwrap();
         let ran = Rc::new(RefCell::new(false));
 
         {
-            let tx = Tx::begin_write(&mut connection).unwrap();
+            let tx = db.begin_write().unwrap();
             tx.after_commit({
                 let ran = Rc::clone(&ran);
                 move || *ran.borrow_mut() = true
@@ -346,5 +367,46 @@ mod tests {
         }
 
         assert!(!*ran.borrow(), "a rolled back write still notified");
+    }
+
+    #[test]
+    fn a_store_is_shareable_across_threads() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+
+        assert_send_sync::<Db>();
+    }
+
+    #[test]
+    fn two_stores_do_not_hear_each_other() {
+        use crate::db::pref::channel::{self, PrefChange};
+
+        let one = Db::open_in_memory().unwrap();
+        let two = Db::open_in_memory().unwrap();
+
+        let mut listening = channel::subscribe(&one);
+
+        two.write(|tx| {
+            crate::db::pref::command::set(tx, "some.key", r#""value""#, 10)?;
+
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(
+            listening.try_recv().is_err(),
+            "a write to one store was announced on the other's channel"
+        );
+
+        one.write(|tx| {
+            crate::db::pref::command::set(tx, "some.key", r#""value""#, 10)?;
+
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(
+            matches!(listening.try_recv(), Ok(PrefChange::Set(_))),
+            "a write to the subscribed store was not announced"
+        );
     }
 }

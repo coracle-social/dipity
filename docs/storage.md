@@ -16,7 +16,9 @@ Where events live, who can answer a query, and what happens while the app is asl
 
 ## The sqlite store
 
-The store is `rusqlite` inside the core with migrations and a global database singleton. This store provides regular query functionality, as well as reactive queries - when a record is written, subscribers should be notified. This allows the UI to be reactive, and for events to be gossiped immediately upon write.
+The store is `rusqlite` inside the core, with migrations and one instance per open database. This store provides regular query functionality, as well as reactive queries - when a record is written, subscribers should be notified. This allows the UI to be reactive, and for events to be gossiped immediately upon write.
+
+The instance is passed to every query and command rather than reached through a global, and it carries its own change channels, so a process can hold two stores that share neither tables nor subscribers. The shell opens one over the directory it owns and hands it around. Two peers in one process is what exercises the protocol without radios.
 
 `rusqlite` is built with the bundled amalgamation, so both platforms run one pinned SQLite rather than whatever the OS shipped, and neither `libsqlite3.dylib` nor `android.database.sqlite` is on the path. **There is no storage API in the shell.**
 

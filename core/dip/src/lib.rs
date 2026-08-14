@@ -5,11 +5,12 @@
 //!
 //! # The store
 //!
-//! [`db`] owns one SQLite connection for the process, the migrations behind it,
-//! and one module per group of tables holding that group's reads, its writes
-//! and the channel its writes announce on. [`model`] holds the types those
-//! answers are expressed in, organized by what they mean rather than by which
-//! table holds them.
+//! A [`Db`](db::Db) is one open store: its SQLite connection, the migrations
+//! behind it, and the channels its writes announce on, and every query and
+//! command takes one. [`db`] holds one module per group of tables, each
+//! carrying that group's reads and its writes, and [`model`] holds the types
+//! those answers are expressed in, organized by what they mean rather than by
+//! which table holds them.
 //!
 //! Nostr's own types are `coracle-lib`'s, not this crate's: events, keys, tags,
 //! kinds, addresses, filters and NIP-77 items. They have to agree byte for byte
@@ -33,17 +34,19 @@
 //! # let (peer, identity): (&coracle_lib::keys::PublicKey, &coracle_lib::keys::PublicKey) = todo!();
 //! # let signature = None;
 //! use coracle_lib::filters::Filter;
+//! use dip::db::Db;
 //! use dip::model::{Query, Order, Registers};
 //!
-//! dip::db::configure("/path/the/shell/provides")?;
+//! let db = Db::open("/path/the/shell/provides")?;
 //!
 //! let stored = dip::db::command::receive_event(
-//!     &incoming, peer, signature, identity, coracle_lib::util::now(),
+//!     &db, &incoming, peer, signature, identity, coracle_lib::util::now(),
 //! )?;
 //!
 //! // The user's feed: by arrival, since a note handed over today is new to
 //! // them whatever its author stamped it.
-//! let feed = dip::db::query::with_details(dip::db::query::list_events(
+//! let feed = dip::db::query::with_details(&db, dip::db::query::list_events(
+//!     &db,
 //!     &Query::new()
 //!         .with_filter(Filter::new().add_kinds([1]).add_limit(50))
 //!         .with_order(Order::SeenAt),
@@ -52,9 +55,10 @@
 //! // What that peer may be handed, which is the same query under the
 //! // constraints they are owed.
 //! let offerable = dip::db::query::list_events(
+//!     &db,
 //!     &Query::new()
 //!         .with_registers(Registers::offerable(*identity))
-//!         .with_policy(dip::db::query::policy(identity)?.for_peer(*peer)),
+//!         .with_policy(dip::db::query::policy(&db, identity)?.for_peer(*peer)),
 //! )?;
 //! # Ok(())
 //! # }

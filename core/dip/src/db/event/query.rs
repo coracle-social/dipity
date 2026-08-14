@@ -543,8 +543,8 @@ mod tests {
     use super::*;
     use coracle_lib::events::HasId;
 
+    use crate::db::Db;
     use crate::db::event::command;
-    use crate::db::open_in_memory;
     use crate::db::recipient_signature::command as signature;
     use crate::fixtures::{author, event, id, note, peer};
     use crate::model::{
@@ -585,8 +585,8 @@ mod tests {
 
     #[test]
     fn constraints_combine_and_results_are_newest_first() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         store(&tx, 1, 100, Tags::new());
         store(&tx, 1, 200, Tags::new());
@@ -628,8 +628,8 @@ mod tests {
 
     #[test]
     fn an_empty_set_matches_nothing() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         store(&tx, 1, 100, Tags::new());
 
@@ -650,8 +650,8 @@ mod tests {
 
     #[test]
     fn tag_constraints_honor_their_mode() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         store(&tx, 1, 100, Tags::new().add("t", ["town"]));
         store(
@@ -681,8 +681,8 @@ mod tests {
 
     #[test]
     fn an_empty_tag_constraint_means_opposite_things_per_mode() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         store(&tx, 1, 100, Tags::new().add("t", ["town"]));
 
@@ -708,8 +708,8 @@ mod tests {
 
     #[test]
     fn an_impossible_window_is_not_asked_of_the_database() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         store(&tx, 1, 100, Tags::new());
 
@@ -731,8 +731,8 @@ mod tests {
 
     #[test]
     fn a_search_query_is_taken_literally() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         command::save(
             &tx,
@@ -764,8 +764,8 @@ mod tests {
 
     #[test]
     fn a_register_is_own_signed_or_neither() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let us = author(1);
         let mine = note(us, 100, "mine", Tags::new());
@@ -809,8 +809,8 @@ mod tests {
 
     #[test]
     fn a_register_constraint_is_applied_before_the_limit() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let us = author(1);
 
@@ -835,8 +835,8 @@ mod tests {
 
     #[test]
     fn a_policy_narrows_by_author_and_by_visibility() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let us = author(1);
         let mut policy = Policy::new(us);
@@ -921,8 +921,8 @@ mod tests {
     /// built to make order matter.
     #[test]
     fn the_compiled_rules_serve_exactly_what_the_rules_admit() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let us = author(1);
         let them = author(9);
@@ -1018,8 +1018,8 @@ mod tests {
     /// including the order within an event and the events that have nothing.
     #[test]
     fn provenance_batches_without_changing_the_answer() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let carried = note(author(1), 100, "carried around", Tags::new());
         let once = note(author(1), 200, "seen once", Tags::new());
@@ -1059,8 +1059,8 @@ mod tests {
 
     #[test]
     fn a_query_orders_by_arrival_when_asked_to() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         // An author whose clock is days out, handed over after a note that
         // claims to be older.

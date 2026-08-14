@@ -157,16 +157,16 @@ mod tests {
     use super::*;
     use coracle_lib::tags::Tags;
 
+    use crate::db::Db;
     use crate::db::event::command as event_command;
-    use crate::db::open_in_memory;
     use crate::db::pref::command as pref_command;
     use crate::fixtures::{author, event, peer};
     use crate::model::Standing;
 
     #[test]
     fn an_unwritten_policy_is_the_documents_defaults() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let policy = policy(&tx, &author(1)).unwrap();
 
@@ -182,8 +182,8 @@ mod tests {
 
     #[test]
     fn a_written_preference_replaces_its_default() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         pref_command::set_as(&tx, keys::GOSSIP, &Scope::Trusted, 10).unwrap();
         pref_command::set_as(&tx, keys::COOL_OFF_MINUTES, &0_i64, 10).unwrap();
@@ -197,8 +197,8 @@ mod tests {
 
     #[test]
     fn a_preference_this_build_cannot_read_is_an_error() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         // Written by a build that knew a tier this one does not. Falling back
         // to the default here would quietly widen the scope the user chose.
@@ -209,8 +209,8 @@ mod tests {
 
     #[test]
     fn the_graph_reads_the_lists_the_user_published() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let us = author(1);
         let mutes = event(

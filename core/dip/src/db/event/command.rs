@@ -14,7 +14,7 @@ use crate::db::Tx;
 use crate::db::sql::event_id_from_sql;
 use crate::model::{KIND_DELETE, Provenance};
 
-use super::events::{self, EventChange};
+use super::channel::{self, EventChange};
 use super::query;
 
 /// Store an event seen from `peer_pubkey` at `seen_at`, and record the
@@ -54,7 +54,7 @@ pub fn save(
     }
 
     insert(tx, event, &id, seen_at)?;
-    events::notify(tx, EventChange::Stored(Box::new(event.clone())));
+    channel::notify(tx, EventChange::Stored(Box::new(event.clone())));
     record_seen(tx, &event.id, peer_pubkey, seen_at)?;
 
     if event.kind == KIND_DELETE {
@@ -95,7 +95,7 @@ pub fn record_seen(
         .execute(params![event_id.to_hex(), seen_at])
         .with_context(|| format!("recording the arrival of {event_id}"))?;
 
-    events::notify(
+    channel::notify(
         tx,
         EventChange::Seen(Provenance {
             event_id: *event_id,
@@ -125,7 +125,7 @@ pub fn delete(tx: &Tx<'_>, id: &EventId) -> Result<bool> {
         return Ok(false);
     }
 
-    events::notify(tx, EventChange::Deleted(id.to_string()));
+    channel::notify(tx, EventChange::Deleted(id.to_string()));
 
     Ok(true)
 }
@@ -264,7 +264,7 @@ mod tests {
     use coracle_lib::filters::Filter;
     use coracle_lib::tags::Tags;
 
-    use crate::db::open_in_memory;
+    use crate::db::Db;
     use crate::fixtures::{author, event, id, note, peer};
     use crate::model::{ProvenanceFilter, Query};
 
@@ -280,8 +280,8 @@ mod tests {
 
     #[test]
     fn saving_indexes_tags_and_content() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let tags = Tags::new()
             .add("t", ["town"])
@@ -321,8 +321,8 @@ mod tests {
 
     #[test]
     fn saving_twice_records_a_sighting_but_not_a_second_event() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let subject = note(author(1), 100, "note", Tags::new());
         let other = author(3);
@@ -343,8 +343,8 @@ mod tests {
 
     #[test]
     fn ephemeral_events_are_never_stored() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let auth = event(author(1), 22_242, 100, "", Tags::new());
 
@@ -354,8 +354,8 @@ mod tests {
 
     #[test]
     fn a_replaceable_event_keeps_one_row_per_address() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let older = event(author(1), 0, 100, "{}", Tags::new());
         let newer = event(author(1), 0, 200, "{\"name\":\"me\"}", Tags::new());
@@ -374,8 +374,8 @@ mod tests {
 
     #[test]
     fn addressable_events_are_keyed_on_their_identifier() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let first = event(author(1), 30_023, 100, "one", Tags::new().add("d", ["one"]));
         let second = event(author(1), 30_023, 200, "two", Tags::new().add("d", ["two"]));
@@ -401,8 +401,8 @@ mod tests {
 
     #[test]
     fn a_deletion_removes_the_authors_own_events_only() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let mine = note(author(1), 100, "mine", Tags::new());
         let theirs = note(author(2), 100, "theirs", Tags::new());
@@ -427,8 +427,8 @@ mod tests {
 
     #[test]
     fn a_deletion_by_address_removes_the_slot() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let article = event(
             author(1),
@@ -454,8 +454,8 @@ mod tests {
 
     #[test]
     fn a_deleted_event_is_not_taken_back() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let subject = note(author(1), 100, "deleted", Tags::new());
         let deletion = event(
@@ -476,8 +476,8 @@ mod tests {
 
     #[test]
     fn deleting_an_event_takes_its_indexes_with_it() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let subject = note(author(1), 100, "note", Tags::new().add("t", ["town"]));
 
@@ -496,8 +496,8 @@ mod tests {
 
     #[test]
     fn forgetting_goes_by_seen_time_not_created_at() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let old_but_fresh = note(author(1), 1, "old news, just in", Tags::new());
         let new_but_stale = note(author(1), 10_000, "yesterday's future", Tags::new());
@@ -515,8 +515,8 @@ mod tests {
     /// except asking both.
     #[test]
     fn an_events_arrival_time_is_the_earliest_of_its_sightings() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let subject = note(author(1), 100, "carried around", Tags::new());
         let stored = id(&subject);
@@ -561,8 +561,8 @@ mod tests {
 
     #[test]
     fn local_queries_narrow_by_peer_and_seen_time() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let early = note(author(1), 100, "early", Tags::new());
         let late = note(author(1), 100, "late", Tags::new());
@@ -588,10 +588,10 @@ mod tests {
 
     #[test]
     fn a_notification_carries_the_stored_event() {
-        let mut connection = open_in_memory().unwrap();
-        let mut changes = events::subscribe();
+        let mut db = Db::open_in_memory().unwrap();
+        let mut changes = channel::subscribe(&db);
 
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let tx = db.begin_write().unwrap();
         let subject = note(author(1), 100, "announced", Tags::new());
         save(&tx, &subject, &peer(), 10).unwrap();
 

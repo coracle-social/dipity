@@ -1,14 +1,16 @@
 //! The database: its tables, its migrations, and the transaction every query
 //! and command takes.
 //!
-//! One SQLite connection for the process, behind a lazy lock that opens the
-//! file and runs migrations on first use. The shell hands over the directory at
-//! startup ([`configure`]); everything after that is core-side.
+//! A [`Db`] is one open store: a SQLite connection, and the channels its writes
+//! announce on. It is an instance rather than a global, and every query and
+//! command takes one, so a process can hold two stores that share nothing. The
+//! shell opens one over the directory it owns at startup ([`Db::open`]) and
+//! hands it around; everything after that is core-side.
 //!
 //! [`query`] and [`command`] are the way in, and they are the only way in: one
-//! function per question asked and per thing that happens, each opening a
-//! transaction with [`read`] or [`write`] and threading it through however many
-//! tables the answer takes.
+//! function per question asked and per thing that happens, each taking the
+//! store, opening a transaction on it with [`Db::read`] or [`Db::write`] and
+//! threading that through however many tables the answer takes.
 //!
 //! Below them sits one module per group of tables — [`blob`], [`event`],
 //! [`pref`], [`recipient_signature`] — each holding three files:
@@ -17,7 +19,7 @@
 //! | --- | --- |
 //! | `query.rs` | Read-only free functions over the group's tables |
 //! | `command.rs` | Free functions that modify them |
-//! | `events.rs` | The change channel commands announce on |
+//! | `channel.rs` | The change channel commands announce on |
 //!
 //! A group owns every table it touches and no table is touched from two of
 //! them, so the invariants between tables — an event and its indexes, a blob
@@ -39,9 +41,9 @@ pub mod event;
 pub mod pref;
 pub mod recipient_signature;
 
+pub(crate) mod channels;
 pub(crate) mod condition;
 mod core;
 pub(crate) mod sql;
 
-pub use self::core::{Tx, configure, migrate, open_in_memory};
-pub(crate) use self::core::{read, write};
+pub use self::core::{Db, Tx, migrate};

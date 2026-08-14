@@ -4,11 +4,9 @@
 //! listens here rather than caching a value it might have read before the user
 //! changed it.
 
-use std::sync::LazyLock;
-
 use tokio::sync::broadcast::{self, Receiver, Sender};
 
-use crate::db::Tx;
+use crate::db::{Db, Tx};
 use crate::model::Pref;
 
 /// How far a subscriber may fall behind. Preferences change at human speed.
@@ -23,18 +21,22 @@ pub enum PrefChange {
     Removed(String),
 }
 
-/// The channel.
-static CHANGES: LazyLock<Sender<PrefChange>> = LazyLock::new(|| broadcast::channel(CAPACITY).0);
+/// This group's channel, one per store.
+pub(crate) fn new() -> Sender<PrefChange> {
+    broadcast::channel(CAPACITY).0
+}
 
-/// Listen for changes to preferences.
+/// Listen for changes to preferences in `db`.
 #[must_use]
-pub fn subscribe() -> Receiver<PrefChange> {
-    CHANGES.subscribe()
+pub fn subscribe(db: &Db) -> Receiver<PrefChange> {
+    db.channels().pref.subscribe()
 }
 
 /// Announce a change once `tx` commits.
 pub(crate) fn notify(tx: &Tx<'_>, change: PrefChange) {
+    let sender = tx.channels().pref.clone();
+
     tx.after_commit(move || {
-        let _ = CHANGES.send(change);
+        let _ = sender.send(change);
     });
 }

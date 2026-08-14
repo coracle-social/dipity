@@ -4,6 +4,6 @@
 //! held by the peer it names. It is the witness an authorship proof is built
 //! from, and it is never served to a peer. See `docs/proofs.md`.
 
+pub mod channel;
 pub mod command;
-pub mod events;
 pub mod query;

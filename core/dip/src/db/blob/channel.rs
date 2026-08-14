@@ -3,11 +3,9 @@
 //! The transfer layer listens for what to fetch next; the view listens for
 //! progress and for the moment an image becomes displayable.
 
-use std::sync::LazyLock;
-
 use tokio::sync::broadcast::{self, Receiver, Sender};
 
-use crate::db::Tx;
+use crate::db::{Db, Tx};
 use crate::model::Blob;
 
 /// How far a subscriber may fall behind. Progress is reported per group of
@@ -29,18 +27,22 @@ pub enum BlobChange {
     Removed(String),
 }
 
-/// The channel.
-static CHANGES: LazyLock<Sender<BlobChange>> = LazyLock::new(|| broadcast::channel(CAPACITY).0);
+/// This group's channel, one per store.
+pub(crate) fn new() -> Sender<BlobChange> {
+    broadcast::channel(CAPACITY).0
+}
 
-/// Listen for changes to blobs.
+/// Listen for changes to blobs in `db`.
 #[must_use]
-pub fn subscribe() -> Receiver<BlobChange> {
-    CHANGES.subscribe()
+pub fn subscribe(db: &Db) -> Receiver<BlobChange> {
+    db.channels().blob.subscribe()
 }
 
 /// Announce a change once `tx` commits.
 pub(crate) fn notify(tx: &Tx<'_>, change: BlobChange) {
+    let sender = tx.channels().blob.clone();
+
     tx.after_commit(move || {
-        let _ = CHANGES.send(change);
+        let _ = sender.send(change);
     });
 }

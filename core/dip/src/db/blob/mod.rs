@@ -4,6 +4,6 @@
 //! much of each one this device holds. The bytes live outside the database in
 //! the blob directory the shell provides. See `docs/sync.md`.
 
+pub mod channel;
 pub mod command;
-pub mod events;
 pub mod query;

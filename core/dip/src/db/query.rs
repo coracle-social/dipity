@@ -1,9 +1,9 @@
 //! What the rest of the core asks the store, one function per question.
 //!
-//! Each function opens a read transaction with [`db::read`](super::read) and
-//! threads it through whatever domain queries the answer takes, so a caller
-//! never holds a transaction, never names a table, and never gets a
-//! half-consistent answer assembled from two of them.
+//! Each function takes the [`Db`] it is asking, opens a read transaction on it
+//! with [`Db::read`] and threads that through whatever domain queries the
+//! answer takes, so a caller never holds a transaction, never names a table,
+//! and never gets a half-consistent answer assembled from two of them.
 //!
 //! Every question about events is [`list_events`], because what separates the
 //! feed from a peer's `REQ` is which constraints a [`Query`] carries rather
@@ -16,7 +16,7 @@ use anyhow::Result;
 use coracle_lib::events::{EventId, HashedEvent};
 use coracle_lib::keys::PublicKey;
 
-use super::read;
+use super::Db;
 use crate::db::blob::query as blob;
 use crate::db::event::query as event;
 use crate::db::pref::query as pref;
@@ -28,18 +28,18 @@ use crate::model::{Blob, BlobRole, Policy, Pref, Provenance, Query};
 // ============================================================================
 
 /// Every preference, for the settings screen.
-pub fn preferences() -> Result<Vec<Pref>> {
-    read(pref::all)
+pub fn preferences(db: &Db) -> Result<Vec<Pref>> {
+    db.read(pref::all)
 }
 
 /// One preference's raw JSON value, or `None` if it has never been written.
-pub fn preference(key: &str) -> Result<Option<String>> {
-    read(|tx| pref::get(tx, key))
+pub fn preference(db: &Db, key: &str) -> Result<Option<String>> {
+    db.read(|tx| pref::get(tx, key))
 }
 
 /// Everything the user has said about who gets what.
-pub fn policy(identity: &PublicKey) -> Result<Policy> {
-    read(|tx| pref::policy(tx, identity))
+pub fn policy(db: &Db, identity: &PublicKey) -> Result<Policy> {
+    db.read(|tx| pref::policy(tx, identity))
 }
 
 // ============================================================================
@@ -58,8 +58,8 @@ pub struct EventDetail {
 }
 
 /// Events matching every constraint on `query`.
-pub fn list_events(query: &Query) -> Result<Vec<HashedEvent>> {
-    read(|tx| event::list(tx, query))
+pub fn list_events(db: &Db, query: &Query) -> Result<Vec<HashedEvent>> {
+    db.read(|tx| event::list(tx, query))
 }
 
 /// Attach each event's media and provenance to it.
@@ -67,7 +67,7 @@ pub fn list_events(query: &Query) -> Result<Vec<HashedEvent>> {
 /// Two reads for the page rather than two per event: the caller is the view
 /// rendering a feed, and asking per event made the cost of showing a screen
 /// scale with how much of it is on screen.
-pub fn with_details(events: Vec<HashedEvent>) -> Result<Vec<EventDetail>> {
+pub fn with_details(db: &Db, events: Vec<HashedEvent>) -> Result<Vec<EventDetail>> {
     let ids: Vec<EventId> = events
         .iter()
         .map(|event| event.id)
@@ -75,7 +75,7 @@ pub fn with_details(events: Vec<HashedEvent>) -> Result<Vec<EventDetail>> {
         .into_iter()
         .collect();
 
-    read(|tx| {
+    db.read(|tx| {
         let blobs = blob::list_for_events(tx, &ids)?;
         let sightings = event::provenance_for(tx, &ids)?;
 
@@ -99,19 +99,19 @@ pub fn with_details(events: Vec<HashedEvent>) -> Result<Vec<EventDetail>> {
 // ============================================================================
 
 /// Blobs a stored event references and this device does not hold, previews first.
-pub fn wanted_blobs(limit: usize) -> Result<Vec<Blob>> {
-    read(|tx| blob::wanted(tx, limit))
+pub fn wanted_blobs(db: &Db, limit: usize) -> Result<Vec<Blob>> {
+    db.read(|tx| blob::wanted(tx, limit))
 }
 
 /// One blob's metadata and transfer progress.
-pub fn get_blob(sha256: &str) -> Result<Option<Blob>> {
+pub fn get_blob(db: &Db, sha256: &str) -> Result<Option<Blob>> {
     let sha256 = hex_key(sha256)?;
 
-    read(|tx| blob::get(tx, &sha256))
+    db.read(|tx| blob::get(tx, &sha256))
 }
 
 /// How many bytes of held originals the cache is carrying, which is what the
 /// ceiling in `docs/sync.md` is measured against.
-pub fn cached_bytes() -> Result<i64> {
-    read(|tx| blob::stored_bytes(tx, BlobRole::Original))
+pub fn cached_bytes(db: &Db) -> Result<i64> {
+    db.read(|tx| blob::stored_bytes(tx, BlobRole::Original))
 }

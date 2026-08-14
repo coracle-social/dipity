@@ -1,15 +1,15 @@
 //! What the rest of the core asks the store to do, one function per thing that
 //! happens.
 //!
-//! Each function opens a write transaction with [`db::write`] and threads it
-//! through whatever domain commands the change takes, so a change spanning
-//! models commits/notifies atomically.
+//! Each function takes the [`Db`] it is acting on, opens a write transaction on
+//! it with [`Db::write`] and threads that through whatever domain commands the
+//! change takes, so a change spanning models commits/notifies atomically.
 
 use anyhow::Result;
 use coracle_lib::events::{EventId, HashedEvent};
 use coracle_lib::keys::PublicKey;
 
-use super::{Tx, write};
+use super::{Db, Tx};
 use crate::db::blob::command as blob;
 use crate::db::blob::query as blob_query;
 use crate::db::event::command as event;
@@ -36,13 +36,14 @@ use crate::model::{Blob, BlobRole, RecipientSignature};
 /// If any of the writes fail, in which case nothing is written and nothing is
 /// announced.
 pub fn receive_event(
+    db: &Db,
     event: &HashedEvent,
     from_peer: &PublicKey,
     author_signature: Option<&[u8; 64]>,
     identity: &PublicKey,
     seen_at: i64,
 ) -> Result<bool> {
-    write(|tx| {
+    db.write(|tx| {
         let stored = event::save(tx, event, from_peer, seen_at)?;
 
         if stored {
@@ -71,8 +72,8 @@ pub fn receive_event(
 ///
 /// The author's own pubkey stands in for the peer it was seen from, so a local
 /// event has provenance and a seen time.
-pub fn publish_event(event: &HashedEvent, identity: &PublicKey, at: i64) -> Result<bool> {
-    write(|tx| {
+pub fn publish_event(db: &Db, event: &HashedEvent, identity: &PublicKey, at: i64) -> Result<bool> {
+    db.write(|tx| {
         let stored = event::save(tx, event, identity, at)?;
 
         if stored {
@@ -90,8 +91,13 @@ pub fn publish_event(event: &HashedEvent, identity: &PublicKey, at: i64) -> Resu
 /// The author comes off the stored event rather than from the caller: it is the
 /// only party whose signature over that event means anything, so there is
 /// nothing for a caller to get wrong.
-pub fn receive_signature(event_id: &EventId, sig: &[u8; 64], identity: &PublicKey) -> Result<bool> {
-    write(|tx| {
+pub fn receive_signature(
+    db: &Db,
+    event_id: &EventId,
+    sig: &[u8; 64],
+    identity: &PublicKey,
+) -> Result<bool> {
+    db.write(|tx| {
         let Some(event) = event_query::get(tx, event_id)? else {
             return Ok(false);
         };
@@ -114,49 +120,50 @@ pub fn receive_signature(event_id: &EventId, sig: &[u8; 64], identity: &PublicKe
 /// which is what lets a transfer interrupted on BLE resume instead of starting
 /// over. Returns whether the blob is known.
 pub fn record_blob_progress(
+    db: &Db,
     sha256: &str,
     stored_bytes: i64,
     chunks: Option<&[u8]>,
 ) -> Result<bool> {
     let sha256 = hex_key(sha256)?;
 
-    write(|tx| blob::record_progress(tx, &sha256, stored_bytes, chunks))
+    db.write(|tx| blob::record_progress(tx, &sha256, stored_bytes, chunks))
 }
 
 /// Mark a blob whole: every chunk arrived and verified. Returns whether this
 /// completed it, and `false` if it was already complete.
-pub fn complete_blob(sha256: &str, stored_bytes: i64, at: i64) -> Result<bool> {
+pub fn complete_blob(db: &Db, sha256: &str, stored_bytes: i64, at: i64) -> Result<bool> {
     let sha256 = hex_key(sha256)?;
 
-    write(|tx| blob::mark_complete(tx, &sha256, stored_bytes, at))
+    db.write(|tx| blob::mark_complete(tx, &sha256, stored_bytes, at))
 }
 
 /// Note that a blob was read, which is what eviction orders on.
-pub fn touch_blob(sha256: &str, at: i64) -> Result<bool> {
+pub fn touch_blob(db: &Db, sha256: &str, at: i64) -> Result<bool> {
     let sha256 = hex_key(sha256)?;
 
-    write(|tx| blob::touch(tx, &sha256, at))
+    db.write(|tx| blob::touch(tx, &sha256, at))
 }
 
 /// Write a preference. `value` is a JSON document.
-pub fn set_preference(key: &str, value: &str, at: i64) -> Result<()> {
-    write(|tx| pref::set(tx, key, value, at))
+pub fn set_preference(db: &Db, key: &str, value: &str, at: i64) -> Result<()> {
+    db.write(|tx| pref::set(tx, key, value, at))
 }
 
 /// Remove a preference. Returns whether it existed before.
-pub fn clear_preference(key: &str) -> Result<bool> {
-    write(|tx| pref::remove(tx, key))
+pub fn clear_preference(db: &Db, key: &str) -> Result<bool> {
+    db.write(|tx| pref::remove(tx, key))
 }
 
 /// Forget events first seen before `cutoff`. Returns how many were deleted.
-pub fn forget_events_before(cutoff: i64) -> Result<usize> {
-    write(|tx| event::forget_seen_before(tx, cutoff))
+pub fn forget_events_before(db: &Db, cutoff: i64) -> Result<usize> {
+    db.write(|tx| event::forget_seen_before(tx, cutoff))
 }
 
 /// Evict held originals, until the cache is under `ceiling_bytes`.
 /// Returns the hashes evicted.
-pub fn evict_originals(ceiling_bytes: i64) -> Result<Vec<String>> {
-    write(|tx| {
+pub fn evict_originals(db: &Db, ceiling_bytes: i64) -> Result<Vec<String>> {
+    db.write(|tx| {
         let mut held = blob_query::stored_bytes(tx, BlobRole::Original)?;
 
         if held <= ceiling_bytes {

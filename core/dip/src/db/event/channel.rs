@@ -6,13 +6,11 @@
 //! event to whoever is currently connected — which is what makes gossip
 //! immediate rather than waiting for the next reconciliation.
 
-use std::sync::LazyLock;
-
 use tokio::sync::broadcast::{self, Receiver, Sender};
 
 use coracle_lib::events::HashedEvent;
 
-use crate::db::Tx;
+use crate::db::{Db, Tx};
 use crate::model::Provenance;
 
 /// How far a subscriber may fall behind before it starts missing changes.
@@ -36,16 +34,18 @@ pub enum EventChange {
     Deleted(String),
 }
 
-/// The channel. Lazy, so a process that never touches events never builds one.
-static CHANGES: LazyLock<Sender<EventChange>> = LazyLock::new(|| broadcast::channel(CAPACITY).0);
+/// This group's channel, one per store.
+pub(crate) fn new() -> Sender<EventChange> {
+    broadcast::channel(CAPACITY).0
+}
 
-/// Listen for changes to events.
+/// Listen for changes to events in `db`.
 ///
 /// A receiver that falls [`CAPACITY`] behind is told so and skipped forward; it
 /// has missed changes and should re-read whatever it is tracking.
 #[must_use]
-pub fn subscribe() -> Receiver<EventChange> {
-    CHANGES.subscribe()
+pub fn subscribe(db: &Db) -> Receiver<EventChange> {
+    db.channels().event.subscribe()
 }
 
 /// Announce a change once `tx` commits.
@@ -53,9 +53,11 @@ pub fn subscribe() -> Receiver<EventChange> {
 /// Deferred rather than sent, so nothing hears about a row a later error rolled
 /// back, and so a subscriber that reads on the news finds it there.
 pub(crate) fn notify(tx: &Tx<'_>, change: EventChange) {
+    let sender = tx.channels().event.clone();
+
     tx.after_commit(move || {
         // Errors here mean nobody is listening, which is the normal state
         // during a background wake with no view attached.
-        let _ = CHANGES.send(change);
+        let _ = sender.send(change);
     });
 }

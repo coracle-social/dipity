@@ -8,6 +8,6 @@
 //! [`HashedEvent`](coracle_lib::events::HashedEvent) — see [`crate::model`] for
 //! why that stage and not [`Event`](coracle_lib::events::Event).
 
+pub mod channel;
 pub mod command;
-pub mod events;
 pub mod query;

@@ -13,7 +13,7 @@ use rusqlite::params;
 use crate::db::Tx;
 use crate::model::RecipientSignature;
 
-use super::events::{self, RecipientSignatureChange};
+use super::channel::{self, RecipientSignatureChange};
 
 /// Store a signature. Returns whether it was new.
 ///
@@ -39,7 +39,7 @@ pub fn save(tx: &Tx<'_>, signature: &RecipientSignature) -> Result<bool> {
         return Ok(false);
     }
 
-    events::notify(
+    channel::notify(
         tx,
         RecipientSignatureChange::Stored(Box::new(signature.clone())),
     );
@@ -60,7 +60,7 @@ pub fn remove(tx: &Tx<'_>, event_id: &EventId, recipient_pubkey: &PublicKey) -> 
         return Ok(false);
     }
 
-    events::notify(
+    channel::notify(
         tx,
         RecipientSignatureChange::Removed(*event_id, *recipient_pubkey),
     );
@@ -90,8 +90,8 @@ mod tests {
     use super::*;
     use coracle_lib::tags::Tags;
 
+    use crate::db::Db;
     use crate::db::event::command as event_command;
-    use crate::db::open_in_memory;
     use crate::db::recipient_signature::query;
     use crate::fixtures::{author, id, note, peer};
 
@@ -118,8 +118,8 @@ mod tests {
 
     #[test]
     fn a_signature_is_stored_once() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let event_id = store_note(&tx, "signed");
 
@@ -135,8 +135,8 @@ mod tests {
 
     #[test]
     fn a_signature_cannot_outlive_its_event() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let event_id = store_note(&tx, "signed");
         save(&tx, &signature(event_id)).unwrap();
@@ -151,8 +151,8 @@ mod tests {
         // The composite foreign key. An author who did not write the event is
         // not someone whose signature over it could exist, so the row is
         // refused rather than kept for a proof that could never verify.
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let event_id = store_note(&tx, "signed");
         let mut signature = signature(event_id);
@@ -163,16 +163,16 @@ mod tests {
 
     #[test]
     fn a_signature_needs_an_event_to_name() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         assert!(save(&tx, &signature(EventId::new([0u8; 32]))).is_err());
     }
 
     #[test]
     fn forwardable_answers_for_a_batch() {
-        let mut connection = open_in_memory().unwrap();
-        let tx = Tx::begin_write(&mut connection).unwrap();
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
 
         let signed = store_note(&tx, "signed");
         let unsigned = store_note(&tx, "unsigned");
