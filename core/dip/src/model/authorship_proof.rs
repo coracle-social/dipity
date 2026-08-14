@@ -431,7 +431,15 @@ impl Statement {
     /// go on the wire.
     fn nonces(&self, witness: &Scalar) -> Result<(Zeroizing<Scalar>, Scalar, Scalar)> {
         let mut aux = Zeroizing::new([0u8; 32]);
-        let _ = getrandom::getrandom(&mut *aux);
+
+        // Safe to carry on without it — the derivation is deterministic anyway,
+        // so proofs repeat byte for byte rather than repeating a nonce under a
+        // moving challenge. Not safe to say nothing: an RNG that never works is
+        // a platform fault reaching well past this module, and this is the only
+        // place positioned to notice.
+        if let Err(error) = getrandom::getrandom(&mut *aux) {
+            log::error!("the OS RNG refused ({error}); proof nonces are deterministic");
+        }
 
         let mask = Zeroizing::new(tagged_hash(AUX_TAG, &[&*aux]));
         let mut masked = Zeroizing::new(scalar_bytes(witness));

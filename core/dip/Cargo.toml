@@ -13,6 +13,7 @@ coracle-lib.workspace = true
 getrandom.workspace = true
 hex.workspace = true
 k256.workspace = true
+log.workspace = true
 rusqlite.workspace = true
 secp256k1.workspace = true
 serde.workspace = true

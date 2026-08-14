@@ -4,7 +4,24 @@
 //! the clock. What is here is the handful of shapes this crate needs that are
 //! neither nostr's nor any one domain's.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
+
+/// A string printed as itself, without the quotes and escapes `str`'s own
+/// `Debug` adds.
+///
+/// For hand-written `Debug` impls, where a field is a rendering rather than a
+/// value: a redaction, a hex encoding, an abbreviation. `debug_struct` takes
+/// `&dyn Debug` for each field, so a bare `&str` there would come out quoted
+/// and a `<redacted>` would read as a string someone stored.
+pub(crate) struct Bare<'a>(pub &'a str);
+
+impl fmt::Debug for Bare<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
 
 /// A stretch of the day as minutes from local midnight.
 ///
@@ -34,6 +51,19 @@ impl Window {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bare_prints_a_string_as_itself() {
+        assert_eq!(format!("{:?}", Bare("<redacted>")), "<redacted>");
+        assert_eq!(format!("{:?}", "<redacted>"), "\"<redacted>\"");
+    }
+
+    #[test]
+    fn bare_does_not_escape() {
+        // The point of it: an abbreviation like `3f8a1c04…` comes out as
+        // itself rather than as `"3f8a1c04\u{2026}"`.
+        assert_eq!(format!("{:?}", Bare("3f8a1c04…")), "3f8a1c04…");
+    }
 
     #[test]
     fn a_window_is_half_open() {

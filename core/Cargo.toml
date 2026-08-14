@@ -39,6 +39,9 @@ sha2 = "0.10"
 # Auxiliary randomness for the proof nonce, and nothing else. The derivation is
 # safe without it — see docs/proofs.md#nonce-derivation.
 getrandom = "0.2"
+# The logging facade only. Inert until a shell installs a logger, which is what
+# routes it to os_log or logcat; nothing in the core picks one.
+log = "0.4"
 
 # The store. Bundled amalgamation so both platforms run one pinned SQLite
 # rather than whatever the OS shipped — see docs/storage.md.
