@@ -42,7 +42,7 @@ To detect the presence of a blob, we first run `HEAD /<sha256>`. This also gives
 
 We then request each group individually using `GET /<sha256>` with `accept-ranges` and `content-length` headers describing a [Bao](https://github.com/oconnor663/bao) slice over that run of groups.
 
-There is no HTTP on a BLE link, so all messages are wrapped as `["BLOSSOM", <id>, <method>, <path>, <headers>, <body>]`.
+There is no HTTP on a BLE link, so each request is wrapped as `["BLOSSOM-REQ", <id>, <method>, <path>, <headers>, <body>]` and its answer as `["BLOSSOM-RES", <id>, <status>, <headers>, <body>]`, the two correlated by the shared `<id>`.
 
 When an event references a blob, we save a record to the `blob` table which maps the sha256 to the blob's metadata - including everything in the `imeta` tag, as well as the id of the event the blob was first referred to (by `seen_at`, not `created_at`), and whether the blob is a `preview` or an `original`. Blobs inherit the permissions of this event.
 
