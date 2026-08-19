@@ -1,19 +1,31 @@
 //! Noise XX over the link: Curve25519 / ChaCha20-Poly1305 / SHA-256.
 //!
-//! The static key is generated per handshake. No device has a long-term Noise
-//! identity, so nothing the handshake establishes outlives the session and a
-//! stranger cannot collect a durable identifier by dialing. The nostr identity
-//! is bound to this channel by mutual NIP-42 instead, for the life of one
+//! A wrapper over `snow`'s handshake and transport states. The static key is
+//! generated per handshake. No device has a long-term Noise identity, so
+//! nothing the handshake establishes outlives the session and a stranger
+//! cannot collect a durable identifier by dialing. The nostr identity is
+//! bound to this channel by mutual NIP-42 instead, for the life of one
 //! session. `docs/transport.md#the-static-key-is-generated-per-session`.
 
-use anyhow::Result;
+use anyhow::{Result, bail};
+use snow::{Builder, HandshakeState, TransportState};
 
 use crate::link::Role;
 
-/// The Noise session for one link.
+/// The pattern's parameters.
+const PARAMS: &str = "Noise_XX_25519_ChaChaPoly_SHA256";
+
+/// The Noise session for one link, either mid-handshake or in transport mode.
 pub struct Noise {
-    /// Whether the handshake has completed and traffic is encrypted.
-    complete: bool,
+    /// Which way the handshake is driven.
+    role: Role,
+    /// The handshake hash, taken at completion because snow gives access to it
+    /// only on the handshake state.
+    hash: Option<[u8; 32]>,
+    /// The snow handshake state, until it completes.
+    handshake: Option<HandshakeState>,
+    /// The snow transport state, once it has.
+    transport: Option<TransportState>,
 }
 
 impl Noise {
@@ -21,14 +33,36 @@ impl Noise {
     ///
     /// The dialer is the Noise initiator.
     #[must_use]
-    pub fn begin(_role: Role) -> Self {
-        Self { complete: false }
+    pub fn begin(role: Role) -> Self {
+        let params = PARAMS
+            .parse::<snow::params::NoiseParams>()
+            .expect("a fixed, valid parameter set");
+        let keypair = Builder::new(params.clone())
+            .generate_keypair()
+            .expect("fresh randomness");
+        let builder = Builder::new(params)
+            .local_private_key(&keypair.private)
+            .expect("a build over its own keypair");
+
+        let handshake = if role == Role::Dialer {
+            builder.build_initiator()
+        } else {
+            builder.build_responder()
+        }
+        .expect("a builder over its own keypair");
+
+        Self {
+            role,
+            hash: None,
+            handshake: Some(handshake),
+            transport: None,
+        }
     }
 
-    /// Whether the handshake has completed.
+    /// Whether the handshake has completed and traffic is encrypted.
     #[must_use]
     pub fn is_complete(&self) -> bool {
-        self.complete
+        self.transport.is_some()
     }
 
     /// Take a handshake message from the peer, and produce the reply the
@@ -36,13 +70,68 @@ impl Noise {
     ///
     /// `Ok(None)` means the handshake completed on this message and there is
     /// nothing further to send.
-    pub fn read_handshake(&mut self, _message: &[u8]) -> Result<Option<Vec<u8>>> {
-        todo!("snow handshake state")
+    pub fn read_handshake(&mut self, message: &[u8]) -> Result<Option<Vec<u8>>> {
+        let Some(handshake) = &mut self.handshake else {
+            bail!("the handshake is over");
+        };
+
+        let mut payload = vec![0u8; message.len()];
+        handshake.read_message(message, &mut payload)?;
+
+        let reply = if handshake.is_handshake_finished() {
+            None
+        } else {
+            let mut out = vec![0u8; u16::MAX as usize + 1];
+            let written = handshake.write_message(&[], &mut out)?;
+
+            Some(out[..written].to_vec())
+        };
+
+        // On the initiator's reply the post-write check is what fires; on the
+        // responder's final read the post-read check already did.
+        if handshake.is_handshake_finished() {
+            self.finish()?;
+        }
+
+        Ok(reply)
     }
 
     /// The first handshake message, which the dialer sends on connect.
     pub fn first_handshake_message(&mut self) -> Result<Vec<u8>> {
-        todo!("snow handshake state")
+        if self.role != Role::Dialer {
+            bail!("the receiver speaks in response");
+        }
+
+        let Some(handshake) = &mut self.handshake else {
+            bail!("the handshake is over");
+        };
+
+        let mut out = vec![0u8; u16::MAX as usize + 1];
+        let written = handshake.write_message(&[], &mut out)?;
+
+        if handshake.is_handshake_finished() {
+            self.finish()?;
+        }
+
+        Ok(out[..written].to_vec())
+    }
+
+    /// Move the completed handshake into transport mode, capturing the hash
+    /// before the handshake state moves.
+    fn finish(&mut self) -> Result<()> {
+        let Some(handshake) = self.handshake.take() else {
+            return Ok(());
+        };
+
+        self.hash = Some(
+            handshake
+                .get_handshake_hash()
+                .try_into()
+                .expect("a 32-byte hash"),
+        );
+        self.transport = Some(handshake.into_transport_mode()?);
+
+        Ok(())
     }
 
     /// The handshake hash: a transcript binding of everything both sides sent.
@@ -50,16 +139,103 @@ impl Noise {
     /// Recognition tags are MACs over this, so a tag is worthless outside the
     /// session it was minted in. `docs/discovery.md#recognition`.
     pub fn handshake_hash(&self) -> Result<[u8; 32]> {
-        todo!("snow handshake state")
+        if let Some(hash) = self.hash {
+            return Ok(hash);
+        }
+
+        bail!("the hash exists only once the handshake has completed")
     }
 
     /// Encrypt one frame's payload.
-    pub fn encrypt(&mut self, _payload: &[u8]) -> Result<Vec<u8>> {
-        todo!("snow transport state")
+    pub fn encrypt(&mut self, payload: &[u8]) -> Result<Vec<u8>> {
+        let Some(transport) = &mut self.transport else {
+            bail!("traffic encrypts only once the handshake has completed");
+        };
+
+        // One AEAD tag over the payload.
+        let mut out = vec![0u8; payload.len() + 16];
+        let written = transport.write_message(payload, &mut out)?;
+
+        Ok(out[..written].to_vec())
     }
 
     /// Decrypt one frame's payload.
-    pub fn decrypt(&mut self, _ciphertext: &[u8]) -> Result<Vec<u8>> {
-        todo!("snow transport state")
+    pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>> {
+        let Some(transport) = &mut self.transport else {
+            bail!("traffic decrypts only once the handshake has completed");
+        };
+
+        let mut out = vec![0u8; ciphertext.len()];
+        let written = transport.read_message(ciphertext, &mut out)?;
+
+        Ok(out[..written].to_vec())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Run a full XX exchange between a dialer and a receiver.
+    fn complete(dialer: &mut Noise, receiver: &mut Noise) {
+        let message = dialer.first_handshake_message().unwrap();
+        let reply = receiver.read_handshake(&message).unwrap().unwrap();
+        let reply = dialer.read_handshake(&reply).unwrap().unwrap();
+        receiver.read_handshake(&reply).unwrap();
+
+        assert!(dialer.is_complete());
+        assert!(receiver.is_complete());
+    }
+
+    #[test]
+    fn the_handshake_hash_is_a_transcript_binding_both_sides_see() {
+        let mut dialer = Noise::begin(Role::Dialer);
+        let mut receiver = Noise::begin(Role::Receiver);
+
+        complete(&mut dialer, &mut receiver);
+
+        assert_eq!(
+            dialer.handshake_hash().unwrap(),
+            receiver.handshake_hash().unwrap()
+        );
+    }
+
+    #[test]
+    fn both_directions_encrypt_and_decrypt() {
+        let mut dialer = Noise::begin(Role::Dialer);
+        let mut receiver = Noise::begin(Role::Receiver);
+
+        complete(&mut dialer, &mut receiver);
+
+        let forward = dialer.encrypt(b"toward the receiver").unwrap();
+        let backward = receiver.encrypt(b"toward the dialer").unwrap();
+
+        assert_eq!(receiver.decrypt(&forward).unwrap(), b"toward the receiver");
+        assert_eq!(dialer.decrypt(&backward).unwrap(), b"toward the dialer");
+    }
+
+    #[test]
+    fn only_the_dialer_speaks_first() {
+        let mut receiver = Noise::begin(Role::Receiver);
+
+        assert!(receiver.first_handshake_message().is_err());
+    }
+
+    #[test]
+    fn nothing_encrypts_before_the_handshake_completes() {
+        let mut dialer = Noise::begin(Role::Dialer);
+
+        assert!(dialer.encrypt(b"early").is_err());
+        assert!(dialer.handshake_hash().is_err());
+    }
+
+    #[test]
+    fn a_reply_after_completion_is_an_error() {
+        let mut dialer = Noise::begin(Role::Dialer);
+        let mut receiver = Noise::begin(Role::Receiver);
+
+        complete(&mut dialer, &mut receiver);
+
+        assert!(receiver.read_handshake(&[1, 2, 3]).is_err());
     }
 }
