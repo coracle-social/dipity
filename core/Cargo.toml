@@ -36,6 +36,8 @@ k256 = { version = "0.13", default-features = false, features = [
   "std",
 ] }
 sha2 = "0.10"
+# HMAC-SHA256 for the recognition tags; see docs/discovery.md#recognition.
+hmac = "0.12"
 # Auxiliary randomness for the proof nonce, and nothing else. The derivation is
 # safe without it — see docs/proofs.md#nonce-derivation.
 getrandom = "0.2"
