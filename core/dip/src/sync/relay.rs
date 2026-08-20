@@ -34,7 +34,7 @@ pub fn handle(
     message: Message,
     quota: Quota,
     used: &mut Used,
-    subscriptions: &mut BTreeMap<SubscriptionId, Filter>,
+    subscriptions: &mut BTreeMap<SubscriptionId, Vec<Filter>>,
 ) -> Result<Vec<Message>> {
     match message {
         Message::Publish(event) => match client::admits(peer, &event, None, quota, *used) {
@@ -50,29 +50,37 @@ pub fn handle(
                 reason(rejected).into(),
             )]),
         },
-        Message::Req(subscription, filters) => serve(db, peer, &subscription, &filters),
+        Message::Req(subscription, filters) => {
+            // Registration is what the live-push path reads: NIP-01 replaces
+            // the filters when the same id is REQ'd again, and CLOSE drops it.
+            subscriptions.insert(subscription.clone(), filters.clone());
+
+            serve(db, peer, &subscription, &filters)
+        }
         Message::Close(subscription) => {
             subscriptions.remove(&subscription);
 
             Ok(Vec::new())
         }
         Message::NegOpen(subscription, filter, frame) => {
-            subscriptions.insert(subscription.clone(), filter.clone());
+            subscriptions.insert(subscription.clone(), vec![filter.clone()]);
 
             negotiate(db, peer, &subscription, &filter, &frame)
         }
         Message::NegMsg(subscription, frame) => {
-            let Some(filter) = subscriptions.get(&subscription) else {
+            let Some(filters) = subscriptions.get(&subscription) else {
                 bail!("a NEG-MSG arrived for a subscription that is not open");
             };
 
-            negotiate(db, peer, &subscription, filter, &frame)
+            // A NEG-OPEN registers one filter, which is all NIP-77 uses.
+            let filter = filters.first().cloned().unwrap_or_default();
+
+            negotiate(db, peer, &subscription, &filter, &frame)
         }
         _ => Ok(Vec::new()),
     }
 }
 
-/// The word a rejection travels as, in the `OK` message's reason slot.
 /// The word a rejection travels as, in the `OK` message's reason slot.
 fn reason(rejected: Rejected) -> &'static str {
     match rejected {
@@ -93,8 +101,17 @@ pub fn query_for(peer: &Peer, filter: Filter) -> Query {
         .with_filter(filter)
         .with_registers(Registers::offerable(peer.identity));
 
-    // Blocked wins over every identity, so any session reaching here may be served.
-    match peer.policies.first() {
+    // Blocked wins over every identity: any blocked pubkey the peer proved sinks
+    // the whole session. Otherwise any unblocked one may be served, and the
+    // first is as good as any other — the bindings differ only in standing,
+    // and none of the unblocked ones is blocked.
+    let binding = peer
+        .policies
+        .iter()
+        .find(|policy| policy.is_blocked())
+        .or_else(|| peer.policies.first());
+
+    match binding {
         Some(policy) => query.with_policy(policy.clone()),
         None => query,
     }
@@ -303,9 +320,54 @@ mod tests {
     }
 
     #[test]
+    fn a_req_registers_the_subscription_for_live_offers() {
+        let db = Db::open_in_memory().unwrap();
+        let mut subscriptions = BTreeMap::new();
+
+        handle(
+            &db,
+            &peer(),
+            Message::Req(
+                SubscriptionId("sub".into()),
+                vec![Filter::new().add_kinds([1])],
+            ),
+            Quota::STRANGER,
+            &mut Used::default(),
+            &mut subscriptions,
+        )
+        .unwrap();
+
+        assert_eq!(
+            subscriptions.get(&SubscriptionId("sub".into())),
+            Some(&vec![Filter::new().add_kinds([1])])
+        );
+
+        // A REQ with the same id replaces the filters, per NIP-01.
+        handle(
+            &db,
+            &peer(),
+            Message::Req(
+                SubscriptionId("sub".into()),
+                vec![Filter::new().add_kinds([1, 7])],
+            ),
+            Quota::STRANGER,
+            &mut Used::default(),
+            &mut subscriptions,
+        )
+        .unwrap();
+
+        assert_eq!(subscriptions.len(), 1);
+        assert_eq!(
+            subscriptions.get(&SubscriptionId("sub".into())),
+            Some(&vec![Filter::new().add_kinds([1, 7])])
+        );
+    }
+
+    #[test]
     fn a_close_drops_the_subscription() {
         let db = Db::open_in_memory().unwrap();
-        let mut subscriptions = BTreeMap::from([(SubscriptionId("sub".into()), Filter::new())]);
+        let mut subscriptions =
+            BTreeMap::from([(SubscriptionId("sub".into()), vec![Filter::new()])]);
 
         handle(
             &db,

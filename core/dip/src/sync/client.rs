@@ -182,7 +182,16 @@ pub fn handle(
                 bail!("a NEG-MSG arrived for a subscription that is not open");
             };
 
-            negotiation.step(&frame)
+            let replies = negotiation.step(&frame)?;
+
+            // The terminating reply is a REQ on the same subscription: the
+            // exchange is over, so the entry goes with it rather than growing
+            // stale answers to anything the peer sends afterwards.
+            if matches!(replies.last(), Some(Message::Req(sub, _)) if *sub == subscription) {
+                negotiations.remove(&subscription);
+            }
+
+            Ok(replies)
         }
         Message::Eose(_) => Ok(Vec::new()),
         Message::Ok(..) => Ok(Vec::new()),

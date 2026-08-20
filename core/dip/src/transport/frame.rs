@@ -46,6 +46,14 @@ const FLAG_MORE: u8 = 0b0000_0001;
 /// The header, which every fragment carries.
 const HEADER: usize = 2;
 
+/// The largest reassembled frame the codec accepts.
+///
+/// A message envelope around the largest stored event fits comfortably in this,
+/// so a peer that exceeds it is misbehaving: the link that let it through is
+/// dropped rather than fed. `docs/sync.md` caps events at 64 KB; this is the
+/// reassembly ceiling for whatever carries them.
+const MAX_FRAME_BYTES: usize = 1024 * 1024;
+
 /// One message on one channel, before fragmentation or after reassembly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
@@ -121,6 +129,13 @@ impl Codec {
 
         let channel = Channel::from_byte(channel)?;
         let buffered = self.partial.entry(channel).or_default();
+
+        // Fragments beyond the frame cap are an attack on unbounded memory, not
+        // a frame: the partial buffer clears and the error ends the link.
+        if buffered.len() + payload.len() > MAX_FRAME_BYTES {
+            self.partial.remove(&channel);
+            bail!("a frame on {channel:?} exceeds the reassembly cap");
+        }
 
         buffered.extend_from_slice(payload);
 
@@ -267,5 +282,21 @@ mod tests {
     fn an_unusable_mtu_is_an_error() {
         assert!(Codec::new(HEADER).is_err());
         assert!(Codec::new(0).is_err());
+    }
+
+    #[test]
+    fn reassembly_stops_at_the_cap() {
+        let mut codec = Codec::new(HEADER + 512).unwrap();
+
+        // "More" fragments fed forever must sooner or later be refused.
+        let mut fragment = vec![Channel::Blob as u8, FLAG_MORE];
+        fragment.extend_from_slice(&[0u8; 512]);
+
+        for _ in 0..MAX_FRAME_BYTES / 512 {
+            assert!(codec.absorb(&fragment).unwrap().is_none());
+        }
+
+        // One more fragment crosses the cap.
+        assert!(codec.absorb(&fragment).is_err());
     }
 }

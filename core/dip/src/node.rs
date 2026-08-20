@@ -28,7 +28,7 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::SecretKey;
 use std::sync::Arc;
@@ -231,6 +231,10 @@ impl Node {
     ///
     /// The dialer opens the Noise handshake here; the receiver waits for it.
     pub fn link_up(&mut self, link: LinkId, role: Role, mtu: usize) -> Result<Vec<Action>> {
+        if self.sessions.contains_key(&link) {
+            bail!("link {link:?} is already up");
+        }
+
         let mut session = Session::open(
             link,
             role,
@@ -248,11 +252,12 @@ impl Node {
         Ok(self.collect())
     }
 
-    /// A link went away. A clean disconnect is reliable when it fires, so this
-    /// drains immediately rather than waiting out the heartbeat.
+    /// A link went away. The shell only reports a disconnect that fired, which is
+    /// reliable: the link is gone and nothing on it will ever finish, so the
+    /// session closes rather than waiting out a drain that cannot complete.
     pub fn link_down(&mut self, link: LinkId) -> Vec<Action> {
         if let Some(session) = self.sessions.get_mut(&link) {
-            session.drain();
+            session.close();
         }
 
         self.collect()
@@ -343,12 +348,9 @@ impl Node {
         Ok(self.collect())
     }
 
-    /// Store an event the user wrote, and offer it to every peer already
-    /// Store an event the user wrote. The event channel does the offering.
-    ///
-    /// Immediate rather than waiting for the next reconciliation: what this
-    /// write announces on the store's event channel is drained in `collect`,
-    /// so a note written in a crowd propagates while the crowd is still there.
+    /// Store an event the user wrote. The event channel does the offering: what
+    /// this write announces is drained in `collect`, so a note written in a
+    /// crowd propagates while the crowd is still there.
     pub fn publish(&mut self, event: &HashedEvent) -> Result<Vec<Action>> {
         db_command::publish_event(&self.db, event, &self.identity.public_key(), clock::now())?;
 
@@ -582,13 +584,69 @@ mod tests {
         node.sessions.insert(LinkId(2), session);
 
         // Publishing the own event flows through the channel into the offer.
-        let actions = node.publish(&event).unwrap();
+        let first = node.publish(&event).unwrap();
 
-        // The Event carrying the note is queued to the peer's link.
+        // The REQ serve's own EOSE was in flight; the shell's write_complete
+        // acknowledgment releases what the offer queued behind it.
         assert!(
-            actions
+            first
                 .iter()
-                .any(|action| matches!(action, Action::Send(link, _) if *link == LinkId(2)))
+                .any(|action| matches!(action, Action::Send(LinkId(2), _)))
         );
+        let actions = node.write_complete(LinkId(2));
+
+        // The Event carrying the note itself reaches the peer's link.
+        let pushed = actions
+            .iter()
+            .find_map(|action| match action {
+                Action::Send(link, fragment) if *link == LinkId(2) => {
+                    // No Noise handshake ran in this test, so the fragment is
+                    // plaintext: two header bytes then the sync message.
+                    match Message::decode(&fragment[2..]) {
+                        Ok(Message::Event(subscription, carried)) => Some((subscription, *carried)),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .expect("the note reached the peer's link");
+
+        assert_eq!(pushed.0, SubscriptionId("sub".into()));
+        assert_eq!(pushed.1, event);
+    }
+
+    #[test]
+    fn a_reported_disconnect_closes_the_session() {
+        let mut node = node();
+        let policy = Arc::new(Policy::new(author(1)));
+        node.sessions.insert(
+            LinkId(1),
+            Session::open(
+                LinkId(1),
+                Role::Receiver,
+                100,
+                policy,
+                SecretKey::generate(),
+            )
+            .unwrap(),
+        );
+
+        let actions = node.link_down(LinkId(1));
+
+        // The link is gone and the session with it; a redundant Disconnect is
+        // the only action, and the session no longer occupies the table.
+        assert!(matches!(
+            actions.as_slice(),
+            [Action::Disconnect(LinkId(1))]
+        ));
+        assert!(node.sessions.is_empty());
+    }
+
+    #[test]
+    fn a_second_link_up_for_a_live_link_is_an_error() {
+        let mut node = node();
+
+        node.link_up(LinkId(1), Role::Receiver, 100).unwrap();
+        assert!(node.link_up(LinkId(1), Role::Dialer, 100).is_err());
     }
 }

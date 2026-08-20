@@ -96,8 +96,9 @@ pub struct Session {
     peer_challenge: Option<String>,
     /// What this device has accepted from the peer this session.
     used: Used,
-    /// Open subscriptions from the peer's relay half.
-    subscriptions: BTreeMap<SubscriptionId, Filter>,
+    /// Open subscriptions from the peer's relay half, with every filter each
+    /// one holds.
+    subscriptions: BTreeMap<SubscriptionId, Vec<Filter>>,
     /// Open negotiations against the peer's relay half.
     negotiations: BTreeMap<SubscriptionId, Negotiation>,
 }
@@ -252,10 +253,20 @@ impl Session {
     }
 
     /// The peer's quota for this session.
+    ///
+    /// A peer that proved any trusted identity is the same device whatever it
+    /// signs with, so the trusted budget is the whole session's.
     #[must_use]
     pub fn quota(&self) -> Quota {
-        match self.peer.as_ref().and_then(|peer| peer.policies.first()) {
-            Some(policy) if policy.standing() == Standing::Trusted => Quota::TRUSTED,
+        match self.peer.as_ref() {
+            Some(peer)
+                if peer
+                    .policies
+                    .iter()
+                    .any(|policy| policy.standing() == Standing::Trusted) =>
+            {
+                Quota::TRUSTED
+            }
             _ => Quota::STRANGER,
         }
     }
@@ -268,6 +279,16 @@ impl Session {
         let Some(peer) = self.peer.as_ref().cloned() else {
             bail!("sync traffic before the peer is identified");
         };
+
+        // Draining finishes what is in flight and starts nothing new: a
+        // publish, a fresh subscription or a fresh negotiation waits for the
+        // next encounter, while replies to work already underway pass.
+        if self.state == State::Draining {
+            match &message {
+                Message::Publish(_) | Message::Req(..) | Message::NegOpen(..) => return Ok(()),
+                _ => {}
+            }
+        }
 
         let quota = self.quota();
 
@@ -291,6 +312,29 @@ impl Session {
         Ok(())
     }
 
+    /// Begin a reconciliation against the peer, sending the opening frame.
+    ///
+    /// The subscription is this device's own, which is how a later reply is
+    /// told apart from one this device must answer: a `NEG-MSG` naming this
+    /// map goes to the client half, anything else to the relay half.
+    pub fn begin_negotiation(&mut self, db: &Db, filter: Filter) -> Result<()> {
+        if self.state == State::Draining {
+            return Ok(());
+        }
+
+        let Some(peer) = self.peer.as_ref().cloned() else {
+            bail!("a negotiation needs the peer to be identified");
+        };
+
+        let (negotiation, opening) = crate::sync::client::Negotiation::begin(db, &peer, filter)?;
+        let subscription = negotiation.subscription_id().clone();
+
+        self.negotiations.insert(subscription, negotiation);
+        self.send_sync(&opening)?;
+
+        Ok(())
+    }
+
     /// Offer a just-stored event to every subscription the peer has open, if the
     /// event would have been served on a fresh `REQ`.
     ///
@@ -298,6 +342,10 @@ impl Session {
     /// a publish, or an own event coming home through an ingest — reaches every
     /// connected peer without the writer knowing.
     pub fn offer_event(&mut self, event: &HashedEvent) -> Result<()> {
+        if self.state == State::Draining {
+            return Ok(());
+        }
+
         let Some(peer) = self.peer.as_ref().cloned() else {
             return Ok(());
         };
@@ -305,14 +353,14 @@ impl Session {
         let subscriptions: Vec<SubscriptionId> = self.subscriptions.keys().cloned().collect();
 
         for subscription in subscriptions {
-            let Some(filter) = self.subscriptions.get(&subscription).cloned() else {
+            let Some(filters) = self.subscriptions.get(&subscription).cloned() else {
                 continue;
             };
 
-            // The same two tests the relay half applies: the sub's filter, and
-            // what the peer may be served. Own events are always in the Own
-            // register, so the registers need no check here.
-            if filter.matches(event) && peer.may_be_served(event) {
+            // The same two tests the relay half applies: any of the sub's
+            // filters, and what the peer may be served. Own events are always
+            // in the Own register, so the registers need no check here.
+            if filters.iter().any(|filter| filter.matches(event)) && peer.may_be_served(event) {
                 self.send_sync(&Message::Event(subscription, Box::new(event.clone())))?;
             }
         }
@@ -323,11 +371,29 @@ impl Session {
     /// Try the relay half. Returns `true` when the message was consumed.
     fn try_relay(&mut self, db: &Db, peer: &Peer, message: &Message, quota: Quota) -> Result<bool> {
         match message {
-            Message::Req(..)
-            | Message::Close(..)
-            | Message::NegOpen(..)
-            | Message::NegMsg(..)
-            | Message::Publish(..) => {
+            Message::Req(..) | Message::Close(..) | Message::NegOpen(..) | Message::Publish(..) => {
+                let replies = relay::handle(
+                    db,
+                    peer,
+                    message.clone(),
+                    quota,
+                    &mut self.used,
+                    &mut self.subscriptions,
+                )?;
+
+                for reply in replies {
+                    self.send_sync(&reply)?;
+                }
+
+                Ok(true)
+            }
+            // A NEG-MSG names the negotiation it belongs to: one this device
+            // opened goes to the client half, whatever else it looks like.
+            // One the peer opened is registered on our relay half.
+            Message::NegMsg(subscription, _) if self.negotiations.contains_key(subscription) => {
+                Ok(false)
+            }
+            Message::NegMsg(..) => {
                 let replies = relay::handle(
                     db,
                     peer,
@@ -440,8 +506,10 @@ impl Session {
             self.send_auth_response(&challenge)?;
 
             // The receiver answers the dialer's challenge and challenges back
-            // in the same turn; the dialer has already challenged.
-            if self.role == Role::Receiver {
+            // in the same turn; the dialer has already challenged. Only the
+            // first challenge while Secured moves the receiver on: a later
+            // one must not demote an identified session.
+            if self.role == Role::Receiver && self.state == State::Secured {
                 self.send_auth_challenge()?;
                 self.state = State::DialerIdentified;
             }
@@ -602,7 +670,9 @@ impl Session {
 mod tests {
     use super::*;
 
-    use crate::fixtures::{author, secret};
+    use crate::db::query as db_query;
+    use crate::fixtures::{author, note, secret};
+    use crate::model::Query;
 
     fn policy() -> Policy {
         Policy::new(author(1))
@@ -706,6 +776,83 @@ mod tests {
 
         assert!(session.peer().unwrap().is_blocked());
         assert_eq!(session.state(), State::Closed);
+    }
+
+    #[test]
+    fn a_trusted_identity_earns_the_trusted_budget_whichever_key_it_proved() {
+        let mut policy = policy();
+        policy.graph.trusted.insert(author(9));
+        let mut session = session(policy);
+
+        // The trusted pubkey sorts after the stranger one, which is what the
+        // old "first policy" reading would have picked instead.
+        session.identify([author(2), author(9)]);
+
+        assert_eq!(session.quota(), Quota::TRUSTED);
+    }
+
+    #[test]
+    fn a_draining_session_takes_no_new_work() {
+        let db = Db::open_in_memory().unwrap();
+        let mut session = session(policy());
+
+        session.identify([author(2)]);
+        session.drain();
+
+        let publish = Frame {
+            channel: crate::transport::Channel::Sync,
+            payload: Message::Publish(Box::new(note(author(2), 100, "new", NostrTags::new())))
+                .encode(),
+        };
+
+        session.handle_sync(&db, &publish).unwrap();
+
+        // No OK travels back and nothing is stored: the publish waits for the
+        // next encounter.
+        assert!(session.next_write().is_none());
+        assert!(
+            db_query::list_events(&db, &Query::new())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_negotiation_reply_goes_to_the_client_half() {
+        let db = Db::open_in_memory().unwrap();
+        let mut session = session(policy());
+
+        session.identify([author(2)]);
+
+        // This device opens a negotiation, so the subscription is this side's;
+        // the session's own bookkeeping is what routes the reply.
+        session
+            .begin_negotiation(&db, coracle_lib::filters::Filter::new())
+            .unwrap();
+        let opening = session.next_write().unwrap();
+        session.acknowledge_write();
+        let Message::NegOpen(subscription, _, frame) = Message::decode(&opening[2..]).unwrap()
+        else {
+            panic!("expected the opening NEG-OPEN");
+        };
+
+        // The peer's relay answers with an empty set under the same filter.
+        let incoming = coracle_lib::sync::Message::decode(&frame).unwrap();
+        let reply = coracle_lib::sync::reconcile_responder(
+            &coracle_lib::sync::SyncSet::from_items([]),
+            &incoming,
+            coracle_lib::sync::FrameBudget::bytes(1024),
+        );
+
+        let reply = Frame {
+            channel: crate::transport::Channel::Sync,
+            payload: Message::NegMsg(subscription, reply.encode()).encode(),
+        };
+
+        // Routed to the client half rather than misread as a reply to a
+        // negotiation this device never hosted, so something travels back.
+        session.handle_sync(&db, &reply).unwrap();
+        assert!(session.next_write().is_some());
     }
 
     #[test]
