@@ -53,7 +53,7 @@ pub struct Used {
 
 impl Used {
     /// Count an event that was just accepted.
-    fn record(&mut self, event: &HashedEvent) {
+    pub(crate) fn record(&mut self, event: &HashedEvent) {
         self.events = self.events.saturating_add(1);
         self.bytes = self.bytes.saturating_add(event_size(event) as u64);
     }
