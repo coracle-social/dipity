@@ -291,9 +291,13 @@ impl Session {
         Ok(())
     }
 
-    /// Offer a freshly stored event to every subscription the peer has open,
-    /// pushing what the relay half would serve.
-    pub fn offer(&mut self, db: &Db, _event: &HashedEvent) -> Result<()> {
+    /// Offer a just-stored event to every subscription the peer has open, if the
+    /// event would have been served on a fresh `REQ`.
+    ///
+    /// Driven by the store's event channel, so anything that stores an own event —
+    /// a publish, or an own event coming home through an ingest — reaches every
+    /// connected peer without the writer knowing.
+    pub fn offer_event(&mut self, event: &HashedEvent) -> Result<()> {
         let Some(peer) = self.peer.as_ref().cloned() else {
             return Ok(());
         };
@@ -305,12 +309,11 @@ impl Session {
                 continue;
             };
 
-            // serve recomputes from the store, which now holds the event, so
-            // the offer is exactly what a fresh REQ would have returned.
-            let replies = relay::serve(db, &peer, &subscription, &[filter])?;
-
-            for reply in replies {
-                self.send_sync(&reply)?;
+            // The same two tests the relay half applies: the sub's filter, and
+            // what the peer may be served. Own events are always in the Own
+            // register, so the registers need no check here.
+            if filter.matches(event) && peer.may_be_served(event) {
+                self.send_sync(&Message::Event(subscription, Box::new(event.clone())))?;
             }
         }
 

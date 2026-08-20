@@ -32,9 +32,11 @@ use anyhow::Result;
 use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::SecretKey;
 use std::sync::Arc;
+use tokio::sync::broadcast::{self, error::TryRecvError};
 
 use crate::clock;
 use crate::db::command as db_command;
+use crate::db::event::channel::{self, EventChange};
 use crate::db::{Db, query};
 use crate::link::{LinkId, PeripheralId, Role};
 use crate::model::Policy;
@@ -171,6 +173,9 @@ pub struct Node {
     sessions: BTreeMap<LinkId, Session>,
     /// Decides which advertised peers to dial, and when.
     scheduler: Scheduler,
+    /// This store's event channel, so a stored own event is offered to every
+    /// connected peer without the writer knowing.
+    events: broadcast::Receiver<EventChange>,
 }
 
 impl Node {
@@ -180,6 +185,7 @@ impl Node {
         let policy = Arc::new(query::policy(&db, &identity.public_key())?);
 
         Ok(Self {
+            events: channel::subscribe(&db),
             db,
             identity,
             policy,
@@ -338,18 +344,13 @@ impl Node {
     }
 
     /// Store an event the user wrote, and offer it to every peer already
-    /// connected.
+    /// Store an event the user wrote. The event channel does the offering.
     ///
-    /// Immediate rather than waiting for the next reconciliation, so a note
-    /// written in a crowd propagates while the crowd is still there.
+    /// Immediate rather than waiting for the next reconciliation: what this
+    /// write announces on the store's event channel is drained in `collect`,
+    /// so a note written in a crowd propagates while the crowd is still there.
     pub fn publish(&mut self, event: &HashedEvent) -> Result<Vec<Action>> {
         db_command::publish_event(&self.db, event, &self.identity.public_key(), clock::now())?;
-
-        for session in self.sessions.values_mut() {
-            if session.state().is_identified() {
-                session.offer(&self.db, event)?;
-            }
-        }
 
         Ok(self.collect())
     }
@@ -364,6 +365,8 @@ impl Node {
     /// The one place actions are produced, so an entry point cannot forget to
     /// flush a session it advanced.
     fn collect(&mut self) -> Vec<Action> {
+        self.offer_saved_events();
+
         let mut actions = Vec::new();
 
         for session in self.sessions.values_mut() {
@@ -390,6 +393,39 @@ impl Node {
 
         actions
     }
+
+    /// Offer events the store just saved to every connected peer.
+    ///
+    /// Drains the store's event channel, which anything that stores an event
+    /// announces on — a publish, or an own event coming home through an ingest
+    /// — so the writer never has to know a peer is attached. Only events
+    /// authored by this device travel this way; everything else waits for the
+    /// next reconciliation, where the registers are checked.
+    fn offer_saved_events(&mut self) {
+        let identity = self.identity.public_key();
+
+        loop {
+            match self.events.try_recv() {
+                Ok(EventChange::Stored(event)) if event.pubkey == identity => {
+                    for session in self.sessions.values_mut() {
+                        if let Err(error) = session.offer_event(&event) {
+                            log::error!(
+                                "offering a saved event on link {:?} failed: {error:#}",
+                                session.link
+                            );
+                        }
+                    }
+                }
+                // Seen events are not newly stored, and Deleted are gone. Both
+                // are for the view.
+                Ok(_) => {}
+                // A lag tells the subscriber it missed changes; the next
+                // reconciliation covers them.
+                Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+                Err(TryRecvError::Lagged(_)) => {}
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -397,9 +433,12 @@ mod tests {
     use super::*;
     use coracle_lib::tags::Tags;
 
-    use crate::fixtures::{author, note};
+    use crate::fixtures::{author, note, secret};
     use crate::model::{Policy, Query};
     use crate::session::Session;
+    use crate::sync::{Message, SubscriptionId};
+    use crate::transport::Frame;
+    use coracle_lib::filters::Filter;
 
     fn node() -> Node {
         Node::new(db(), SecretKey::generate()).unwrap()
@@ -506,14 +545,50 @@ mod tests {
     }
 
     #[test]
-    fn publish_stores_and_offers() {
+    fn publish_stores_and_offers_via_the_channel() {
         let db = db();
-        let mut node = Node::new(Arc::clone(&db), SecretKey::generate()).unwrap();
+        let mut node = Node::new(Arc::clone(&db), secret(1)).unwrap();
         let event = note(author(1), 100, "hello", Tags::new());
 
         node.publish(&event).unwrap();
 
         let stored = query::list_events(&db, &Query::new()).unwrap();
         assert_eq!(stored, vec![event]);
+    }
+
+    #[test]
+    fn a_saved_own_event_reaches_a_subscribed_peer() {
+        let db = db();
+        // Node 1 authors; a peer's session is attached to the same node (as in
+        // a single device with a live link).
+        let mut node = Node::new(Arc::clone(&db), secret(1)).unwrap();
+        let event = note(author(1), 100, "hello", Tags::new());
+
+        // A session that goes through the real REQ path.
+        let policy = Arc::new(Policy::new(author(1)));
+        let mut session =
+            Session::open(LinkId(2), Role::Receiver, 4096, policy, secret(2)).unwrap();
+        session.identify([author(2)]);
+
+        let req = Message::Req(
+            SubscriptionId("sub".into()),
+            vec![Filter::new().add_kinds([1])],
+        );
+        let frame = Frame {
+            channel: Channel::Sync,
+            payload: req.encode(),
+        };
+        session.handle_sync(&db, &frame).unwrap();
+        node.sessions.insert(LinkId(2), session);
+
+        // Publishing the own event flows through the channel into the offer.
+        let actions = node.publish(&event).unwrap();
+
+        // The Event carrying the note is queued to the peer's link.
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, Action::Send(link, _) if *link == LinkId(2)))
+        );
     }
 }
