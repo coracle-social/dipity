@@ -19,6 +19,12 @@ const PARAMS: &str = "Noise_XX_25519_ChaChaPoly_SHA256";
 pub struct Noise {
     /// Which way the handshake is driven.
     role: Role,
+    /// The local static public key, for the `noise://` authority in the AUTH
+    /// event's relay tag. `docs/nips/p2p-auth.md`.
+    local_static: [u8; 32],
+    /// The peer's static public key, captured at completion. The peer's AUTH
+    /// responses name this as the relay tag.
+    remote_static: Option<[u8; 32]>,
     /// The handshake hash, taken at completion because snow gives access to it
     /// only on the handshake state.
     hash: Option<[u8; 32]>,
@@ -40,6 +46,11 @@ impl Noise {
         let keypair = Builder::new(params.clone())
             .generate_keypair()
             .expect("fresh randomness");
+        let local_static: [u8; 32] = keypair
+            .public
+            .as_slice()
+            .try_into()
+            .expect("a 32-byte Curve25519 public key");
         let builder = Builder::new(params)
             .local_private_key(&keypair.private)
             .expect("a build over its own keypair");
@@ -53,10 +64,19 @@ impl Noise {
 
         Self {
             role,
+            local_static,
+            remote_static: None,
             hash: None,
             handshake: Some(handshake),
             transport: None,
         }
+    }
+
+    /// The local static public key, for the `noise://` authority in the AUTH
+    /// event's relay tag. `docs/nips/p2p-auth.md`.
+    #[must_use]
+    pub fn local_static_key(&self) -> [u8; 32] {
+        self.local_static
     }
 
     /// Whether the handshake has completed and traffic is encrypted.
@@ -129,9 +149,21 @@ impl Noise {
                 .try_into()
                 .expect("a 32-byte hash"),
         );
+        self.remote_static = handshake.get_remote_static().map(|bytes| {
+            let mut key = [0u8; 32];
+            key.copy_from_slice(bytes);
+
+            key
+        });
         self.transport = Some(handshake.into_transport_mode()?);
 
         Ok(())
+    }
+
+    /// The peer's static public key, once the handshake has completed.
+    #[must_use]
+    pub fn remote_static_key(&self) -> Option<[u8; 32]> {
+        self.remote_static
     }
 
     /// The handshake hash: a transcript binding of everything both sides sent.

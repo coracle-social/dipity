@@ -37,6 +37,7 @@ use crate::db::{Db, query};
 use crate::link::{LinkId, PeripheralId, Role};
 use crate::model::Policy;
 use crate::session::{Session, State};
+use crate::transport::Channel;
 
 /// Something the shell does on the core's behalf.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,12 +126,21 @@ impl Node {
     ///
     /// The dialer opens the Noise handshake here; the receiver waits for it.
     pub fn link_up(&mut self, link: LinkId, role: Role, mtu: usize) -> Result<Vec<Action>> {
-        self.sessions.insert(
+        let mut session = Session::open(
             link,
-            Session::open(link, role, mtu, Arc::clone(&self.policy))?,
-        );
+            role,
+            mtu,
+            Arc::clone(&self.policy),
+            self.identity.clone(),
+        )?;
 
-        Ok(Vec::new())
+        if role == Role::Dialer {
+            session.initiate()?;
+        }
+
+        self.sessions.insert(link, session);
+
+        Ok(self.collect())
     }
 
     /// A link went away. A clean disconnect is reliable when it fires, so this
@@ -148,12 +158,32 @@ impl Node {
     /// Reassembles, decrypts, and hands the frame to the session or to
     /// [`crate::sync`] by channel. A malformed or unauthenticated frame ends
     /// the link rather than being dropped.
-    pub fn bytes_received(&mut self, link: LinkId, _write: &[u8]) -> Vec<Action> {
-        let Some(_session) = self.sessions.get_mut(&link) else {
-            return vec![Action::Disconnect(link)];
+    pub fn bytes_received(&mut self, link: LinkId, write: &[u8]) -> Vec<Action> {
+        let result = self.receive_frame(link, write);
+
+        match result {
+            Ok(()) => self.collect(),
+            Err(_) => vec![Action::Disconnect(link)],
+        }
+    }
+
+    /// Reassemble, decrypt, and dispatch one frame off the characteristic.
+    fn receive_frame(&mut self, link: LinkId, write: &[u8]) -> Result<()> {
+        let Some(session) = self.sessions.get_mut(&link) else {
+            return Ok(());
         };
 
-        todo!("session.receive, then dispatch by channel")
+        let Some(frame) = session.receive(write)? else {
+            return Ok(());
+        };
+
+        match frame.channel {
+            Channel::Control => session.advance(&self.db, &frame)?,
+            Channel::Sync => session.handle_sync(&self.db, &frame)?,
+            Channel::Blob => {} // blob transfers are not yet wired
+        }
+
+        Ok(())
     }
 
     /// The write the shell was handed has been acknowledged, which releases the
