@@ -32,6 +32,28 @@ pub const DRAIN_CAP_SECONDS: i64 = 300;
 /// How long without a heartbeat before an idle session drains.
 pub const HEARTBEAT_TIMEOUT_SECONDS: i64 = 60;
 
+/// The low bound on the jittered heartbeat interval. `docs/discovery.md`.
+pub const HEARTBEAT_MIN_SECONDS: i64 = 15;
+/// The high bound on the jittered heartbeat interval.
+pub const HEARTBEAT_MAX_SECONDS: i64 = 30;
+
+/// Control-frame discriminants, one byte ahead of the payload.
+///
+/// Recognition tags, an AUTH challenge, an AUTH response and the heartbeat
+/// share the control channel, so the first byte names what follows. The
+/// handshake frames that precede encryption carry no discriminant: they are
+/// raw Noise messages and only [`State::Linked`] ever sees them.
+mod control {
+    /// A list of 32-byte recognition tags.
+    pub const TAGS: u8 = 0x01;
+    /// A NIP-42 challenge string.
+    pub const CHALLENGE: u8 = 0x02;
+    /// A signed kind 22242 event answering a challenge.
+    pub const AUTH_EVENT: u8 = 0x03;
+    /// A liveness beacon, carrying nothing.
+    pub const HEARTBEAT: u8 = 0x04;
+}
+
 /// Where a link is in its lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -88,6 +110,9 @@ pub struct Session {
     identity: SecretKey,
     /// When a frame was last heard, which the heartbeat measures.
     last_heard: i64,
+    /// When the next heartbeat is due, so a quiet session still proves it is
+    /// alive before the peer's own timeout drains it.
+    next_heartbeat_at: i64,
     /// When the session entered [`Draining`](State::Draining).
     draining_since: Option<i64>,
     /// The challenge this device sent, to match against the peer's response.
@@ -123,6 +148,7 @@ impl Session {
             peer: None,
             identity,
             last_heard: clock::now(),
+            next_heartbeat_at: clock::now() + jittered_heartbeat_interval(),
             draining_since: None,
             sent_challenge: None,
             peer_challenge: None,
@@ -443,8 +469,50 @@ impl Session {
     pub fn deadline(&self) -> i64 {
         match self.draining_since {
             Some(since) => since + DRAIN_CAP_SECONDS,
+            None if self.beats() => self
+                .next_heartbeat_at
+                .min(self.last_heard + HEARTBEAT_TIMEOUT_SECONDS),
             None => self.last_heard + HEARTBEAT_TIMEOUT_SECONDS,
         }
+    }
+
+    /// Send a heartbeat if one is due and the link has been quiet.
+    ///
+    /// A beat proves liveness to the peer; anything already queued or in
+    /// flight proves it too, so a busy link skips the beat rather than piling
+    /// one behind a transfer. Only post-handshake states beat.
+    pub fn maybe_heartbeat(&mut self) -> Result<()> {
+        if !self.beats() {
+            return Ok(());
+        }
+
+        let now = clock::now();
+
+        if now < self.next_heartbeat_at {
+            return Ok(());
+        }
+
+        // Traffic on its way out is the heartbeat; a beat would only wait
+        // behind it. Reset the timer either way, so a long transfer does not
+        // emit a beat the moment it drains.
+        if !self.outbox.is_idle() {
+            self.next_heartbeat_at = now + jittered_heartbeat_interval();
+            return Ok(());
+        }
+
+        self.send_control(control::HEARTBEAT, &[])?;
+        self.next_heartbeat_at = now + jittered_heartbeat_interval();
+
+        Ok(())
+    }
+
+    /// Whether the heartbeat runs in this state: after the handshake, before
+    /// teardown.
+    fn beats(&self) -> bool {
+        matches!(
+            self.state,
+            State::Secured | State::DialerIdentified | State::Identified | State::Syncing
+        )
     }
 
     // ========================================================================
@@ -480,41 +548,53 @@ impl Session {
     // Secured: recognition, then mutual AUTH
     // ========================================================================
 
-    /// Dispatch one post-handshake control frame by what it carries.
+    /// Dispatch one post-handshake control frame by its discriminant byte.
     ///
-    /// Recognition tags, an AUTH challenge and an AUTH response share the
-    /// control channel and carry no opcode, so the payload shape is the
-    /// discriminator: the tags are an array of 32-byte arrays, a challenge is
-    /// a UTF-8 string, and a response is an event.
+    /// Recognition tags, an AUTH challenge, an AUTH response and the heartbeat
+    /// share the control channel, so the first byte names what follows rather
+    /// than the payload's shape guessing at it.
     fn on_auth_frame(&mut self, db: &Db, frame: &Frame) -> Result<()> {
-        // An AUTH response is JSON, and JSON is valid UTF-8, so the event
-        // parse must come before the challenge string.
-        if serde_json::from_slice::<Vec<[u8; 32]>>(&frame.payload).is_ok() {
-            self.resolve_recognition(db, frame)?;
-        } else if let Ok(event) =
-            serde_json::from_slice::<coracle_lib::events::Event>(&frame.payload)
-        {
-            self.verify_auth_response(event)?;
+        let Some((&discriminant, payload)) = frame.payload.split_first() else {
+            bail!("an empty frame arrived on the control channel");
+        };
 
-            // Once a device has verified the peer and answered the peer's
-            // challenge, both identities are bound.
-            if self.peer.is_some() && self.peer_challenge.is_some() {
-                self.state = State::Identified;
+        match discriminant {
+            control::TAGS => {
+                self.resolve_recognition(db, payload)?;
             }
-        } else if let Ok(challenge) = String::from_utf8(frame.payload.clone()) {
-            self.peer_challenge = Some(challenge.clone());
-            self.send_auth_response(&challenge)?;
+            control::CHALLENGE => {
+                let challenge = String::from_utf8(payload.to_vec())
+                    .context("an AUTH challenge is not UTF-8")?;
 
-            // The receiver answers the dialer's challenge and challenges back
-            // in the same turn; the dialer has already challenged. Only the
-            // first challenge while Secured moves the receiver on: a later
-            // one must not demote an identified session.
-            if self.role == Role::Receiver && self.state == State::Secured {
-                self.send_auth_challenge()?;
-                self.state = State::DialerIdentified;
+                self.peer_challenge = Some(challenge.clone());
+                self.send_auth_response(&challenge)?;
+
+                // The receiver answers the dialer's challenge and challenges
+                // back in the same turn; the dialer has already challenged.
+                // Only the first challenge while Secured moves the receiver on:
+                // a later one must not demote an identified session.
+                if self.role == Role::Receiver && self.state == State::Secured {
+                    self.send_auth_challenge()?;
+                    self.state = State::DialerIdentified;
+                }
             }
-        } else {
-            bail!("an unknown frame arrived on the control channel");
+            control::AUTH_EVENT => {
+                let event = serde_json::from_slice::<coracle_lib::events::Event>(payload)
+                    .context("parsing an AUTH response")?;
+
+                self.verify_auth_response(event)?;
+
+                // Once a device has verified the peer and answered the peer's
+                // challenge, both identities are bound.
+                if self.peer.is_some() && self.peer_challenge.is_some() {
+                    self.state = State::Identified;
+                }
+            }
+            control::HEARTBEAT => {
+                // The write itself refreshed `last_heard` in `receive`; there
+                // is nothing else a liveness beacon carries.
+            }
+            other => bail!("an unknown control frame {other} arrived"),
         }
 
         Ok(())
@@ -538,13 +618,13 @@ impl Session {
 
         let payload = serde_json::to_vec(&padding).context("serializing recognition tags")?;
 
-        self.send_control(&payload)
+        self.send_control(control::TAGS, &payload)
     }
 
     /// Trial-MAC the offered tags against every pair secret this device holds.
-    fn resolve_recognition(&mut self, _db: &Db, frame: &Frame) -> Result<Option<PublicKey>> {
+    fn resolve_recognition(&mut self, _db: &Db, payload: &[u8]) -> Result<Option<PublicKey>> {
         let _offered: Vec<[u8; 32]> =
-            serde_json::from_slice(&frame.payload).context("decoding recognition tags")?;
+            serde_json::from_slice(payload).context("decoding recognition tags")?;
 
         // Pair secrets are not yet stored, so the peer is always a stranger.
         Ok(None)
@@ -561,7 +641,7 @@ impl Session {
 
         let challenge = hex::encode(challenge);
         self.sent_challenge = Some(challenge.clone());
-        self.send_control(challenge.as_bytes())
+        self.send_control(control::CHALLENGE, challenge.as_bytes())
     }
 
     /// Answer the peer's challenge with a signed kind 22242 event.
@@ -590,7 +670,7 @@ impl Session {
         let event = hashed.with_sig(self.identity.sign(id.as_bytes()));
         let payload = serde_json::to_vec(&event).context("serializing AUTH response")?;
 
-        self.send_control(&payload)
+        self.send_control(control::AUTH_EVENT, &payload)
     }
 
     /// Verify the peer's AUTH response against our challenge and this channel.
@@ -634,11 +714,16 @@ impl Session {
     // Sending helpers
     // ========================================================================
 
-    /// Queue a raw payload on the control channel, encrypted.
-    fn send_control(&mut self, payload: &[u8]) -> Result<()> {
+    /// Queue a control frame, encrypted, with its discriminant ahead of the
+    /// payload.
+    fn send_control(&mut self, discriminant: u8, payload: &[u8]) -> Result<()> {
+        let mut framed = Vec::with_capacity(payload.len() + 1);
+        framed.push(discriminant);
+        framed.extend_from_slice(payload);
+
         self.send(&Frame {
             channel: Channel::Control,
-            payload: payload.to_vec(),
+            payload: framed,
         })
     }
 
@@ -664,6 +749,15 @@ impl Session {
             payload,
         })
     }
+}
+
+/// A fresh heartbeat interval, jittered between the documented bounds.
+fn jittered_heartbeat_interval() -> i64 {
+    let mut byte = [0u8; 1];
+    let _ = getrandom::getrandom(&mut byte);
+
+    HEARTBEAT_MIN_SECONDS
+        + i64::from(byte[0] % (HEARTBEAT_MAX_SECONDS - HEARTBEAT_MIN_SECONDS + 1) as u8)
 }
 
 #[cfg(test)]
@@ -789,6 +883,79 @@ mod tests {
         session.identify([author(2), author(9)]);
 
         assert_eq!(session.quota(), Quota::TRUSTED);
+    }
+
+    #[test]
+    fn a_quiet_session_beats_within_the_jittered_bounds() {
+        let mut session = clock::at(1_000, || session(policy()));
+        session.identify([author(2)]);
+
+        // Before the minimum interval nothing is due.
+        clock::at(1_000 + HEARTBEAT_MIN_SECONDS - 1, || {
+            session.maybe_heartbeat().unwrap();
+            assert!(session.next_write().is_none());
+        });
+
+        // Past the maximum it is, and the beat carries the discriminant alone.
+        clock::at(1_000 + HEARTBEAT_MAX_SECONDS + 1, || {
+            session.maybe_heartbeat().unwrap();
+        });
+        let fragment = session.next_write().unwrap();
+        assert_eq!(
+            &fragment[..],
+            &[Channel::Control as u8, 0, control::HEARTBEAT]
+        );
+    }
+
+    #[test]
+    fn a_busy_link_skips_the_beat_and_treats_traffic_as_liveness() {
+        let mut session = clock::at(1_000, || session(policy()));
+        session.identify([author(2)]);
+
+        // Queued traffic stands in for the beat.
+        session
+            .send(&crate::transport::Frame {
+                channel: crate::transport::Channel::Sync,
+                payload: vec![0; 8],
+            })
+            .unwrap();
+
+        clock::at(1_000 + HEARTBEAT_MAX_SECONDS + 1, || {
+            session.maybe_heartbeat().unwrap();
+        });
+
+        // The first fragment out is the queued traffic, not a beat.
+        let fragment = session.next_write().unwrap();
+        assert_eq!(fragment[0], Channel::Sync as u8);
+    }
+
+    #[test]
+    fn a_heartbeat_is_absorbed_without_moving_the_session() {
+        let db = Db::open_in_memory().unwrap();
+        let mut session = session(policy());
+        session.identify([author(2)]);
+
+        let frame = Frame {
+            channel: crate::transport::Channel::Control,
+            payload: vec![control::HEARTBEAT],
+        };
+        session.advance(&db, &frame).unwrap();
+
+        assert_eq!(session.state(), State::Identified);
+    }
+
+    #[test]
+    fn an_unknown_control_frame_is_an_error() {
+        let db = Db::open_in_memory().unwrap();
+        let mut session = session(policy());
+        session.identify([author(2)]);
+
+        let frame = Frame {
+            channel: crate::transport::Channel::Control,
+            payload: vec![0xEE],
+        };
+
+        assert!(session.advance(&db, &frame).is_err());
     }
 
     #[test]

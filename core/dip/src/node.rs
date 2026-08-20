@@ -369,6 +369,17 @@ impl Node {
     fn collect(&mut self) -> Vec<Action> {
         self.offer_saved_events();
 
+        // Heartbeats go out before writes are drained, so a quiet session
+        // still proves it is alive within its jittered interval.
+        for session in self.sessions.values_mut() {
+            if let Err(error) = session.maybe_heartbeat() {
+                log::error!(
+                    "sending a heartbeat on link {:?} failed: {error:#}",
+                    session.link
+                );
+            }
+        }
+
         let mut actions = Vec::new();
 
         for session in self.sessions.values_mut() {
