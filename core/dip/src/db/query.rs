@@ -22,7 +22,6 @@ use crate::db::event::query as event;
 use crate::db::pairing::query as pairing;
 use crate::db::pref::query as pref;
 use crate::db::recipient_signature::query as signature;
-use crate::db::spending::query as spending;
 use crate::db::sql::hex_key;
 use crate::model::{Blob, BlobRole, Policy, Pref, Provenance, Query, RecipientSignature};
 
@@ -59,12 +58,6 @@ pub fn pair_secrets(db: &Db) -> Result<Vec<(PublicKey, [u8; 32])>> {
 /// `cutoff`.
 pub fn disclosures_since(db: &Db, cutoff: i64) -> Result<u32> {
     db.read(|tx| pairing::disclosures_since(tx, cutoff))
-}
-
-/// The accepted events and their bytes from `pubkey` at or after `cutoff`,
-/// which the rolling 24 h quota sums.
-pub fn spending_since(db: &Db, pubkey: &PublicKey, cutoff: i64) -> Result<(u32, u64)> {
-    db.read(|tx| spending::since(tx, pubkey, cutoff))
 }
 
 // ============================================================================

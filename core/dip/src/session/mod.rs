@@ -22,6 +22,7 @@ use crate::clock;
 use crate::db::Db;
 use crate::link::{LinkId, Role};
 use crate::model::{Blob, DISCLOSURE_WINDOW_SECONDS, Policy, Standing};
+use crate::spending::SpendingLedger;
 use crate::sync::blob::{BLOB_GROUP_BYTES, BlobFetch};
 use crate::sync::client::Used;
 use crate::sync::relay;
@@ -157,6 +158,8 @@ pub struct Session {
     client: crate::sync::client::Client,
     /// Where blob bytes go, provided by the shell.
     blobs: Arc<dyn BlobStore>,
+    /// The shared rolling spending ledger, metered across sessions.
+    spending: Arc<SpendingLedger>,
     /// The blob this session is fetching, if one is in flight.
     blob_fetch: Option<BlobFetch>,
     /// The battery level in percent, as the shell last reported it.
@@ -177,6 +180,7 @@ impl Session {
         policy: Arc<Policy>,
         identity: SecretKey,
         blobs: Arc<dyn BlobStore>,
+        spending: Arc<SpendingLedger>,
     ) -> Result<Self> {
         Ok(Self {
             link,
@@ -203,6 +207,7 @@ impl Session {
             subscriptions: BTreeMap::new(),
             client: crate::sync::client::Client::default(),
             blobs,
+            spending,
             blob_fetch: None,
             battery: None,
             l2cap_requested: false,
@@ -418,6 +423,10 @@ impl Session {
     }
 
     /// Handle one frame on the sync channel.
+    ///
+    /// `&*self.spending` is the one way to name the ledger's reference through
+    /// its `Arc`; clippy's auto-deref suggestion does not typecheck there.
+    #[allow(clippy::explicit_auto_deref)]
     pub fn handle_sync(&mut self, db: &Db, frame: &Frame) -> Result<()> {
         let message = Message::decode(&frame.payload)
             .context("the sync channel carried a malformed message")?;
@@ -460,7 +469,10 @@ impl Session {
         }
 
         let replies = crate::sync::client::handle(
-            db,
+            &crate::sync::Ctx {
+                db,
+                spending: &*self.spending,
+            },
             &peer,
             message,
             quota,
@@ -757,11 +769,15 @@ impl Session {
     }
 
     /// Try the relay half. Returns `true` when the message was consumed.
+    #[allow(clippy::explicit_auto_deref)]
     fn try_relay(&mut self, db: &Db, peer: &Peer, message: &Message, quota: Quota) -> Result<bool> {
         match message {
             Message::Req(..) | Message::Close(..) | Message::NegOpen(..) | Message::Publish(..) => {
                 let replies = relay::handle(
-                    db,
+                    &crate::sync::Ctx {
+                        db,
+                        spending: &*self.spending,
+                    },
                     peer,
                     &self.identity,
                     message.clone(),
@@ -786,7 +802,10 @@ impl Session {
             }
             Message::NegMsg(..) => {
                 let replies = relay::handle(
-                    db,
+                    &crate::sync::Ctx {
+                        db,
+                        spending: &*self.spending,
+                    },
                     peer,
                     &self.identity,
                     message.clone(),
@@ -1263,6 +1282,10 @@ mod tests {
         Arc::new(crate::blobstore::MemoryBlobStore::default())
     }
 
+    fn spending() -> Arc<SpendingLedger> {
+        Arc::new(SpendingLedger::default())
+    }
+
     fn session(policy: Policy) -> Session {
         Session::open(
             LinkId(1),
@@ -1271,6 +1294,7 @@ mod tests {
             Arc::new(policy),
             identity(),
             blobs(),
+            spending(),
         )
         .unwrap()
     }
@@ -1529,6 +1553,7 @@ mod tests {
             Arc::new(policy()),
             secret(1),
             store.clone(),
+            spending(),
         )
         .unwrap();
         session.state = State::Syncing;
@@ -1570,6 +1595,7 @@ mod tests {
             Arc::new(policy()),
             secret(1),
             store.clone(),
+            spending(),
         )
         .unwrap();
         session.state = State::Syncing;
@@ -1691,6 +1717,7 @@ mod tests {
             Arc::new(policy()),
             secret(1),
             blobs(),
+            spending(),
         )
         .unwrap();
         let mut receiver = Session::open(
@@ -1700,6 +1727,7 @@ mod tests {
             Arc::new(policy()),
             secret(2),
             blobs(),
+            spending(),
         )
         .unwrap();
 
@@ -1776,6 +1804,7 @@ mod tests {
             Arc::new(policy()),
             secret(key),
             blobs(),
+            spending(),
         )
         .unwrap()
     }
@@ -1790,6 +1819,7 @@ mod tests {
             Arc::new(policy()),
             secret(1),
             blobs(),
+            spending(),
         )
         .unwrap();
         let mut receiver = Session::open(
@@ -1799,6 +1829,7 @@ mod tests {
             Arc::new(policy()),
             secret(2),
             blobs(),
+            spending(),
         )
         .unwrap();
 

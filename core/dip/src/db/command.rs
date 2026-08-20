@@ -17,7 +17,6 @@ use crate::db::event::query as event_query;
 use crate::db::pairing::command as pairing;
 use crate::db::pref::command as pref;
 use crate::db::recipient_signature::command as signature;
-use crate::db::spending::command as spending;
 use crate::db::sql::hex_key;
 use crate::model::{Blob, BlobRole, RecipientSignature};
 
@@ -47,12 +46,6 @@ pub fn receive_event(
 
         if stored {
             record_media(tx, event, event.id)?;
-
-            // A newly stored event counts against the peer's rolling budget,
-            // keyed by its primary pubkey, in the same transaction.
-            if let Some(pubkey) = seen_from.first() {
-                spending::record(tx, pubkey, seen_at, serialized_size(event))?;
-            }
         }
 
         if let Some(sig) = author_signature
@@ -71,11 +64,6 @@ pub fn receive_event(
 
         Ok(stored)
     })
-}
-
-/// The bytes an event occupies on the wire, which is what the budget counts.
-fn serialized_size(event: &HashedEvent) -> usize {
-    serde_json::to_vec(event).map_or(0, |encoded| encoded.len())
 }
 
 /// Store an event this device wrote. Returns whether it was new.

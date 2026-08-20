@@ -172,13 +172,3 @@ CREATE TABLE disclosure (
     pubkey       TEXT PRIMARY KEY,
     disclosed_at INTEGER NOT NULL
 ) STRICT;
-
--- Rolling quotas: one row per event accepted from a peer, so the 24 h budget
--- is a sum over recent rows rather than a counter that outlives its session.
-CREATE TABLE spending (
-    pubkey TEXT NOT NULL,
-    at      INTEGER NOT NULL,
-    bytes   INTEGER NOT NULL
-) STRICT;
-
-CREATE INDEX spending_pubkey ON spending (pubkey, at);

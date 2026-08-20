@@ -280,6 +280,8 @@ pub struct Node {
     link_peripheral: BTreeMap<LinkId, PeripheralId>,
     /// Decides which advertised peers to dial, and when.
     scheduler: Scheduler,
+    /// The shared rolling spending ledger, metered across sessions.
+    spending: Arc<crate::spending::SpendingLedger>,
     /// When the app was last foregrounded, for the cool-off admission window.
     cool_off_since: Option<i64>,
     /// This store's event channel, so a stored own event is offered to every
@@ -303,6 +305,7 @@ impl Node {
             sessions: BTreeMap::new(),
             link_peripheral: BTreeMap::new(),
             scheduler: Scheduler::default(),
+            spending: Arc::new(crate::spending::SpendingLedger::default()),
             cool_off_since: None,
         })
     }
@@ -371,6 +374,7 @@ impl Node {
             Arc::clone(&self.policy),
             self.identity.clone(),
             Arc::clone(&self.blobs),
+            Arc::clone(&self.spending),
         )?;
         session.set_cool_off_since(self.cool_off_since);
 
@@ -659,6 +663,10 @@ mod tests {
         .unwrap()
     }
 
+    fn spending() -> Arc<crate::spending::SpendingLedger> {
+        Arc::new(crate::spending::SpendingLedger::default())
+    }
+
     fn db() -> Arc<Db> {
         Arc::new(Db::open_in_memory().unwrap())
     }
@@ -799,6 +807,7 @@ mod tests {
                     Arc::clone(&policy),
                     SecretKey::generate(),
                     Arc::new(crate::blobstore::MemoryBlobStore::default()),
+                    spending(),
                 )
                 .unwrap(),
             );
@@ -848,6 +857,7 @@ mod tests {
             policy,
             secret(2),
             Arc::new(crate::blobstore::MemoryBlobStore::default()),
+            spending(),
         )
         .unwrap();
         session.identify([author(2)]);
@@ -908,6 +918,7 @@ mod tests {
                 policy,
                 SecretKey::generate(),
                 Arc::new(crate::blobstore::MemoryBlobStore::default()),
+                spending(),
             )
             .unwrap(),
         );

@@ -18,7 +18,7 @@ use crate::db::query as db_query;
 use crate::model::{AuthorshipClaim, AuthorshipProof, RecipientSignature};
 use crate::session::Peer;
 use crate::sync::relay;
-use crate::sync::{Message, Quota, ROLLING_WINDOW_SECONDS, SubscriptionId};
+use crate::sync::{Message, Quota, SubscriptionId};
 
 /// The largest event the store accepts, whatever the peer's standing.
 /// `docs/sync.md#quotas` names the cap; this is its value.
@@ -60,7 +60,7 @@ impl Used {
 }
 
 /// An event's count against the byte budget.
-fn event_size(event: &HashedEvent) -> usize {
+pub(crate) fn event_size(event: &HashedEvent) -> usize {
     serde_json::to_vec(event).map_or(0, |encoded| encoded.len())
 }
 
@@ -197,16 +197,19 @@ pub struct Client {
 
 /// Handle a message this device's client half received.
 pub fn handle(
-    db: &Db,
+    ctx: &crate::sync::Ctx<'_>,
     peer: &Peer,
     message: Message,
     quota: Quota,
     used: &mut Used,
     client: &mut Client,
 ) -> Result<Vec<Message>> {
+    let db = ctx.db;
+    let spending = ctx.spending;
+
     // The quota is tested against the session and the rolling window together,
     // so a reconnect cannot refill what a drive-by already spent.
-    let (events, bytes) = total_usage(db, peer, *used)?;
+    let (events, bytes) = total_usage(spending, peer, *used);
 
     match message {
         Message::Event(subscription, event) => {
@@ -218,12 +221,14 @@ pub fn handle(
                 if admits(peer, &event, Some(proof), quota, events, bytes).is_ok() {
                     ingest(db, peer, &event, Some(proof))?;
                     used.record(&event);
+                    accept(spending, peer, &event);
                 }
             } else if peer.authored(event.as_ref()) {
                 // First hop: the authenticated session is the proof.
                 if admits(peer, &event, None, quota, events, bytes).is_ok() {
                     ingest(db, peer, &event, None)?;
                     used.record(&event);
+                    accept(spending, peer, &event);
                 }
             } else {
                 // Forwarded without its proof yet; hold it until one arrives.
@@ -250,6 +255,7 @@ pub fn handle(
                     if admits(peer, &event, Some(&proof), quota, events, bytes).is_ok() {
                         ingest(db, peer, &event, Some(&proof))?;
                         used.record(&event);
+                        accept(spending, peer, &event);
                     }
                 }
                 None => {
@@ -377,15 +383,25 @@ pub fn admits(
 
 /// The events and bytes this device has accepted from the peer, across the
 /// session and the rolling window, ready to test against its quota.
-pub fn total_usage(db: &Db, peer: &Peer, used: Used) -> Result<(u32, u64)> {
+pub fn total_usage(
+    spending: &crate::spending::SpendingLedger,
+    peer: &Peer,
+    used: Used,
+) -> (u32, u64) {
     let Some(pubkey) = peer.pubkeys().next().copied() else {
-        return Ok((used.events, used.bytes));
+        return (used.events, used.bytes);
     };
 
-    let (rolling_events, rolling_bytes) =
-        db_query::spending_since(db, &pubkey, clock::now() - ROLLING_WINDOW_SECONDS)?;
+    let (rolling_events, rolling_bytes) = spending.since(&pubkey);
 
-    Ok((used.events + rolling_events, used.bytes + rolling_bytes))
+    (used.events + rolling_events, used.bytes + rolling_bytes)
+}
+
+/// Count a newly accepted event against the peer's rolling window.
+fn accept(spending: &crate::spending::SpendingLedger, peer: &Peer, event: &HashedEvent) {
+    if let Some(pubkey) = peer.pubkeys().next().copied() {
+        spending.record(&pubkey, event_size(event));
+    }
 }
 
 /// Take in an event a peer offered, once [`admits`] has passed it.
@@ -450,6 +466,10 @@ mod tests {
         let peer = peer([author(2)]);
 
         Negotiation::begin(db, &peer, filter)
+    }
+
+    fn spending() -> crate::spending::SpendingLedger {
+        crate::spending::SpendingLedger::default()
     }
 
     #[test]
@@ -523,54 +543,53 @@ mod tests {
 
     #[test]
     fn the_rolling_window_counts_across_sessions() {
-        let db = Db::open_in_memory().unwrap();
-        let recent = note_from(2, 200);
-        let stale = note_from(2, 100);
+        let spending = crate::spending::SpendingLedger::default();
 
-        // One event admitted now, one just outside the 24 h window.
-        command::receive_event(&db, &recent, &[author(2)], None, &us(), clock::now()).unwrap();
-        command::receive_event(
-            &db,
-            &stale,
-            &[author(2)],
-            None,
-            &us(),
-            clock::now() - ROLLING_WINDOW_SECONDS - 1,
-        )
-        .unwrap();
+        // One event admitted now, one just inside the window.
+        clock::at(1_000, || {
+            spending.record(&author(2), 10);
+        });
+        clock::at(2_000, || {
+            spending.record(&author(2), 20);
 
-        let (events, bytes) = total_usage(&db, &peer([author(2)]), Used::default()).unwrap();
-        assert_eq!(events, 1, "the stale event fell out of the window");
-        assert!(bytes > 0);
+            // Both are inside the window at one instant past the first.
+            let (events, _) = total_usage(&spending, &peer([author(2)]), Used::default());
+            assert_eq!(events, 2);
+        });
+
+        // …and the first has fallen out just past the window.
+        clock::at(1_000 + crate::spending::WINDOW_SECONDS + 1, || {
+            let (events, bytes) = total_usage(&spending, &peer([author(2)]), Used::default());
+            assert_eq!(events, 1, "the stale event fell out of the window");
+            assert!(bytes > 0);
+        });
     }
 
     #[test]
     fn a_reconnect_cannot_refill_a_spent_budget() {
-        let db = Db::open_in_memory().unwrap();
+        let spending = crate::spending::SpendingLedger::default();
 
-        // A past session already spent the stranger budget in the window.
-        db.write(|tx| {
+        clock::at(1_000, || {
+            // A past session already spent the stranger budget in the window.
             for _ in 0..Quota::STRANGER.events {
-                crate::db::spending::command::record(tx, &author(2), clock::now(), 1)?;
+                spending.record(&author(2), 1);
             }
-            Ok(())
-        })
-        .unwrap();
 
-        let (events, bytes) = total_usage(&db, &peer([author(2)]), Used::default()).unwrap();
+            let (events, bytes) = total_usage(&spending, &peer([author(2)]), Used::default());
 
-        // A fresh session sees the same spent budget and is over quota.
-        assert_eq!(
-            admits(
-                &peer([author(2)]),
-                &note_from(2, 200),
-                None,
-                Quota::STRANGER,
-                events,
-                bytes,
-            ),
-            Err(Rejected::OverQuota)
-        );
+            // A fresh session sees the same spent budget and is over quota.
+            assert_eq!(
+                admits(
+                    &peer([author(2)]),
+                    &note_from(2, 200),
+                    None,
+                    Quota::STRANGER,
+                    events,
+                    bytes,
+                ),
+                Err(Rejected::OverQuota)
+            );
+        });
     }
 
     #[test]
@@ -707,7 +726,10 @@ mod tests {
 
         // One of the two arrives.
         let replies = handle(
-            &db,
+            &crate::sync::Ctx {
+                db: &db,
+                spending: &spending(),
+            },
             &peer([author(2)]),
             Message::Event(subscription.clone(), Box::new(first.clone())),
             Quota::STRANGER,
@@ -719,7 +741,10 @@ mod tests {
 
         // EOSE with one still missing asks again for just that one.
         let replies = handle(
-            &db,
+            &crate::sync::Ctx {
+                db: &db,
+                spending: &spending(),
+            },
             &peer([author(2)]),
             Message::Eose(subscription.clone()),
             Quota::STRANGER,
@@ -754,7 +779,10 @@ mod tests {
 
         // EOSE arrives with nothing served: the peer does not hold the rest.
         let replies = handle(
-            &db,
+            &crate::sync::Ctx {
+                db: &db,
+                spending: &spending(),
+            },
             &peer([author(2)]),
             Message::Eose(subscription.clone()),
             Quota::STRANGER,
@@ -782,7 +810,10 @@ mod tests {
         )]));
 
         handle(
-            &db,
+            &crate::sync::Ctx {
+                db: &db,
+                spending: &spending(),
+            },
             &peer([author(2)]),
             Message::Event(subscription.clone(), Box::new(event.clone())),
             Quota::STRANGER,
@@ -792,7 +823,10 @@ mod tests {
         .unwrap();
 
         let replies = handle(
-            &db,
+            &crate::sync::Ctx {
+                db: &db,
+                spending: &spending(),
+            },
             &peer([author(2)]),
             Message::Eose(subscription.clone()),
             Quota::STRANGER,
@@ -820,7 +854,10 @@ mod tests {
 
         // The event arrives without a proof and is held.
         let replies = handle(
-            &db,
+            &crate::sync::Ctx {
+                db: &db,
+                spending: &spending(),
+            },
             &peer([author(2)]),
             Message::Event(subscription.clone(), Box::new(forwarded.clone())),
             Quota::STRANGER,
@@ -843,7 +880,10 @@ mod tests {
         let proof = AuthorshipProof::prove(&signature, us()).unwrap();
 
         handle(
-            &db,
+            &crate::sync::Ctx {
+                db: &db,
+                spending: &spending(),
+            },
             &peer([author(2)]),
             Message::AuthorshipProof(subscription, forwarded.id, Box::new(proof.to_bytes())),
             Quota::STRANGER,
@@ -866,7 +906,10 @@ mod tests {
         let mut client = Client::default();
 
         handle(
-            &db,
+            &crate::sync::Ctx {
+                db: &db,
+                spending: &spending(),
+            },
             &peer([author(2)]),
             Message::Event(SubscriptionId("sub".into()), Box::new(forwarded)),
             Quota::STRANGER,
@@ -892,7 +935,10 @@ mod tests {
         let signature = RecipientSignature::sign(&secret(2), event.id, us());
 
         handle(
-            &db,
+            &crate::sync::Ctx {
+                db: &db,
+                spending: &spending(),
+            },
             &peer([author(2)]),
             Message::RecipientSignature(
                 SubscriptionId("sub".into()),

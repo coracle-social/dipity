@@ -19,9 +19,16 @@ pub mod relay;
 
 pub use message::{Message, SubscriptionId};
 
-/// The rolling window the quota counts a peer's accepted events over, in
-/// seconds. `docs/sync.md#quotas`.
-pub const ROLLING_WINDOW_SECONDS: i64 = 24 * 60 * 60;
+use crate::db::Db;
+
+/// The app-wide dependencies a sync half needs, bundled so a handler stays
+/// under the argument limit: the store and the rolling spending ledger.
+pub struct Ctx<'a> {
+    /// The store events are read from and written to.
+    pub db: &'a Db,
+    /// The rolling spending ledger, metered across sessions.
+    pub spending: &'a crate::spending::SpendingLedger,
+}
 
 /// Per-peer ceilings on what a session may write to this device.
 ///

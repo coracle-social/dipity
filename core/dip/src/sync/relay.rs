@@ -30,7 +30,7 @@ const NEG_FRAME_BYTES: usize = 4 * 1024;
 
 /// Handle a message this device's relay half received.
 pub fn handle(
-    db: &Db,
+    ctx: &crate::sync::Ctx<'_>,
     peer: &Peer,
     identity: &SecretKey,
     message: Message,
@@ -38,14 +38,23 @@ pub fn handle(
     used: &mut Used,
     subscriptions: &mut BTreeMap<SubscriptionId, Vec<Filter>>,
 ) -> Result<Vec<Message>> {
+    let db = ctx.db;
+    let spending = ctx.spending;
+
     match message {
         Message::Publish(event) => {
-            let (events, bytes) = client::total_usage(db, peer, *used)?;
+            let (events, bytes) = client::total_usage(spending, peer, *used);
 
             match client::admits(peer, &event, None, quota, events, bytes) {
                 Ok(()) => {
                     client::ingest(db, peer, &event, None)?;
                     used.record(&event);
+
+                    // A publish counts against the rolling window like any
+                    // other accepted event.
+                    if let Some(pubkey) = peer.pubkeys().next().copied() {
+                        spending.record(&pubkey, client::event_size(&event));
+                    }
 
                     Ok(vec![Message::Ok(event.id.to_hex(), true, "stored".into())])
                 }
@@ -263,6 +272,10 @@ mod tests {
         Peer::bind(LinkId(1), [author(2)], &Policy::new(us()))
     }
 
+    fn spending() -> crate::spending::SpendingLedger {
+        crate::spending::SpendingLedger::default()
+    }
+
     fn given(db: &Db, author: PublicKey, at: i64, content: &str) -> HashedEvent {
         let event = note(author, at, content, Tags::new());
 
@@ -276,7 +289,10 @@ mod tests {
         let event = note(author(2), 100, "published", Tags::new());
 
         let replies = handle(
-            &db,
+            &crate::sync::Ctx {
+                db: &db,
+                spending: &spending(),
+            },
             &peer(),
             &secret(1),
             Message::Publish(Box::new(event.clone())),
@@ -303,7 +319,10 @@ mod tests {
         let event = note(author(4), 100, "sneaky", Tags::new());
 
         let replies = handle(
-            &db,
+            &crate::sync::Ctx {
+                db: &db,
+                spending: &spending(),
+            },
             &peer(),
             &secret(1),
             Message::Publish(Box::new(event.clone())),
@@ -333,7 +352,10 @@ mod tests {
         let event = note(author(2), 100, "blocked", Tags::new());
 
         let replies = handle(
-            &db,
+            &crate::sync::Ctx {
+                db: &db,
+                spending: &spending(),
+            },
             &peer,
             &secret(1),
             Message::Publish(Box::new(event)),
@@ -359,7 +381,10 @@ mod tests {
         let stored = given(&db, author(1), 100, "one");
 
         let replies = handle(
-            &db,
+            &crate::sync::Ctx {
+                db: &db,
+                spending: &spending(),
+            },
             &peer(),
             &secret(1),
             Message::Req(
@@ -439,7 +464,10 @@ mod tests {
         let mut subscriptions = BTreeMap::new();
 
         handle(
-            &db,
+            &crate::sync::Ctx {
+                db: &db,
+                spending: &spending(),
+            },
             &peer(),
             &secret(1),
             Message::Req(
@@ -459,7 +487,10 @@ mod tests {
 
         // A REQ with the same id replaces the filters, per NIP-01.
         handle(
-            &db,
+            &crate::sync::Ctx {
+                db: &db,
+                spending: &spending(),
+            },
             &peer(),
             &secret(1),
             Message::Req(
@@ -486,7 +517,10 @@ mod tests {
             BTreeMap::from([(SubscriptionId("sub".into()), vec![Filter::new()])]);
 
         handle(
-            &db,
+            &crate::sync::Ctx {
+                db: &db,
+                spending: &spending(),
+            },
             &peer(),
             &secret(1),
             Message::Close(SubscriptionId("sub".into())),
@@ -524,7 +558,10 @@ mod tests {
         // Bob's relay half answers the opening.
         let mut subscriptions = BTreeMap::new();
         let replies = handle(
-            &server,
+            &crate::sync::Ctx {
+                db: &server,
+                spending: &spending(),
+            },
             &server_peer,
             &secret(2),
             Message::NegOpen(subscription.clone(), filter.clone(), frame),
