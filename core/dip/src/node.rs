@@ -27,13 +27,14 @@
 //! ```
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::SecretKey;
-use std::sync::Arc;
 use tokio::sync::broadcast::{self, error::TryRecvError};
 
+use crate::blobstore::BlobStore;
 use crate::clock;
 use crate::db::command as db_command;
 use crate::db::event::channel::{self, EventChange};
@@ -172,6 +173,10 @@ pub struct Node {
     identity: SecretKey,
     /// The user's policy
     policy: Arc<Policy>,
+    /// Where blob bytes go, provided by the shell.
+    blobs: Arc<dyn BlobStore>,
+    /// The battery level, percent, as the shell last reported it.
+    battery: Option<u8>,
     /// Live sessions, keyed on link
     sessions: BTreeMap<LinkId, Session>,
     /// Decides which advertised peers to dial, and when.
@@ -185,8 +190,8 @@ pub struct Node {
 
 impl Node {
     /// Build a node over a store the shell has opened and a key it has read out
-    /// of the Keychain or Keystore.
-    pub fn new(db: Arc<Db>, identity: SecretKey) -> Result<Self> {
+    /// of the Keychain or Keystore. Blob bytes go through `blobs`.
+    pub fn new(db: Arc<Db>, identity: SecretKey, blobs: Arc<dyn BlobStore>) -> Result<Self> {
         let policy = Arc::new(query::policy(&db, &identity.public_key())?);
 
         Ok(Self {
@@ -194,6 +199,8 @@ impl Node {
             db,
             identity,
             policy,
+            blobs,
+            battery: None,
             sessions: BTreeMap::new(),
             scheduler: Scheduler::default(),
             cool_off_since: None,
@@ -247,6 +254,7 @@ impl Node {
             mtu,
             Arc::clone(&self.policy),
             self.identity.clone(),
+            Arc::clone(&self.blobs),
         )?;
         session.set_cool_off_since(self.cool_off_since);
 
@@ -342,6 +350,18 @@ impl Node {
     // The view, through the shell
     // ========================================================================
 
+    /// The battery level, percent, as the shell reports it. Blob transfers are
+    /// gated on it.
+    pub fn battery(&mut self, level: u8) -> Vec<Action> {
+        self.battery = Some(level);
+
+        for session in self.sessions.values_mut() {
+            session.set_battery(Some(level));
+        }
+
+        self.collect()
+    }
+
     /// The app came to the foreground, which starts the cool-off admission
     /// window for unknown peers.
     pub fn notify_foregrounded(&mut self) -> Vec<Action> {
@@ -421,6 +441,13 @@ impl Node {
             }
         }
 
+        // A blob transfer is the opening that justifies a bulk channel.
+        for session in self.sessions.values_mut() {
+            if session.take_l2cap_request() {
+                actions.push(Action::OpenL2cap(session.link));
+            }
+        }
+
         for session in self.sessions.values_mut() {
             while let Some(fragment) = session.next_write() {
                 actions.push(Action::Send(session.link, fragment));
@@ -493,7 +520,12 @@ mod tests {
     use coracle_lib::filters::Filter;
 
     fn node() -> Node {
-        Node::new(db(), SecretKey::generate()).unwrap()
+        Node::new(
+            db(),
+            SecretKey::generate(),
+            Arc::new(crate::blobstore::MemoryBlobStore::default()),
+        )
+        .unwrap()
     }
 
     fn db() -> Arc<Db> {
@@ -586,6 +618,7 @@ mod tests {
                     100,
                     Arc::clone(&policy),
                     SecretKey::generate(),
+                    Arc::new(crate::blobstore::MemoryBlobStore::default()),
                 )
                 .unwrap(),
             );
@@ -599,7 +632,12 @@ mod tests {
     #[test]
     fn publish_stores_and_offers_via_the_channel() {
         let db = db();
-        let mut node = Node::new(Arc::clone(&db), secret(1)).unwrap();
+        let mut node = Node::new(
+            Arc::clone(&db),
+            secret(1),
+            Arc::new(crate::blobstore::MemoryBlobStore::default()),
+        )
+        .unwrap();
         let event = note(author(1), 100, "hello", Tags::new());
 
         node.publish(&event).unwrap();
@@ -613,13 +651,25 @@ mod tests {
         let db = db();
         // Node 1 authors; a peer's session is attached to the same node (as in
         // a single device with a live link).
-        let mut node = Node::new(Arc::clone(&db), secret(1)).unwrap();
+        let mut node = Node::new(
+            Arc::clone(&db),
+            secret(1),
+            Arc::new(crate::blobstore::MemoryBlobStore::default()),
+        )
+        .unwrap();
         let event = note(author(1), 100, "hello", Tags::new());
 
         // A session that goes through the real REQ path.
         let policy = Arc::new(Policy::new(author(1)));
-        let mut session =
-            Session::open(LinkId(2), Role::Receiver, 4096, policy, secret(2)).unwrap();
+        let mut session = Session::open(
+            LinkId(2),
+            Role::Receiver,
+            4096,
+            policy,
+            secret(2),
+            Arc::new(crate::blobstore::MemoryBlobStore::default()),
+        )
+        .unwrap();
         session.identify([author(2)]);
 
         let req = Message::Req(
@@ -677,6 +727,7 @@ mod tests {
                 100,
                 policy,
                 SecretKey::generate(),
+                Arc::new(crate::blobstore::MemoryBlobStore::default()),
             )
             .unwrap(),
         );

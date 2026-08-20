@@ -66,6 +66,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod blobstore;
 pub mod clock;
 pub mod db;
 pub mod link;

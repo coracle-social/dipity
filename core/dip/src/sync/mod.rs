@@ -12,6 +12,7 @@
 //! [`Session`](crate::session::Session) and a [`Db`](crate::db::Db), the same
 //! shape as [`crate::db::query`] and [`crate::db::command`].
 
+pub mod blob;
 pub mod client;
 pub mod message;
 pub mod relay;

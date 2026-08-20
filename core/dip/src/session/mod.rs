@@ -17,10 +17,12 @@ use coracle_lib::filters::Filter;
 use coracle_lib::keys::{PublicKey, SecretKey};
 use coracle_lib::tags::Tags as NostrTags;
 
+use crate::blobstore::BlobStore;
 use crate::clock;
 use crate::db::Db;
 use crate::link::{LinkId, Role};
-use crate::model::{DISCLOSURE_WINDOW_SECONDS, Policy, Standing};
+use crate::model::{Blob, DISCLOSURE_WINDOW_SECONDS, Policy, Standing};
+use crate::sync::blob::{BLOB_GROUP_BYTES, BlobFetch};
 use crate::sync::client::Used;
 use crate::sync::relay;
 use crate::sync::{Message, Quota, SubscriptionId};
@@ -153,6 +155,14 @@ pub struct Session {
     /// The client half's state: negotiations, fetches, and the events awaiting
     /// their proofs.
     client: crate::sync::client::Client,
+    /// Where blob bytes go, provided by the shell.
+    blobs: Arc<dyn BlobStore>,
+    /// The blob this session is fetching, if one is in flight.
+    blob_fetch: Option<BlobFetch>,
+    /// The battery level in percent, as the shell last reported it.
+    battery: Option<u8>,
+    /// Whether the shell has been asked to open L2CAP for this link.
+    l2cap_requested: bool,
     /// Whether the one reconciliation this session opens has already been
     /// opened.
     sync_started: bool,
@@ -166,6 +176,7 @@ impl Session {
         mtu: usize,
         policy: Arc<Policy>,
         identity: SecretKey,
+        blobs: Arc<dyn BlobStore>,
     ) -> Result<Self> {
         Ok(Self {
             link,
@@ -191,6 +202,10 @@ impl Session {
             used: Used::default(),
             subscriptions: BTreeMap::new(),
             client: crate::sync::client::Client::default(),
+            blobs,
+            blob_fetch: None,
+            battery: None,
+            l2cap_requested: false,
             sync_started: false,
         })
     }
@@ -423,6 +438,23 @@ impl Session {
 
         let quota = self.quota();
 
+        // Blobs answer and drive their own channel: a request is served from
+        // the store, a response advances whatever fetch it belongs to.
+        match &message {
+            Message::BlossomRequest(request) => {
+                let reply = crate::sync::blob::handle_request(db, &*self.blobs, &peer, request)?;
+
+                self.send_sync(&Message::BlossomResponse(Box::new(reply)))?;
+                return Ok(());
+            }
+            Message::BlossomResponse(response) => {
+                self.on_blossom_response(db, response.as_ref())?;
+                self.maybe_fetch_blob(db)?;
+                return Ok(());
+            }
+            _ => {}
+        }
+
         if self.try_relay(db, &peer, &message, quota)? {
             return Ok(());
         }
@@ -484,7 +516,8 @@ impl Session {
         self.sync_started = true;
 
         self.pair(db)?;
-        self.begin_negotiation(db, Filter::new())
+        self.begin_negotiation(db, Filter::new())?;
+        self.maybe_fetch_blob(db)
     }
 
     /// Store the pair secret derived from this session and record the
@@ -499,6 +532,170 @@ impl Session {
         let pubkeys: Vec<PublicKey> = peer.pubkeys().copied().collect();
 
         crate::db::command::pair_with(db, &pubkeys, &secret, clock::now())
+    }
+
+    /// Start the next blob fetch if none is in flight, probing it with a
+    /// `HEAD` before any bytes move.
+    fn maybe_fetch_blob(&mut self, db: &Db) -> Result<()> {
+        if self.state != State::Syncing || self.blob_fetch.is_some() {
+            return Ok(());
+        }
+
+        // Low battery skips the transfer; it is the one thing a fetch cannot
+        // be interrupted for on a phone.
+        if self
+            .battery
+            .is_some_and(|level| level < crate::sync::blob::BLOB_MIN_BATTERY)
+        {
+            return Ok(());
+        }
+
+        let Some(wanted) = crate::db::query::wanted_blobs(db, 1)?.into_iter().next() else {
+            return Ok(());
+        };
+
+        // Partial bytes from a dead transfer cannot be trusted without
+        // per-chunk verification, so a re-fetch starts clean.
+        if self.blobs.has(&wanted.sha256)? {
+            self.blobs.delete(&wanted.sha256)?;
+        }
+
+        let request_id = format!("blob-{}", &wanted.sha256[..16]);
+        let mut fetch = BlobFetch::begin(wanted.clone(), request_id);
+
+        self.send_blob_request(&fetch.blob, "HEAD", &fetch.request_id, &[])?;
+        fetch.probing = true;
+        self.blob_fetch = Some(fetch);
+
+        Ok(())
+    }
+
+    /// Advance the in-flight fetch on one `BLOSSOM-RES`.
+    fn on_blossom_response(
+        &mut self,
+        db: &Db,
+        response: &crate::sync::message::BlossomResponse,
+    ) -> Result<()> {
+        let mut fetch = match &self.blob_fetch {
+            Some(fetch) if fetch.request_id == response.id => fetch.clone(),
+            _ => return Ok(()),
+        };
+
+        if fetch.probing {
+            // The HEAD answers: either the length, or that the peer lacks it.
+            if response.status == 404 {
+                self.blob_fetch = None;
+                return Ok(());
+            }
+
+            let total = response
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                .and_then(|(_, value)| value.parse::<u64>().ok());
+
+            let Some(total) = total else {
+                self.blob_fetch = None;
+                return Ok(());
+            };
+
+            fetch.total = Some(total);
+            fetch.probing = false;
+
+            if fetch.stored >= total {
+                self.finish_blob(db, &fetch)?;
+                return Ok(());
+            }
+
+            self.ask_blob_group(&mut fetch)?;
+        } else if response.status == 206 {
+            // One group of verified bytes arrived.
+            self.blobs.append(&fetch.blob.sha256, &response.body)?;
+            fetch.stored += response.body.len() as u64;
+
+            crate::db::command::record_blob_progress(
+                db,
+                &fetch.blob.sha256,
+                fetch.stored as i64,
+                None,
+            )?;
+
+            if fetch.total.is_some_and(|total| fetch.stored >= total) {
+                self.finish_blob(db, &fetch)?;
+                return Ok(());
+            } else {
+                self.ask_blob_group(&mut fetch)?;
+            }
+        } else {
+            // Anything else ends this fetch.
+            self.blob_fetch = None;
+            return Ok(());
+        }
+
+        self.blob_fetch = Some(fetch);
+
+        Ok(())
+    }
+
+    /// Mark a fetch whole after verifying the assembled bytes.
+    fn finish_blob(&mut self, db: &Db, fetch: &BlobFetch) -> Result<()> {
+        if crate::sync::blob::verifies(&fetch.blob, &*self.blobs)? {
+            crate::db::command::complete_blob(
+                db,
+                &fetch.blob.sha256,
+                fetch.stored as i64,
+                clock::now(),
+            )?;
+        }
+
+        self.blob_fetch = None;
+
+        Ok(())
+    }
+
+    /// Ask for the next group of a probe-completed fetch. Marking the link for a
+    /// bulk channel: once bytes move, the setup round trip is worth it.
+    fn ask_blob_group(&mut self, fetch: &mut BlobFetch) -> Result<()> {
+        let start = fetch.stored;
+        let end = start + BLOB_GROUP_BYTES - 1;
+        let id = fetch.request_id.clone();
+
+        self.l2cap_requested = true;
+        self.send_blob_request(
+            &fetch.blob,
+            "GET",
+            &id,
+            &[("range".to_string(), format!("bytes={start}-{end}"))],
+        )
+    }
+
+    /// Whether the shell should be told to open L2CAP for this link, once.
+    pub fn take_l2cap_request(&mut self) -> bool {
+        std::mem::take(&mut self.l2cap_requested)
+    }
+
+    /// The battery level in percent, which gates blob transfers.
+    pub fn set_battery(&mut self, level: Option<u8>) {
+        self.battery = level;
+    }
+
+    /// Queue one Blossom request on the sync channel.
+    fn send_blob_request(
+        &mut self,
+        blob: &Blob,
+        method: &str,
+        id: &str,
+        headers: &[(String, String)],
+    ) -> Result<()> {
+        let request = crate::sync::message::BlossomRequest {
+            id: id.to_string(),
+            method: method.to_string(),
+            path: format!("/{}", blob.sha256),
+            headers: headers.to_vec(),
+            body: Vec::new(),
+        };
+
+        self.send_sync(&Message::BlossomRequest(Box::new(request)))
     }
 
     /// Offer a just-stored event to every subscription the peer has open, if the
@@ -1062,8 +1259,20 @@ mod tests {
         secret(1)
     }
 
+    fn blobs() -> Arc<crate::blobstore::MemoryBlobStore> {
+        Arc::new(crate::blobstore::MemoryBlobStore::default())
+    }
+
     fn session(policy: Policy) -> Session {
-        Session::open(LinkId(1), Role::Dialer, 64, Arc::new(policy), identity()).unwrap()
+        Session::open(
+            LinkId(1),
+            Role::Dialer,
+            64,
+            Arc::new(policy),
+            identity(),
+            blobs(),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1245,6 +1454,123 @@ mod tests {
     }
 
     #[test]
+    fn a_wanted_blob_is_driven_through_head_and_get() {
+        use crate::blobstore::MemoryBlobStore;
+        use crate::db::command as db_command;
+        use crate::sync::message::BlossomResponse;
+        use sha2::{Digest as _, Sha256};
+
+        let db = Db::open_in_memory().unwrap();
+        let store = Arc::new(MemoryBlobStore::default());
+        let mut session = Session::open(
+            LinkId(1),
+            Role::Dialer,
+            4096,
+            Arc::new(policy()),
+            secret(1),
+            store.clone(),
+        )
+        .unwrap();
+        session.state = State::Syncing;
+
+        // A stored event references a blob this device does not hold.
+        let bytes = b"the quick brown fox";
+        let hash = hex::encode(Sha256::digest(bytes));
+        let event = note(
+            author(1),
+            1,
+            "with a blob",
+            NostrTags::new().add(
+                "imeta",
+                [format!("x {hash}"), format!("size {}", bytes.len())],
+            ),
+        );
+        db_command::publish_event(&db, &event, &author(1), 1).unwrap();
+
+        // The fetch begins with a HEAD.
+        session.maybe_fetch_blob(&db).unwrap();
+        let head = session.next_write().unwrap();
+        session.acknowledge_write();
+        let Message::BlossomRequest(head_req) = Message::decode(&head[2..]).unwrap() else {
+            panic!("expected a HEAD request");
+        };
+        assert_eq!(head_req.method, "HEAD");
+
+        // The HEAD answers with the length, and a GET follows.
+        session
+            .on_blossom_response(
+                &db,
+                &BlossomResponse {
+                    id: head_req.id.clone(),
+                    status: 200,
+                    headers: vec![("content-length".into(), "19".into())],
+                    body: vec![],
+                },
+            )
+            .unwrap();
+
+        let get = session.next_write().unwrap();
+        session.acknowledge_write();
+        let Message::BlossomRequest(get_req) = Message::decode(&get[2..]).unwrap() else {
+            panic!("expected a GET request");
+        };
+        assert_eq!(get_req.method, "GET");
+
+        // The GET answers with the bytes, the whole blob now held and complete.
+        session
+            .on_blossom_response(
+                &db,
+                &BlossomResponse {
+                    id: get_req.id.clone(),
+                    status: 206,
+                    headers: vec![],
+                    body: bytes.to_vec(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(store.len(&hash).unwrap(), Some(19));
+        assert!(
+            crate::db::query::get_blob(&db, &hash)
+                .unwrap()
+                .unwrap()
+                .complete
+        );
+        assert!(session.blob_fetch.is_none());
+    }
+
+    #[test]
+    fn the_battery_floor_gates_blob_fetches() {
+        use crate::db::command as db_command;
+        use sha2::{Digest as _, Sha256};
+
+        let db = Db::open_in_memory().unwrap();
+        let mut session = session(policy());
+        session.state = State::Syncing;
+
+        let bytes = b"below the floor";
+        let hash = hex::encode(Sha256::digest(bytes));
+        let event = note(
+            author(1),
+            1,
+            "with a blob",
+            NostrTags::new().add("imeta", [format!("x {hash}")]),
+        );
+        db_command::publish_event(&db, &event, &author(1), 1).unwrap();
+
+        session.set_battery(Some(crate::sync::blob::BLOB_MIN_BATTERY - 1));
+        session.maybe_fetch_blob(&db).unwrap();
+        assert!(
+            session.next_write().is_none(),
+            "a low battery fetches nothing"
+        );
+
+        session.set_battery(Some(crate::sync::blob::BLOB_MIN_BATTERY));
+        session.maybe_fetch_blob(&db).unwrap();
+        assert!(session.next_write().is_some());
+    }
+
+    #[test]
     fn a_draining_session_takes_no_new_work() {
         let db = Db::open_in_memory().unwrap();
         let mut session = session(policy());
@@ -1311,14 +1637,22 @@ mod tests {
     #[test]
     fn a_full_handshake_moves_a_pair_to_secured() {
         // A big MTU so every handshake message is one fragment.
-        let mut dialer =
-            Session::open(LinkId(1), Role::Dialer, 4096, Arc::new(policy()), secret(1)).unwrap();
+        let mut dialer = Session::open(
+            LinkId(1),
+            Role::Dialer,
+            4096,
+            Arc::new(policy()),
+            secret(1),
+            blobs(),
+        )
+        .unwrap();
         let mut receiver = Session::open(
             LinkId(2),
             Role::Receiver,
             4096,
             Arc::new(policy()),
             secret(2),
+            blobs(),
         )
         .unwrap();
 
@@ -1388,20 +1722,36 @@ mod tests {
     }
 
     fn pair(mtu: usize, role: Role, key: u8) -> Session {
-        Session::open(LinkId(1), role, mtu, Arc::new(policy()), secret(key)).unwrap()
+        Session::open(
+            LinkId(1),
+            role,
+            mtu,
+            Arc::new(policy()),
+            secret(key),
+            blobs(),
+        )
+        .unwrap()
     }
 
     #[test]
     fn a_pair_reaches_syncing_through_mutual_auth() {
         let db = Db::open_in_memory().unwrap();
-        let mut dialer =
-            Session::open(LinkId(1), Role::Dialer, 4096, Arc::new(policy()), secret(1)).unwrap();
+        let mut dialer = Session::open(
+            LinkId(1),
+            Role::Dialer,
+            4096,
+            Arc::new(policy()),
+            secret(1),
+            blobs(),
+        )
+        .unwrap();
         let mut receiver = Session::open(
             LinkId(2),
             Role::Receiver,
             4096,
             Arc::new(policy()),
             secret(2),
+            blobs(),
         )
         .unwrap();
 
