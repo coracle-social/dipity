@@ -41,6 +41,7 @@ pub mod event;
 pub mod pairing;
 pub mod pref;
 pub mod recipient_signature;
+pub mod spending;
 
 pub(crate) mod channels;
 pub(crate) mod condition;

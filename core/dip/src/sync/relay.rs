@@ -39,19 +39,23 @@ pub fn handle(
     subscriptions: &mut BTreeMap<SubscriptionId, Vec<Filter>>,
 ) -> Result<Vec<Message>> {
     match message {
-        Message::Publish(event) => match client::admits(peer, &event, None, quota, *used) {
-            Ok(()) => {
-                client::ingest(db, peer, &event, None)?;
-                used.record(&event);
+        Message::Publish(event) => {
+            let (events, bytes) = client::total_usage(db, peer, *used)?;
 
-                Ok(vec![Message::Ok(event.id.to_hex(), true, "stored".into())])
+            match client::admits(peer, &event, None, quota, events, bytes) {
+                Ok(()) => {
+                    client::ingest(db, peer, &event, None)?;
+                    used.record(&event);
+
+                    Ok(vec![Message::Ok(event.id.to_hex(), true, "stored".into())])
+                }
+                Err(rejected) => Ok(vec![Message::Ok(
+                    event.id.to_hex(),
+                    false,
+                    reason(rejected).into(),
+                )]),
             }
-            Err(rejected) => Ok(vec![Message::Ok(
-                event.id.to_hex(),
-                false,
-                reason(rejected).into(),
-            )]),
-        },
+        }
         Message::Req(subscription, filters) => {
             // Registration is what the live-push path reads: NIP-01 replaces
             // the filters when the same id is REQ'd again, and CLOSE drops it.

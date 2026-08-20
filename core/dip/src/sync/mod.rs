@@ -18,6 +18,10 @@ pub mod relay;
 
 pub use message::{Message, SubscriptionId};
 
+/// The rolling window the quota counts a peer's accepted events over, in
+/// seconds. `docs/sync.md#quotas`.
+pub const ROLLING_WINDOW_SECONDS: i64 = 24 * 60 * 60;
+
 /// Per-peer ceilings on what a session may write to this device.
 ///
 /// Accepting gossip is an unbounded write from whoever is standing nearby, so

@@ -34,6 +34,10 @@ const MIGRATIONS: &[Migration] = &[
         name: "0002_pairing",
         sql: include_str!("../../migrations/0002_pairing.sql"),
     },
+    Migration {
+        name: "0003_spending",
+        sql: include_str!("../../migrations/0003_spending.sql"),
+    },
 ];
 
 /// The database file's name inside the directory the shell provides.

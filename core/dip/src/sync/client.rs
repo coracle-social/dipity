@@ -18,7 +18,7 @@ use crate::db::query as db_query;
 use crate::model::{AuthorshipClaim, AuthorshipProof, RecipientSignature};
 use crate::session::Peer;
 use crate::sync::relay;
-use crate::sync::{Message, Quota, SubscriptionId};
+use crate::sync::{Message, Quota, ROLLING_WINDOW_SECONDS, SubscriptionId};
 
 /// The largest event the store accepts, whatever the peer's standing.
 /// `docs/sync.md#quotas` names the cap; this is its value.
@@ -204,6 +204,10 @@ pub fn handle(
     used: &mut Used,
     client: &mut Client,
 ) -> Result<Vec<Message>> {
+    // The quota is tested against the session and the rolling window together,
+    // so a reconnect cannot refill what a drive-by already spent.
+    let (events, bytes) = total_usage(db, peer, *used)?;
+
     match message {
         Message::Event(subscription, event) => {
             let id = event.id;
@@ -211,13 +215,13 @@ pub fn handle(
 
             if let Some(proof) = &proof {
                 // Second hop: the proof authorizes the forwarded event.
-                if admits(peer, &event, Some(proof), quota, *used).is_ok() {
+                if admits(peer, &event, Some(proof), quota, events, bytes).is_ok() {
                     ingest(db, peer, &event, Some(proof))?;
                     used.record(&event);
                 }
             } else if peer.authored(event.as_ref()) {
                 // First hop: the authenticated session is the proof.
-                if admits(peer, &event, None, quota, *used).is_ok() {
+                if admits(peer, &event, None, quota, events, bytes).is_ok() {
                     ingest(db, peer, &event, None)?;
                     used.record(&event);
                 }
@@ -243,7 +247,7 @@ pub fn handle(
 
             match client.pending_events.remove(&event_id) {
                 Some(event) => {
-                    if admits(peer, &event, Some(&proof), quota, *used).is_ok() {
+                    if admits(peer, &event, Some(&proof), quota, events, bytes).is_ok() {
                         ingest(db, peer, &event, Some(&proof))?;
                         used.record(&event);
                     }
@@ -345,7 +349,8 @@ pub fn admits(
     event: &HashedEvent,
     proof: Option<&AuthorshipProof>,
     quota: Quota,
-    used: Used,
+    events: u32,
+    bytes: u64,
 ) -> Result<(), Rejected> {
     if peer.is_blocked() {
         return Err(Rejected::Unauthorized);
@@ -359,7 +364,7 @@ pub fn admits(
         return Err(Rejected::TooLarge);
     }
 
-    if used.events >= quota.events || used.bytes + event_size(event) as u64 > quota.bytes {
+    if events >= quota.events || bytes + event_size(event) as u64 > quota.bytes {
         return Err(Rejected::OverQuota);
     }
 
@@ -368,6 +373,19 @@ pub fn admits(
     }
 
     Ok(())
+}
+
+/// The events and bytes this device has accepted from the peer, across the
+/// session and the rolling window, ready to test against its quota.
+pub fn total_usage(db: &Db, peer: &Peer, used: Used) -> Result<(u32, u64)> {
+    let Some(pubkey) = peer.pubkeys().next().copied() else {
+        return Ok((used.events, used.bytes));
+    };
+
+    let (rolling_events, rolling_bytes) =
+        db_query::spending_since(db, &pubkey, clock::now() - ROLLING_WINDOW_SECONDS)?;
+
+    Ok((used.events + rolling_events, used.bytes + rolling_bytes))
 }
 
 /// Take in an event a peer offered, once [`admits`] has passed it.
@@ -439,10 +457,7 @@ mod tests {
         let event = note_from(2, 100);
         let peer = peer([author(2)]);
 
-        assert_eq!(
-            admits(&peer, &event, None, Quota::STRANGER, Used::default()),
-            Ok(())
-        );
+        assert_eq!(admits(&peer, &event, None, Quota::STRANGER, 0, 0), Ok(()));
     }
 
     #[test]
@@ -451,7 +466,7 @@ mod tests {
         let peer = peer([author(2)]);
 
         assert_eq!(
-            admits(&peer, &event, None, Quota::STRANGER, Used::default()),
+            admits(&peer, &event, None, Quota::STRANGER, 0, 0),
             Err(Rejected::Unauthorized)
         );
     }
@@ -465,7 +480,7 @@ mod tests {
         let event = note_from(2, 100);
 
         assert_eq!(
-            admits(&peer, &event, None, Quota::STRANGER, Used::default()),
+            admits(&peer, &event, None, Quota::STRANGER, 0, 0),
             Err(Rejected::Unauthorized)
         );
     }
@@ -479,7 +494,7 @@ mod tests {
         let event = note_from(2, 100);
 
         assert_eq!(
-            admits(&peer, &event, None, Quota::STRANGER, Used::default()),
+            admits(&peer, &event, None, Quota::STRANGER, 0, 0),
             Err(Rejected::OutOfScope)
         );
     }
@@ -494,7 +509,66 @@ mod tests {
         };
 
         assert_eq!(
-            admits(&peer, &event, None, Quota::STRANGER, full),
+            admits(
+                &peer,
+                &event,
+                None,
+                Quota::STRANGER,
+                full.events,
+                full.bytes
+            ),
+            Err(Rejected::OverQuota)
+        );
+    }
+
+    #[test]
+    fn the_rolling_window_counts_across_sessions() {
+        let db = Db::open_in_memory().unwrap();
+        let recent = note_from(2, 200);
+        let stale = note_from(2, 100);
+
+        // One event admitted now, one just outside the 24 h window.
+        command::receive_event(&db, &recent, &[author(2)], None, &us(), clock::now()).unwrap();
+        command::receive_event(
+            &db,
+            &stale,
+            &[author(2)],
+            None,
+            &us(),
+            clock::now() - ROLLING_WINDOW_SECONDS - 1,
+        )
+        .unwrap();
+
+        let (events, bytes) = total_usage(&db, &peer([author(2)]), Used::default()).unwrap();
+        assert_eq!(events, 1, "the stale event fell out of the window");
+        assert!(bytes > 0);
+    }
+
+    #[test]
+    fn a_reconnect_cannot_refill_a_spent_budget() {
+        let db = Db::open_in_memory().unwrap();
+
+        // A past session already spent the stranger budget in the window.
+        db.write(|tx| {
+            for _ in 0..Quota::STRANGER.events {
+                crate::db::spending::command::record(tx, &author(2), clock::now(), 1)?;
+            }
+            Ok(())
+        })
+        .unwrap();
+
+        let (events, bytes) = total_usage(&db, &peer([author(2)]), Used::default()).unwrap();
+
+        // A fresh session sees the same spent budget and is over quota.
+        assert_eq!(
+            admits(
+                &peer([author(2)]),
+                &note_from(2, 200),
+                None,
+                Quota::STRANGER,
+                events,
+                bytes,
+            ),
             Err(Rejected::OverQuota)
         );
     }
@@ -510,7 +584,7 @@ mod tests {
         let peer = peer([author(2)]);
 
         assert_eq!(
-            admits(&peer, &event, None, Quota::STRANGER, Used::default()),
+            admits(&peer, &event, None, Quota::STRANGER, 0, 0),
             Err(Rejected::TooLarge)
         );
     }
