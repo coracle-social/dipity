@@ -1,10 +1,10 @@
 //! Blob transfers: the Blossom request/response pair over the sync channel.
 //!
-//! The relay half serves a peer's `BLOSSOM-REQ` from the [`BlobStore`], the
-//! client half fetches blobs a stored event references and this device does
-//! not hold, one group of bytes at a time. Each chunk is written as it
-//! arrives; the record is completed once the whole file's length is held.
-//! `docs/sync.md#blob-sync`.
+//! The relay half serves a peer's `BLOSSOM-REQ` from the [`BlobStore`] — the
+//! core's file-backed store by default — and the client half fetches blobs a
+//! stored event references and this device does not hold, one group of bytes
+//! at a time. Each chunk is written as it arrives; the record is completed
+//! once the whole file's length is held. `docs/sync.md#blob-sync`.
 //!
 //! Verification is whole-file for now: the completed transfer is checked
 //! against the `x` SHA-256 in the blob's `imeta`. Per-chunk BLAKE3 streaming

@@ -27,6 +27,7 @@
 //! ```
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
@@ -34,7 +35,7 @@ use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::SecretKey;
 use tokio::sync::broadcast::{self, error::TryRecvError};
 
-use crate::blobstore::BlobStore;
+use crate::blobstore::{BlobStore, FileBlobStore};
 use crate::clock;
 use crate::db::command as db_command;
 use crate::db::event::channel::{self, EventChange};
@@ -288,7 +289,7 @@ pub struct Node {
 
 impl Node {
     /// Build a node over a store the shell has opened and a key it has read out
-    /// of the Keychain or Keystore. Blob bytes go through `blobs`.
+    /// of the Keychain or Keystore, with the blob store of the shell's choosing.
     pub fn new(db: Arc<Db>, identity: SecretKey, blobs: Arc<dyn BlobStore>) -> Result<Self> {
         let policy = Arc::new(query::policy(&db, &identity.public_key())?);
 
@@ -304,6 +305,15 @@ impl Node {
             scheduler: Scheduler::default(),
             cool_off_since: None,
         })
+    }
+
+    /// Build a node with the file-backed blob store, under the same directory
+    /// the shell already tells the core to open the database in. Blobs live in
+    /// `directory/blobs`, one file per hash.
+    pub fn open(db: Arc<Db>, identity: SecretKey, directory: impl AsRef<Path>) -> Result<Self> {
+        let blobs = Arc::new(FileBlobStore::open(directory.as_ref().join("blobs"))?);
+
+        Self::new(db, identity, blobs)
     }
 
     /// The store, for the view and for tests.
@@ -655,6 +665,55 @@ mod tests {
 
     fn peripheral(id: u8) -> PeripheralId {
         PeripheralId(id.to_string())
+    }
+
+    fn sha256(bytes: &[u8]) -> [u8; 32] {
+        use sha2::{Digest as _, Sha256};
+
+        Sha256::digest(bytes).into()
+    }
+
+    /// A self-cleaning directory under the system temp dir.
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "dip-node-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+
+            std::fs::create_dir_all(&dir).unwrap();
+
+            Self(dir)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_file_backed_node_puts_blobs_in_the_blob_directory() {
+        let dir = TempDir::new();
+        let node = Node::open(db(), SecretKey::generate(), &dir.0).unwrap();
+
+        // The store the node hands its sessions is the file-backed one: what
+        // it writes shows up as a file under `<directory>/blobs`, next to the
+        // database file the shell already gives the core.
+        let bytes = b"the quick brown fox";
+        let hash = hex::encode(sha256(bytes));
+
+        node.blobs.append(&hash, bytes).unwrap();
+        assert!(node.blobs.has(&hash).unwrap());
+        assert_eq!(node.blobs.read(&hash, 0, 100).unwrap(), bytes);
+        assert!(dir.0.join("blobs").join(&hash).is_file());
     }
 
     #[test]

@@ -1453,28 +1453,12 @@ mod tests {
         assert!(session.advance(&db, &frame).is_err());
     }
 
-    #[test]
-    fn a_wanted_blob_is_driven_through_head_and_get() {
-        use crate::blobstore::MemoryBlobStore;
-        use crate::db::command as db_command;
+    /// Run one whole blob fetch — HEAD, then GET with the full body — against
+    /// `session`, returning the blob's hash.
+    fn drive_blob_fetch(session: &mut Session, db: &Db, bytes: &[u8]) -> String {
         use crate::sync::message::BlossomResponse;
         use sha2::{Digest as _, Sha256};
 
-        let db = Db::open_in_memory().unwrap();
-        let store = Arc::new(MemoryBlobStore::default());
-        let mut session = Session::open(
-            LinkId(1),
-            Role::Dialer,
-            4096,
-            Arc::new(policy()),
-            secret(1),
-            store.clone(),
-        )
-        .unwrap();
-        session.state = State::Syncing;
-
-        // A stored event references a blob this device does not hold.
-        let bytes = b"the quick brown fox";
         let hash = hex::encode(Sha256::digest(bytes));
         let event = note(
             author(1),
@@ -1485,10 +1469,10 @@ mod tests {
                 [format!("x {hash}"), format!("size {}", bytes.len())],
             ),
         );
-        db_command::publish_event(&db, &event, &author(1), 1).unwrap();
+        crate::db::command::publish_event(db, &event, &author(1), 1).unwrap();
 
         // The fetch begins with a HEAD.
-        session.maybe_fetch_blob(&db).unwrap();
+        session.maybe_fetch_blob(db).unwrap();
         let head = session.next_write().unwrap();
         session.acknowledge_write();
         let Message::BlossomRequest(head_req) = Message::decode(&head[2..]).unwrap() else {
@@ -1499,11 +1483,11 @@ mod tests {
         // The HEAD answers with the length, and a GET follows.
         session
             .on_blossom_response(
-                &db,
+                db,
                 &BlossomResponse {
                     id: head_req.id.clone(),
                     status: 200,
-                    headers: vec![("content-length".into(), "19".into())],
+                    headers: vec![("content-length".into(), bytes.len().to_string())],
                     body: vec![],
                 },
             )
@@ -1519,7 +1503,7 @@ mod tests {
         // The GET answers with the bytes, the whole blob now held and complete.
         session
             .on_blossom_response(
-                &db,
+                db,
                 &BlossomResponse {
                     id: get_req.id.clone(),
                     status: 206,
@@ -1529,6 +1513,29 @@ mod tests {
             )
             .unwrap();
 
+        hash
+    }
+
+    #[test]
+    fn a_wanted_blob_is_driven_through_head_and_get() {
+        use crate::blobstore::MemoryBlobStore;
+
+        let db = Db::open_in_memory().unwrap();
+        let store = Arc::new(MemoryBlobStore::default());
+        let mut session = Session::open(
+            LinkId(1),
+            Role::Dialer,
+            4096,
+            Arc::new(policy()),
+            secret(1),
+            store.clone(),
+        )
+        .unwrap();
+        session.state = State::Syncing;
+
+        let bytes = b"the quick brown fox";
+        let hash = drive_blob_fetch(&mut session, &db, bytes);
+
         assert_eq!(store.len(&hash).unwrap(), Some(19));
         assert!(
             crate::db::query::get_blob(&db, &hash)
@@ -1537,6 +1544,46 @@ mod tests {
                 .complete
         );
         assert!(session.blob_fetch.is_none());
+    }
+
+    #[test]
+    fn a_blob_fetch_writes_a_real_file() {
+        use crate::blobstore::FileBlobStore;
+        use std::fs;
+
+        // A fresh store of the same kind the shells use, over a real directory.
+        let dir = std::env::temp_dir().join(format!(
+            "dip-session-blobs-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = Arc::new(FileBlobStore::open(&dir).unwrap());
+
+        let db = Db::open_in_memory().unwrap();
+        let mut session = Session::open(
+            LinkId(1),
+            Role::Dialer,
+            4096,
+            Arc::new(policy()),
+            secret(1),
+            store.clone(),
+        )
+        .unwrap();
+        session.state = State::Syncing;
+
+        let bytes = b"the quick brown fox";
+        let hash = drive_blob_fetch(&mut session, &db, bytes);
+
+        // The bytes are on disk, one file named by the hash, and the record is
+        // complete — the file-backed store is what a real session uses.
+        assert_eq!(store.len(&hash).unwrap(), Some(19));
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        assert!(dir.join(&hash).is_file());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
