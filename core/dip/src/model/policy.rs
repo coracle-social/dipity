@@ -31,6 +31,12 @@ pub const DEFAULT_COOL_OFF_MINUTES: i64 = 10;
 /// How many new pubkeys the device discloses to per discoverable window.
 pub const DEFAULT_DISCLOSURE_BUDGET: u32 = 10;
 
+/// The window the disclosure budget counts new pubkeys over, in seconds.
+///
+/// A rolling day, conservative against the doc's "per discoverable window":
+/// resetting at each window boundary would admit more strangers, not fewer.
+pub const DISCLOSURE_WINDOW_SECONDS: i64 = 24 * 60 * 60;
+
 /// Everything the user has said about who gets what, ready to apply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Policy {

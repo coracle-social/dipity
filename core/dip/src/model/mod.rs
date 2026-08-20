@@ -37,7 +37,10 @@ pub use blob::{Blob, BlobRole};
 pub use graph::{Graph, Standing};
 pub use kind::{KIND_DELETE, KIND_MUTE, KIND_PROFILE};
 pub use order::Order;
-pub use policy::{DEFAULT_COOL_OFF_MINUTES, DEFAULT_DISCLOSURE_BUDGET, Policy, PubkeyPolicy};
+pub use policy::{
+    DEFAULT_COOL_OFF_MINUTES, DEFAULT_DISCLOSURE_BUDGET, DISCLOSURE_WINDOW_SECONDS, Policy,
+    PubkeyPolicy,
+};
 pub use pref::{Pref, keys};
 pub use provenance::{Provenance, ProvenanceFilter};
 pub use query::Query;

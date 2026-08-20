@@ -25,10 +25,16 @@ struct Migration {
 /// Every migration, oldest first. Append only — the index in this slice is the
 /// `user_version` a database is left at, so reordering or removing an entry
 /// re-runs the wrong statements against an existing store.
-const MIGRATIONS: &[Migration] = &[Migration {
-    name: "0001_init",
-    sql: include_str!("../../migrations/0001_init.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        name: "0001_init",
+        sql: include_str!("../../migrations/0001_init.sql"),
+    },
+    Migration {
+        name: "0002_pairing",
+        sql: include_str!("../../migrations/0002_pairing.sql"),
+    },
+];
 
 /// The database file's name inside the directory the shell provides.
 const FILENAME: &str = "dip.sqlite";

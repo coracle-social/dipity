@@ -59,6 +59,9 @@ pub enum Action {
     /// The shell reports back with [`Node::write_complete`] once the ATT write
     /// is acknowledged, which releases the next.
     Send(LinkId, Vec<u8>),
+    /// Ask the user whether an unadmitted stranger may connect. Answer with
+    /// [`Node::approve`]; the link is held up to the drain cap meanwhile.
+    RequestApproval(LinkId),
     /// Open an L2CAP channel, once outstanding blob bytes justify the setup
     /// round trip. Bulk moves across; control frames stay on GATT.
     OpenL2cap(LinkId),
@@ -173,6 +176,8 @@ pub struct Node {
     sessions: BTreeMap<LinkId, Session>,
     /// Decides which advertised peers to dial, and when.
     scheduler: Scheduler,
+    /// When the app was last foregrounded, for the cool-off admission window.
+    cool_off_since: Option<i64>,
     /// This store's event channel, so a stored own event is offered to every
     /// connected peer without the writer knowing.
     events: broadcast::Receiver<EventChange>,
@@ -191,6 +196,7 @@ impl Node {
             policy,
             sessions: BTreeMap::new(),
             scheduler: Scheduler::default(),
+            cool_off_since: None,
         })
     }
 
@@ -242,6 +248,7 @@ impl Node {
             Arc::clone(&self.policy),
             self.identity.clone(),
         )?;
+        session.set_cool_off_since(self.cool_off_since);
 
         if role == Role::Dialer {
             session.initiate()?;
@@ -312,6 +319,9 @@ impl Node {
         for session in self.sessions.values_mut() {
             if session.expired() {
                 match session.state() {
+                    // A gate hold and a drain both close outright on their cap:
+                    // there is nothing in flight to finish, only to drop.
+                    State::GatePending => session.close(),
                     State::Draining => session.close(),
                     _ => session.drain(),
                 }
@@ -331,6 +341,28 @@ impl Node {
     // ========================================================================
     // The view, through the shell
     // ========================================================================
+
+    /// The app came to the foreground, which starts the cool-off admission
+    /// window for unknown peers.
+    pub fn notify_foregrounded(&mut self) -> Vec<Action> {
+        self.cool_off_since = Some(clock::now());
+
+        for session in self.sessions.values_mut() {
+            session.set_cool_off_since(self.cool_off_since);
+        }
+
+        self.collect()
+    }
+
+    /// Answer a pending consent gate. `approved` admits the stranger and
+    /// resumes the exchange; refusing closes the link.
+    pub fn approve(&mut self, link: LinkId, approved: bool) -> Result<Vec<Action>> {
+        if let Some(session) = self.sessions.get_mut(&link) {
+            session.approve(&self.db, approved)?;
+        }
+
+        Ok(self.collect())
+    }
 
     /// The user changed a preference, so re-read the policy and rebind it on
     /// every live session.
@@ -381,6 +413,13 @@ impl Node {
         }
 
         let mut actions = Vec::new();
+
+        // A held gate asks the shell once.
+        for session in self.sessions.values_mut() {
+            if session.request_approval() {
+                actions.push(Action::RequestApproval(session.link));
+            }
+        }
 
         for session in self.sessions.values_mut() {
             while let Some(fragment) = session.next_write() {

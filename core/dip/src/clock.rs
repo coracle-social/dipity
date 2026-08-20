@@ -15,6 +15,15 @@ pub fn now() -> i64 {
         .unwrap_or_else(coracle_lib::util::now)
 }
 
+/// The minute of the current day, UTC.
+///
+/// `Policy::is_discoverable_at` reads the device's local time; this is a
+/// stand-in until the shell reports a timezone offset for the core to fold in.
+#[must_use]
+pub fn minute_of_day() -> u16 {
+    (now().rem_euclid(86_400) / 60) as u16
+}
+
 /// Run `f` with the clock pinned to `instant`.
 pub fn at<T>(instant: i64, f: impl FnOnce() -> T) -> T {
     let _restore = Restore(PINNED.with(|pinned| pinned.replace(Some(instant))));

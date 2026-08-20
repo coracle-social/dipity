@@ -19,6 +19,7 @@ use coracle_lib::keys::PublicKey;
 use super::Db;
 use crate::db::blob::query as blob;
 use crate::db::event::query as event;
+use crate::db::pairing::query as pairing;
 use crate::db::pref::query as pref;
 use crate::db::sql::hex_key;
 use crate::model::{Blob, BlobRole, Policy, Pref, Provenance, Query};
@@ -40,6 +41,22 @@ pub fn preference(db: &Db, key: &str) -> Result<Option<String>> {
 /// Everything the user has said about who gets what.
 pub fn policy(db: &Db, identity: &PublicKey) -> Result<Policy> {
     db.read(|tx| pref::policy(tx, identity))
+}
+
+// ============================================================================
+// Pairing
+// ============================================================================
+
+/// Every pair secret this device holds, for trial-MACing a peer's recognition
+/// tags.
+pub fn pair_secrets(db: &Db) -> Result<Vec<(PublicKey, [u8; 32])>> {
+    db.read(pairing::secrets)
+}
+
+/// How many distinct pubkeys this device first disclosed to at or after
+/// `cutoff`.
+pub fn disclosures_since(db: &Db, cutoff: i64) -> Result<u32> {
+    db.read(|tx| pairing::disclosures_since(tx, cutoff))
 }
 
 // ============================================================================

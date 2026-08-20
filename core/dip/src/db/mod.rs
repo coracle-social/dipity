@@ -38,6 +38,7 @@ pub mod query;
 
 pub mod blob;
 pub mod event;
+pub mod pairing;
 pub mod pref;
 pub mod recipient_signature;
 

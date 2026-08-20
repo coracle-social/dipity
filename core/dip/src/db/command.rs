@@ -14,6 +14,7 @@ use crate::db::blob::command as blob;
 use crate::db::blob::query as blob_query;
 use crate::db::event::command as event;
 use crate::db::event::query as event_query;
+use crate::db::pairing::command as pairing;
 use crate::db::pref::command as pref;
 use crate::db::recipient_signature::command as signature;
 use crate::db::sql::hex_key;
@@ -78,6 +79,21 @@ pub fn publish_event(db: &Db, event: &HashedEvent, identity: &PublicKey, at: i64
         }
 
         Ok(stored)
+    })
+}
+
+/// Store the pair secret derived from a completed session against every pubkey
+/// the peer proved, and record the disclosure of this device's identity to
+/// them. One transaction, because pairing and the budget it feeds are one
+/// event.
+pub fn pair_with(db: &Db, pubkeys: &[PublicKey], secret: &[u8; 32], at: i64) -> Result<()> {
+    db.write(|tx| {
+        for pubkey in pubkeys {
+            pairing::save_secret(tx, pubkey, secret, at)?;
+            pairing::record_disclosure(tx, pubkey, at)?;
+        }
+
+        Ok(())
     })
 }
 

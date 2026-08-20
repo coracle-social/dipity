@@ -9,7 +9,7 @@
 
 use coracle_lib::keys::PublicKey;
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 
 /// How many tags go on the wire, padded with random bytes to hide the count.
 pub const TAG_COUNT: usize = 32;
@@ -21,8 +21,21 @@ type HmacSha256 = Hmac<Sha256>;
 pub type Tag = [u8; 32];
 
 /// The tags a device emits, padded to [`TAG_COUNT`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Tags(pub Vec<Tag>);
+
+/// Derive the pair secret both sides of a completed session agree on, from the
+/// handshake hash they both hold. Domain-separated so it is not a value any
+/// other use of the hash could collide with.
+#[must_use]
+pub fn derive_secret(handshake_hash: &[u8; 32]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+
+    hasher.update(b"dip/pair-secret");
+    hasher.update(handshake_hash);
+
+    hasher.finalize().into()
+}
 
 /// The tag proving possession of `pair_secret` in the session `handshake_hash`
 /// identifies.
