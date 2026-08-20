@@ -10,7 +10,7 @@
 
 use anyhow::{Context, Result};
 use base64::Engine as _;
-use coracle_lib::events::{Event, HashedEvent};
+use coracle_lib::events::{Event, EventId, HashedEvent};
 use coracle_lib::filters::Filter;
 use serde_json::{Value, json};
 
@@ -39,6 +39,12 @@ pub enum Message {
     AuthChallenge(String),
     /// The kind 22242 event answering a challenge. Client → relay.
     AuthResponse(Box<Event>),
+    /// The author's signature over an event, naming this device. The first
+    /// hop carries it; it never travels a second. `docs/proofs.md`.
+    RecipientSignature(SubscriptionId, EventId, Box<[u8; 64]>),
+    /// A designated-verifier proof over an event. The second hop carries it
+    /// instead of the signature it was built from.
+    AuthorshipProof(SubscriptionId, EventId, Box<[u8; 160]>),
     /// Open a NIP-77 reconciliation over a filter.
     NegOpen(SubscriptionId, Filter, Vec<u8>),
     /// One round of it.
@@ -222,6 +228,37 @@ impl Message {
 
                 Ok(Self::NegOpen(subscription, filter, frame))
             }
+            "RECIPIENT-SIGNATURE" => {
+                let subscription = id(&mut items)?;
+                let event_id = EventId::from_hex(&string(&mut items)?)
+                    .context("a RECIPIENT-SIGNATURE has no valid event id")?;
+                let sig = hex(&mut items)?;
+
+                Ok(Self::RecipientSignature(
+                    subscription,
+                    event_id,
+                    Box::new(
+                        sig.try_into()
+                            .map_err(|_| anyhow::anyhow!("a signature is not 64 bytes"))?,
+                    ),
+                ))
+            }
+            "AUTHORSHIP-PROOF" => {
+                let subscription = id(&mut items)?;
+                let event_id = EventId::from_hex(&string(&mut items)?)
+                    .context("an AUTHORSHIP-PROOF has no valid event id")?;
+                let proof = hex(&mut items)?;
+
+                Ok(Self::AuthorshipProof(
+                    subscription,
+                    event_id,
+                    Box::new(
+                        proof
+                            .try_into()
+                            .map_err(|_| anyhow::anyhow!("a proof is not 160 bytes"))?,
+                    ),
+                ))
+            }
             "NEG-MSG" => {
                 let subscription = id(&mut items)?;
                 let message = hex(&mut items)?;
@@ -302,6 +339,18 @@ impl Message {
                 to_filter(filter),
                 hex(frame)
             ])),
+            Self::RecipientSignature(subscription, event_id, sig) => bytes(json!([
+                "RECIPIENT-SIGNATURE",
+                subscription.0.clone(),
+                event_id.to_hex(),
+                hex(&sig[..])
+            ])),
+            Self::AuthorshipProof(subscription, event_id, proof) => bytes(json!([
+                "AUTHORSHIP-PROOF",
+                subscription.0.clone(),
+                event_id.to_hex(),
+                hex(&proof[..])
+            ])),
             Self::NegMsg(subscription, message) => {
                 bytes(json!(["NEG-MSG", subscription.0.clone(), hex(message)]))
             }
@@ -371,6 +420,16 @@ mod tests {
         ));
         round_trips(Message::NegMsg(SubscriptionId("a".into()), vec![4, 5, 6]));
         round_trips(Message::NegClose(SubscriptionId("a".into())));
+        round_trips(Message::RecipientSignature(
+            SubscriptionId("a".into()),
+            EventId::new([1u8; 32]),
+            Box::new([2u8; 64]),
+        ));
+        round_trips(Message::AuthorshipProof(
+            SubscriptionId("a".into()),
+            EventId::new([1u8; 32]),
+            Box::new([3u8; 160]),
+        ));
 
         let request = BlossomRequest {
             id: "id".into(),

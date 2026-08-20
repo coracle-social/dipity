@@ -21,7 +21,7 @@ use crate::clock;
 use crate::db::Db;
 use crate::link::{LinkId, Role};
 use crate::model::{DISCLOSURE_WINDOW_SECONDS, Policy, Standing};
-use crate::sync::client::{Fetch, Negotiation, Used};
+use crate::sync::client::Used;
 use crate::sync::relay;
 use crate::sync::{Message, Quota, SubscriptionId};
 use crate::transport::{Channel, Codec, Frame, Noise, Outbox};
@@ -150,11 +150,9 @@ pub struct Session {
     /// Open subscriptions from the peer's relay half, with every filter each
     /// one holds.
     subscriptions: BTreeMap<SubscriptionId, Vec<Filter>>,
-    /// Open negotiations against the peer's relay half.
-    negotiations: BTreeMap<SubscriptionId, Negotiation>,
-    /// Fetches in the `REQ` phase, pulling the ids a finished negotiation
-    /// found missing.
-    fetches: BTreeMap<SubscriptionId, Fetch>,
+    /// The client half's state: negotiations, fetches, and the events awaiting
+    /// their proofs.
+    client: crate::sync::client::Client,
     /// Whether the one reconciliation this session opens has already been
     /// opened.
     sync_started: bool,
@@ -192,8 +190,7 @@ impl Session {
             proved_pubkeys: BTreeSet::new(),
             used: Used::default(),
             subscriptions: BTreeMap::new(),
-            negotiations: BTreeMap::new(),
-            fetches: BTreeMap::new(),
+            client: crate::sync::client::Client::default(),
             sync_started: false,
         })
     }
@@ -436,8 +433,7 @@ impl Session {
             message,
             quota,
             &mut self.used,
-            &mut self.negotiations,
-            &mut self.fetches,
+            &mut self.client,
         )?;
 
         for reply in replies {
@@ -464,7 +460,7 @@ impl Session {
         let (negotiation, opening) = crate::sync::client::Negotiation::begin(db, &peer, filter)?;
         let subscription = negotiation.subscription_id().clone();
 
-        self.negotiations.insert(subscription, negotiation);
+        self.client.negotiations.insert(subscription, negotiation);
         self.send_sync(&opening)?;
 
         Ok(())
@@ -531,11 +527,36 @@ impl Session {
             // filters, and what the peer may be served. Own events are always
             // in the Own register, so the registers need no check here.
             if filters.iter().any(|filter| filter.matches(event)) && peer.may_be_served(event) {
-                self.send_sync(&Message::Event(subscription, Box::new(event.clone())))?;
+                self.send_sync(&Message::Event(
+                    subscription.clone(),
+                    Box::new(event.clone()),
+                ))?;
+                self.attach_own_signature(&peer, &subscription, event)?;
             }
         }
 
         Ok(())
+    }
+
+    /// Attach this device's signature over its own event, naming the peer, so
+    /// the peer can forward it one more hop.
+    fn attach_own_signature(
+        &mut self,
+        peer: &Peer,
+        subscription: &SubscriptionId,
+        event: &HashedEvent,
+    ) -> Result<()> {
+        let Some(peer_key) = peer.pubkeys().next().copied() else {
+            return Ok(());
+        };
+
+        let signature = crate::model::RecipientSignature::sign(&self.identity, event.id, peer_key);
+
+        self.send_sync(&Message::RecipientSignature(
+            subscription.clone(),
+            event.id,
+            Box::new(signature.sig),
+        ))
     }
 
     /// Try the relay half. Returns `true` when the message was consumed.
@@ -545,6 +566,7 @@ impl Session {
                 let replies = relay::handle(
                     db,
                     peer,
+                    &self.identity,
                     message.clone(),
                     quota,
                     &mut self.used,
@@ -560,13 +582,16 @@ impl Session {
             // A NEG-MSG names the negotiation it belongs to: one this device
             // opened goes to the client half, whatever else it looks like.
             // One the peer opened is registered on our relay half.
-            Message::NegMsg(subscription, _) if self.negotiations.contains_key(subscription) => {
+            Message::NegMsg(subscription, _)
+                if self.client.negotiations.contains_key(subscription) =>
+            {
                 Ok(false)
             }
             Message::NegMsg(..) => {
                 let replies = relay::handle(
                     db,
                     peer,
+                    &self.identity,
                     message.clone(),
                     quota,
                     &mut self.used,

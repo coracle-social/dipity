@@ -15,7 +15,7 @@ use crate::clock;
 use crate::db::Db;
 use crate::db::command;
 use crate::db::query as db_query;
-use crate::model::{AuthorshipClaim, AuthorshipProof};
+use crate::model::{AuthorshipClaim, AuthorshipProof, RecipientSignature};
 use crate::session::Peer;
 use crate::sync::relay;
 use crate::sync::{Message, Quota, SubscriptionId};
@@ -181,6 +181,20 @@ impl Fetch {
     }
 }
 
+/// The client half's state, held by the session for the life of the link.
+#[derive(Default)]
+pub struct Client {
+    /// Open negotiations against the peer's relay half.
+    pub negotiations: BTreeMap<SubscriptionId, Negotiation>,
+    /// Fetches in the `REQ` phase, pulling the ids a finished negotiation
+    /// found missing.
+    fetches: BTreeMap<SubscriptionId, Fetch>,
+    /// Events the peer forwarded that are waiting on their authorship proof.
+    pending_events: BTreeMap<EventId, HashedEvent>,
+    /// Authorship proofs waiting on the event they prove.
+    pending_proofs: BTreeMap<EventId, AuthorshipProof>,
+}
+
 /// Handle a message this device's client half received.
 pub fn handle(
     db: &Db,
@@ -188,24 +202,61 @@ pub fn handle(
     message: Message,
     quota: Quota,
     used: &mut Used,
-    negotiations: &mut BTreeMap<SubscriptionId, Negotiation>,
-    fetches: &mut BTreeMap<SubscriptionId, Fetch>,
+    client: &mut Client,
 ) -> Result<Vec<Message>> {
     match message {
         Message::Event(subscription, event) => {
-            if admits(peer, &event, None, quota, *used).is_ok() {
-                ingest(db, peer, &event, None)?;
-                used.record(&event);
+            let id = event.id;
+            let proof = client.pending_proofs.remove(&id);
+
+            if let Some(proof) = &proof {
+                // Second hop: the proof authorizes the forwarded event.
+                if admits(peer, &event, Some(proof), quota, *used).is_ok() {
+                    ingest(db, peer, &event, Some(proof))?;
+                    used.record(&event);
+                }
+            } else if peer.authored(event.as_ref()) {
+                // First hop: the authenticated session is the proof.
+                if admits(peer, &event, None, quota, *used).is_ok() {
+                    ingest(db, peer, &event, None)?;
+                    used.record(&event);
+                }
+            } else {
+                // Forwarded without its proof yet; hold it until one arrives.
+                client.pending_events.insert(id, *event);
             }
-            // Whether stored or rejected, it is no longer wanted.
-            if let Some(fetch) = fetches.get_mut(&subscription) {
-                fetch.pending.remove(&event.id);
+
+            // Whether stored, held or rejected, it is no longer wanted.
+            if let Some(fetch) = client.fetches.get_mut(&subscription) {
+                fetch.pending.remove(&id);
+            }
+
+            Ok(Vec::new())
+        }
+        Message::RecipientSignature(_, event_id, sig) => {
+            store_signature(db, peer, event_id, &sig);
+
+            Ok(Vec::new())
+        }
+        Message::AuthorshipProof(_, event_id, proof) => {
+            let proof = AuthorshipProof::from_bytes(&proof);
+
+            match client.pending_events.remove(&event_id) {
+                Some(event) => {
+                    if admits(peer, &event, Some(&proof), quota, *used).is_ok() {
+                        ingest(db, peer, &event, Some(&proof))?;
+                        used.record(&event);
+                    }
+                }
+                None => {
+                    client.pending_proofs.insert(event_id, proof);
+                }
             }
 
             Ok(Vec::new())
         }
         Message::NegMsg(subscription, frame) => {
-            let Some(negotiation) = negotiations.get_mut(&subscription) else {
+            let Some(negotiation) = client.negotiations.get_mut(&subscription) else {
                 bail!("a NEG-MSG arrived for a subscription that is not open");
             };
 
@@ -216,30 +267,32 @@ pub fn handle(
             if matches!(replies.last(), Some(Message::Req(sub, _)) if *sub == subscription) {
                 let need = negotiation.need().iter().copied().collect::<BTreeSet<_>>();
 
-                negotiations.remove(&subscription);
+                client.negotiations.remove(&subscription);
 
                 if !need.is_empty() {
-                    fetches.insert(subscription.clone(), Fetch::new(need));
+                    client
+                        .fetches
+                        .insert(subscription.clone(), Fetch::new(need));
                 }
             }
 
             Ok(replies)
         }
         Message::Eose(subscription) => {
-            let Some(fetch) = fetches.get_mut(&subscription) else {
+            let Some(fetch) = client.fetches.get_mut(&subscription) else {
                 return Ok(Vec::new());
             };
 
             // Done: everything this page asked for arrived.
             if fetch.pending.is_empty() {
-                fetches.remove(&subscription);
+                client.fetches.remove(&subscription);
                 return Ok(Vec::new());
             }
 
             // A page that served nothing means the peer does not hold the
             // rest; asking again would not change that.
             if fetch.pending == fetch.last_requested {
-                fetches.remove(&subscription);
+                client.fetches.remove(&subscription);
                 return Ok(Vec::new());
             }
 
@@ -253,6 +306,30 @@ pub fn handle(
         }
         Message::Ok(..) => Ok(Vec::new()),
         _ => Ok(Vec::new()),
+    }
+}
+
+/// Store the author's signature over an event, once it verifies against the
+/// stored event and names this device.
+fn store_signature(db: &Db, peer: &Peer, event_id: EventId, sig: &[u8; 64]) {
+    let Ok(Some(event)) = db_query::get_event(db, &event_id) else {
+        return;
+    };
+
+    // The signature is the author's, so only the author sends it.
+    if !peer.authored(&event) {
+        return;
+    }
+
+    let signature = RecipientSignature {
+        event_id,
+        author_pubkey: event.pubkey,
+        recipient_pubkey: peer.identity,
+        sig: *sig,
+    };
+
+    if signature.verifies() {
+        let _ = command::receive_signature(db, &event_id, sig, &peer.identity);
     }
 }
 
@@ -534,6 +611,14 @@ mod tests {
         [id.id].into_iter().collect()
     }
 
+    /// A client with only `fetches` populated, for the pagination tests.
+    fn client(fetches: BTreeMap<SubscriptionId, Fetch>) -> Client {
+        Client {
+            fetches,
+            ..Client::default()
+        }
+    }
+
     #[test]
     fn an_eose_with_ids_still_missing_requests_the_next_page() {
         let db = Db::open_in_memory().unwrap();
@@ -541,10 +626,10 @@ mod tests {
         let second = note_from(2, 200);
 
         let subscription = SubscriptionId("sub".into());
-        let mut fetches = BTreeMap::from([(
+        let mut client = client(BTreeMap::from([(
             subscription.clone(),
             Fetch::new([first.id, second.id].into()),
-        )]);
+        )]));
 
         // One of the two arrives.
         let replies = handle(
@@ -553,8 +638,7 @@ mod tests {
             Message::Event(subscription.clone(), Box::new(first.clone())),
             Quota::STRANGER,
             &mut Used::default(),
-            &mut BTreeMap::new(),
-            &mut fetches,
+            &mut client,
         )
         .unwrap();
         assert!(replies.is_empty());
@@ -566,8 +650,7 @@ mod tests {
             Message::Eose(subscription.clone()),
             Quota::STRANGER,
             &mut Used::default(),
-            &mut BTreeMap::new(),
-            &mut fetches,
+            &mut client,
         )
         .unwrap();
 
@@ -590,7 +673,10 @@ mod tests {
         let missing = note_from(3, 300);
 
         let subscription = SubscriptionId("sub".into());
-        let mut fetches = BTreeMap::from([(subscription.clone(), Fetch::new(fetched(&missing)))]);
+        let mut client = client(BTreeMap::from([(
+            subscription.clone(),
+            Fetch::new(fetched(&missing)),
+        )]));
 
         // EOSE arrives with nothing served: the peer does not hold the rest.
         let replies = handle(
@@ -599,13 +685,15 @@ mod tests {
             Message::Eose(subscription.clone()),
             Quota::STRANGER,
             &mut Used::default(),
-            &mut BTreeMap::new(),
-            &mut fetches,
+            &mut client,
         )
         .unwrap();
 
         assert!(replies.is_empty());
-        assert!(fetches.is_empty(), "the dead fetch should be dropped");
+        assert!(
+            client.fetches.is_empty(),
+            "the dead fetch should be dropped"
+        );
     }
 
     #[test]
@@ -614,7 +702,10 @@ mod tests {
         let event = note_from(2, 100);
 
         let subscription = SubscriptionId("sub".into());
-        let mut fetches = BTreeMap::from([(subscription.clone(), Fetch::new(fetched(&event)))]);
+        let mut client = client(BTreeMap::from([(
+            subscription.clone(),
+            Fetch::new(fetched(&event)),
+        )]));
 
         handle(
             &db,
@@ -622,8 +713,7 @@ mod tests {
             Message::Event(subscription.clone(), Box::new(event.clone())),
             Quota::STRANGER,
             &mut Used::default(),
-            &mut BTreeMap::new(),
-            &mut fetches,
+            &mut client,
         )
         .unwrap();
 
@@ -633,12 +723,118 @@ mod tests {
             Message::Eose(subscription.clone()),
             Quota::STRANGER,
             &mut Used::default(),
-            &mut BTreeMap::new(),
-            &mut fetches,
+            &mut client,
         )
         .unwrap();
 
         assert!(replies.is_empty());
-        assert!(fetches.is_empty(), "a completed fetch should be dropped");
+        assert!(
+            client.fetches.is_empty(),
+            "a completed fetch should be dropped"
+        );
+    }
+
+    // ------------------------------------------------------ the second hop
+
+    #[test]
+    fn a_forwarded_event_is_held_until_its_proof_arrives() {
+        let db = Db::open_in_memory().unwrap();
+        let forwarded = note_from(3, 100);
+        let subscription = SubscriptionId("sub".into());
+
+        let mut client = Client::default();
+
+        // The event arrives without a proof and is held.
+        let replies = handle(
+            &db,
+            &peer([author(2)]),
+            Message::Event(subscription.clone(), Box::new(forwarded.clone())),
+            Quota::STRANGER,
+            &mut Used::default(),
+            &mut client,
+        )
+        .unwrap();
+
+        assert!(replies.is_empty());
+        assert!(client.pending_events.contains_key(&forwarded.id));
+        assert!(
+            db_query::list_events(&db, &Query::new())
+                .unwrap()
+                .is_empty(),
+            "nothing stored before its proof"
+        );
+
+        // The proof authorizes it: B holds the author's signature naming B.
+        let signature = RecipientSignature::sign(&secret(3), forwarded.id, author(2));
+        let proof = AuthorshipProof::prove(&signature, us()).unwrap();
+
+        handle(
+            &db,
+            &peer([author(2)]),
+            Message::AuthorshipProof(subscription, forwarded.id, Box::new(proof.to_bytes())),
+            Quota::STRANGER,
+            &mut Used::default(),
+            &mut client,
+        )
+        .unwrap();
+
+        assert_eq!(
+            db_query::list_events(&db, &Query::new()).unwrap(),
+            vec![forwarded]
+        );
+    }
+
+    #[test]
+    fn an_unproven_forwarded_event_is_dropped_at_eose() {
+        let db = Db::open_in_memory().unwrap();
+        let forwarded = note_from(3, 100);
+
+        let mut client = Client::default();
+
+        handle(
+            &db,
+            &peer([author(2)]),
+            Message::Event(SubscriptionId("sub".into()), Box::new(forwarded)),
+            Quota::STRANGER,
+            &mut Used::default(),
+            &mut client,
+        )
+        .unwrap();
+
+        // No proof ever comes, so the held event is simply not stored.
+        assert!(
+            db_query::list_events(&db, &Query::new())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_recipient_signature_is_verified_and_stored() {
+        let db = Db::open_in_memory().unwrap();
+        let event = note_from(2, 100);
+        command::publish_event(&db, &event, &author(2), 100).unwrap();
+
+        let signature = RecipientSignature::sign(&secret(2), event.id, us());
+
+        handle(
+            &db,
+            &peer([author(2)]),
+            Message::RecipientSignature(
+                SubscriptionId("sub".into()),
+                event.id,
+                Box::new(signature.sig),
+            ),
+            Quota::STRANGER,
+            &mut Used::default(),
+            &mut Client::default(),
+        )
+        .unwrap();
+
+        assert!(
+            db_query::get_signature(&db, &event.id, &us())
+                .unwrap()
+                .is_some()
+        );
     }
 }

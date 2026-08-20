@@ -21,8 +21,9 @@ use crate::db::blob::query as blob;
 use crate::db::event::query as event;
 use crate::db::pairing::query as pairing;
 use crate::db::pref::query as pref;
+use crate::db::recipient_signature::query as signature;
 use crate::db::sql::hex_key;
-use crate::model::{Blob, BlobRole, Policy, Pref, Provenance, Query};
+use crate::model::{Blob, BlobRole, Policy, Pref, Provenance, Query, RecipientSignature};
 
 // ============================================================================
 // Policy and preferences
@@ -77,6 +78,21 @@ pub struct EventDetail {
 /// Events matching every constraint on `query`.
 pub fn list_events(db: &Db, query: &Query) -> Result<Vec<HashedEvent>> {
     db.read(|tx| event::list(tx, query))
+}
+
+/// One event, by id, or `None` if it is not stored.
+pub fn get_event(db: &Db, id: &EventId) -> Result<Option<HashedEvent>> {
+    db.read(|tx| event::get(tx, id))
+}
+
+/// The author's signature over an event naming `recipient`, if this device
+/// holds it.
+pub fn get_signature(
+    db: &Db,
+    event_id: &EventId,
+    recipient: &PublicKey,
+) -> Result<Option<RecipientSignature>> {
+    db.read(|tx| signature::get(tx, event_id, recipient))
 }
 
 /// Attach each event's media and provenance to it.
