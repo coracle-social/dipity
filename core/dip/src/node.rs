@@ -85,7 +85,17 @@ const CONNECT_INTERVAL_SECONDS: i64 = 1;
 
 /// How long a peripheral is left alone after a dial, so a peer that ignores
 /// connections is not redialed every advertisement.
-const BACKOFF_SECONDS: i64 = 15;
+/// How long a peripheral that never answered a connect is left alone before
+/// its advertisement may be dialed again.
+const NEVER_ANSWERED_BACKOFF_SECONDS: i64 = 60;
+
+/// How long after a connected peer walks away before redialing. They usually
+/// come back, so this is short. `docs/discovery.md#connection-scheduling`.
+const WALKED_AWAY_BACKOFF_SECONDS: i64 = 15;
+
+/// How long after a consent-gate refusal before trying again. Hard, since the
+/// user just said no.
+const DECLINED_BACKOFF_SECONDS: i64 = 5 * 60;
 
 /// Everything scheduling dials from an advertisement.
 #[derive(Debug, Default)]
@@ -93,10 +103,31 @@ struct Scheduler {
     /// Candidates queued by the floor, the link cap, or the rate limit, most
     /// recently seen first.
     candidates: Vec<(PeripheralId, i16)>,
-    /// When each peripheral may next be dialed, ratcheted back on each attempt.
-    backoff: BTreeMap<PeripheralId, i64>,
+    /// When each peripheral may next be dialed, and what set it. The tier
+    /// decides how a later outcome may move it.
+    backoff: BTreeMap<PeripheralId, Backoff>,
     /// When the last connect attempt went out, for the global rate limit.
     last_attempt: Option<i64>,
+}
+
+/// One peripheral's backoff: a deadline and the outcome that set it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Backoff {
+    /// The earliest this peripheral may be dialed again.
+    until: i64,
+    /// Why it is backed off.
+    tier: Tier,
+}
+
+/// What set a backoff, and how far out it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tier {
+    /// A dial that never answered.
+    NeverAnswered,
+    /// A peer that was connected and walked away.
+    WalkedAway,
+    /// A peer the user declined at the consent gate.
+    Declined,
 }
 
 impl Scheduler {
@@ -146,21 +177,86 @@ impl Scheduler {
             let (peripheral, _) = self.candidates[index].clone();
 
             let admissible = match self.backoff.get(&peripheral) {
-                Some(&until) => now >= until,
+                Some(backoff) => now >= backoff.until,
                 None => true,
             };
 
             if admissible {
                 self.candidates.remove(index);
                 self.last_attempt = Some(now);
-                self.backoff
-                    .insert(peripheral.clone(), now + BACKOFF_SECONDS);
+                // A dial that gets no answer shows up again as an
+                // advertisement before this lapses; a dial that connects
+                // supersedes it with the walked-away or declined tier.
+                self.backoff.insert(
+                    peripheral.clone(),
+                    Backoff {
+                        until: now + NEVER_ANSWERED_BACKOFF_SECONDS,
+                        tier: Tier::NeverAnswered,
+                    },
+                );
 
                 return Some(peripheral);
             }
         }
 
         None
+    }
+
+    /// A peer was connected and left: redial soon, since they usually come
+    /// back. Pulls in a stale never-answered backoff — this one answered, just
+    /// not for long — but never a decline.
+    fn walked_away(&mut self, peripheral: &PeripheralId) {
+        self.record(peripheral, Tier::WalkedAway, WALKED_AWAY_BACKOFF_SECONDS);
+    }
+
+    /// A peer whose gate was refused: leave them alone. Never shortened by any
+    /// later report.
+    fn declined(&mut self, peripheral: &PeripheralId) {
+        self.record(peripheral, Tier::Declined, DECLINED_BACKOFF_SECONDS);
+    }
+
+    /// Merge one outcome into a peripheral's backoff.
+    ///
+    /// A shorter tier (never answered → walked away) replaces the longer
+    /// deadline; a longer one (walked away → declined) never shrinks, so the
+    /// user's "no" survives a disconnect report arriving afterwards.
+    fn record(&mut self, peripheral: &PeripheralId, tier: Tier, seconds: i64) {
+        let deadline = clock::now() + seconds;
+
+        match self.backoff.get_mut(peripheral) {
+            Some(backoff) => {
+                let replace = match (backoff.tier, tier) {
+                    (Tier::NeverAnswered, Tier::WalkedAway) => true,
+                    (Tier::NeverAnswered, Tier::Declined) => true,
+                    (Tier::WalkedAway, Tier::Declined) => true,
+                    (Tier::Declined, _) => false,
+                    _ => backoff.until < deadline,
+                };
+
+                if replace {
+                    // Only the walked-away pull-in shortens what a dial left
+                    // behind; every other merge extends.
+                    backoff.until = if matches!(
+                        (backoff.tier, tier),
+                        (Tier::NeverAnswered, Tier::WalkedAway)
+                    ) {
+                        deadline
+                    } else {
+                        deadline.max(backoff.until)
+                    };
+                    backoff.tier = tier;
+                }
+            }
+            None => {
+                self.backoff.insert(
+                    peripheral.clone(),
+                    Backoff {
+                        until: deadline,
+                        tier,
+                    },
+                );
+            }
+        }
     }
 }
 
@@ -179,6 +275,8 @@ pub struct Node {
     battery: Option<u8>,
     /// Live sessions, keyed on link
     sessions: BTreeMap<LinkId, Session>,
+    /// The peripheral each dialed link came from, for grading its outcome.
+    link_peripheral: BTreeMap<LinkId, PeripheralId>,
     /// Decides which advertised peers to dial, and when.
     scheduler: Scheduler,
     /// When the app was last foregrounded, for the cool-off admission window.
@@ -202,6 +300,7 @@ impl Node {
             blobs,
             battery: None,
             sessions: BTreeMap::new(),
+            link_peripheral: BTreeMap::new(),
             scheduler: Scheduler::default(),
             cool_off_since: None,
         })
@@ -242,8 +341,15 @@ impl Node {
 
     /// A GATT connection came up, with the MTU the link negotiated.
     ///
-    /// The dialer opens the Noise handshake here; the receiver waits for it.
-    pub fn link_up(&mut self, link: LinkId, role: Role, mtu: usize) -> Result<Vec<Action>> {
+    /// `peripheral` is the one this device dialed, so the scheduler can grade
+    /// the link's outcome; a link the peer dialed has none.
+    pub fn link_up(
+        &mut self,
+        link: LinkId,
+        peripheral: Option<PeripheralId>,
+        role: Role,
+        mtu: usize,
+    ) -> Result<Vec<Action>> {
         if self.sessions.contains_key(&link) {
             bail!("link {link:?} is already up");
         }
@@ -258,6 +364,10 @@ impl Node {
         )?;
         session.set_cool_off_since(self.cool_off_since);
 
+        if let Some(peripheral) = peripheral {
+            self.link_peripheral.insert(link, peripheral);
+        }
+
         if role == Role::Dialer {
             session.initiate()?;
         }
@@ -270,9 +380,15 @@ impl Node {
     /// A link went away. The shell only reports a disconnect that fired, which is
     /// reliable: the link is gone and nothing on it will ever finish, so the
     /// session closes rather than waiting out a drain that cannot complete.
+    ///
+    /// A peer that walked away is redialed soon: they usually come back.
     pub fn link_down(&mut self, link: LinkId) -> Vec<Action> {
         if let Some(session) = self.sessions.get_mut(&link) {
             session.close();
+        }
+
+        if let Some(peripheral) = self.link_peripheral.remove(&link) {
+            self.scheduler.walked_away(&peripheral);
         }
 
         self.collect()
@@ -375,10 +491,15 @@ impl Node {
     }
 
     /// Answer a pending consent gate. `approved` admits the stranger and
-    /// resumes the exchange; refusing closes the link.
+    /// resumes the exchange; refusing closes the link and the scheduler leaves
+    /// the peer alone.
     pub fn approve(&mut self, link: LinkId, approved: bool) -> Result<Vec<Action>> {
         if let Some(session) = self.sessions.get_mut(&link) {
             session.approve(&self.db, approved)?;
+        }
+
+        if !approved && let Some(peripheral) = self.link_peripheral.get(&link) {
+            self.scheduler.declined(peripheral);
         }
 
         Ok(self.collect())
@@ -595,7 +716,7 @@ mod tests {
             assert!(node.peripheral_seen(&peripheral(1), -80).is_empty());
         });
 
-        clock::at(1_000 + BACKOFF_SECONDS, || {
+        clock::at(1_000 + NEVER_ANSWERED_BACKOFF_SECONDS, || {
             assert_eq!(
                 node.peripheral_seen(&peripheral(1), -80),
                 vec![Action::Connect(peripheral(1))]
@@ -747,7 +868,86 @@ mod tests {
     fn a_second_link_up_for_a_live_link_is_an_error() {
         let mut node = node();
 
-        node.link_up(LinkId(1), Role::Receiver, 100).unwrap();
-        assert!(node.link_up(LinkId(1), Role::Dialer, 100).is_err());
+        node.link_up(LinkId(1), None, Role::Receiver, 100).unwrap();
+        assert!(node.link_up(LinkId(1), None, Role::Dialer, 100).is_err());
+    }
+
+    #[test]
+    fn a_walked_away_peer_is_redialed_sooner_than_a_silent_one() {
+        let mut node = clock::at(1_000, node);
+        let silent = peripheral(1);
+        let walker = peripheral(2);
+
+        // Both are dialed, a second apart.
+        clock::at(1_000, || {
+            assert_eq!(
+                node.peripheral_seen(&silent, -80),
+                vec![Action::Connect(silent.clone())]
+            );
+        });
+        clock::at(1_001, || {
+            assert_eq!(
+                node.peripheral_seen(&walker, -80),
+                vec![Action::Connect(walker.clone())]
+            );
+        });
+
+        // The walker connects and leaves at once; the silent one never answers.
+        clock::at(1_001, || {
+            node.link_up(LinkId(9), Some(walker.clone()), Role::Dialer, 100)
+                .unwrap();
+            node.link_down(LinkId(9));
+        });
+
+        // The walker is admissible at the short walked-away backoff… which was set
+        // at 1001, so the deadline is 1001 + WALKED_AWAY_BACKOFF_SECONDS.
+        clock::at(1_001 + WALKED_AWAY_BACKOFF_SECONDS, || {
+            assert_eq!(
+                node.peripheral_seen(&walker, -80),
+                vec![Action::Connect(walker.clone())]
+            );
+        });
+        // …while the silent one must wait out the never-answered backoff,
+        // which was set at 1000.
+        clock::at(1_001 + WALKED_AWAY_BACKOFF_SECONDS + 1, || {
+            assert!(node.peripheral_seen(&silent, -80).is_empty());
+        });
+        clock::at(1_000 + NEVER_ANSWERED_BACKOFF_SECONDS, || {
+            assert_eq!(
+                node.peripheral_seen(&silent, -80),
+                vec![Action::Connect(silent)]
+            );
+        });
+    }
+
+    #[test]
+    fn a_declined_peer_is_backed_off_longer_than_a_walked_away_one() {
+        let mut node = clock::at(1_000, node);
+        let peer = peripheral(1);
+
+        clock::at(1_000, || {
+            node.peripheral_seen(&peer, -80);
+        });
+        clock::at(1_000, || {
+            node.link_up(LinkId(9), Some(peer.clone()), Role::Dialer, 100)
+                .unwrap();
+            node.approve(LinkId(9), false).unwrap();
+        });
+
+        // A decline outlasts the walked-away tier even if the disconnect
+        // report arrives after the refusal.
+        clock::at(1_000, || {
+            node.link_down(LinkId(9));
+        });
+
+        clock::at(1_000 + WALKED_AWAY_BACKOFF_SECONDS + 1, || {
+            assert!(node.peripheral_seen(&peer, -80).is_empty());
+        });
+        clock::at(1_000 + DECLINED_BACKOFF_SECONDS, || {
+            assert_eq!(
+                node.peripheral_seen(&peer, -80),
+                vec![Action::Connect(peer)]
+            );
+        });
     }
 }
