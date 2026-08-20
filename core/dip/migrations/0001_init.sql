@@ -118,7 +118,7 @@ CREATE TABLE pref (
 -- Blob metadata, extracted from the imeta tag of the first event seen to
 -- reference the hash. That event anchors the blob's permissions, so the row
 -- dies with it and is rebuilt from whatever else references the hash.
--- Bytes live outside the database, keyed by sha256. See docs/sync.md.
+-- Bytes live outside the database, keyed by sha256.
 CREATE TABLE blob (
     sha256       TEXT PRIMARY KEY,
     event_id     TEXT    NOT NULL REFERENCES event (id) ON DELETE CASCADE,
@@ -133,7 +133,7 @@ CREATE TABLE blob (
     dim          TEXT,
     blurhash     TEXT,
     alt          TEXT,
-    -- BLAKE3 root, for verified streaming. See docs/nips/imeta-blake3.md.
+    -- BLAKE3 root, for verified streaming.
     blake3       TEXT,
     -- The imeta tag as it arrived, JSON, minus the tag name. The columns above
     -- are the keys this build reads; this is everything the event carried, so a
@@ -153,8 +153,7 @@ CREATE INDEX blob_wanted ON blob (role, accessed_at) WHERE complete = 0;
 CREATE INDEX blob_lru ON blob (role, accessed_at) WHERE complete = 1;
 
 -- Pairing: what lets one encounter recognize the next, and what bounds how
--- many strangers it discloses to. See docs/discovery.md#recognition and
--- docs/policy.md#discoverability.
+-- many strangers it discloses to.
 
 -- A pair secret is derived from a completed session's handshake hash and stored
 -- against the peer, so a later encounter is recognized from its tags before
@@ -176,7 +175,6 @@ CREATE TABLE disclosure (
 
 -- Rolling quotas: one row per event accepted from a peer, so the 24 h budget
 -- is a sum over recent rows rather than a counter that outlives its session.
--- See docs/sync.md#quotas.
 CREATE TABLE spending (
     pubkey TEXT NOT NULL,
     at      INTEGER NOT NULL,
