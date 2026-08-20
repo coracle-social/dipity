@@ -21,7 +21,7 @@ use crate::clock;
 use crate::db::Db;
 use crate::link::{LinkId, Role};
 use crate::model::{Policy, Standing};
-use crate::sync::client::{Negotiation, Used};
+use crate::sync::client::{Fetch, Negotiation, Used};
 use crate::sync::relay;
 use crate::sync::{Message, Quota, SubscriptionId};
 use crate::transport::{Channel, Codec, Frame, Noise, Outbox};
@@ -126,6 +126,12 @@ pub struct Session {
     subscriptions: BTreeMap<SubscriptionId, Vec<Filter>>,
     /// Open negotiations against the peer's relay half.
     negotiations: BTreeMap<SubscriptionId, Negotiation>,
+    /// Fetches in the `REQ` phase, pulling the ids a finished negotiation
+    /// found missing.
+    fetches: BTreeMap<SubscriptionId, Fetch>,
+    /// Whether the one reconciliation this session opens has already been
+    /// opened.
+    sync_started: bool,
 }
 
 impl Session {
@@ -155,6 +161,8 @@ impl Session {
             used: Used::default(),
             subscriptions: BTreeMap::new(),
             negotiations: BTreeMap::new(),
+            fetches: BTreeMap::new(),
+            sync_started: false,
         })
     }
 
@@ -190,6 +198,7 @@ impl Session {
         let peer = Peer::bind(self.link, pubkeys, &self.policy);
 
         self.state = if peer.is_blocked() {
+            self.sync_started = false;
             State::Closed
         } else {
             State::Identified
@@ -206,6 +215,12 @@ impl Session {
 
         if let Some(peer) = self.peer.take() {
             self.identify(peer.into_pubkeys());
+        }
+
+        // A rebind leaves an already-syncing session at Identified; put it
+        // back without re-opening the reconciliation it has already done.
+        if self.state == State::Identified && self.sync_started {
+            self.state = State::Syncing;
         }
     }
 
@@ -329,6 +344,7 @@ impl Session {
             quota,
             &mut self.used,
             &mut self.negotiations,
+            &mut self.fetches,
         )?;
 
         for reply in replies {
@@ -359,6 +375,25 @@ impl Session {
         self.send_sync(&opening)?;
 
         Ok(())
+    }
+
+    /// Move an identified session into syncing and open its reconciliation.
+    ///
+    /// The accept policy gates ingest and the peer's relay half bounds what it
+    /// will answer, so a bare filter is the right opening move.
+    pub fn maybe_start_sync(&mut self, db: &Db) -> Result<()> {
+        if self.state != State::Identified {
+            return Ok(());
+        }
+
+        self.state = State::Syncing;
+
+        if self.sync_started {
+            return Ok(());
+        }
+        self.sync_started = true;
+
+        self.begin_negotiation(db, Filter::new())
     }
 
     /// Offer a just-stored event to every subscription the peer has open, if the
@@ -583,18 +618,18 @@ impl Session {
                     .context("parsing an AUTH response")?;
 
                 self.verify_auth_response(event)?;
-
-                // Once a device has verified the peer and answered the peer's
-                // challenge, both identities are bound.
-                if self.peer.is_some() && self.peer_challenge.is_some() {
-                    self.state = State::Identified;
-                }
             }
             control::HEARTBEAT => {
                 // The write itself refreshed `last_heard` in `receive`; there
                 // is nothing else a liveness beacon carries.
             }
             other => bail!("an unknown control frame {other} arrived"),
+        }
+
+        // Both identities are bound once the peer is verified and their
+        // challenge has been answered, in whichever order the two arrived.
+        if self.peer.is_some() && self.peer_challenge.is_some() {
+            self.maybe_start_sync(db)?;
         }
 
         Ok(())
@@ -1084,7 +1119,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pair_reaches_identified_through_mutual_auth() {
+    fn a_pair_reaches_syncing_through_mutual_auth() {
         let db = Db::open_in_memory().unwrap();
         let mut dialer =
             Session::open(LinkId(1), Role::Dialer, 4096, Arc::new(policy()), secret(1)).unwrap();
@@ -1108,14 +1143,14 @@ mod tests {
 
         // Receiver queued: response, own challenge. Dialer is Secured.
         pump(&mut receiver, &mut dialer, &db); // response: dialer verifies, identifies
-        pump(&mut receiver, &mut dialer, &db); // own challenge: dialer answers
+        pump(&mut receiver, &mut dialer, &db); // own challenge: dialer answers + opens sync
 
-        // Dialer is Identified. Its response to the receiver's challenge
-        // completes the receiver.
+        // Dialer is Syncing. Its response to the receiver's challenge
+        // completes the receiver, which opens its own reconciliation.
         pump(&mut dialer, &mut receiver, &db); // response: receiver verifies
 
-        assert_eq!(dialer.state(), State::Identified);
-        assert_eq!(receiver.state(), State::Identified);
+        assert_eq!(dialer.state(), State::Syncing);
+        assert_eq!(receiver.state(), State::Syncing);
         assert_eq!(
             dialer
                 .peer()
@@ -1134,5 +1169,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![author(1)]
         );
+
+        // Each side has queued its reconciliation opening on the sync channel.
+        // The payload is encrypted, but the frame header is not.
+        let opening = dialer.next_write().unwrap();
+        assert_eq!(opening[0], Channel::Sync as u8);
     }
 }

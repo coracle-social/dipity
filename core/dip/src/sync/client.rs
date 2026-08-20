@@ -127,6 +127,13 @@ impl Negotiation {
         &self.subscription
     }
 
+    /// The ids the peer has that this device lacks, once reconciliation has
+    /// run to completion. What the terminating `REQ` asks for.
+    #[must_use]
+    pub fn need(&self) -> &[EventId] {
+        &self.need
+    }
+
     /// Consume one `NEG-MSG` from the peer's relay, returning what comes next.
     ///
     /// The reply is the next round's frame, or the `REQ` for the accumulated
@@ -154,6 +161,26 @@ impl Negotiation {
     }
 }
 
+/// The `REQ` phase after a negotiation terminates: which of the negotiated
+/// ids are still missing, fetched page by page.
+pub struct Fetch {
+    /// Ids this device still wants.
+    pending: BTreeSet<EventId>,
+    /// The ids in the most recent `REQ`, to tell a page that served nothing —
+    /// the peer does not hold the rest — from one still in flight.
+    last_requested: BTreeSet<EventId>,
+}
+
+impl Fetch {
+    /// A fetch for every id the negotiation concluded with.
+    fn new(need: BTreeSet<EventId>) -> Self {
+        Self {
+            pending: need.clone(),
+            last_requested: need,
+        }
+    }
+}
+
 /// Handle a message this device's client half received.
 pub fn handle(
     db: &Db,
@@ -162,20 +189,20 @@ pub fn handle(
     quota: Quota,
     used: &mut Used,
     negotiations: &mut BTreeMap<SubscriptionId, Negotiation>,
+    fetches: &mut BTreeMap<SubscriptionId, Fetch>,
 ) -> Result<Vec<Message>> {
     match message {
-        Message::Event(_subscription, event) => {
-            match admits(peer, &event, None, quota, *used) {
-                Ok(()) => {
-                    ingest(db, peer, &event, None)?;
-                    used.record(&event);
-
-                    Ok(Vec::new())
-                }
-                // Events on a subscription carry no `OK` back: the relay
-                // pushed them, and the drop is the rejection.
-                Err(_) => Ok(Vec::new()),
+        Message::Event(subscription, event) => {
+            if admits(peer, &event, None, quota, *used).is_ok() {
+                ingest(db, peer, &event, None)?;
+                used.record(&event);
             }
+            // Whether stored or rejected, it is no longer wanted.
+            if let Some(fetch) = fetches.get_mut(&subscription) {
+                fetch.pending.remove(&event.id);
+            }
+
+            Ok(Vec::new())
         }
         Message::NegMsg(subscription, frame) => {
             let Some(negotiation) = negotiations.get_mut(&subscription) else {
@@ -185,15 +212,45 @@ pub fn handle(
             let replies = negotiation.step(&frame)?;
 
             // The terminating reply is a REQ on the same subscription: the
-            // exchange is over, so the entry goes with it rather than growing
-            // stale answers to anything the peer sends afterwards.
+            // exchange is over and the fetch for what it wants begins.
             if matches!(replies.last(), Some(Message::Req(sub, _)) if *sub == subscription) {
+                let need = negotiation.need().iter().copied().collect::<BTreeSet<_>>();
+
                 negotiations.remove(&subscription);
+
+                if !need.is_empty() {
+                    fetches.insert(subscription.clone(), Fetch::new(need));
+                }
             }
 
             Ok(replies)
         }
-        Message::Eose(_) => Ok(Vec::new()),
+        Message::Eose(subscription) => {
+            let Some(fetch) = fetches.get_mut(&subscription) else {
+                return Ok(Vec::new());
+            };
+
+            // Done: everything this page asked for arrived.
+            if fetch.pending.is_empty() {
+                fetches.remove(&subscription);
+                return Ok(Vec::new());
+            }
+
+            // A page that served nothing means the peer does not hold the
+            // rest; asking again would not change that.
+            if fetch.pending == fetch.last_requested {
+                fetches.remove(&subscription);
+                return Ok(Vec::new());
+            }
+
+            let ids = fetch.pending.clone();
+            fetch.last_requested = ids.clone();
+
+            Ok(vec![Message::Req(
+                subscription.clone(),
+                vec![Filter::new().add_ids(ids)],
+            )])
+        }
         Message::Ok(..) => Ok(Vec::new()),
         _ => Ok(Vec::new()),
     }
@@ -469,5 +526,119 @@ mod tests {
             }
             _ => panic!("expected the terminating REQ"),
         }
+    }
+
+    // ---------------------------------------------------------- pagination
+
+    fn fetched(id: &HashedEvent) -> BTreeSet<EventId> {
+        [id.id].into_iter().collect()
+    }
+
+    #[test]
+    fn an_eose_with_ids_still_missing_requests_the_next_page() {
+        let db = Db::open_in_memory().unwrap();
+        let first = note_from(2, 100);
+        let second = note_from(2, 200);
+
+        let subscription = SubscriptionId("sub".into());
+        let mut fetches = BTreeMap::from([(
+            subscription.clone(),
+            Fetch::new([first.id, second.id].into()),
+        )]);
+
+        // One of the two arrives.
+        let replies = handle(
+            &db,
+            &peer([author(2)]),
+            Message::Event(subscription.clone(), Box::new(first.clone())),
+            Quota::STRANGER,
+            &mut Used::default(),
+            &mut BTreeMap::new(),
+            &mut fetches,
+        )
+        .unwrap();
+        assert!(replies.is_empty());
+
+        // EOSE with one still missing asks again for just that one.
+        let replies = handle(
+            &db,
+            &peer([author(2)]),
+            Message::Eose(subscription.clone()),
+            Quota::STRANGER,
+            &mut Used::default(),
+            &mut BTreeMap::new(),
+            &mut fetches,
+        )
+        .unwrap();
+
+        match replies.as_slice() {
+            [Message::Req(sub, filters)] => {
+                assert_eq!(sub, &subscription);
+                let ids = filters
+                    .first()
+                    .and_then(|filter| filter.ids.as_ref())
+                    .unwrap();
+                assert_eq!(ids, &fetched(&second));
+            }
+            other => panic!("expected a REQ for the missing page, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_page_that_served_nothing_ends_the_fetch() {
+        let db = Db::open_in_memory().unwrap();
+        let missing = note_from(3, 300);
+
+        let subscription = SubscriptionId("sub".into());
+        let mut fetches = BTreeMap::from([(subscription.clone(), Fetch::new(fetched(&missing)))]);
+
+        // EOSE arrives with nothing served: the peer does not hold the rest.
+        let replies = handle(
+            &db,
+            &peer([author(2)]),
+            Message::Eose(subscription.clone()),
+            Quota::STRANGER,
+            &mut Used::default(),
+            &mut BTreeMap::new(),
+            &mut fetches,
+        )
+        .unwrap();
+
+        assert!(replies.is_empty());
+        assert!(fetches.is_empty(), "the dead fetch should be dropped");
+    }
+
+    #[test]
+    fn a_fetch_drains_when_every_requested_id_arrives() {
+        let db = Db::open_in_memory().unwrap();
+        let event = note_from(2, 100);
+
+        let subscription = SubscriptionId("sub".into());
+        let mut fetches = BTreeMap::from([(subscription.clone(), Fetch::new(fetched(&event)))]);
+
+        handle(
+            &db,
+            &peer([author(2)]),
+            Message::Event(subscription.clone(), Box::new(event.clone())),
+            Quota::STRANGER,
+            &mut Used::default(),
+            &mut BTreeMap::new(),
+            &mut fetches,
+        )
+        .unwrap();
+
+        let replies = handle(
+            &db,
+            &peer([author(2)]),
+            Message::Eose(subscription.clone()),
+            Quota::STRANGER,
+            &mut Used::default(),
+            &mut BTreeMap::new(),
+            &mut fetches,
+        )
+        .unwrap();
+
+        assert!(replies.is_empty());
+        assert!(fetches.is_empty(), "a completed fetch should be dropped");
     }
 }
