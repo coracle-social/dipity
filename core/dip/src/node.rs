@@ -33,6 +33,8 @@ use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::SecretKey;
 use std::sync::Arc;
 
+use crate::clock;
+use crate::db::command as db_command;
 use crate::db::{Db, query};
 use crate::link::{LinkId, PeripheralId, Role};
 use crate::model::Policy;
@@ -71,6 +73,91 @@ pub const RSSI_FLOOR: i16 = -90;
 /// How many central links may be open at once.
 pub const MAX_LINKS: usize = 6;
 
+/// Minimum gap between connect attempts. The doc calls for roughly one per
+/// 0.5s; the clock counts in whole seconds, so one per second.
+const CONNECT_INTERVAL_SECONDS: i64 = 1;
+
+/// How long a peripheral is left alone after a dial, so a peer that ignores
+/// connections is not redialed every advertisement.
+const BACKOFF_SECONDS: i64 = 15;
+
+/// Everything scheduling dials from an advertisement.
+#[derive(Debug, Default)]
+struct Scheduler {
+    /// Candidates queued by the floor, the link cap, or the rate limit, most
+    /// recently seen first.
+    candidates: Vec<(PeripheralId, i16)>,
+    /// When each peripheral may next be dialed, ratcheted back on each attempt.
+    backoff: BTreeMap<PeripheralId, i64>,
+    /// When the last connect attempt went out, for the global rate limit.
+    last_attempt: Option<i64>,
+}
+
+impl Scheduler {
+    /// A peripheral was seen; try to dial it, or queue it and say nothing.
+    fn seen(&mut self, peripheral: PeripheralId, rssi: i16) -> Option<PeripheralId> {
+        self.queue(peripheral, rssi);
+
+        self.poll()
+    }
+
+    /// Make room for a candidate, keeping the best RSSI.
+    fn queue(&mut self, peripheral: PeripheralId, rssi: i16) {
+        match self
+            .candidates
+            .iter()
+            .position(|(candidate, _)| *candidate == peripheral)
+        {
+            Some(index) => {
+                // A stronger reading replaces the queued one.
+                if self.candidates[index].1 < rssi {
+                    self.candidates[index] = (peripheral, rssi);
+                }
+            }
+            None => {
+                self.candidates.push((peripheral, rssi));
+                self.candidates
+                    .sort_by_key(|(_, rssi)| std::cmp::Reverse(*rssi));
+            }
+        }
+    }
+
+    /// Dial the strongest admissible candidate, if any.
+    fn poll(&mut self) -> Option<PeripheralId> {
+        let now = clock::now();
+
+        if self
+            .last_attempt
+            .is_some_and(|at| now - at < CONNECT_INTERVAL_SECONDS)
+        {
+            return None;
+        }
+
+        // Walk the queue most-recently-seen-but-strongest first; the first
+        // candidate not under its backoff is dialed, and candidates under it
+        // stay queued for a later tick.
+        for index in 0..self.candidates.len() {
+            let (peripheral, _) = self.candidates[index].clone();
+
+            let admissible = match self.backoff.get(&peripheral) {
+                Some(&until) => now >= until,
+                None => true,
+            };
+
+            if admissible {
+                self.candidates.remove(index);
+                self.last_attempt = Some(now);
+                self.backoff
+                    .insert(peripheral.clone(), now + BACKOFF_SECONDS);
+
+                return Some(peripheral);
+            }
+        }
+
+        None
+    }
+}
+
 /// Every live session, the store behind them, and the key they authenticate
 /// with.
 pub struct Node {
@@ -82,6 +169,8 @@ pub struct Node {
     policy: Arc<Policy>,
     /// Live sessions, keyed on link
     sessions: BTreeMap<LinkId, Session>,
+    /// Decides which advertised peers to dial, and when.
+    scheduler: Scheduler,
 }
 
 impl Node {
@@ -95,6 +184,7 @@ impl Node {
             identity,
             policy,
             sessions: BTreeMap::new(),
+            scheduler: Scheduler::default(),
         })
     }
 
@@ -118,8 +208,17 @@ impl Node {
     ///
     /// Whether to dial is the core's call; the shell keeps the radio.
     /// `docs/discovery.md#connection-scheduling`.
-    pub fn peripheral_seen(&mut self, _peripheral: &PeripheralId, _rssi: i16) -> Vec<Action> {
-        todo!("scheduler: RSSI floor, rate limit, backoff, link cap")
+    pub fn peripheral_seen(&mut self, peripheral: &PeripheralId, rssi: i16) -> Vec<Action> {
+        let mut actions = Vec::new();
+
+        if rssi < RSSI_FLOOR || self.sessions.len() >= MAX_LINKS {
+            // Queued, not dialed: still worth the scheduler remembering.
+            self.scheduler.queue(peripheral.clone(), rssi);
+        } else if let Some(peripheral) = self.scheduler.seen(peripheral.clone(), rssi) {
+            actions.push(Action::Connect(peripheral));
+        }
+
+        actions
     }
 
     /// A GATT connection came up, with the MTU the link negotiated.
@@ -208,7 +307,14 @@ impl Node {
             }
         }
 
-        self.collect()
+        // A queued candidate may now be past its rate limit or backoff.
+        let mut actions = Vec::new();
+        if let Some(peripheral) = self.scheduler.poll() {
+            actions.push(Action::Connect(peripheral));
+        }
+
+        actions.extend(self.collect());
+        actions
     }
 
     // ========================================================================
@@ -236,8 +342,16 @@ impl Node {
     ///
     /// Immediate rather than waiting for the next reconciliation, so a note
     /// written in a crowd propagates while the crowd is still there.
-    pub fn publish(&mut self, _event: &HashedEvent) -> Result<Vec<Action>> {
-        todo!("db::command::publish_event, then offer on every syncing session")
+    pub fn publish(&mut self, event: &HashedEvent) -> Result<Vec<Action>> {
+        db_command::publish_event(&self.db, event, &self.identity.public_key(), clock::now())?;
+
+        for session in self.sessions.values_mut() {
+            if session.state().is_identified() {
+                session.offer(&self.db, event)?;
+            }
+        }
+
+        Ok(self.collect())
     }
 
     // ========================================================================
@@ -275,5 +389,131 @@ impl Node {
         }
 
         actions
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use coracle_lib::tags::Tags;
+
+    use crate::fixtures::{author, note};
+    use crate::model::{Policy, Query};
+    use crate::session::Session;
+
+    fn node() -> Node {
+        Node::new(db(), SecretKey::generate()).unwrap()
+    }
+
+    fn db() -> Arc<Db> {
+        Arc::new(Db::open_in_memory().unwrap())
+    }
+
+    fn peripheral(id: u8) -> PeripheralId {
+        PeripheralId(id.to_string())
+    }
+
+    #[test]
+    fn a_candidate_above_the_floor_is_dialed() {
+        let mut node = node();
+
+        let actions = node.peripheral_seen(&peripheral(1), -80);
+
+        assert_eq!(actions, vec![Action::Connect(peripheral(1))]);
+    }
+
+    #[test]
+    fn a_candidate_below_the_floor_is_queued_until_the_reading_recovers() {
+        let mut node = node();
+
+        assert!(node.peripheral_seen(&peripheral(1), -100).is_empty());
+        assert!(node.peripheral_seen(&peripheral(1), -95).is_empty());
+
+        // A reading above the floor lets the queued candidate out.
+        let actions = node.peripheral_seen(&peripheral(1), -85);
+        assert_eq!(actions, vec![Action::Connect(peripheral(1))]);
+    }
+
+    #[test]
+    fn attempts_are_rate_limited() {
+        let mut node = clock::at(1_000, node);
+
+        clock::at(1_000, || {
+            assert_eq!(
+                node.peripheral_seen(&peripheral(1), -80),
+                vec![Action::Connect(peripheral(1))]
+            );
+            assert!(node.peripheral_seen(&peripheral(2), -80).is_empty());
+        });
+
+        // A second later the rate limit has cleared.
+        clock::at(1_001, || {
+            assert_eq!(
+                node.peripheral_seen(&peripheral(2), -80),
+                vec![Action::Connect(peripheral(2))]
+            );
+        });
+    }
+
+    #[test]
+    fn a_peer_ignoring_connects_is_backed_off() {
+        let mut node = clock::at(1_000, node);
+
+        clock::at(1_000, || {
+            assert_eq!(
+                node.peripheral_seen(&peripheral(1), -80),
+                vec![Action::Connect(peripheral(1))]
+            );
+        });
+
+        // The dial went unanswered; a fresh advertisement is held until the
+        // backoff lapses.
+        clock::at(1_005, || {
+            assert!(node.peripheral_seen(&peripheral(1), -80).is_empty());
+        });
+
+        clock::at(1_000 + BACKOFF_SECONDS, || {
+            assert_eq!(
+                node.peripheral_seen(&peripheral(1), -80),
+                vec![Action::Connect(peripheral(1))]
+            );
+        });
+    }
+
+    #[test]
+    fn the_link_cap_queues_candidates_beyond_max_links() {
+        // Fill the session table to the cap.
+        let mut node = node();
+        let policy = Arc::new(Policy::new(author(1)));
+
+        for index in 0..MAX_LINKS {
+            node.sessions.insert(
+                LinkId(index as u64),
+                Session::open(
+                    LinkId(index as u64),
+                    Role::Receiver,
+                    100,
+                    Arc::clone(&policy),
+                    SecretKey::generate(),
+                )
+                .unwrap(),
+            );
+        }
+
+        let actions = node.peripheral_seen(&peripheral(1), -80);
+
+        assert!(actions.is_empty(), "a dial slipped past the link cap");
+    }
+
+    #[test]
+    fn publish_stores_and_offers() {
+        let db = db();
+        let mut node = Node::new(Arc::clone(&db), SecretKey::generate()).unwrap();
+        let event = note(author(1), 100, "hello", Tags::new());
+
+        node.publish(&event).unwrap();
+
+        let stored = query::list_events(&db, &Query::new()).unwrap();
+        assert_eq!(stored, vec![event]);
     }
 }

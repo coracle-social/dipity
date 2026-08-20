@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use coracle_lib::events::EventContent;
+use coracle_lib::events::{EventContent, HashedEvent};
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::{PublicKey, SecretKey};
 use coracle_lib::tags::Tags as NostrTags;
@@ -286,6 +286,32 @@ impl Session {
 
         for reply in replies {
             self.send_sync(&reply)?;
+        }
+
+        Ok(())
+    }
+
+    /// Offer a freshly stored event to every subscription the peer has open,
+    /// pushing what the relay half would serve.
+    pub fn offer(&mut self, db: &Db, _event: &HashedEvent) -> Result<()> {
+        let Some(peer) = self.peer.as_ref().cloned() else {
+            return Ok(());
+        };
+
+        let subscriptions: Vec<SubscriptionId> = self.subscriptions.keys().cloned().collect();
+
+        for subscription in subscriptions {
+            let Some(filter) = self.subscriptions.get(&subscription).cloned() else {
+                continue;
+            };
+
+            // serve recomputes from the store, which now holds the event, so
+            // the offer is exactly what a fresh REQ would have returned.
+            let replies = relay::serve(db, &peer, &subscription, &[filter])?;
+
+            for reply in replies {
+                self.send_sync(&reply)?;
+            }
         }
 
         Ok(())
