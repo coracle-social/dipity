@@ -100,7 +100,7 @@ pub struct Node {
     /// Decides which advertised peers to dial, and when.
     scheduler: Scheduler,
     /// The shared rolling spending ledger, metered across sessions.
-    spending: Arc<crate::spending::SpendingLedger>,
+    spending: Arc<crate::sync::spending::SpendingLedger>,
     /// Where the app is, for the cool-off admission window. `None` until the
     /// shell first reports it.
     presence: Option<Presence>,
@@ -125,7 +125,7 @@ impl Node {
             sessions: BTreeMap::new(),
             link_peripheral: BTreeMap::new(),
             scheduler: Scheduler::default(),
-            spending: Arc::new(crate::spending::SpendingLedger::default()),
+            spending: Arc::new(crate::sync::spending::SpendingLedger::default()),
             presence: None,
         })
     }
@@ -528,8 +528,8 @@ mod tests {
         .unwrap()
     }
 
-    fn spending() -> Arc<crate::spending::SpendingLedger> {
-        Arc::new(crate::spending::SpendingLedger::default())
+    fn spending() -> Arc<crate::sync::spending::SpendingLedger> {
+        Arc::new(crate::sync::spending::SpendingLedger::default())
     }
 
     fn db() -> Arc<Db> {

@@ -16,8 +16,8 @@ use dip::LinkId;
 use dip::db::{Db, query};
 use dip::model::{AuthorshipProof, Identity, Policy, Query, RecipientSignature};
 use dip::session::Peer;
-use dip::spending::{SessionSpending, SpendingLedger};
 use dip::sync::client::Client;
+use dip::sync::spending::{SessionSpending, SpendingLedger};
 use dip::sync::{Message, Quota, SubscriptionId};
 
 /// An event whose id names different content than it carries.

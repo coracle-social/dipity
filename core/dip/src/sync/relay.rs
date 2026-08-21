@@ -19,8 +19,8 @@ use crate::db::Db;
 use crate::db::query as db_query;
 use crate::model::{AuthorshipProof, Identity, Query, RecipientSignature, Registers};
 use crate::session::Peer;
-use crate::spending::SessionSpending;
 use crate::sync::client::{self, Rejected};
+use crate::sync::spending::SessionSpending;
 use crate::sync::{Message, Quota, SubscriptionId};
 
 /// A page of events served on one subscription, pending the client's next
@@ -308,7 +308,7 @@ mod tests {
     use crate::fixtures::{author, note, secret};
     use crate::link::LinkId;
     use crate::model::{Policy, RecipientSignature, Scope};
-    use crate::spending::SpendingLedger;
+    use crate::sync::spending::SpendingLedger;
 
     fn us() -> PublicKey {
         author(1)

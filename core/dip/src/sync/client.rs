@@ -17,7 +17,7 @@ use crate::db::command;
 use crate::db::query as db_query;
 use crate::model::{AuthorshipClaim, AuthorshipProof, Identity, RecipientSignature};
 use crate::session::Peer;
-use crate::spending::{SessionSpending, Spent, event_size};
+use crate::sync::spending::{SessionSpending, Spent, event_size};
 use crate::sync::{Message, Quota, SubscriptionId};
 
 /// The largest event the store accepts, whatever the peer's standing.
@@ -560,7 +560,7 @@ mod tests {
     use crate::fixtures::{author, note, secret};
     use crate::link::LinkId;
     use crate::model::{Policy, Query, RecipientSignature, Scope};
-    use crate::spending::SpendingLedger;
+    use crate::sync::spending::SpendingLedger;
 
     /// This device, identifying as seed 1.
     fn us() -> PublicKey {
@@ -675,7 +675,7 @@ mod tests {
         });
 
         // …and the first has fallen out just past the window.
-        clock::at(1_000 + crate::spending::WINDOW_SECONDS + 1, || {
+        clock::at(1_000 + crate::sync::spending::WINDOW_SECONDS + 1, || {
             let spending = SessionSpending::new(Arc::clone(&ledger));
             let spent = spending.spent(&peer([author(2)]));
             assert_eq!(spent.events, 1, "the stale event fell out of the window");

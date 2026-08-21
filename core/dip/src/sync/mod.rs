@@ -16,6 +16,7 @@ pub mod blob;
 pub mod client;
 pub mod message;
 pub mod relay;
+pub mod spending;
 
 pub use message::{Message, SubscriptionId};
 
@@ -23,7 +24,8 @@ pub use message::{Message, SubscriptionId};
 ///
 /// Accepting gossip is an unbounded write from whoever is standing nearby, so
 /// these apply independently of scope: a peer inside the user's trust graph is
-/// still metered. `docs/sync.md#quotas`.
+/// still metered, and what it has spent against these is [`spending`].
+/// `docs/sync.md#quotas`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Quota {
     /// Events this session may store.

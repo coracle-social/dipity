@@ -72,7 +72,6 @@ pub mod link;
 pub mod model;
 pub mod node;
 pub mod session;
-pub mod spending;
 pub mod sync;
 pub mod transport;
 pub mod util;

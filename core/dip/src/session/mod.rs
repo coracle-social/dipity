@@ -42,10 +42,10 @@ use crate::clock;
 use crate::db::Db;
 use crate::link::{LinkId, Role};
 use crate::model::{Identity, Policy};
-use crate::spending::{SessionSpending, SpendingLedger};
 use crate::sync::blob::BlobExchange;
 use crate::sync::client::Client;
 use crate::sync::relay::{self, Relay};
+use crate::sync::spending::{SessionSpending, SpendingLedger};
 use crate::sync::{Message, Quota};
 use crate::transport::{Channel, Frame, Wire};
 

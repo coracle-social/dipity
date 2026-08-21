@@ -1,4 +1,5 @@
-//! How much has been written to this device, measured against what is allowed.
+//! How much has been written to this device, measured against the
+//! [`Quota`](super::Quota) allowing it.
 //!
 //! Two meters over the same rolling 24 h window, because the threat has two
 //! shapes:
