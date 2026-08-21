@@ -30,7 +30,7 @@ use crate::clock;
 use crate::db::Db;
 use crate::db::command;
 use crate::db::query as db_query;
-use crate::model::{Blob, BlobHash, LocalIdentity};
+use crate::model::{Blob, BlobHash, Identity};
 use crate::session::Peer;
 use crate::sync::Quota;
 use crate::sync::message::{BlossomRequest, BlossomResponse};
@@ -161,7 +161,7 @@ impl BlobExchange {
         &mut self,
         db: &Db,
         peer: &Peer,
-        local: &LocalIdentity,
+        local: &Identity,
         request: &BlossomRequest,
         quota: Quota,
     ) -> Result<BlossomResponse> {
@@ -613,12 +613,7 @@ fn requested_range(request: &BlossomRequest) -> Option<Requested> {
 
 /// The blob a request path names, if this device knows it and the peer may be
 /// served its anchor.
-fn offerable_blob(
-    db: &Db,
-    peer: &Peer,
-    local: &LocalIdentity,
-    hash: &BlobHash,
-) -> Result<Option<Blob>> {
+fn offerable_blob(db: &Db, peer: &Peer, local: &Identity, hash: &BlobHash) -> Result<Option<Blob>> {
     let Some(blob) = db_query::get_blob(db, hash)? else {
         return Ok(None);
     };
@@ -673,8 +668,8 @@ mod tests {
     use crate::link::LinkId;
     use crate::model::Policy;
 
-    fn local() -> LocalIdentity {
-        LocalIdentity::new(author(1))
+    fn local() -> Identity {
+        Identity::from([author(1)])
     }
 
     fn peer() -> Peer {

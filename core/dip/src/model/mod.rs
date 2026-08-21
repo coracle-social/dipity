@@ -36,7 +36,7 @@ pub use authors::Authors;
 pub use authorship_proof::{AuthorshipClaim, AuthorshipProof};
 pub use blob::{Blob, BlobHash, BlobRole};
 pub use graph::{Graph, Standing};
-pub use identity::LocalIdentity;
+pub use identity::Identity;
 pub use kind::{KIND_DELETE, KIND_MUTE, KIND_PROFILE};
 pub use order::Order;
 pub use policy::{DISCLOSURE_WINDOW_SECONDS, PeerPolicy, Policy};

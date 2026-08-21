@@ -14,7 +14,7 @@ use coracle_lib::tags::Tags;
 
 use dip::LinkId;
 use dip::db::{Db, query};
-use dip::model::{AuthorshipProof, LocalIdentity, Policy, Query, RecipientSignature};
+use dip::model::{AuthorshipProof, Identity, Policy, Query, RecipientSignature};
 use dip::session::Peer;
 use dip::spending::{SessionSpending, SpendingLedger};
 use dip::sync::client::Client;
@@ -75,7 +75,7 @@ fn a_forwarder_cannot_reuse_a_proof_for_content_the_author_never_wrote() {
         .handle(
             &db,
             &peer,
-            &LocalIdentity::new(carol.public_key()),
+            &Identity::from([carol.public_key()]),
             Message::Event(subscription.clone(), Box::new(forged)),
             Quota::STRANGER,
             &mut spending,
@@ -86,7 +86,7 @@ fn a_forwarder_cannot_reuse_a_proof_for_content_the_author_never_wrote() {
         .handle(
             &db,
             &peer,
-            &LocalIdentity::new(carol.public_key()),
+            &Identity::from([carol.public_key()]),
             Message::AuthorshipProof(subscription, real.id, Box::new(proof.to_bytes())),
             Quota::STRANGER,
             &mut spending,

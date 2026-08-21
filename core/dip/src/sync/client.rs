@@ -15,7 +15,7 @@ use crate::clock;
 use crate::db::Db;
 use crate::db::command;
 use crate::db::query as db_query;
-use crate::model::{AuthorshipClaim, AuthorshipProof, LocalIdentity, RecipientSignature};
+use crate::model::{AuthorshipClaim, AuthorshipProof, Identity, RecipientSignature};
 use crate::session::Peer;
 use crate::spending::{SessionSpending, Spent, event_size};
 use crate::sync::{Message, Quota, SubscriptionId};
@@ -246,7 +246,7 @@ impl Client {
         &mut self,
         db: &Db,
         peer: &Peer,
-        local: &LocalIdentity,
+        local: &Identity,
         message: Message,
         quota: Quota,
         spending: &mut SessionSpending,
@@ -403,7 +403,7 @@ fn bound<T>(pending: &mut BTreeMap<EventId, T>) {
 
 /// Store the author's signature over an event, once it verifies against the
 /// stored event and names this device.
-fn store_signature(db: &Db, peer: &Peer, local: &LocalIdentity, event_id: EventId, sig: &[u8; 64]) {
+fn store_signature(db: &Db, peer: &Peer, local: &Identity, event_id: EventId, sig: &[u8; 64]) {
     let Ok(Some(event)) = db_query::get_event(db, &event_id) else {
         return;
     };
@@ -415,7 +415,7 @@ fn store_signature(db: &Db, peer: &Peer, local: &LocalIdentity, event_id: EventI
 
     // Nothing on the wire says which of this device's identities the author
     // named, so the one it verifies under is the answer.
-    let named = local.pubkeys().find_map(|identity| {
+    let named = local.iter().find_map(|identity| {
         let signature = RecipientSignature {
             event_id,
             author_pubkey: event.pubkey,
@@ -515,7 +515,7 @@ fn admissible(
 pub fn ingest(
     db: &Db,
     peer: &Peer,
-    local: &LocalIdentity,
+    local: &Identity,
     event: &HashedEvent,
     proof: Option<&AuthorshipProof>,
 ) -> Result<bool> {
@@ -527,7 +527,7 @@ pub fn ingest(
         // which of this device's it was designated to, are both unnamed on the
         // wire — so the pair it verifies under is the pair it was built for.
         let verified = peer.pubkeys().any(|holder| {
-            local.pubkeys().any(|verifier| {
+            local.iter().any(|verifier| {
                 proof.verifies(&AuthorshipClaim {
                     event_id: event.id,
                     author: event.pubkey,
@@ -572,8 +572,8 @@ mod tests {
     }
 
     /// This device's identity in these tests.
-    fn local() -> LocalIdentity {
-        LocalIdentity::new(us())
+    fn local() -> Identity {
+        Identity::from([us()])
     }
 
     fn note_from(n: u8, at: i64) -> HashedEvent {

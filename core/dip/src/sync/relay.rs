@@ -17,7 +17,7 @@ use coracle_lib::sync::{FrameBudget, Item, SyncSet};
 
 use crate::db::Db;
 use crate::db::query as db_query;
-use crate::model::{AuthorshipProof, LocalIdentity, Query, RecipientSignature, Registers};
+use crate::model::{AuthorshipProof, Identity, Query, RecipientSignature, Registers};
 use crate::session::Peer;
 use crate::spending::SessionSpending;
 use crate::sync::client::{self, Rejected};
@@ -68,7 +68,7 @@ impl Relay {
         quota: Quota,
         spending: &mut SessionSpending,
     ) -> Result<Vec<Message>> {
-        let local = LocalIdentity::new(identity.public_key());
+        let local = Identity::from([identity.public_key()]);
 
         match message {
             Message::Publish(event) => {
@@ -147,21 +147,16 @@ fn reason(rejected: Rejected) -> &'static str {
 /// measured from whichever identities this device is acting as. So this is the
 /// one place that decides what a peer may see, and it decides it once.
 #[must_use]
-pub fn query_for(peer: &Peer, local: &LocalIdentity, filter: Filter) -> Query {
+pub fn query_for(peer: &Peer, local: &Identity, filter: Filter) -> Query {
     Query::new()
         .with_filter(filter)
-        .with_registers(Registers::offerable(local.pubkeys()))
+        .with_registers(Registers::offerable(local))
         .with_policy(peer.policy().clone())
 }
 
 /// The set the NIP-77 negentropy pass diffs, bounded by the same query as
 /// everything else the relay half serves.
-pub fn reconcilable(
-    db: &Db,
-    peer: &Peer,
-    local: &LocalIdentity,
-    filter: Filter,
-) -> Result<SyncSet> {
+pub fn reconcilable(db: &Db, peer: &Peer, local: &Identity, filter: Filter) -> Result<SyncSet> {
     let items = db_query::list_events(db, &query_for(peer, local, filter))?
         .into_iter()
         .map(|event| Item {
@@ -180,7 +175,7 @@ pub fn reconcilable(
 fn negotiate(
     db: &Db,
     peer: &Peer,
-    local: &LocalIdentity,
+    local: &Identity,
     subscription: &SubscriptionId,
     filter: &Filter,
     frame: &[u8],
@@ -210,7 +205,7 @@ pub fn serve(
     subscription: &SubscriptionId,
     filters: &[Filter],
 ) -> Result<Vec<Message>> {
-    let local = LocalIdentity::new(identity.public_key());
+    let local = Identity::from([identity.public_key()]);
     let mut events = Vec::new();
 
     for filter in filters {

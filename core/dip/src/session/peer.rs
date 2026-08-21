@@ -1,12 +1,10 @@
 //! What a peer has proved about itself.
 
-use std::collections::BTreeSet;
-
 use coracle_lib::events::{HasCreatedAt, HasId, HasKind, HasPubkey, HasTags};
 use coracle_lib::keys::PublicKey;
 
 use crate::link::LinkId;
-use crate::model::{PeerPolicy, Policy, Standing};
+use crate::model::{Identity, PeerPolicy, Policy, Standing};
 
 /// A peer — the device on the other end of the session — that has completed
 /// NIP-42, and what the user's settings say about it.
@@ -30,7 +28,7 @@ pub struct Peer {
     /// The link it was proved over. A `Peer` does not outlive its session.
     pub link: LinkId,
     /// Every pubkey the peer proved.
-    pubkeys: BTreeSet<PublicKey>,
+    pubkeys: Identity,
     /// The user's policy, resolved against the whole set.
     policy: PeerPolicy,
 }
@@ -47,7 +45,7 @@ impl Peer {
         pubkeys: impl IntoIterator<Item = PublicKey>,
         policy: &Policy,
     ) -> Self {
-        let pubkeys: BTreeSet<PublicKey> = pubkeys.into_iter().collect();
+        let pubkeys: Identity = pubkeys.into_iter().collect();
         let standing = pubkeys
             .iter()
             .map(|pubkey| policy.graph.standing(pubkey))

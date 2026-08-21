@@ -41,7 +41,7 @@ use crate::blobstore::BlobStore;
 use crate::clock;
 use crate::db::Db;
 use crate::link::{LinkId, Role};
-use crate::model::Policy;
+use crate::model::{Identity, Policy};
 use crate::spending::{SessionSpending, SpendingLedger};
 use crate::sync::blob::BlobExchange;
 use crate::sync::client::Client;
@@ -367,8 +367,8 @@ impl Session {
 
     /// The identity this device is acting as on this link.
     #[must_use]
-    fn local(&self) -> crate::model::LocalIdentity {
-        crate::model::LocalIdentity::new(self.identity.public_key())
+    fn local(&self) -> Identity {
+        Identity::from([self.identity.public_key()])
     }
 
     /// The peer's quota for this session.
