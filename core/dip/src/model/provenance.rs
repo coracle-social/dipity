@@ -17,12 +17,6 @@ pub struct Provenance {
 }
 
 /// Criteria over an event's sightings: when it arrived, and who from.
-///
-/// The relay protocol cannot express these, and must not — they read
-/// [`Provenance`], which records the user's movements and who they were with,
-/// and is never served to a peer. So they are kept off the
-/// [`Filter`](coracle_lib::filters::Filter) that may go on the wire, and are
-/// never serialized. See `docs/privacy.md`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProvenanceFilter {
     /// Lower bound on the event's seen time, inclusive.

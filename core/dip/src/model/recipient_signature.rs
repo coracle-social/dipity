@@ -11,14 +11,6 @@ use crate::util::Bare;
 /// the peer it names. It is the witness an authorship proof is built from,
 /// not the proof. The recipient proves in zero knowledge that it holds this
 /// signature, designated to the peer it is forwarding to.
-///
-/// The signature is BIP-340 over a message that is not an event, so it is bare
-/// bytes rather than anything in `coracle_lib::events`.
-///
-/// Everything needed to check it is here, author included, because a signature
-/// without the key it is by is not a claim about anything — it neither verifies
-/// nor proves. The store keeps the author against the event's own by foreign
-/// key, so the two cannot disagree.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RecipientSignature {
     /// The event the signature commits to.

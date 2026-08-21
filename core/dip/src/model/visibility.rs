@@ -42,7 +42,7 @@ impl Default for Visibility {
 }
 
 impl Visibility {
-    /// The scope governing one of the user's own events.
+    /// The scope for an event. Only events signed by the user make sense to check here.
     #[must_use]
     pub fn scope_for<E>(&self, event: &E) -> Scope
     where

@@ -37,14 +37,7 @@ pub trait BlobStore: Send + Sync {
     fn delete(&self, sha256: &BlobHash) -> Result<()>;
 }
 
-/// A blob store over a directory the shell provides, one file per blob named
-/// by its lowercase hex sha256.
-///
-/// Blobs are content-addressed and appended group by group as they arrive, so
-/// the whole transfer is `create` + `append` until the sync layer has the
-/// whole file and checks it against its hash.
-/// The directory is the one the shell already owns, alongside where it tells
-/// the core to open the database.
+/// A blob store over a directory the shell provides.
 pub struct FileBlobStore {
     /// The directory the files live in, created on open.
     directory: PathBuf,
@@ -63,8 +56,7 @@ impl FileBlobStore {
         })
     }
 
-    /// The file a hash lives in. One path component, never a traversal: a
-    /// [`BlobHash`] is 64 hex characters or it does not exist.
+    /// The file a hash lives in.
     fn path(&self, sha256: &BlobHash) -> PathBuf {
         self.directory.join(sha256.as_str())
     }
