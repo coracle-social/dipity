@@ -43,7 +43,9 @@ pub struct Db {
     /// The connection, locked for the life of one transaction.
     connection: Mutex<Connection>,
     /// What this store's writes announce on.
-    channels: Channels,
+    /// What this store's writes announce on. Used by the domain `channel`
+    /// modules to subscribe; nothing else should need it.
+    pub(crate) channels: Channels,
 }
 
 impl Db {
@@ -107,12 +109,6 @@ impl Db {
         tx.commit()?;
 
         Ok(value)
-    }
-
-    /// What this store's writes announce on. Used by the domain `channel`
-    /// modules to subscribe; nothing else should need it.
-    pub(crate) fn channels(&self) -> &Channels {
-        &self.channels
     }
 
     /// Lock the connection, for the life of one transaction.
@@ -216,7 +212,9 @@ fn configure_connection(connection: &Connection) -> Result<()> {
 /// work as they would on a bare connection.
 pub struct Tx<'a> {
     inner: Transaction<'a>,
-    channels: &'a Channels,
+    /// The channels this transaction's writes announce on. Used by the
+    /// domain `channel` modules; nothing else should need it.
+    pub(crate) channels: &'a Channels,
     on_commit: RefCell<Vec<Box<dyn FnOnce()>>>,
 }
 
@@ -236,12 +234,6 @@ impl<'a> Tx<'a> {
             channels,
             on_commit: RefCell::new(Vec::new()),
         })
-    }
-
-    /// The channels this transaction's writes announce on. Used by the domain
-    /// `channel` modules; nothing else should need it.
-    pub(crate) fn channels(&self) -> &Channels {
-        self.channels
     }
 
     /// Queue `f` to run once this transaction commits. Used by the domain

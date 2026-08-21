@@ -59,7 +59,7 @@ pub fn list(tx: &Tx<'_>, query: &Query) -> Result<Vec<HashedEvent>> {
 
     let mut prepared = tx.prepare(&sql)?;
     let events = prepared
-        .query_map(params_from_iter(conditions.params()), to_event)?
+        .query_map(params_from_iter(conditions.params), to_event)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("listing events")?;
 
@@ -77,7 +77,7 @@ pub fn count(tx: &Tx<'_>, query: &Query) -> Result<usize> {
 
     let count: i64 = tx
         .prepare(&sql)?
-        .query_row(params_from_iter(conditions.params()), |row| row.get(0))
+        .query_row(params_from_iter(conditions.params), |row| row.get(0))
         .context("counting events")?;
 
     Ok(usize::try_from(count).unwrap_or(0))
@@ -448,8 +448,8 @@ fn push_policy(conditions: &mut Conditions, policy: &PeerPolicy) {
 
 /// Exclude the user's own events this peer may not see.
 fn push_visibility(conditions: &mut Conditions, policy: &PeerPolicy) {
-    let visibility = &policy.policy().visibility;
-    let standing = policy.standing();
+    let visibility = &policy.policy.visibility;
+    let standing = policy.standing;
     let hides = |scope: Scope| !scope.admits(standing);
 
     let depth = if hides(visibility.default) {
@@ -471,14 +471,14 @@ fn push_visibility(conditions: &mut Conditions, policy: &PeerPolicy) {
             let mut reached = unmatched.clone();
 
             reached.push(matched.clone());
-            push_hidden(conditions, policy.identity(), &reached);
+            push_hidden(conditions, &policy.policy.identity, &reached);
         }
 
         unmatched.push(format!("NOT {matched}"));
     }
 
     if hides(visibility.default) {
-        push_hidden(conditions, policy.identity(), &unmatched);
+        push_hidden(conditions, &policy.policy.identity, &unmatched);
     }
 }
 

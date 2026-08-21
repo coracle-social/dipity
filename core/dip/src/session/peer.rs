@@ -1,6 +1,5 @@
 //! What a peer has proved about itself.
 
-use coracle_lib::events::{HasCreatedAt, HasId, HasKind, HasPubkey, HasTags};
 use coracle_lib::keys::PublicKey;
 
 use crate::link::LinkId;
@@ -28,9 +27,9 @@ pub struct Peer {
     /// The link it was proved over. A `Peer` does not outlive its session.
     pub link: LinkId,
     /// Every pubkey the peer proved.
-    pubkeys: Identity,
+    pub pubkeys: Identity,
     /// The user's policy, resolved against the whole set.
-    policy: PeerPolicy,
+    pub policy: PeerPolicy,
 }
 
 impl Peer {
@@ -57,63 +56,6 @@ impl Peer {
             pubkeys,
             policy: policy.clone().for_standing(standing),
         }
-    }
-
-    /// Every pubkey the peer proved.
-    pub fn pubkeys(&self) -> impl Iterator<Item = &PublicKey> {
-        self.pubkeys.iter()
-    }
-
-    /// The user's settings as they apply to this device.
-    #[must_use]
-    pub fn policy(&self) -> &PeerPolicy {
-        &self.policy
-    }
-
-    /// Where the device stands in the user's graph.
-    #[must_use]
-    pub fn standing(&self) -> Standing {
-        self.policy.standing()
-    }
-
-    /// Whether `event` was authored by this peer.
-    #[must_use]
-    pub fn authored<E: HasPubkey>(&self, event: &E) -> bool {
-        self.pubkeys.contains(event.pubkey())
-    }
-
-    /// Whether the user has blocked this device.
-    #[must_use]
-    pub fn is_blocked(&self) -> bool {
-        self.policy.is_blocked()
-    }
-
-    /// Whether the user trusts this device.
-    #[must_use]
-    pub fn is_trusted(&self) -> bool {
-        self.standing() == Standing::Trusted
-    }
-
-    /// Whether `event` may be served to this peer.
-    #[must_use]
-    pub fn may_be_served<E>(&self, event: &E) -> bool
-    where
-        E: HasId + HasKind + HasPubkey + HasTags + HasCreatedAt,
-    {
-        self.policy.should_gossip(event)
-    }
-
-    /// Whether an event this peer offered is one to store.
-    #[must_use]
-    pub fn may_store<E: HasPubkey>(&self, event: &E) -> bool {
-        self.policy.should_accept(event)
-    }
-
-    /// Whether this peer may be handed the author's signature that lets it
-    /// forward an event one more hop.
-    #[must_use]
-    pub fn may_forward(&self) -> bool {
-        self.policy.may_forward()
     }
 }
 
@@ -142,15 +84,19 @@ mod tests {
         let policy = policy();
 
         assert_eq!(
-            Peer::bind(LinkId(1), [author(3), author(2)], &policy).standing(),
+            Peer::bind(LinkId(1), [author(3), author(2)], &policy)
+                .policy
+                .standing,
             Standing::Trusted
         );
         assert_eq!(
-            Peer::bind(LinkId(1), [author(3), author(4)], &policy).standing(),
+            Peer::bind(LinkId(1), [author(3), author(4)], &policy)
+                .policy
+                .standing,
             Standing::Network
         );
         assert_eq!(
-            Peer::bind(LinkId(1), [author(4)], &policy).standing(),
+            Peer::bind(LinkId(1), [author(4)], &policy).policy.standing,
             Standing::Stranger
         );
     }
@@ -161,24 +107,24 @@ mod tests {
         // device holding that key is theirs whatever else it also signs with.
         let peer = Peer::bind(LinkId(1), [author(2), author(9)], &policy());
 
-        assert!(peer.is_blocked());
-        assert!(!peer.is_trusted());
-        assert!(!peer.may_forward());
+        assert!(peer.policy.is_blocked());
+        assert_ne!(peer.policy.standing, Standing::Trusted);
+        assert!(!peer.policy.may_forward());
     }
 
     #[test]
     fn proving_one_pubkey_twice_does_not_weigh_the_set() {
         let peer = Peer::bind(LinkId(1), [author(2), author(2)], &policy());
 
-        assert_eq!(peer.pubkeys().count(), 1);
+        assert_eq!(peer.pubkeys.len(), 1);
     }
 
     #[test]
     fn a_peer_that_proved_nothing_passes_nothing() {
         let peer = Peer::bind(LinkId(1), [], &policy());
 
-        assert!(peer.is_blocked());
-        assert!(!peer.may_forward());
+        assert!(peer.policy.is_blocked());
+        assert!(!peer.policy.may_forward());
     }
 
     #[test]
@@ -187,7 +133,15 @@ mod tests {
         // qualifies even alongside one the user has never heard of.
         let policy = policy();
 
-        assert!(Peer::bind(LinkId(1), [author(2), author(4)], &policy).may_forward());
-        assert!(!Peer::bind(LinkId(1), [author(3)], &policy).may_forward());
+        assert!(
+            Peer::bind(LinkId(1), [author(2), author(4)], &policy)
+                .policy
+                .may_forward()
+        );
+        assert!(
+            !Peer::bind(LinkId(1), [author(3)], &policy)
+                .policy
+                .may_forward()
+        );
     }
 }

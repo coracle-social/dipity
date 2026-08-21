@@ -135,15 +135,19 @@ impl BlobExchange {
         }
     }
 
-    /// The battery level in percent, which gates new transfers.
-    pub fn set_battery(&mut self, level: Option<u8>) {
-        self.battery = level;
-    }
-
     /// Whether a transfer is in flight, waiting on the peer's next answer.
+    ///
+    /// A method rather than a public field: `BlobFetch` is this module's own
+    /// bookkeeping, and publishing it to answer a bool would be the wrong
+    /// trade.
     #[must_use]
     pub fn is_fetching(&self) -> bool {
         self.active.is_some()
+    }
+
+    /// The battery level in percent, which gates new transfers.
+    pub fn set_battery(&mut self, level: Option<u8>) {
+        self.battery = level;
     }
 
     /// Whether the shell should be told to open L2CAP for this link, once.
@@ -484,7 +488,8 @@ impl BlobExchange {
         // A bad answer names the peer that gave it. `docs/sync.md#blob-sync`.
         log::info!(
             "blob {hash} skipped for this session: peer {} {reason}",
-            peer.pubkeys()
+            peer.pubkeys
+                .iter()
                 .next()
                 .map_or_else(|| "unidentified".to_string(), ToString::to_string)
         );
@@ -1470,7 +1475,7 @@ mod tests {
         policy.graph.blocked.insert(author(3));
 
         let blocked = Peer::bind(LinkId(1), [author(2), author(3)], &policy);
-        assert!(blocked.is_blocked());
+        assert!(blocked.policy.is_blocked());
         let response = blobs
             .serve(
                 &db,

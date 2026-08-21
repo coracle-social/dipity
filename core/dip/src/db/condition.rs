@@ -17,18 +17,14 @@ use rusqlite::types::Value;
 #[derive(Debug, Default)]
 pub(crate) struct Conditions {
     clauses: Vec<String>,
-    params: Vec<Value>,
+    /// The parameters, in the order their placeholders name them.
+    pub(crate) params: Vec<Value>,
 }
 
 impl Conditions {
     /// No constraint at all, which matches everything.
     pub(crate) fn new() -> Self {
         Self::default()
-    }
-
-    /// The parameters, in the order their placeholders name them.
-    pub(crate) fn params(&self) -> &[Value] {
-        &self.params
     }
 
     /// The `WHERE` clause these compile to, empty when they constrain nothing.
@@ -141,7 +137,7 @@ mod tests {
         let conditions = Conditions::new();
 
         assert_eq!(conditions.where_clause(), "");
-        assert!(conditions.params().is_empty());
+        assert!(conditions.params.is_empty());
     }
 
     #[test]
@@ -164,7 +160,7 @@ mod tests {
 
         // Which is the invariant: the nth placeholder names the nth parameter.
         assert_eq!(
-            conditions.params(),
+            conditions.params,
             [text("a"), text("b"), text("c"), Value::Integer(4)]
         );
     }
@@ -180,7 +176,7 @@ mod tests {
         exclusion.push_excluded("x", Vec::new());
         assert_eq!(exclusion.where_clause(), "");
 
-        assert!(membership.params().is_empty());
-        assert!(exclusion.params().is_empty());
+        assert!(membership.params.is_empty());
+        assert!(exclusion.params.is_empty());
     }
 }

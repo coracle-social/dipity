@@ -48,31 +48,15 @@ pub enum Presence {
 #[derive(Debug, Default)]
 pub struct Gate {
     /// Whether the gate has passed, by policy or by the user's approval.
-    passed: bool,
+    /// Nothing that names an identity — a challenge answered, an `AUTH`
+    /// response accepted — happens before it has.
+    pub passed: bool,
     /// Where the app is, or `None` if it has not been in the foreground this
     /// run — in which case there is no cool-off to spend.
-    presence: Option<Presence>,
+    pub presence: Option<Presence>,
 }
 
 impl Gate {
-    /// Where the app is, which the cool-off admission window is measured
-    /// against.
-    pub fn set_presence(&mut self, presence: Option<Presence>) {
-        self.presence = presence;
-    }
-
-    /// Whether the gate has passed. Nothing that names an identity — a
-    /// challenge answered, an `AUTH` response accepted — happens before it has.
-    #[must_use]
-    pub fn passed(&self) -> bool {
-        self.passed
-    }
-
-    /// Pass the gate on the user's approval.
-    pub fn pass(&mut self) {
-        self.passed = true;
-    }
-
     /// Judge the peer the recognition exchange resolved, recording a pass.
     pub fn evaluate(
         &mut self,
@@ -153,7 +137,7 @@ mod tests {
             gate.evaluate(&db, &policy, &[author(2)]).unwrap(),
             Verdict::Blocked
         );
-        assert!(!gate.passed());
+        assert!(!gate.passed);
     }
 
     #[test]
@@ -176,7 +160,7 @@ mod tests {
             gate.evaluate(&db, &policy, &resolved).unwrap(),
             Verdict::Blocked
         );
-        assert!(!gate.passed());
+        assert!(!gate.passed);
     }
 
     #[test]
@@ -188,14 +172,16 @@ mod tests {
             gate.evaluate(&db, &policy(), &[author(2)]).unwrap(),
             Verdict::Pass
         );
-        assert!(gate.passed());
+        assert!(gate.passed);
     }
 
     #[test]
     fn the_gate_admits_a_stranger_during_the_cool_off() {
         let db = Db::open_in_memory().unwrap();
-        let mut gate = Gate::default();
-        gate.set_presence(Some(Presence::Foreground));
+        let mut gate = Gate {
+            presence: Some(Presence::Foreground),
+            ..Default::default()
+        };
 
         assert_eq!(gate.evaluate(&db, &policy(), &[]).unwrap(), Verdict::Pass);
     }
@@ -209,17 +195,19 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let policy = policy();
         let window = policy.cool_off_minutes * 60;
-        let mut gate = Gate::default();
+        let mut gate = Gate {
+            presence: Some(Presence::Foreground),
+            ..Default::default()
+        };
 
         // Open on the screen, well past the window: still accepting.
-        gate.set_presence(Some(Presence::Foreground));
         assert_eq!(
             clock::at(10_000 + window * 2, || gate.evaluate(&db, &policy, &[])).unwrap(),
             Verdict::Pass
         );
 
         // Pocketed at 20_000: the window starts there.
-        gate.set_presence(Some(Presence::Background { since: 20_000 }));
+        gate.presence = Some(Presence::Background { since: 20_000 });
         assert_eq!(
             clock::at(20_000 + window - 1, || gate.evaluate(&db, &policy, &[])).unwrap(),
             Verdict::Pass
@@ -239,7 +227,7 @@ mod tests {
             gate.evaluate(&db, &policy(), &[]).unwrap(),
             Verdict::Pending
         );
-        assert!(!gate.passed());
+        assert!(!gate.passed);
     }
 
     #[test]
@@ -247,21 +235,14 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let mut policy = policy();
         policy.disclosure_budget = 1;
-        let mut gate = Gate::default();
-        gate.set_presence(Some(Presence::Foreground));
+        let mut gate = Gate {
+            presence: Some(Presence::Foreground),
+            ..Default::default()
+        };
 
         // One stranger already disclosed to spends the budget of one.
         crate::db::command::pair_with(&db, &[author(9)], &[0u8; 32], clock::now()).unwrap();
 
         assert_eq!(gate.evaluate(&db, &policy, &[]).unwrap(), Verdict::Pending);
-    }
-
-    #[test]
-    fn approval_passes_the_gate() {
-        let mut gate = Gate::default();
-
-        gate.pass();
-
-        assert!(gate.passed());
     }
 }

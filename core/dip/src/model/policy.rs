@@ -72,12 +72,6 @@ impl Policy {
         }
     }
 
-    /// Whether the user has muted `pubkey`.
-    #[must_use]
-    pub fn is_muted(&self, pubkey: &PublicKey) -> bool {
-        self.graph.is_muted(pubkey)
-    }
-
     /// Whether the device is passively discoverable at `minute` of the local
     /// day, ignoring the cool-off window and the disclosure budget.
     #[must_use]
@@ -108,29 +102,13 @@ impl Policy {
 /// A [`Policy`] bound to one pubkey a peer proved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PeerPolicy {
-    policy: Policy,
-    standing: Standing,
+    /// The policy this was bound from.
+    pub policy: Policy,
+    /// Where the pubkey stands in the user's graph.
+    pub standing: Standing,
 }
 
 impl PeerPolicy {
-    /// The policy this was bound from.
-    #[must_use]
-    pub fn policy(&self) -> &Policy {
-        &self.policy
-    }
-
-    /// This device's own pubkey.
-    #[must_use]
-    pub fn identity(&self) -> &PublicKey {
-        &self.policy.identity
-    }
-
-    /// Where the pubkey stands in the user's graph.
-    #[must_use]
-    pub fn standing(&self) -> Standing {
-        self.standing
-    }
-
     /// Whether the pubkey is blocked, in which case nothing passes in either
     /// direction and the session should not have been accepted at all.
     #[must_use]
@@ -159,7 +137,7 @@ impl PeerPolicy {
             return false;
         }
 
-        event.pubkey() == self.identity()
+        event.pubkey() == &self.policy.identity
             || self
                 .policy
                 .accept
@@ -183,7 +161,7 @@ impl PeerPolicy {
             return false;
         }
 
-        if event.pubkey() == self.identity() {
+        if event.pubkey() == &self.policy.identity {
             return self.is_visible(event);
         }
 
@@ -236,14 +214,6 @@ mod tests {
             graph: graph(),
             ..Policy::new(us())
         }
-    }
-
-    #[test]
-    fn muting_is_read_through_to_the_graph() {
-        let policy = policy();
-
-        assert!(policy.is_muted(&author(5)));
-        assert!(!policy.is_muted(&author(2)));
     }
 
     #[test]

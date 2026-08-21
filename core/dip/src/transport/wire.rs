@@ -23,11 +23,11 @@ use super::{Channel, Codec, Fragment, Frame, Noise, Outbox, Secrecy};
 /// The encrypted, fragmented, prioritized pipe over one link.
 pub struct Wire {
     /// The Noise session encrypting it.
-    noise: Noise,
+    pub noise: Noise,
     /// Fragmentation and reassembly, both over plaintext.
     codec: Codec,
     /// What is waiting to go out, most urgent channel first.
-    outbox: Outbox,
+    pub outbox: Outbox,
     /// The link's negotiated MTU: the ceiling on one write, header and tag
     /// included.
     mtu: usize,
@@ -66,12 +66,6 @@ impl Wire {
         }
 
         Ok(self.noise.is_complete())
-    }
-
-    /// Whether the handshake has completed and traffic is encrypted.
-    #[must_use]
-    pub fn is_secured(&self) -> bool {
-        self.noise.is_complete()
     }
 
     /// Queue a frame, fragmented to the link's MTU and sealed on its way out.
@@ -126,30 +120,6 @@ impl Wire {
         self.outbox.acknowledge();
     }
 
-    /// Whether nothing is queued or in flight.
-    #[must_use]
-    pub fn is_idle(&self) -> bool {
-        self.outbox.is_idle()
-    }
-
-    /// The handshake hash, the transcript both sides agree on.
-    pub fn handshake_hash(&self) -> Result<[u8; 32]> {
-        self.noise.handshake_hash()
-    }
-
-    /// The local static public key, for the `noise://` authority in the AUTH
-    /// event's relay tag.
-    #[must_use]
-    pub fn local_static_key(&self) -> [u8; 32] {
-        self.noise.local_static_key()
-    }
-
-    /// The peer's static public key, once the handshake has completed.
-    #[must_use]
-    pub fn remote_static_key(&self) -> Option<[u8; 32]> {
-        self.noise.remote_static_key()
-    }
-
     /// Queue a handshake payload without encryption. Only the handshake path
     /// uses this: the peer's handshake state is what decrypts it.
     fn send_plain(&mut self, payload: &[u8]) -> Result<()> {
@@ -193,7 +163,7 @@ mod tests {
             );
 
             if let Some(frame) = into.receive(&write).unwrap() {
-                if frame.channel == Channel::Control && !into.is_secured() {
+                if frame.channel == Channel::Control && !into.noise.is_complete() {
                     into.read_handshake(&frame.payload).unwrap();
                 } else {
                     received.push(frame);
@@ -211,7 +181,7 @@ mod tests {
 
         dialer.initiate().unwrap();
 
-        while !(dialer.is_secured() && receiver.is_secured()) {
+        while !(dialer.noise.is_complete() && receiver.noise.is_complete()) {
             pump(&mut dialer, &mut receiver);
             pump(&mut receiver, &mut dialer);
         }
@@ -238,8 +208,8 @@ mod tests {
         let (dialer, receiver) = secured_pair(4096);
 
         assert_eq!(
-            dialer.handshake_hash().unwrap(),
-            receiver.handshake_hash().unwrap()
+            dialer.noise.handshake_hash().unwrap(),
+            receiver.noise.handshake_hash().unwrap()
         );
     }
 

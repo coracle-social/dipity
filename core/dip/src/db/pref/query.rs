@@ -215,7 +215,7 @@ mod tests {
         let ours = policy(&tx, &us).unwrap();
 
         assert_eq!(ours.graph.muted, [author(2)].into());
-        assert!(ours.is_muted(&author(2)));
+        assert!(ours.graph.muted.contains(&author(2)));
 
         // Muting is a display filter, so it moves nobody in the tiers.
         assert_eq!(ours.graph.standing(&author(2)), Standing::Stranger);

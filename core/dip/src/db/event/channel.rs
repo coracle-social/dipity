@@ -45,7 +45,7 @@ pub(crate) fn new() -> Sender<EventChange> {
 /// has missed changes and should re-read whatever it is tracking.
 #[must_use]
 pub fn subscribe(db: &Db) -> Receiver<EventChange> {
-    db.channels().event.subscribe()
+    db.channels.event.subscribe()
 }
 
 /// Announce a change once `tx` commits.
@@ -53,7 +53,7 @@ pub fn subscribe(db: &Db) -> Receiver<EventChange> {
 /// Deferred rather than sent, so nothing hears about a row a later error rolled
 /// back, and so a subscriber that reads on the news finds it there.
 pub(crate) fn notify(tx: &Tx<'_>, change: EventChange) {
-    let sender = tx.channels().event.clone();
+    let sender = tx.channels.event.clone();
 
     tx.after_commit(move || {
         // Errors here mean nobody is listening, which is the normal state

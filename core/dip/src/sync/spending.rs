@@ -32,6 +32,7 @@ use std::sync::{Arc, Mutex};
 use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::PublicKey;
 
+use crate::model::Standing;
 use crate::session::Peer;
 
 /// How far back spending counts, in seconds.
@@ -203,16 +204,17 @@ impl SessionSpending {
     pub fn spent(&self, peer: &Peer) -> Spent {
         // The most-spent identity binds: a device cannot buy headroom by
         // presenting a quiet key alongside a busy one.
-        let (events, bytes) = peer.pubkeys().map(|pubkey| self.ledger.since(pubkey)).fold(
-            (0, 0),
-            |(events, bytes), (their_events, their_bytes)| {
+        let (events, bytes) = peer
+            .pubkeys
+            .iter()
+            .map(|pubkey| self.ledger.since(pubkey))
+            .fold((0, 0), |(events, bytes), (their_events, their_bytes)| {
                 (events.max(their_events), bytes.max(their_bytes))
-            },
-        );
+            });
 
         // A trusted peer is not measured against the pool, so reading it would
         // only cost a lock.
-        let (pooled_events, pooled_bytes) = if peer.is_trusted() {
+        let (pooled_events, pooled_bytes) = if peer.policy.standing == Standing::Trusted {
             (0, 0)
         } else {
             self.ledger.strangers()
@@ -231,9 +233,9 @@ impl SessionSpending {
     /// Charged to every identity the peer proved, and once to the pool.
     pub fn record(&mut self, peer: &Peer, event: &HashedEvent) {
         let size = event_size(event);
-        let trusted = peer.is_trusted();
+        let trusted = peer.policy.standing == Standing::Trusted;
 
-        for (index, pubkey) in peer.pubkeys().enumerate() {
+        for (index, pubkey) in peer.pubkeys.iter().enumerate() {
             // The pool counts the event, not the identities behind it.
             let pooled = index == 0;
 

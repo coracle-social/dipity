@@ -49,12 +49,6 @@ impl Registers {
         Self::new(identities, [Register::Own, Register::Forwardable])
     }
 
-    /// Whether this constraint admits `register`.
-    #[must_use]
-    pub fn admits(&self, register: Register) -> bool {
-        self.registers.contains(&register)
-    }
-
     /// Whether the constraint admits nothing.
     #[must_use]
     pub fn matches_nothing(&self) -> bool {
@@ -72,9 +66,9 @@ mod tests {
     fn the_offerable_registers_are_the_two_that_travel() {
         let registers = Registers::offerable(&[author(1)]);
 
-        assert!(registers.admits(Register::Own));
-        assert!(registers.admits(Register::Forwardable));
-        assert!(!registers.admits(Register::Held));
+        assert!(registers.registers.contains(&Register::Own));
+        assert!(registers.registers.contains(&Register::Forwardable));
+        assert!(!registers.registers.contains(&Register::Held));
         assert!(!registers.matches_nothing());
     }
 }

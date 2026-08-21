@@ -15,7 +15,7 @@ use crate::clock;
 use crate::db::Db;
 use crate::db::command;
 use crate::db::query as db_query;
-use crate::model::{AuthorshipClaim, AuthorshipProof, Identity, RecipientSignature};
+use crate::model::{AuthorshipClaim, AuthorshipProof, Identity, RecipientSignature, Standing};
 use crate::session::Peer;
 use crate::sync::spending::{SessionSpending, Spent, event_size};
 use crate::sync::{Message, Quota, SubscriptionId};
@@ -56,7 +56,7 @@ pub enum Rejected {
 /// The negentropy side of the client half: one open subscription's diff.
 pub struct Negotiation {
     /// The subscription this exchange runs on.
-    subscription: SubscriptionId,
+    pub subscription: SubscriptionId,
     /// The filter the exchange is bounded by.
     filter: Filter,
     /// This device's side of the diff, under the filter and the peer's
@@ -65,7 +65,8 @@ pub struct Negotiation {
     /// Ids this device has that the peer lacks. Not yet on the wire.
     have: Vec<EventId>,
     /// Ids the peer has that this device lacks, accumulated every round.
-    need: Vec<EventId>,
+    /// What the terminating `REQ` asks for, once reconciliation completes.
+    pub need: Vec<EventId>,
     /// The reply budget for the next message.
     budget: FrameBudget,
 }
@@ -111,19 +112,6 @@ impl Negotiation {
         );
 
         Ok((negotiation, message))
-    }
-
-    /// This exchange's subscription id.
-    #[must_use]
-    pub fn subscription_id(&self) -> &SubscriptionId {
-        &self.subscription
-    }
-
-    /// The ids the peer has that this device lacks, once reconciliation has
-    /// run to completion. What the terminating `REQ` asks for.
-    #[must_use]
-    pub fn need(&self) -> &[EventId] {
-        &self.need
     }
 
     /// Consume one `NEG-MSG` from the peer's relay, returning what comes next.
@@ -185,7 +173,7 @@ fn fresh_subscription() -> Result<SubscriptionId> {
 #[derive(Default)]
 pub struct Client {
     /// Open negotiations against the peer's relay half.
-    negotiations: BTreeMap<SubscriptionId, Negotiation>,
+    pub negotiations: BTreeMap<SubscriptionId, Negotiation>,
     /// Fetches in the `REQ` phase, pulling the ids a finished negotiation
     /// found missing.
     fetches: BTreeMap<SubscriptionId, Fetch>,
@@ -203,14 +191,7 @@ impl Client {
     /// subscription id.
     pub fn open_negotiation(&mut self, negotiation: Negotiation) {
         self.negotiations
-            .insert(negotiation.subscription_id().clone(), negotiation);
-    }
-
-    /// Whether this device opened the named subscription, which is how a
-    /// `NEG-MSG` is routed to the right half.
-    #[must_use]
-    pub fn owns_subscription(&self, subscription: &SubscriptionId) -> bool {
-        self.negotiations.contains_key(subscription)
+            .insert(negotiation.subscription.clone(), negotiation);
     }
 
     /// Whether this device is still waiting on the peer for something it asked
@@ -267,7 +248,7 @@ impl Client {
                         ingest(db, peer, local, &event, Some(proof))?;
                         spending.record(peer, &event);
                     }
-                } else if peer.authored(event.as_ref()) {
+                } else if peer.pubkeys.contains(&event.pubkey) {
                     // First hop: the authenticated session is the proof.
                     if admits(peer, &event, None, quota, spent).is_ok() {
                         ingest(db, peer, local, &event, None)?;
@@ -323,7 +304,7 @@ impl Client {
                 let terminated =
                     matches!(replies.last(), Some(Message::Req(sub, _)) if *sub == subscription);
                 let need: BTreeSet<EventId> = if terminated {
-                    negotiation.need().iter().copied().collect()
+                    negotiation.need.iter().copied().collect()
                 } else {
                     BTreeSet::new()
                 };
@@ -409,7 +390,7 @@ fn store_signature(db: &Db, peer: &Peer, local: &Identity, event_id: EventId, si
     };
 
     // The signature is the author's, so only the author sends it.
-    if !peer.authored(&event) {
+    if !peer.pubkeys.contains(&event.pubkey) {
         return;
     }
 
@@ -448,7 +429,7 @@ pub fn admits(
     admissible(peer, event, quota, spent)?;
 
     // The two registers, and nothing else widens them.
-    if !peer.authored(event) && proof.is_none() {
+    if !peer.pubkeys.contains(&event.pubkey) && proof.is_none() {
         return Err(Rejected::Unauthorized);
     }
 
@@ -477,7 +458,7 @@ fn admissible(
         return Err(Rejected::Forged);
     }
 
-    if peer.is_blocked() {
+    if peer.policy.is_blocked() {
         return Err(Rejected::Unauthorized);
     }
 
@@ -494,14 +475,14 @@ fn admissible(
     // A stranger is bounded twice: by its own budget above, and by what every
     // stranger together has already taken. The second is what a fresh keypair
     // cannot reset. `docs/sync.md#quotas`.
-    if !peer.is_trusted()
+    if peer.policy.standing != Standing::Trusted
         && (spent.pooled_events >= Quota::STRANGER_POOL.events
             || spent.pooled_bytes + size > Quota::STRANGER_POOL.bytes)
     {
         return Err(Rejected::OverQuota);
     }
 
-    if !peer.may_store(event) {
+    if !peer.policy.should_accept(event) {
         return Err(Rejected::OutOfScope);
     }
 
@@ -526,7 +507,7 @@ pub fn ingest(
         // Which of the peer's identities holds the author's signature, and
         // which of this device's it was designated to, are both unnamed on the
         // wire — so the pair it verifies under is the pair it was built for.
-        let verified = peer.pubkeys().any(|holder| {
+        let verified = peer.pubkeys.iter().any(|holder| {
             local.iter().any(|verifier| {
                 proof.verifies(&AuthorshipClaim {
                     event_id: event.id,
@@ -542,7 +523,7 @@ pub fn ingest(
         }
     }
 
-    let seen_from: Vec<coracle_lib::keys::PublicKey> = peer.pubkeys().copied().collect();
+    let seen_from: Vec<coracle_lib::keys::PublicKey> = peer.pubkeys.iter().copied().collect();
 
     command::receive_event(db, event, &seen_from, clock::now())
 }
@@ -844,7 +825,7 @@ mod tests {
 
         match out.last() {
             Some(Message::Req(subscription, filters)) => {
-                assert_eq!(subscription, negotiation.subscription_id());
+                assert_eq!(subscription, &negotiation.subscription);
                 let ids = filters
                     .first()
                     .and_then(|filter| filter.ids.as_ref())

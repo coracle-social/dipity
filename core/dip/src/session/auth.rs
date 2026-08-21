@@ -23,29 +23,18 @@ pub struct AuthExchange {
     /// The challenge this device sent, to match against the peer's response.
     sent_challenge: Option<String>,
     /// The peer's challenge, answered when this device chooses to disclose.
-    peer_challenge: Option<String>,
+    pub peer_challenge: Option<String>,
     /// Whether this device has disclosed its identity by answering.
-    disclosed: bool,
+    pub disclosed: bool,
     /// Every pubkey the peer has proved, accumulated across responses: a peer
     /// may authenticate as several identities over one channel.
-    proved: BTreeSet<PublicKey>,
+    pub proved: BTreeSet<PublicKey>,
 }
 
 impl AuthExchange {
     /// Record pubkeys the peer has proved, accumulating rather than replacing.
     pub fn prove(&mut self, pubkeys: impl IntoIterator<Item = PublicKey>) {
         self.proved.extend(pubkeys);
-    }
-
-    /// Every pubkey the peer has proved.
-    pub fn proved(&self) -> impl Iterator<Item = &PublicKey> {
-        self.proved.iter()
-    }
-
-    /// Whether the peer has proved any identity yet.
-    #[must_use]
-    pub fn has_proved(&self) -> bool {
-        !self.proved.is_empty()
     }
 
     /// Mint the challenge this device sends, remembering it for verification.
@@ -68,18 +57,6 @@ impl AuthExchange {
         self.peer_challenge = Some(challenge);
 
         Ok(())
-    }
-
-    /// Whether the peer has challenged this device.
-    #[must_use]
-    pub fn challenged(&self) -> bool {
-        self.peer_challenge.is_some()
-    }
-
-    /// Whether this device has disclosed its identity this session.
-    #[must_use]
-    pub fn disclosed(&self) -> bool {
-        self.disclosed
     }
 
     /// Answer the peer's challenge once, disclosing this device's identity.
@@ -202,7 +179,7 @@ mod tests {
             .unwrap()
             .expect("an answer to the stored challenge");
 
-        assert!(responder.disclosed());
+        assert!(responder.disclosed);
         assert_eq!(
             challenger.verify(&payload, DIALER_STATIC).unwrap(),
             identity.public_key()
@@ -238,7 +215,7 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        assert!(!responder.disclosed());
+        assert!(!responder.disclosed);
     }
 
     #[test]

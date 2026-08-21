@@ -139,13 +139,8 @@ impl Node {
         Self::new(db, identity, blobs)
     }
 
-    /// The store, for the view and for tests.
-    #[must_use]
-    pub fn db(&self) -> &Arc<Db> {
-        &self.db
-    }
-
-    /// This device's pubkey.
+    /// This device's pubkey. A method, not a field, because the field is the
+    /// secret key and it never leaves the node.
     #[must_use]
     pub fn identity(&self) -> coracle_lib::keys::PublicKey {
         self.identity.public_key()
@@ -192,7 +187,7 @@ impl Node {
             Arc::clone(&self.blobs),
             Arc::clone(&self.spending),
         )?;
-        session.set_presence(self.presence);
+        session.gate.presence = self.presence;
 
         if let Some(peripheral) = peripheral {
             self.link_peripheral.insert(link, peripheral);
@@ -281,7 +276,7 @@ impl Node {
     pub fn tick(&mut self) -> Vec<Action> {
         for session in self.sessions.values_mut() {
             if session.expired() {
-                match session.state() {
+                match session.state {
                     // A gate hold and a drain both close outright on their cap:
                     // there is nothing in flight to finish, only to drop.
                     State::GatePending { .. } | State::Draining { .. } => session.close(),
@@ -338,7 +333,7 @@ impl Node {
         self.presence = Some(presence);
 
         for session in self.sessions.values_mut() {
-            session.set_presence(self.presence);
+            session.gate.presence = self.presence;
         }
 
         self.collect()
@@ -454,7 +449,7 @@ impl Node {
         let closed: Vec<LinkId> = self
             .sessions
             .iter()
-            .filter(|(_, session)| session.state() == State::Closed)
+            .filter(|(_, session)| session.state == State::Closed)
             .map(|(link, _)| *link)
             .collect();
 

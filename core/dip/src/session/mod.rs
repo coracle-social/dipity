@@ -41,7 +41,7 @@ use crate::blobs::BlobStore;
 use crate::clock;
 use crate::db::Db;
 use crate::link::{LinkId, Role};
-use crate::model::{Identity, Policy};
+use crate::model::{Identity, Policy, Standing};
 use crate::sync::blob::BlobExchange;
 use crate::sync::client::Client;
 use crate::sync::relay::{self, Relay};
@@ -50,7 +50,7 @@ use crate::sync::{Message, Quota};
 use crate::transport::{Channel, Frame, Wire};
 
 use auth::AuthExchange;
-use gate::{Gate, Presence, Verdict};
+use gate::{Gate, Verdict};
 use heartbeat::Heartbeat;
 
 /// How long a session sits in [`Draining`](State::Draining) before it is
@@ -136,7 +136,7 @@ pub struct Session {
     /// Which side dialed.
     pub role: Role,
     /// Where the link is in its lifecycle.
-    state: State,
+    pub state: State,
     /// When the link came up, which bounds how long it may go unidentified.
     opened_at: i64,
     /// The encrypted pipe the session talks through.
@@ -145,7 +145,7 @@ pub struct Session {
     heartbeat: Heartbeat,
     /// The consent gate, holding strangers until policy or the user admits
     /// them.
-    gate: Gate,
+    pub gate: Gate,
     /// Mutual NIP-42, and every pubkey the peer has proved over it.
     auth: AuthExchange,
     /// The user's policy, shared with every other live session.
@@ -153,7 +153,7 @@ pub struct Session {
     /// This device's identity key, for signing AUTH responses.
     identity: SecretKey,
     /// The proved pubkeys bound under policy, once the peer has proved any.
-    peer: Option<Peer>,
+    pub peer: Option<Peer>,
     /// The relay half: what this device serves, and the subscriptions it
     /// serves to.
     relay: Relay,
@@ -197,18 +197,6 @@ impl Session {
         })
     }
 
-    /// Where the link is in its lifecycle.
-    #[must_use]
-    pub fn state(&self) -> State {
-        self.state
-    }
-
-    /// What the peer has proved, or `None` before it has proved anything.
-    #[must_use]
-    pub fn peer(&self) -> Option<&Peer> {
-        self.peer.as_ref()
-    }
-
     /// The dialer's first move: send the Noise handshake opening.
     pub fn initiate(&mut self) -> Result<()> {
         if self.role != Role::Dialer {
@@ -244,13 +232,13 @@ impl Session {
     /// Binds only, whatever the phase: a peer that has proved nothing stays
     /// `None`, and the lifecycle moves in [`identify`](Self::identify) alone.
     fn bind_peer(&mut self) {
-        if !self.auth.has_proved() {
+        if self.auth.proved.is_empty() {
             return;
         }
 
-        let peer = Peer::bind(self.link, self.auth.proved().copied(), &self.policy);
+        let peer = Peer::bind(self.link, self.auth.proved.iter().copied(), &self.policy);
 
-        if peer.is_blocked() {
+        if peer.policy.is_blocked() {
             self.state = State::Closed;
         }
 
@@ -267,12 +255,6 @@ impl Session {
         self.bind_peer();
     }
 
-    /// Where the app is, which the cool-off admission window is measured
-    /// against. `None` means it has not been in the foreground this run.
-    pub fn set_presence(&mut self, presence: Option<Presence>) {
-        self.gate.set_presence(presence);
-    }
-
     /// Answer the consent gate's hold, from the user's decision.
     ///
     /// Approving resumes whatever the gate held back; refusing closes the link.
@@ -286,12 +268,12 @@ impl Session {
             return Ok(());
         }
 
-        self.gate.pass();
+        self.gate.passed = true;
         self.state = State::Secured;
 
         // Resume the deferred turn, if its trigger has already arrived.
         match self.role {
-            Role::Receiver if self.auth.challenged() => {
+            Role::Receiver if self.auth.peer_challenge.is_some() => {
                 self.send_recognition_tags(db)?;
                 self.challenge_peer()?;
             }
@@ -378,7 +360,7 @@ impl Session {
     #[must_use]
     pub fn quota(&self) -> Quota {
         match self.peer.as_ref() {
-            Some(peer) if peer.is_trusted() => Quota::TRUSTED,
+            Some(peer) if peer.policy.standing == Standing::Trusted => Quota::TRUSTED,
             _ => Quota::STRANGER,
         }
     }
@@ -462,7 +444,9 @@ impl Session {
             Message::Req(..) | Message::Close(..) | Message::NegOpen(..) | Message::Publish(..) => {
                 true
             }
-            Message::NegMsg(subscription, _) => !self.client.owns_subscription(subscription),
+            Message::NegMsg(subscription, _) => {
+                !self.client.negotiations.contains_key(subscription)
+            }
             _ => false,
         }
     }
@@ -519,8 +503,8 @@ impl Session {
             return Ok(());
         };
 
-        let secret = recognition::derive_secret(&self.wire.handshake_hash()?);
-        let pubkeys: Vec<PublicKey> = peer.pubkeys().copied().collect();
+        let secret = recognition::derive_secret(&self.wire.noise.handshake_hash()?);
+        let pubkeys: Vec<PublicKey> = peer.pubkeys.iter().copied().collect();
 
         crate::db::command::pair_with(db, &pubkeys, &secret, clock::now())
     }
@@ -569,7 +553,7 @@ impl Session {
         // The same two tests the relay half applies: any of the subscription's
         // filters, and what the peer may be served. Own events are always in
         // the Own register, so the registers need no check here.
-        if !peer.may_be_served(event) {
+        if !peer.policy.should_gossip(event) {
             return Ok(());
         }
 
@@ -642,7 +626,7 @@ impl Session {
     /// "Do not kill a working transfer over two missed beacons."
     #[must_use]
     fn has_work_in_flight(&self) -> bool {
-        !self.wire.is_idle() || self.blobs.is_fetching() || self.client.is_awaiting()
+        !self.wire.outbox.is_idle() || self.blobs.is_fetching() || self.client.is_awaiting()
     }
 
     /// When this session next needs attention, for the shell to arm a timer on.
@@ -657,7 +641,7 @@ impl Session {
                 .min(self.opened_at + IDENTIFY_CAP_SECONDS),
             _ if self.beats() => self
                 .heartbeat
-                .next_beat_deadline()
+                .next_beat_at
                 .min(self.heartbeat.timeout_deadline()),
             _ => self.heartbeat.timeout_deadline(),
         }
@@ -679,7 +663,7 @@ impl Session {
 
         // Traffic on its way out is the heartbeat; a beat would only wait
         // behind it.
-        if self.wire.is_idle() {
+        if self.wire.outbox.is_idle() {
             self.send_control(control::HEARTBEAT, &[])?;
         }
 
@@ -743,7 +727,7 @@ impl Session {
 
         // Both identities are bound once the peer is verified and this device
         // has disclosed its own, in whichever order the two happened.
-        if self.peer.is_some() && self.auth.disclosed() {
+        if self.peer.is_some() && self.auth.disclosed {
             self.enter_syncing(db)?;
         }
 
@@ -783,7 +767,7 @@ impl Session {
     fn on_challenge(&mut self, db: &Db, payload: &[u8]) -> Result<()> {
         self.auth.receive_challenge(payload)?;
 
-        if !self.gate.passed() {
+        if !self.gate.passed {
             return Ok(());
         }
 
@@ -811,11 +795,11 @@ impl Session {
     /// Nothing is accepted while the gate holds: a held stranger cannot
     /// identify itself into being served before the user has answered.
     fn on_auth_response(&mut self, payload: &[u8]) -> Result<()> {
-        if !self.gate.passed() {
+        if !self.gate.passed {
             bail!("an AUTH response arrived before the gate passed");
         }
 
-        let pubkey = self.auth.verify(payload, self.wire.local_static_key())?;
+        let pubkey = self.auth.verify(payload, self.wire.noise.local_static)?;
 
         self.identify([pubkey]);
 
@@ -843,7 +827,8 @@ impl Session {
     fn answer_peer_challenge(&mut self) -> Result<bool> {
         let remote = self
             .wire
-            .remote_static_key()
+            .noise
+            .remote_static
             .ok_or_else(|| anyhow::anyhow!("the handshake has not completed"))?;
 
         match self.auth.answer(&self.identity, remote)? {
@@ -863,7 +848,7 @@ impl Session {
     /// length discloses neither how many peers this device has paired with nor
     /// that it has paired with any.
     fn send_recognition_tags(&mut self, db: &Db) -> Result<()> {
-        let hash = self.wire.handshake_hash()?;
+        let hash = self.wire.noise.handshake_hash()?;
         let secrets = crate::db::query::pair_secrets(db)?;
         let tags = recognition::select(&secrets, &hash)?;
 
@@ -874,7 +859,7 @@ impl Session {
     /// returning every pubkey they resolve to.
     fn resolve_recognition(&self, db: &Db, payload: &[u8]) -> Result<Vec<PublicKey>> {
         let offered = recognition::Tags::decode(payload)?;
-        let hash = self.wire.handshake_hash()?;
+        let hash = self.wire.noise.handshake_hash()?;
         let secrets = crate::db::query::pair_secrets(db)?;
 
         Ok(recognition::resolve(&offered, &secrets, &hash))
@@ -911,6 +896,7 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gate::Presence;
 
     use crate::db::query as db_query;
     use crate::fixtures::{author, note, secret};
@@ -971,7 +957,7 @@ mod tests {
 
         session.wire.initiate().unwrap();
 
-        while !(session.wire.is_secured() && peer.wire.is_secured()) {
+        while !(session.wire.noise.is_complete() && peer.wire.noise.is_complete()) {
             pump_handshake(&mut session, &mut peer);
             pump_handshake(&mut peer, &mut session);
         }
@@ -1009,7 +995,7 @@ mod tests {
 
     #[test]
     fn nothing_is_proved_before_the_peer_names_itself() {
-        assert!(session(policy()).peer().is_none());
+        assert!(session(policy()).peer.is_none());
     }
 
     #[test]
@@ -1018,10 +1004,10 @@ mod tests {
 
         session.identify([author(2), author(3)]);
 
-        let peer = session.peer().unwrap();
+        let peer = session.peer.as_ref().unwrap();
 
-        assert_eq!(peer.pubkeys().count(), 2);
-        assert_eq!(session.state(), State::Identified);
+        assert_eq!(peer.pubkeys.len(), 2);
+        assert_eq!(session.state, State::Identified);
     }
 
     #[test]
@@ -1030,7 +1016,7 @@ mod tests {
 
         session.identify([author(2), author(2)]);
 
-        assert_eq!(session.peer().unwrap().pubkeys().count(), 1);
+        assert_eq!(session.peer.as_ref().unwrap().pubkeys.len(), 1);
     }
 
     #[test]
@@ -1042,8 +1028,8 @@ mod tests {
 
         session.identify([author(2), author(3)]);
 
-        assert!(session.peer().unwrap().is_blocked());
-        assert_eq!(session.state(), State::Closed);
+        assert!(session.peer.as_ref().unwrap().policy.is_blocked());
+        assert_eq!(session.state, State::Closed);
     }
 
     #[test]
@@ -1054,8 +1040,8 @@ mod tests {
 
         session.set_policy(Arc::new(policy()));
 
-        assert_eq!(session.state(), State::Linked);
-        assert!(session.peer().is_none());
+        assert_eq!(session.state, State::Linked);
+        assert!(session.peer.as_ref().is_none());
     }
 
     #[test]
@@ -1066,7 +1052,7 @@ mod tests {
 
         session.set_policy(Arc::new(policy()));
 
-        assert!(matches!(session.state(), State::Draining { .. }));
+        assert!(matches!(session.state, State::Draining { .. }));
     }
 
     #[test]
@@ -1190,7 +1176,7 @@ mod tests {
         };
 
         assert!(session.advance(&db, &frame).is_err());
-        assert_eq!(session.state(), State::Syncing);
+        assert_eq!(session.state, State::Syncing);
     }
 
     #[test]
@@ -1198,15 +1184,15 @@ mod tests {
         let mut session = secured_session(policy());
 
         session.identify([author(2)]);
-        assert_eq!(session.state(), State::Identified);
+        assert_eq!(session.state, State::Identified);
 
         let mut blocked = policy();
         blocked.graph.blocked.insert(author(2));
 
         session.set_policy(Arc::new(blocked));
 
-        assert!(session.peer().unwrap().is_blocked());
-        assert_eq!(session.state(), State::Closed);
+        assert!(session.peer.as_ref().unwrap().policy.is_blocked());
+        assert_eq!(session.state, State::Closed);
     }
 
     #[test]
@@ -1281,7 +1267,7 @@ mod tests {
         };
         session.advance(&db, &frame).unwrap();
 
-        assert_eq!(session.state(), State::Identified);
+        assert_eq!(session.state, State::Identified);
     }
 
     #[test]
@@ -1311,7 +1297,7 @@ mod tests {
         assert!(!session.request_approval(), "the prompt is one-shot");
 
         session.approve(&db, false).unwrap();
-        assert_eq!(session.state(), State::Closed);
+        assert_eq!(session.state, State::Closed);
     }
 
     #[test]
@@ -1331,7 +1317,7 @@ mod tests {
         };
 
         assert!(session.advance(&db, &frame).is_err());
-        assert!(session.peer().is_none());
+        assert!(session.peer.as_ref().is_none());
     }
 
     #[test]
@@ -1450,10 +1436,10 @@ mod tests {
             .advance(&Db::open_in_memory().unwrap(), &frame)
             .unwrap();
 
-        assert!(dialer.wire.is_secured());
-        assert!(receiver.wire.is_secured());
-        assert_eq!(dialer.state(), State::Secured);
-        assert_eq!(receiver.state(), State::Secured);
+        assert!(dialer.wire.noise.is_complete());
+        assert!(receiver.wire.noise.is_complete());
+        assert_eq!(dialer.state, State::Secured);
+        assert_eq!(receiver.state, State::Secured);
     }
 
     /// Pump one queued fragment from `sender` into `receiver`, advancing it.
@@ -1486,8 +1472,8 @@ mod tests {
         pump(dialer, receiver, db); // dialer response
         pump(receiver, dialer, db); // receiver response
 
-        assert_eq!(dialer.state(), State::Syncing);
-        assert_eq!(receiver.state(), State::Syncing);
+        assert_eq!(dialer.state, State::Syncing);
+        assert_eq!(receiver.state, State::Syncing);
     }
 
     fn pair(mtu: usize, role: Role, key: u8) -> Session {
@@ -1510,8 +1496,8 @@ mod tests {
         let mut receiver = pair(4096, Role::Receiver, 2);
 
         // The cool-off admits the strangers, or the gate holds the pair.
-        dialer.set_presence(Some(Presence::Foreground));
-        receiver.set_presence(Some(Presence::Foreground));
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
 
         dialer.initiate().unwrap();
         pump(&mut dialer, &mut receiver, &db); // handshake msg1
@@ -1532,22 +1518,26 @@ mod tests {
         pump(&mut dialer, &mut receiver, &db); // response: receiver identifies + discloses
         pump(&mut receiver, &mut dialer, &db); // response: dialer identifies
 
-        assert_eq!(dialer.state(), State::Syncing);
-        assert_eq!(receiver.state(), State::Syncing);
+        assert_eq!(dialer.state, State::Syncing);
+        assert_eq!(receiver.state, State::Syncing);
         assert_eq!(
             dialer
-                .peer()
+                .peer
+                .as_ref()
                 .unwrap()
-                .pubkeys()
+                .pubkeys
+                .iter()
                 .copied()
                 .collect::<Vec<_>>(),
             vec![author(2)]
         );
         assert_eq!(
             receiver
-                .peer()
+                .peer
+                .as_ref()
                 .unwrap()
-                .pubkeys()
+                .pubkeys
+                .iter()
                 .copied()
                 .collect::<Vec<_>>(),
             vec![author(1)]
@@ -1565,8 +1555,8 @@ mod tests {
         let mut dialer = pair(4096, Role::Dialer, 1);
         let mut receiver = pair(4096, Role::Receiver, 2);
 
-        dialer.set_presence(Some(Presence::Foreground));
-        receiver.set_presence(Some(Presence::Foreground));
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
 
         full_exchange(&mut dialer, &mut receiver, &db);
 
@@ -1584,8 +1574,8 @@ mod tests {
         // First encounter pairs them, admitted by the cool-off.
         let mut dialer = pair(4096, Role::Dialer, 1);
         let mut receiver = pair(4096, Role::Receiver, 2);
-        dialer.set_presence(Some(Presence::Foreground));
-        receiver.set_presence(Some(Presence::Foreground));
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
         full_exchange(&mut dialer, &mut receiver, &db);
 
         // Second encounter: no cool-off, but the tags resolve, so the gate
@@ -1603,7 +1593,7 @@ mod tests {
 
         // Only the dialer's cool-off runs, so it admits the receiver while the
         // receiver holds the dialer for the user.
-        dialer.set_presence(Some(Presence::Foreground));
+        dialer.gate.presence = Some(Presence::Foreground);
 
         dialer.initiate().unwrap();
         pump(&mut dialer, &mut receiver, &db); // msg1
@@ -1612,9 +1602,9 @@ mod tests {
         pump(&mut dialer, &mut receiver, &db); // dialer tags: the gate holds
         pump(&mut dialer, &mut receiver, &db); // dialer challenge: held too
 
-        assert!(matches!(receiver.state(), State::GatePending { .. }));
+        assert!(matches!(receiver.state, State::GatePending { .. }));
         assert!(
-            !receiver.auth.disclosed(),
+            !receiver.auth.disclosed,
             "nothing disclosed before approval"
         );
 
@@ -1625,7 +1615,7 @@ mod tests {
         pump(&mut dialer, &mut receiver, &db); // dialer response: receiver discloses
         pump(&mut receiver, &mut dialer, &db); // receiver response: dialer identifies
 
-        assert_eq!(dialer.state(), State::Syncing);
-        assert_eq!(receiver.state(), State::Syncing);
+        assert_eq!(dialer.state, State::Syncing);
+        assert_eq!(receiver.state, State::Syncing);
     }
 }

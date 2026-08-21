@@ -22,10 +22,10 @@ pub const MAX_INTERVAL_SECONDS: i64 = 30;
 #[derive(Debug)]
 pub struct Heartbeat {
     /// When a frame was last heard from the peer.
-    last_heard: i64,
+    pub last_heard: i64,
     /// When the next beat is due, so a quiet session still proves it is alive
     /// before the peer's own timeout drains it.
-    next_beat_at: i64,
+    pub next_beat_at: i64,
 }
 
 impl Heartbeat {
@@ -69,12 +69,6 @@ impl Heartbeat {
     #[must_use]
     pub fn timeout_deadline(&self) -> i64 {
         self.last_heard + TIMEOUT_SECONDS
-    }
-
-    /// When the next beat is due.
-    #[must_use]
-    pub fn next_beat_deadline(&self) -> i64 {
-        self.next_beat_at
     }
 }
 

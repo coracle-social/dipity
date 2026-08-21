@@ -32,12 +32,12 @@ pub(crate) fn new() -> Sender<RecipientSignatureChange> {
 /// Listen for changes to stored signatures in `db`.
 #[must_use]
 pub fn subscribe(db: &Db) -> Receiver<RecipientSignatureChange> {
-    db.channels().recipient_signature.subscribe()
+    db.channels.recipient_signature.subscribe()
 }
 
 /// Announce a change once `tx` commits.
 pub(crate) fn notify(tx: &Tx<'_>, change: RecipientSignatureChange) {
-    let sender = tx.channels().recipient_signature.clone();
+    let sender = tx.channels.recipient_signature.clone();
 
     tx.after_commit(move || {
         let _ = sender.send(change);

@@ -29,12 +29,12 @@ pub(crate) fn new() -> Sender<PrefChange> {
 /// Listen for changes to preferences in `db`.
 #[must_use]
 pub fn subscribe(db: &Db) -> Receiver<PrefChange> {
-    db.channels().pref.subscribe()
+    db.channels.pref.subscribe()
 }
 
 /// Announce a change once `tx` commits.
 pub(crate) fn notify(tx: &Tx<'_>, change: PrefChange) {
-    let sender = tx.channels().pref.clone();
+    let sender = tx.channels.pref.clone();
 
     tx.after_commit(move || {
         let _ = sender.send(change);

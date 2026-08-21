@@ -64,12 +64,6 @@ impl Graph {
             Standing::Stranger
         }
     }
-
-    /// Whether the user has muted `pubkey`.
-    #[must_use]
-    pub fn is_muted(&self, pubkey: &PublicKey) -> bool {
-        self.muted.contains(pubkey)
-    }
 }
 
 #[cfg(test)]
@@ -112,7 +106,7 @@ pub(crate) mod tests {
 
         // Muting is not a tier: a muted author still gossips normally.
         assert_eq!(graph.standing(&author(5)), Standing::Stranger);
-        assert!(graph.is_muted(&author(5)));
-        assert!(!graph.is_muted(&author(2)));
+        assert!(graph.muted.contains(&author(5)));
+        assert!(!graph.muted.contains(&author(2)));
     }
 }

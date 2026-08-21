@@ -35,12 +35,12 @@ pub(crate) fn new() -> Sender<BlobChange> {
 /// Listen for changes to blobs in `db`.
 #[must_use]
 pub fn subscribe(db: &Db) -> Receiver<BlobChange> {
-    db.channels().blob.subscribe()
+    db.channels.blob.subscribe()
 }
 
 /// Announce a change once `tx` commits.
 pub(crate) fn notify(tx: &Tx<'_>, change: BlobChange) {
-    let sender = tx.channels().blob.clone();
+    let sender = tx.channels.blob.clone();
 
     tx.after_commit(move || {
         let _ = sender.send(change);

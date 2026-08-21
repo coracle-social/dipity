@@ -151,7 +151,7 @@ pub fn query_for(peer: &Peer, local: &Identity, filter: Filter) -> Query {
     Query::new()
         .with_filter(filter)
         .with_registers(Registers::offerable(local))
-        .with_policy(peer.policy().clone())
+        .with_policy(peer.policy.clone())
 }
 
 /// The set the NIP-77 negentropy pass diffs, bounded by the same query as
@@ -261,11 +261,11 @@ pub fn attach(
         // question and not a consequence of being served the event. A peer
         // outside the Forward scope still receives the event; it simply stops
         // with them. `docs/policy.md#forwarding`.
-        if !peer.may_forward() {
+        if !peer.policy.may_forward() {
             return Ok(());
         }
 
-        for recipient in peer.pubkeys() {
+        for recipient in peer.pubkeys.iter() {
             let signature = RecipientSignature::sign(identity, event.id, *recipient);
 
             messages.push(Message::RecipientSignature(
@@ -279,7 +279,7 @@ pub fn attach(
         // A proof is designated to one peer and worthless to anyone else, so
         // it is not gated: handing one over discloses nothing a third party
         // could use, which is the whole point of the construction.
-        for verifier in peer.pubkeys() {
+        for verifier in peer.pubkeys.iter() {
             let proof = AuthorshipProof::prove(&signature, *verifier)?;
 
             messages.push(Message::AuthorshipProof(
