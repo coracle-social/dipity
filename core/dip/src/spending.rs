@@ -1,21 +1,35 @@
-//! The rolling 24 h spending ledger, in memory.
+//! How much a peer has written to this device, measured against its quota.
 //!
-//! What a peer has written to this device recently, metered against its quota
-//! across sessions. It lives in memory and dies with the process: durable
-//! billing rows of "who handed me how much, when" are exactly the provenance
-//! the app refuses to keep (`docs/privacy.md`), and a rolling meter that resets
-//! on restart costs nothing, since a peer cannot kill the process to refill
-//! it. The window is bounded — each peer's entries older than it are pruned on
-//! every write, so the ledger cannot grow without bound either; entries
-//! outside the window cost no disk, no index and no scan.
+//! One meter, the rolling 24 h window: [`SpendingLedger`], shared across
+//! sessions, with [`SessionSpending`] as one session's view onto it. Every
+//! accept lands in the window, so the rolling ceiling bounds the session that
+//! did the accepting as much as the reconnect that follows it — a drive-by
+//! cannot refill its budget by dropping the link, and no separate per-session
+//! counter is needed (one would double-count what the window already holds).
+//!
+//! The ledger lives in memory and dies with the process: durable billing rows
+//! of "who handed me how much, when" are exactly the provenance the app
+//! refuses to keep (`docs/privacy.md`), and a rolling meter that resets on
+//! restart costs nothing, since a peer cannot kill the process to refill it.
+//! The window is bounded — each peer's entries older than it are pruned on
+//! every write, so the ledger cannot grow without bound either.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::PublicKey;
+
+use crate::session::Peer;
 
 /// How far back spending counts, in seconds.
 pub const WINDOW_SECONDS: i64 = 24 * 60 * 60;
+
+/// An event's count against the byte budget.
+#[must_use]
+pub fn event_size(event: &HashedEvent) -> usize {
+    serde_json::to_vec(event).map_or(0, |encoded| encoded.len())
+}
 
 /// One accepted event's entry in the ledger.
 type Entry = (i64, u64);
@@ -71,7 +85,7 @@ impl Ledger {
     }
 }
 
-/// The shared, thread-safe ledger the sync layer meters against.
+/// The shared, thread-safe rolling ledger, metered across sessions.
 #[derive(Debug, Default)]
 pub struct SpendingLedger {
     inner: Mutex<Ledger>,
@@ -97,12 +111,54 @@ impl SpendingLedger {
     }
 }
 
+/// One session's view onto the shared rolling window, keyed to its peer.
+///
+/// The ledger keys on the peer's first pubkey: a device proving several
+/// identities is metered as one peer, though one that proves different key
+/// sets across encounters splits its meter across them. Each split is still
+/// bounded by the same window.
+#[derive(Debug)]
+pub struct SessionSpending {
+    /// The rolling window, shared with every other session.
+    ledger: Arc<SpendingLedger>,
+}
+
+impl SessionSpending {
+    /// A fresh session's metering over the shared ledger.
+    #[must_use]
+    pub fn new(ledger: Arc<SpendingLedger>) -> Self {
+        Self { ledger }
+    }
+
+    /// The events and bytes accepted from the peer within the rolling window,
+    /// this session's own accepts included, ready to test against its quota.
+    ///
+    /// A peer that proved no pubkey — which cannot happen once identified —
+    /// has spent nothing.
+    #[must_use]
+    pub fn total(&self, peer: &Peer) -> (u32, u64) {
+        match peer.pubkeys().next() {
+            Some(pubkey) => self.ledger.since(pubkey),
+            None => (0, 0),
+        }
+    }
+
+    /// Count one accepted event against the rolling window.
+    pub fn record(&mut self, peer: &Peer, event: &HashedEvent) {
+        if let Some(pubkey) = peer.pubkeys().next().copied() {
+            self.ledger.record(&pubkey, event_size(event));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::clock;
-    use crate::fixtures::author;
+    use crate::fixtures::{author, note};
+    use crate::link::LinkId;
+    use crate::model::Policy;
 
     #[test]
     fn spending_sums_the_window_per_peer() {
@@ -143,6 +199,27 @@ mod tests {
         clock::at(1_000 + WINDOW_SECONDS + 1, || {
             ledger.record(&author(2), 1);
             assert_eq!(ledger.since(&author(1)), (0, 0));
+        });
+    }
+
+    #[test]
+    fn an_accept_counts_once_against_the_shared_window() {
+        let ledger = Arc::new(SpendingLedger::default());
+        let peer = Peer::bind(LinkId(1), [author(2)], &Policy::new(author(1)));
+
+        clock::at(1_000, || {
+            // A past session already put one event in the window.
+            ledger.record(&author(2), 10);
+
+            // This session accepts one more; it lands in the same window and
+            // is not double-counted against the session that accepted it.
+            let mut spending = SessionSpending::new(Arc::clone(&ledger));
+            let event = note(author(2), 100, "counted", coracle_lib::tags::Tags::new());
+            spending.record(&peer, &event);
+
+            let (events, bytes) = spending.total(&peer);
+            assert_eq!(events, 2);
+            assert!(bytes > 10);
         });
     }
 }

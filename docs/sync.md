@@ -24,7 +24,7 @@ Once the negentropy reconciliation is complete, a regular `REQ` is used to retri
 
 Accepting gossiped events is an unbounded write from whoever is standing nearby. Independent of scope:
 
-- Per-peer event-count and byte budgets per session and per rolling 24 h.
+- Per-peer event-count and byte budgets over a rolling 24 h window. A session's own accepts land in the same window, so one meter bounds the session and the reconnect alike.
 - Per-event size cap.
 - A separate, smaller budget for untrusted peers, with a hard ceiling that cannot crowd out known peers. bitchat's courier trust tiers are the pattern.
 

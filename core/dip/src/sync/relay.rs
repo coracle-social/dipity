@@ -10,6 +10,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, bail};
+use coracle_lib::events::HashedEvent;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::SecretKey;
 use coracle_lib::sync::{FrameBudget, Item, SyncSet};
@@ -18,7 +19,8 @@ use crate::db::Db;
 use crate::db::query as db_query;
 use crate::model::{AuthorshipProof, Query, RecipientSignature, Registers};
 use crate::session::Peer;
-use crate::sync::client::{self, Rejected, Used};
+use crate::spending::SessionSpending;
+use crate::sync::client::{self, Rejected};
 use crate::sync::{Message, Quota, SubscriptionId};
 
 /// A page of events served on one subscription, pending the client's next
@@ -28,71 +30,85 @@ const PAGE_SIZE: usize = 512;
 /// The cap on one negentropy reply, mirroring the client's.
 const NEG_FRAME_BYTES: usize = 4 * 1024;
 
-/// Handle a message this device's relay half received.
-pub fn handle(
-    ctx: &crate::sync::Ctx<'_>,
-    peer: &Peer,
-    identity: &SecretKey,
-    message: Message,
-    quota: Quota,
-    used: &mut Used,
-    subscriptions: &mut BTreeMap<SubscriptionId, Vec<Filter>>,
-) -> Result<Vec<Message>> {
-    let db = ctx.db;
-    let spending = ctx.spending;
+/// The relay half's state, held by the session for the life of the link: the
+/// subscriptions the peer has open, which the live-push path reads.
+#[derive(Default)]
+pub struct Relay {
+    /// Open subscriptions, with every filter each one holds.
+    subscriptions: BTreeMap<SubscriptionId, Vec<Filter>>,
+}
 
-    match message {
-        Message::Publish(event) => {
-            let (events, bytes) = client::total_usage(spending, peer, *used);
+impl Relay {
+    /// The open subscriptions whose filters match `event`, for the live push.
+    #[must_use]
+    pub fn matching(&self, event: &HashedEvent) -> Vec<SubscriptionId> {
+        self.subscriptions
+            .iter()
+            .filter(|(_, filters)| filters.iter().any(|filter| filter.matches(event)))
+            .map(|(subscription, _)| subscription.clone())
+            .collect()
+    }
 
-            match client::admits(peer, &event, None, quota, events, bytes) {
-                Ok(()) => {
-                    client::ingest(db, peer, &event, None)?;
-                    used.record(&event);
+    /// Handle a message this device's relay half received.
+    pub fn handle(
+        &mut self,
+        db: &Db,
+        peer: &Peer,
+        identity: &SecretKey,
+        message: Message,
+        quota: Quota,
+        spending: &mut SessionSpending,
+    ) -> Result<Vec<Message>> {
+        match message {
+            Message::Publish(event) => {
+                let (events, bytes) = spending.total(peer);
 
-                    // A publish counts against the rolling window like any
-                    // other accepted event.
-                    if let Some(pubkey) = peer.pubkeys().next().copied() {
-                        spending.record(&pubkey, client::event_size(&event));
+                match client::admits(peer, &event, None, quota, events, bytes) {
+                    Ok(()) => {
+                        client::ingest(db, peer, &event, None)?;
+                        spending.record(peer, &event);
+
+                        Ok(vec![Message::Ok(event.id.to_hex(), true, "stored".into())])
                     }
-
-                    Ok(vec![Message::Ok(event.id.to_hex(), true, "stored".into())])
+                    Err(rejected) => Ok(vec![Message::Ok(
+                        event.id.to_hex(),
+                        false,
+                        reason(rejected).into(),
+                    )]),
                 }
-                Err(rejected) => Ok(vec![Message::Ok(
-                    event.id.to_hex(),
-                    false,
-                    reason(rejected).into(),
-                )]),
             }
-        }
-        Message::Req(subscription, filters) => {
-            // Registration is what the live-push path reads: NIP-01 replaces
-            // the filters when the same id is REQ'd again, and CLOSE drops it.
-            subscriptions.insert(subscription.clone(), filters.clone());
+            Message::Req(subscription, filters) => {
+                // Registration is what the live-push path reads: NIP-01
+                // replaces the filters when the same id is REQ'd again, and
+                // CLOSE drops it.
+                self.subscriptions
+                    .insert(subscription.clone(), filters.clone());
 
-            serve(db, peer, identity, &subscription, &filters)
-        }
-        Message::Close(subscription) => {
-            subscriptions.remove(&subscription);
+                serve(db, peer, identity, &subscription, &filters)
+            }
+            Message::Close(subscription) => {
+                self.subscriptions.remove(&subscription);
 
-            Ok(Vec::new())
-        }
-        Message::NegOpen(subscription, filter, frame) => {
-            subscriptions.insert(subscription.clone(), vec![filter.clone()]);
+                Ok(Vec::new())
+            }
+            Message::NegOpen(subscription, filter, frame) => {
+                self.subscriptions
+                    .insert(subscription.clone(), vec![filter.clone()]);
 
-            negotiate(db, peer, &subscription, &filter, &frame)
-        }
-        Message::NegMsg(subscription, frame) => {
-            let Some(filters) = subscriptions.get(&subscription) else {
-                bail!("a NEG-MSG arrived for a subscription that is not open");
-            };
+                negotiate(db, peer, &subscription, &filter, &frame)
+            }
+            Message::NegMsg(subscription, frame) => {
+                let Some(filters) = self.subscriptions.get(&subscription) else {
+                    bail!("a NEG-MSG arrived for a subscription that is not open");
+                };
 
-            // A NEG-OPEN registers one filter, which is all NIP-77 uses.
-            let filter = filters.first().cloned().unwrap_or_default();
+                // A NEG-OPEN registers one filter, which is all NIP-77 uses.
+                let filter = filters.first().cloned().unwrap_or_default();
 
-            negotiate(db, peer, &subscription, &filter, &frame)
+                negotiate(db, peer, &subscription, &filter, &frame)
+            }
+            _ => Ok(Vec::new()),
         }
-        _ => Ok(Vec::new()),
     }
 }
 
@@ -213,8 +229,11 @@ pub fn serve(
 ///
 /// An own event is signed for the peer; a forwardable one is proved to it. A
 /// peer that proved no pubkey — which cannot happen once identified — simply
-/// gets the bare event.
-fn attach(
+/// gets the bare event. The live-push path
+/// ([`Session::offer_event`](crate::session::Session::offer_event)) attaches
+/// through here too, so what accompanies an event cannot drift between the
+/// serve and the offer.
+pub fn attach(
     db: &Db,
     peer: &Peer,
     identity: &SecretKey,
@@ -258,11 +277,14 @@ mod tests {
     use coracle_lib::keys::PublicKey;
     use coracle_lib::tags::Tags;
 
+    use std::sync::Arc;
+
     use crate::db::command;
     use crate::db::query as db_query;
     use crate::fixtures::{author, note, secret};
     use crate::link::LinkId;
     use crate::model::{Policy, RecipientSignature, Scope};
+    use crate::spending::SpendingLedger;
 
     fn us() -> PublicKey {
         author(1)
@@ -272,8 +294,8 @@ mod tests {
         Peer::bind(LinkId(1), [author(2)], &Policy::new(us()))
     }
 
-    fn spending() -> crate::spending::SpendingLedger {
-        crate::spending::SpendingLedger::default()
+    fn spending() -> SessionSpending {
+        SessionSpending::new(Arc::new(SpendingLedger::default()))
     }
 
     fn given(db: &Db, author: PublicKey, at: i64, content: &str) -> HashedEvent {
@@ -288,19 +310,16 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let event = note(author(2), 100, "published", Tags::new());
 
-        let replies = handle(
-            &crate::sync::Ctx {
-                db: &db,
-                spending: &spending(),
-            },
-            &peer(),
-            &secret(1),
-            Message::Publish(Box::new(event.clone())),
-            Quota::STRANGER,
-            &mut Used::default(),
-            &mut BTreeMap::new(),
-        )
-        .unwrap();
+        let replies = Relay::default()
+            .handle(
+                &db,
+                &peer(),
+                &secret(1),
+                Message::Publish(Box::new(event.clone())),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
 
         assert_eq!(
             replies,
@@ -318,19 +337,16 @@ mod tests {
         // Authored by someone the peer did not prove.
         let event = note(author(4), 100, "sneaky", Tags::new());
 
-        let replies = handle(
-            &crate::sync::Ctx {
-                db: &db,
-                spending: &spending(),
-            },
-            &peer(),
-            &secret(1),
-            Message::Publish(Box::new(event.clone())),
-            Quota::STRANGER,
-            &mut Used::default(),
-            &mut BTreeMap::new(),
-        )
-        .unwrap();
+        let replies = Relay::default()
+            .handle(
+                &db,
+                &peer(),
+                &secret(1),
+                Message::Publish(Box::new(event.clone())),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
 
         assert_eq!(
             replies,
@@ -351,19 +367,16 @@ mod tests {
         let peer = Peer::bind(LinkId(1), [author(2)], &policy);
         let event = note(author(2), 100, "blocked", Tags::new());
 
-        let replies = handle(
-            &crate::sync::Ctx {
-                db: &db,
-                spending: &spending(),
-            },
-            &peer,
-            &secret(1),
-            Message::Publish(Box::new(event)),
-            Quota::STRANGER,
-            &mut Used::default(),
-            &mut BTreeMap::new(),
-        )
-        .unwrap();
+        let replies = Relay::default()
+            .handle(
+                &db,
+                &peer,
+                &secret(1),
+                Message::Publish(Box::new(event)),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
 
         assert!(matches!(replies.first(), Some(Message::Ok(_, false, _))));
         assert!(
@@ -380,22 +393,19 @@ mod tests {
         // offerable; a stranger's is not.
         let stored = given(&db, author(1), 100, "one");
 
-        let replies = handle(
-            &crate::sync::Ctx {
-                db: &db,
-                spending: &spending(),
-            },
-            &peer(),
-            &secret(1),
-            Message::Req(
-                SubscriptionId("sub".into()),
-                vec![Filter::new().add_kinds([1])],
-            ),
-            Quota::STRANGER,
-            &mut Used::default(),
-            &mut BTreeMap::new(),
-        )
-        .unwrap();
+        let replies = Relay::default()
+            .handle(
+                &db,
+                &peer(),
+                &secret(1),
+                Message::Req(
+                    SubscriptionId("sub".into()),
+                    vec![Filter::new().add_kinds([1])],
+                ),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
 
         assert!(replies.contains(&Message::Event(
             SubscriptionId("sub".into()),
@@ -461,51 +471,45 @@ mod tests {
     #[test]
     fn a_req_registers_the_subscription_for_live_offers() {
         let db = Db::open_in_memory().unwrap();
-        let mut subscriptions = BTreeMap::new();
+        let mut relay = Relay::default();
 
-        handle(
-            &crate::sync::Ctx {
-                db: &db,
-                spending: &spending(),
-            },
-            &peer(),
-            &secret(1),
-            Message::Req(
-                SubscriptionId("sub".into()),
-                vec![Filter::new().add_kinds([1])],
-            ),
-            Quota::STRANGER,
-            &mut Used::default(),
-            &mut subscriptions,
-        )
-        .unwrap();
+        relay
+            .handle(
+                &db,
+                &peer(),
+                &secret(1),
+                Message::Req(
+                    SubscriptionId("sub".into()),
+                    vec![Filter::new().add_kinds([1])],
+                ),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
 
         assert_eq!(
-            subscriptions.get(&SubscriptionId("sub".into())),
+            relay.subscriptions.get(&SubscriptionId("sub".into())),
             Some(&vec![Filter::new().add_kinds([1])])
         );
 
         // A REQ with the same id replaces the filters, per NIP-01.
-        handle(
-            &crate::sync::Ctx {
-                db: &db,
-                spending: &spending(),
-            },
-            &peer(),
-            &secret(1),
-            Message::Req(
-                SubscriptionId("sub".into()),
-                vec![Filter::new().add_kinds([1, 7])],
-            ),
-            Quota::STRANGER,
-            &mut Used::default(),
-            &mut subscriptions,
-        )
-        .unwrap();
+        relay
+            .handle(
+                &db,
+                &peer(),
+                &secret(1),
+                Message::Req(
+                    SubscriptionId("sub".into()),
+                    vec![Filter::new().add_kinds([1, 7])],
+                ),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
 
-        assert_eq!(subscriptions.len(), 1);
+        assert_eq!(relay.subscriptions.len(), 1);
         assert_eq!(
-            subscriptions.get(&SubscriptionId("sub".into())),
+            relay.subscriptions.get(&SubscriptionId("sub".into())),
             Some(&vec![Filter::new().add_kinds([1, 7])])
         );
     }
@@ -513,24 +517,40 @@ mod tests {
     #[test]
     fn a_close_drops_the_subscription() {
         let db = Db::open_in_memory().unwrap();
-        let mut subscriptions =
-            BTreeMap::from([(SubscriptionId("sub".into()), vec![Filter::new()])]);
+        let mut relay = Relay::default();
+        relay
+            .subscriptions
+            .insert(SubscriptionId("sub".into()), vec![Filter::new()]);
 
-        handle(
-            &crate::sync::Ctx {
-                db: &db,
-                spending: &spending(),
-            },
-            &peer(),
-            &secret(1),
-            Message::Close(SubscriptionId("sub".into())),
-            Quota::STRANGER,
-            &mut Used::default(),
-            &mut subscriptions,
-        )
-        .unwrap();
+        relay
+            .handle(
+                &db,
+                &peer(),
+                &secret(1),
+                Message::Close(SubscriptionId("sub".into())),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
 
-        assert!(subscriptions.is_empty());
+        assert!(relay.subscriptions.is_empty());
+    }
+
+    #[test]
+    fn matching_names_the_subscriptions_an_event_falls_under() {
+        let mut relay = Relay::default();
+        relay.subscriptions.insert(
+            SubscriptionId("notes".into()),
+            vec![Filter::new().add_kinds([1])],
+        );
+        relay.subscriptions.insert(
+            SubscriptionId("reactions".into()),
+            vec![Filter::new().add_kinds([7])],
+        );
+
+        let event = note(author(1), 100, "a note", Tags::new());
+
+        assert_eq!(relay.matching(&event), vec![SubscriptionId("notes".into())]);
     }
 
     #[test]
@@ -556,20 +576,16 @@ mod tests {
         };
 
         // Bob's relay half answers the opening.
-        let mut subscriptions = BTreeMap::new();
-        let replies = handle(
-            &crate::sync::Ctx {
-                db: &server,
-                spending: &spending(),
-            },
-            &server_peer,
-            &secret(2),
-            Message::NegOpen(subscription.clone(), filter.clone(), frame),
-            Quota::STRANGER,
-            &mut Used::default(),
-            &mut subscriptions,
-        )
-        .unwrap();
+        let replies = Relay::default()
+            .handle(
+                &server,
+                &server_peer,
+                &secret(2),
+                Message::NegOpen(subscription.clone(), filter.clone(), frame),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
 
         // Feed Bob's reply round back through Alice's step.
         let Message::NegMsg(_, reply) = replies.last().unwrap() else {

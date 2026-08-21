@@ -9,9 +9,12 @@
 //! | --- | --- |
 //! | [`frame`] | The codec: channels, fragmentation, reassembly, priority |
 //! | [`noise`] | Noise XX, and the transport state a completed handshake leaves |
+//! | [`wire`] | The two composed: the encrypted pipe a session talks through |
 
 pub mod frame;
 pub mod noise;
+pub mod wire;
 
 pub use frame::{Channel, Codec, Frame, Outbox};
 pub use noise::Noise;
+pub use wire::Wire;

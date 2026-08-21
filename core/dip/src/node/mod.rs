@@ -26,6 +26,10 @@
 //!   view ─────────────────► Db ◄┘
 //! ```
 
+mod scheduler;
+
+pub use scheduler::{MAX_LINKS, RSSI_FLOOR};
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -44,6 +48,7 @@ use crate::link::{LinkId, PeripheralId, Role};
 use crate::model::Policy;
 use crate::session::{Session, State};
 use crate::transport::Channel;
+use scheduler::Scheduler;
 
 /// Something the shell does on the core's behalf.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,193 +77,6 @@ pub enum Action {
     /// Advisory: iOS runs no timer for a suspended app, so the heartbeat and
     /// the connection scheduler both recover on the next radio callback.
     WakeAt(i64),
-}
-
-/// Signal floor below which a candidate is queued rather than dialed.
-pub const RSSI_FLOOR: i16 = -90;
-
-/// How many central links may be open at once.
-pub const MAX_LINKS: usize = 6;
-
-/// Minimum gap between connect attempts. The doc calls for roughly one per
-/// 0.5s; the clock counts in whole seconds, so one per second.
-const CONNECT_INTERVAL_SECONDS: i64 = 1;
-
-/// How long a peripheral is left alone after a dial, so a peer that ignores
-/// connections is not redialed every advertisement.
-/// How long a peripheral that never answered a connect is left alone before
-/// its advertisement may be dialed again.
-const NEVER_ANSWERED_BACKOFF_SECONDS: i64 = 60;
-
-/// How long after a connected peer walks away before redialing. They usually
-/// come back, so this is short. `docs/discovery.md#connection-scheduling`.
-const WALKED_AWAY_BACKOFF_SECONDS: i64 = 15;
-
-/// How long after a consent-gate refusal before trying again. Hard, since the
-/// user just said no.
-const DECLINED_BACKOFF_SECONDS: i64 = 5 * 60;
-
-/// Everything scheduling dials from an advertisement.
-#[derive(Debug, Default)]
-struct Scheduler {
-    /// Candidates queued by the floor, the link cap, or the rate limit, most
-    /// recently seen first.
-    candidates: Vec<(PeripheralId, i16)>,
-    /// When each peripheral may next be dialed, and what set it. The tier
-    /// decides how a later outcome may move it.
-    backoff: BTreeMap<PeripheralId, Backoff>,
-    /// When the last connect attempt went out, for the global rate limit.
-    last_attempt: Option<i64>,
-}
-
-/// One peripheral's backoff: a deadline and the outcome that set it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Backoff {
-    /// The earliest this peripheral may be dialed again.
-    until: i64,
-    /// Why it is backed off.
-    tier: Tier,
-}
-
-/// What set a backoff, and how far out it is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Tier {
-    /// A dial that never answered.
-    NeverAnswered,
-    /// A peer that was connected and walked away.
-    WalkedAway,
-    /// A peer the user declined at the consent gate.
-    Declined,
-}
-
-impl Scheduler {
-    /// A peripheral was seen; try to dial it, or queue it and say nothing.
-    fn seen(&mut self, peripheral: PeripheralId, rssi: i16) -> Option<PeripheralId> {
-        self.queue(peripheral, rssi);
-
-        self.poll()
-    }
-
-    /// Make room for a candidate, keeping the best RSSI.
-    fn queue(&mut self, peripheral: PeripheralId, rssi: i16) {
-        match self
-            .candidates
-            .iter()
-            .position(|(candidate, _)| *candidate == peripheral)
-        {
-            Some(index) => {
-                // A stronger reading replaces the queued one.
-                if self.candidates[index].1 < rssi {
-                    self.candidates[index] = (peripheral, rssi);
-                }
-            }
-            None => {
-                self.candidates.push((peripheral, rssi));
-                self.candidates
-                    .sort_by_key(|(_, rssi)| std::cmp::Reverse(*rssi));
-            }
-        }
-    }
-
-    /// Dial the strongest admissible candidate, if any.
-    fn poll(&mut self) -> Option<PeripheralId> {
-        let now = clock::now();
-
-        if self
-            .last_attempt
-            .is_some_and(|at| now - at < CONNECT_INTERVAL_SECONDS)
-        {
-            return None;
-        }
-
-        // Walk the queue most-recently-seen-but-strongest first; the first
-        // candidate not under its backoff is dialed, and candidates under it
-        // stay queued for a later tick.
-        for index in 0..self.candidates.len() {
-            let (peripheral, _) = self.candidates[index].clone();
-
-            let admissible = match self.backoff.get(&peripheral) {
-                Some(backoff) => now >= backoff.until,
-                None => true,
-            };
-
-            if admissible {
-                self.candidates.remove(index);
-                self.last_attempt = Some(now);
-                // A dial that gets no answer shows up again as an
-                // advertisement before this lapses; a dial that connects
-                // supersedes it with the walked-away or declined tier.
-                self.backoff.insert(
-                    peripheral.clone(),
-                    Backoff {
-                        until: now + NEVER_ANSWERED_BACKOFF_SECONDS,
-                        tier: Tier::NeverAnswered,
-                    },
-                );
-
-                return Some(peripheral);
-            }
-        }
-
-        None
-    }
-
-    /// A peer was connected and left: redial soon, since they usually come
-    /// back. Pulls in a stale never-answered backoff — this one answered, just
-    /// not for long — but never a decline.
-    fn walked_away(&mut self, peripheral: &PeripheralId) {
-        self.record(peripheral, Tier::WalkedAway, WALKED_AWAY_BACKOFF_SECONDS);
-    }
-
-    /// A peer whose gate was refused: leave them alone. Never shortened by any
-    /// later report.
-    fn declined(&mut self, peripheral: &PeripheralId) {
-        self.record(peripheral, Tier::Declined, DECLINED_BACKOFF_SECONDS);
-    }
-
-    /// Merge one outcome into a peripheral's backoff.
-    ///
-    /// A shorter tier (never answered → walked away) replaces the longer
-    /// deadline; a longer one (walked away → declined) never shrinks, so the
-    /// user's "no" survives a disconnect report arriving afterwards.
-    fn record(&mut self, peripheral: &PeripheralId, tier: Tier, seconds: i64) {
-        let deadline = clock::now() + seconds;
-
-        match self.backoff.get_mut(peripheral) {
-            Some(backoff) => {
-                let replace = match (backoff.tier, tier) {
-                    (Tier::NeverAnswered, Tier::WalkedAway) => true,
-                    (Tier::NeverAnswered, Tier::Declined) => true,
-                    (Tier::WalkedAway, Tier::Declined) => true,
-                    (Tier::Declined, _) => false,
-                    _ => backoff.until < deadline,
-                };
-
-                if replace {
-                    // Only the walked-away pull-in shortens what a dial left
-                    // behind; every other merge extends.
-                    backoff.until = if matches!(
-                        (backoff.tier, tier),
-                        (Tier::NeverAnswered, Tier::WalkedAway)
-                    ) {
-                        deadline
-                    } else {
-                        deadline.max(backoff.until)
-                    };
-                    backoff.tier = tier;
-                }
-            }
-            None => {
-                self.backoff.insert(
-                    peripheral.clone(),
-                    Backoff {
-                        until: deadline,
-                        tier,
-                    },
-                );
-            }
-        }
-    }
 }
 
 /// Every live session, the store behind them, and the key they authenticate
@@ -340,16 +158,12 @@ impl Node {
     /// Whether to dial is the core's call; the shell keeps the radio.
     /// `docs/discovery.md#connection-scheduling`.
     pub fn peripheral_seen(&mut self, peripheral: &PeripheralId, rssi: i16) -> Vec<Action> {
-        let mut actions = Vec::new();
+        self.scheduler.seen(peripheral.clone(), rssi);
 
-        if rssi < RSSI_FLOOR || self.sessions.len() >= MAX_LINKS {
-            // Queued, not dialed: still worth the scheduler remembering.
-            self.scheduler.queue(peripheral.clone(), rssi);
-        } else if let Some(peripheral) = self.scheduler.seen(peripheral.clone(), rssi) {
-            actions.push(Action::Connect(peripheral));
+        match self.scheduler.next_dial(self.sessions.len()) {
+            Some(peripheral) => vec![Action::Connect(peripheral)],
+            None => Vec::new(),
         }
-
-        actions
     }
 
     /// A GATT connection came up, with the MTU the link negotiated.
@@ -459,16 +273,16 @@ impl Node {
                 match session.state() {
                     // A gate hold and a drain both close outright on their cap:
                     // there is nothing in flight to finish, only to drop.
-                    State::GatePending => session.close(),
-                    State::Draining => session.close(),
+                    State::GatePending { .. } | State::Draining { .. } => session.close(),
                     _ => session.drain(),
                 }
             }
         }
 
-        // A queued candidate may now be past its rate limit or backoff.
+        // A queued candidate may now be past its rate limit, its backoff, or
+        // the link cap.
         let mut actions = Vec::new();
-        if let Some(peripheral) = self.scheduler.poll() {
+        if let Some(peripheral) = self.scheduler.next_dial(self.sessions.len()) {
             actions.push(Action::Connect(peripheral));
         }
 
@@ -622,7 +436,7 @@ impl Node {
             match self.events.try_recv() {
                 Ok(EventChange::Stored(event)) if event.pubkey == identity => {
                     for session in self.sessions.values_mut() {
-                        if let Err(error) = session.offer_event(&event) {
+                        if let Err(error) = session.offer_event(&self.db, &event) {
                             log::error!(
                                 "offering a saved event on link {:?} failed: {error:#}",
                                 session.link
@@ -644,6 +458,9 @@ impl Node {
 
 #[cfg(test)]
 mod tests {
+    use super::scheduler::{
+        DECLINED_BACKOFF_SECONDS, NEVER_ANSWERED_BACKOFF_SECONDS, WALKED_AWAY_BACKOFF_SECONDS,
+    };
     use super::*;
     use coracle_lib::tags::Tags;
 

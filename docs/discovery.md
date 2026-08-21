@@ -102,4 +102,4 @@ Interval: 15–30 s when connected, jittered. A 60 s timeout is 2–4 missed bea
 | BLE link healthy | Nothing. |
 | Heartbeat missed, session idle | After 60 s → DRAINING → CLOSED. |
 | Heartbeat missed, transfer in flight | DRAINING: accept no new work, let in-flight transfers finish. Hard cap 5 min. Do not kill a working transfer over two missed beacons — radio contention during bulk transfer and iOS background throttling both cause them. |
-| Clean BLE disconnect event | Immediate DRAINING, no timeout. Disconnects are reliable when they fire; the timeout is for the ambiguous case. |
+| Clean BLE disconnect event | Immediate close. Disconnects are reliable when they fire, and nothing in flight can finish on a dead link, so there is no drain to wait out; the timeout is for the ambiguous case. |

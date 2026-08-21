@@ -8,9 +8,9 @@
 //! | [`relay`] | what this device serves a peer | Gossip scope and visibility |
 //! | [`client`] | what it takes from one | Accept scope and the authorship registers |
 //!
-//! Neither is a trait: one implementation of each, as free functions over a
-//! [`Session`](crate::session::Session) and a [`Db`](crate::db::Db), the same
-//! shape as [`crate::db::query`] and [`crate::db::command`].
+//! Neither is a trait: one [`Relay`](relay::Relay) and one
+//! [`Client`](client::Client) per session, each owning its half's state with
+//! a single `handle` entry point over the same [`Db`](crate::db::Db).
 
 pub mod blob;
 pub mod client;
@@ -18,17 +18,6 @@ pub mod message;
 pub mod relay;
 
 pub use message::{Message, SubscriptionId};
-
-use crate::db::Db;
-
-/// The app-wide dependencies a sync half needs, bundled so a handler stays
-/// under the argument limit: the store and the rolling spending ledger.
-pub struct Ctx<'a> {
-    /// The store events are read from and written to.
-    pub db: &'a Db,
-    /// The rolling spending ledger, metered across sessions.
-    pub spending: &'a crate::spending::SpendingLedger,
-}
 
 /// Per-peer ceilings on what a session may write to this device.
 ///

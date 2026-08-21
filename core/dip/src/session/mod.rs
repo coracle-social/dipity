@@ -1,44 +1,61 @@
 //! One link's lifecycle, from a GATT connection to a synchronizing peer.
 //!
 //! A session is keyed on [`LinkId`]. Nothing here performs I/O.
+//!
+//! The lifecycle itself is [`State`], and each phase's bookkeeping rides on
+//! its variant, so a phase cannot exist without the data it needs and no flag
+//! can disagree with the state it shadows. Everything else is a behavior the
+//! session composes, each owning its own state and clock:
+//!
+//! | Behavior | Owns |
+//! | --- | --- |
+//! | [`Wire`] | The encrypted pipe: Noise, fragmentation, write scheduling |
+//! | [`Heartbeat`] | Liveness: what was last heard, when to beat next |
+//! | [`Gate`] | Consent: admission, the cool-off, the disclosure budget |
+//! | [`AuthExchange`] | Mutual NIP-42, and the pubkeys the peer proved |
+//! | [`Relay`] | The relay half: the peer's open subscriptions |
+//! | [`Client`] | The client half: negotiations, fetches, pending proofs |
+//! | [`BlobExchange`] | Blobs, both directions: serving, and the one fetch |
+//! | [`SessionSpending`] | The peer's quota use, this session and this window |
+//!
+//! What stays on the session is what ties them together: the lifecycle, the
+//! [`Peer`] the exchange proved, and the policy it is bound under.
 
+pub mod auth;
+pub mod gate;
+pub mod heartbeat;
 pub mod peer;
 pub mod recognition;
 
 pub use peer::Peer;
 pub use recognition::{Tag, Tags};
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use coracle_lib::events::{EventContent, HashedEvent};
+use coracle_lib::events::HashedEvent;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::{PublicKey, SecretKey};
-use coracle_lib::tags::Tags as NostrTags;
 
 use crate::blobstore::BlobStore;
 use crate::clock;
 use crate::db::Db;
 use crate::link::{LinkId, Role};
-use crate::model::{Blob, DISCLOSURE_WINDOW_SECONDS, Policy, Standing};
-use crate::spending::SpendingLedger;
-use crate::sync::blob::{BLOB_GROUP_BYTES, BlobFetch};
-use crate::sync::client::Used;
-use crate::sync::relay;
-use crate::sync::{Message, Quota, SubscriptionId};
-use crate::transport::{Channel, Codec, Frame, Noise, Outbox};
+use crate::model::{Policy, Standing};
+use crate::spending::{SessionSpending, SpendingLedger};
+use crate::sync::blob::BlobExchange;
+use crate::sync::client::Client;
+use crate::sync::relay::{self, Relay};
+use crate::sync::{Message, Quota};
+use crate::transport::{Channel, Frame, Wire};
 
-/// How long a session sits in [`Draining`](State::Draining) before it is closed.
+use auth::AuthExchange;
+use gate::{Gate, Verdict};
+use heartbeat::Heartbeat;
+
+/// How long a session sits in [`Draining`](State::Draining) — or holds an
+/// unanswered consent prompt — before it is closed.
 pub const DRAIN_CAP_SECONDS: i64 = 300;
-
-/// How long without a heartbeat before an idle session drains.
-pub const HEARTBEAT_TIMEOUT_SECONDS: i64 = 60;
-
-/// The low bound on the jittered heartbeat interval. `docs/discovery.md`.
-pub const HEARTBEAT_MIN_SECONDS: i64 = 15;
-/// The high bound on the jittered heartbeat interval.
-pub const HEARTBEAT_MAX_SECONDS: i64 = 30;
 
 /// Control-frame discriminants, one byte ahead of the payload.
 ///
@@ -73,35 +90,27 @@ pub enum State {
     Syncing,
     /// Waiting on the user to approve an unadmitted stranger, up to the drain
     /// cap.
-    GatePending,
+    GatePending {
+        /// When the hold began.
+        since: i64,
+        /// Whether the shell has been asked to prompt yet.
+        approval_requested: bool,
+    },
     /// No new work; in-flight transfers finish or time out.
-    Draining,
+    Draining {
+        /// When the drain began.
+        since: i64,
+    },
     /// Torn down. Synced data is retained.
     Closed,
 }
 
 impl State {
-    /// Whether the peer has proved an identity.
-    #[must_use]
-    pub fn is_identified(self) -> bool {
-        matches!(self, State::Identified | State::Syncing | State::Draining)
-    }
-
     /// Whether new work may start.
     #[must_use]
     pub fn is_open(self) -> bool {
-        !matches!(self, State::Draining | State::Closed)
+        !matches!(self, State::Draining { .. } | State::Closed)
     }
-}
-
-/// What the consent gate decided about a peer.
-enum Gate {
-    /// Admitted, or already paired.
-    Pass,
-    /// Blocked; drop the link before either side names itself.
-    Blocked,
-    /// An unadmitted stranger; hold for the user.
-    Pending,
 }
 
 /// One link, and everything the core knows about it.
@@ -112,63 +121,32 @@ pub struct Session {
     pub role: Role,
     /// Where the link is in its lifecycle.
     state: State,
-    /// The Noise session encrypting it.
-    noise: Noise,
-    /// Fragmentation, sized to this link's negotiated MTU.
-    codec: Codec,
-    /// What is waiting to go out, most urgent channel first.
-    outbox: Outbox,
+    /// The encrypted pipe the session talks through.
+    wire: Wire,
+    /// Liveness: when the peer was last heard, and when to beat next.
+    heartbeat: Heartbeat,
+    /// The consent gate, holding strangers until policy or the user admits
+    /// them.
+    gate: Gate,
+    /// Mutual NIP-42, and every pubkey the peer has proved over it.
+    auth: AuthExchange,
     /// The user's policy, shared with every other live session.
     policy: Arc<Policy>,
-    /// What the peer has proved, once it has proved anything.
-    peer: Option<Peer>,
     /// This device's identity key, for signing AUTH responses.
     identity: SecretKey,
-    /// When a frame was last heard, which the heartbeat measures.
-    last_heard: i64,
-    /// When the next heartbeat is due, so a quiet session still proves it is
-    /// alive before the peer's own timeout drains it.
-    next_heartbeat_at: i64,
-    /// When the session entered [`Draining`](State::Draining).
-    draining_since: Option<i64>,
-    /// The challenge this device sent, to match against the peer's response.
-    sent_challenge: Option<String>,
-    /// The peer's challenge, to sign and return.
-    peer_challenge: Option<String>,
-    /// Whether this device has disclosed its own identity this session, by
-    /// answering the peer's challenge.
-    disclosed: bool,
-    /// Whether the recognition gate has passed for this peer.
-    gate_passed: bool,
-    /// When the session entered [`GatePending`](State::GatePending), if it did.
-    pending_since: Option<i64>,
-    /// Whether the shell has been asked to approve this session yet.
-    approval_requested: bool,
-    /// When the app was last foregrounded, for the cool-off admission window.
-    cool_off_since: Option<i64>,
-    /// Every pubkey the peer has proved, accumulated across `AUTH` responses.
-    proved_pubkeys: BTreeSet<PublicKey>,
-    /// What this device has accepted from the peer this session.
-    used: Used,
-    /// Open subscriptions from the peer's relay half, with every filter each
-    /// one holds.
-    subscriptions: BTreeMap<SubscriptionId, Vec<Filter>>,
-    /// The client half's state: negotiations, fetches, and the events awaiting
-    /// their proofs.
-    client: crate::sync::client::Client,
-    /// Where blob bytes go, provided by the shell.
-    blobs: Arc<dyn BlobStore>,
-    /// The shared rolling spending ledger, metered across sessions.
-    spending: Arc<SpendingLedger>,
-    /// The blob this session is fetching, if one is in flight.
-    blob_fetch: Option<BlobFetch>,
-    /// The battery level in percent, as the shell last reported it.
-    battery: Option<u8>,
-    /// Whether the shell has been asked to open L2CAP for this link.
-    l2cap_requested: bool,
-    /// Whether the one reconciliation this session opens has already been
-    /// opened.
-    sync_started: bool,
+    /// The proved pubkeys bound under policy, once the peer has proved any.
+    peer: Option<Peer>,
+    /// The relay half: what this device serves, and the subscriptions it
+    /// serves to.
+    relay: Relay,
+    /// The client half: negotiations, fetches, and events awaiting proofs.
+    client: Client,
+    /// The blob half: serving the peer's requests, driving this device's one
+    /// fetch.
+    blobs: BlobExchange,
+    /// What the peer has spent against its quota, this session and this
+    /// window.
+    spending: SessionSpending,
 }
 
 impl Session {
@@ -186,32 +164,17 @@ impl Session {
             link,
             role,
             state: State::Linked,
-            noise: Noise::begin(role),
-            codec: Codec::new(mtu)?,
-            outbox: Outbox::default(),
+            wire: Wire::new(role, mtu)?,
+            heartbeat: Heartbeat::new(),
+            gate: Gate::default(),
+            auth: AuthExchange::default(),
             policy,
-            peer: None,
             identity,
-            last_heard: clock::now(),
-            next_heartbeat_at: clock::now() + jittered_heartbeat_interval(),
-            draining_since: None,
-            sent_challenge: None,
-            peer_challenge: None,
-            disclosed: false,
-            gate_passed: false,
-            pending_since: None,
-            approval_requested: false,
-            cool_off_since: None,
-            proved_pubkeys: BTreeSet::new(),
-            used: Used::default(),
-            subscriptions: BTreeMap::new(),
-            client: crate::sync::client::Client::default(),
-            blobs,
-            spending,
-            blob_fetch: None,
-            battery: None,
-            l2cap_requested: false,
-            sync_started: false,
+            peer: None,
+            relay: Relay::default(),
+            client: Client::default(),
+            blobs: BlobExchange::new(blobs),
+            spending: SessionSpending::new(spending),
         })
     }
 
@@ -233,9 +196,7 @@ impl Session {
             bail!("only the dialer initiates");
         }
 
-        let message = self.noise.first_handshake_message()?;
-
-        self.send_plain(&message)
+        self.wire.initiate()
     }
 
     /// Record what the peer proved over `AUTH`, binding policy to each pubkey.
@@ -244,52 +205,60 @@ impl Session {
     /// this accumulates rather than replacing. A peer that turns out to be
     /// blocked is refused here: the consent gate ran before anyone was named.
     pub fn identify(&mut self, pubkeys: impl IntoIterator<Item = PublicKey>) {
-        self.proved_pubkeys.extend(pubkeys);
-        self.rebind();
+        self.auth.prove(pubkeys);
+        self.bind_peer();
+
+        // A newly proved identity moves a secured link to Identified. A
+        // session already syncing stays where it is, and a blocked one was
+        // closed by the binding above.
+        if matches!(
+            self.state,
+            State::Secured | State::DialerIdentified | State::Identified
+        ) {
+            self.state = State::Identified;
+        }
     }
 
-    /// Rebind the peer from the pubkeys it has proved, under the current
-    /// policy, closing the session if any of them is blocked.
-    fn rebind(&mut self) {
-        self.peer = Some(Peer::bind(
-            self.link,
-            self.proved_pubkeys.iter().copied(),
-            &self.policy,
-        ));
+    /// Bind the peer from the pubkeys it has proved, under the current policy,
+    /// closing the session if any of them is blocked.
+    ///
+    /// Binds only, whatever the phase: a peer that has proved nothing stays
+    /// `None`, and the lifecycle moves in [`identify`](Self::identify) alone.
+    fn bind_peer(&mut self) {
+        if !self.auth.has_proved() {
+            return;
+        }
 
-        self.state = if self.peer.as_ref().is_some_and(Peer::is_blocked) {
-            self.sync_started = false;
-            State::Closed
-        } else {
-            State::Identified
-        };
+        let peer = Peer::bind(self.link, self.auth.proved().copied(), &self.policy);
+
+        if peer.is_blocked() {
+            self.state = State::Closed;
+        }
+
+        self.peer = Some(peer);
     }
 
-    /// Take a policy the user has just changed, and rebind it.
+    /// Take a policy the user has just changed and rebind the peer under it,
+    /// closing the session if any proved pubkey is now blocked.
     ///
     /// A session follows the user's preferences rather than caching them,
     /// because policy is read at encounter time with nobody watching.
     pub fn set_policy(&mut self, policy: Arc<Policy>) {
         self.policy = policy;
-        self.rebind();
-
-        // A rebind leaves an already-syncing session at Identified; put it
-        // back without re-opening the reconciliation it has already done.
-        if self.state == State::Identified && self.sync_started {
-            self.state = State::Syncing;
-        }
+        self.bind_peer();
     }
 
     /// When the app was last foregrounded, which the cool-off admission window
     /// is measured from. `None` means the cool-off is not running.
     pub fn set_cool_off_since(&mut self, since: Option<i64>) {
-        self.cool_off_since = since;
+        self.gate.set_cool_off_since(since);
     }
+
     /// Answer the consent gate's hold, from the user's decision.
     ///
     /// Approving resumes whatever the gate held back; refusing closes the link.
     pub fn approve(&mut self, db: &Db, approved: bool) -> Result<()> {
-        if self.state != State::GatePending {
+        if !matches!(self.state, State::GatePending { .. }) {
             return Ok(());
         }
 
@@ -298,20 +267,17 @@ impl Session {
             return Ok(());
         }
 
-        self.gate_passed = true;
-        self.pending_since = None;
+        self.gate.pass();
         self.state = State::Secured;
 
         // Resume the deferred turn, if its trigger has already arrived.
         match self.role {
-            Role::Receiver if self.peer_challenge.is_some() => {
+            Role::Receiver if self.auth.challenged() => {
                 self.send_recognition_tags(db)?;
-                self.send_auth_challenge()?;
+                self.challenge_peer()?;
             }
             Role::Dialer => {
-                if let Some(challenge) = self.peer_challenge.clone() {
-                    self.send_auth_response(&challenge)?;
-                    self.disclosed = true;
+                if self.answer_peer_challenge()? {
                     self.state = State::DialerIdentified;
                 }
             }
@@ -323,63 +289,40 @@ impl Session {
 
     /// Whether the shell should be told to prompt for this session, once.
     pub fn request_approval(&mut self) -> bool {
-        if self.state == State::GatePending && !self.approval_requested {
-            self.approval_requested = true;
+        if let State::GatePending {
+            approval_requested, ..
+        } = &mut self.state
+            && !*approval_requested
+        {
+            *approval_requested = true;
             return true;
         }
 
         false
     }
 
-    /// Queue a frame, fragmented to this link's MTU.
-    ///
-    /// Encryption happens here, once the handshake has completed. Everything
-    /// above deals in plaintext frames.
+    /// Queue a frame for the peer, encrypted and fragmented by the wire.
     pub fn send(&mut self, frame: &Frame) -> Result<()> {
-        let payload = if self.noise.is_complete() {
-            self.noise.encrypt(&frame.payload)?
-        } else {
-            frame.payload.clone()
-        };
-
-        let fragments = self.codec.fragment(&Frame {
-            channel: frame.channel,
-            payload,
-        });
-
-        self.outbox.push(frame.channel, fragments);
-
-        Ok(())
+        self.wire.send(frame)
     }
 
     /// The next fragment for the shell to write, if the last one has been
     /// acknowledged.
     pub fn next_write(&mut self) -> Option<Vec<u8>> {
-        self.outbox.next_write()
+        self.wire.next_write()
     }
 
     /// Record that the fragment the shell was handed has been acknowledged.
     pub fn acknowledge_write(&mut self) {
-        self.outbox.acknowledge();
+        self.wire.acknowledge_write();
     }
 
     /// Take one write off the characteristic, returning a decrypted frame once
     /// its last fragment lands.
     pub fn receive(&mut self, write: &[u8]) -> Result<Option<Frame>> {
-        self.last_heard = clock::now();
+        self.heartbeat.heard();
 
-        let Some(frame) = self.codec.absorb(write)? else {
-            return Ok(None);
-        };
-
-        if !self.noise.is_complete() {
-            return Ok(Some(frame));
-        }
-
-        Ok(Some(Frame {
-            channel: frame.channel,
-            payload: self.noise.decrypt(&frame.payload)?,
-        }))
+        self.wire.receive(write)
     }
 
     /// Advance the lifecycle on an inbound control frame: the handshake, the
@@ -396,7 +339,7 @@ impl Session {
             | State::DialerIdentified
             | State::Identified
             | State::Syncing
-            | State::GatePending => self.on_control_frame(db, frame)?,
+            | State::GatePending { .. } => self.on_control_frame(db, frame)?,
             _ => {}
         }
 
@@ -422,11 +365,8 @@ impl Session {
         }
     }
 
-    /// Handle one frame on the sync channel.
-    ///
-    /// `&*self.spending` is the one way to name the ledger's reference through
-    /// its `Arc`; clippy's auto-deref suggestion does not typecheck there.
-    #[allow(clippy::explicit_auto_deref)]
+    /// Handle one frame on the sync channel, routing it to the blob, relay or
+    /// client half.
     pub fn handle_sync(&mut self, db: &Db, frame: &Frame) -> Result<()> {
         let message = Message::decode(&frame.payload)
             .context("the sync channel carried a malformed message")?;
@@ -437,48 +377,52 @@ impl Session {
 
         // Draining finishes what is in flight and starts nothing new: a
         // publish, a fresh subscription or a fresh negotiation waits for the
-        // next encounter, while replies to work already underway pass.
-        if self.state == State::Draining {
+        // next encounter, while replies to work already underway pass. A
+        // Blossom request passes too: the peer's own in-flight fetch asks for
+        // its groups one request at a time.
+        if matches!(self.state, State::Draining { .. }) {
             match &message {
                 Message::Publish(_) | Message::Req(..) | Message::NegOpen(..) => return Ok(()),
                 _ => {}
             }
         }
 
-        let quota = self.quota();
-
         // Blobs answer and drive their own channel: a request is served from
-        // the store, a response advances whatever fetch it belongs to.
+        // the store, a response advances the fetch in flight.
         match &message {
             Message::BlossomRequest(request) => {
-                let reply = crate::sync::blob::handle_request(db, &*self.blobs, &peer, request)?;
+                let reply = self.blobs.serve(db, &peer, request)?;
 
                 self.send_sync(&Message::BlossomResponse(Box::new(reply)))?;
                 return Ok(());
             }
             Message::BlossomResponse(response) => {
-                self.on_blossom_response(db, response.as_ref())?;
+                if let Some(request) = self.blobs.on_response(db, response.as_ref())? {
+                    self.send_sync(&Message::BlossomRequest(Box::new(request)))?;
+                }
+
+                // A finished fetch frees the slot for the next wanted blob.
                 self.maybe_fetch_blob(db)?;
                 return Ok(());
             }
             _ => {}
         }
 
-        if self.try_relay(db, &peer, &message, quota)? {
-            return Ok(());
-        }
+        let quota = self.quota();
 
-        let replies = crate::sync::client::handle(
-            &crate::sync::Ctx {
+        let replies = if self.is_for_relay(&message) {
+            self.relay.handle(
                 db,
-                spending: &*self.spending,
-            },
-            &peer,
-            message,
-            quota,
-            &mut self.used,
-            &mut self.client,
-        )?;
+                &peer,
+                &self.identity,
+                message,
+                quota,
+                &mut self.spending,
+            )?
+        } else {
+            self.client
+                .handle(db, &peer, message, quota, &mut self.spending)?
+        };
 
         for reply in replies {
             self.send_sync(&reply)?;
@@ -487,13 +431,27 @@ impl Session {
         Ok(())
     }
 
+    /// Whether the relay half answers this message.
+    ///
+    /// A `NEG-MSG` naming a negotiation this device opened belongs to the
+    /// client half; everything the peer initiates belongs to the relay.
+    fn is_for_relay(&self, message: &Message) -> bool {
+        match message {
+            Message::Req(..) | Message::Close(..) | Message::NegOpen(..) | Message::Publish(..) => {
+                true
+            }
+            Message::NegMsg(subscription, _) => !self.client.owns_subscription(subscription),
+            _ => false,
+        }
+    }
+
     /// Begin a reconciliation against the peer, sending the opening frame.
     ///
     /// The subscription is this device's own, which is how a later reply is
-    /// told apart from one this device must answer: a `NEG-MSG` naming this
-    /// map goes to the client half, anything else to the relay half.
+    /// told apart from one this device must answer: a `NEG-MSG` naming it goes
+    /// to the client half, anything else to the relay half.
     pub fn begin_negotiation(&mut self, db: &Db, filter: Filter) -> Result<()> {
-        if self.state == State::Draining {
+        if !self.state.is_open() {
             return Ok(());
         }
 
@@ -502,9 +460,8 @@ impl Session {
         };
 
         let (negotiation, opening) = crate::sync::client::Negotiation::begin(db, &peer, filter)?;
-        let subscription = negotiation.subscription_id().clone();
 
-        self.client.negotiations.insert(subscription, negotiation);
+        self.client.open_negotiation(negotiation);
         self.send_sync(&opening)?;
 
         Ok(())
@@ -513,19 +470,16 @@ impl Session {
     /// Once both identities are bound, store the pair secret and the
     /// disclosure, and open the reconciliation.
     ///
-    /// The accept policy gates ingest and the peer's relay half bounds what it
+    /// Runs once: [`identify`](Self::identify) never regresses a session that
+    /// is already syncing, so the first arrival here is the only one. The
+    /// accept policy gates ingest and the peer's relay half bounds what it
     /// will answer, so a bare filter is the right opening move.
-    pub fn enter_syncing(&mut self, db: &Db) -> Result<()> {
+    fn enter_syncing(&mut self, db: &Db) -> Result<()> {
         if self.state != State::Identified {
             return Ok(());
         }
 
         self.state = State::Syncing;
-
-        if self.sync_started {
-            return Ok(());
-        }
-        self.sync_started = true;
 
         self.pair(db)?;
         self.begin_negotiation(db, Filter::new())?;
@@ -540,174 +494,34 @@ impl Session {
             return Ok(());
         };
 
-        let secret = recognition::derive_secret(&self.noise.handshake_hash()?);
+        let secret = recognition::derive_secret(&self.wire.handshake_hash()?);
         let pubkeys: Vec<PublicKey> = peer.pubkeys().copied().collect();
 
         crate::db::command::pair_with(db, &pubkeys, &secret, clock::now())
     }
 
-    /// Start the next blob fetch if none is in flight, probing it with a
-    /// `HEAD` before any bytes move.
+    /// Start the next blob fetch once the session is syncing and none is in
+    /// flight.
     fn maybe_fetch_blob(&mut self, db: &Db) -> Result<()> {
-        if self.state != State::Syncing || self.blob_fetch.is_some() {
+        if self.state != State::Syncing {
             return Ok(());
         }
 
-        // Low battery skips the transfer; it is the one thing a fetch cannot
-        // be interrupted for on a phone.
-        if self
-            .battery
-            .is_some_and(|level| level < crate::sync::blob::BLOB_MIN_BATTERY)
-        {
-            return Ok(());
+        if let Some(request) = self.blobs.poll(db)? {
+            self.send_sync(&Message::BlossomRequest(Box::new(request)))?;
         }
-
-        let Some(wanted) = crate::db::query::wanted_blobs(db, 1)?.into_iter().next() else {
-            return Ok(());
-        };
-
-        // Partial bytes from a dead transfer cannot be trusted without
-        // per-chunk verification, so a re-fetch starts clean.
-        if self.blobs.has(&wanted.sha256)? {
-            self.blobs.delete(&wanted.sha256)?;
-        }
-
-        let request_id = format!("blob-{}", &wanted.sha256[..16]);
-        let mut fetch = BlobFetch::begin(wanted.clone(), request_id);
-
-        self.send_blob_request(&fetch.blob, "HEAD", &fetch.request_id, &[])?;
-        fetch.probing = true;
-        self.blob_fetch = Some(fetch);
 
         Ok(())
-    }
-
-    /// Advance the in-flight fetch on one `BLOSSOM-RES`.
-    fn on_blossom_response(
-        &mut self,
-        db: &Db,
-        response: &crate::sync::message::BlossomResponse,
-    ) -> Result<()> {
-        let mut fetch = match &self.blob_fetch {
-            Some(fetch) if fetch.request_id == response.id => fetch.clone(),
-            _ => return Ok(()),
-        };
-
-        if fetch.probing {
-            // The HEAD answers: either the length, or that the peer lacks it.
-            if response.status == 404 {
-                self.blob_fetch = None;
-                return Ok(());
-            }
-
-            let total = response
-                .headers
-                .iter()
-                .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-                .and_then(|(_, value)| value.parse::<u64>().ok());
-
-            let Some(total) = total else {
-                self.blob_fetch = None;
-                return Ok(());
-            };
-
-            fetch.total = Some(total);
-            fetch.probing = false;
-
-            if fetch.stored >= total {
-                self.finish_blob(db, &fetch)?;
-                return Ok(());
-            }
-
-            self.ask_blob_group(&mut fetch)?;
-        } else if response.status == 206 {
-            // One group of verified bytes arrived.
-            self.blobs.append(&fetch.blob.sha256, &response.body)?;
-            fetch.stored += response.body.len() as u64;
-
-            crate::db::command::record_blob_progress(
-                db,
-                &fetch.blob.sha256,
-                fetch.stored as i64,
-                None,
-            )?;
-
-            if fetch.total.is_some_and(|total| fetch.stored >= total) {
-                self.finish_blob(db, &fetch)?;
-                return Ok(());
-            } else {
-                self.ask_blob_group(&mut fetch)?;
-            }
-        } else {
-            // Anything else ends this fetch.
-            self.blob_fetch = None;
-            return Ok(());
-        }
-
-        self.blob_fetch = Some(fetch);
-
-        Ok(())
-    }
-
-    /// Mark a fetch whole after verifying the assembled bytes.
-    fn finish_blob(&mut self, db: &Db, fetch: &BlobFetch) -> Result<()> {
-        if crate::sync::blob::verifies(&fetch.blob, &*self.blobs)? {
-            crate::db::command::complete_blob(
-                db,
-                &fetch.blob.sha256,
-                fetch.stored as i64,
-                clock::now(),
-            )?;
-        }
-
-        self.blob_fetch = None;
-
-        Ok(())
-    }
-
-    /// Ask for the next group of a probe-completed fetch. Marking the link for a
-    /// bulk channel: once bytes move, the setup round trip is worth it.
-    fn ask_blob_group(&mut self, fetch: &mut BlobFetch) -> Result<()> {
-        let start = fetch.stored;
-        let end = start + BLOB_GROUP_BYTES - 1;
-        let id = fetch.request_id.clone();
-
-        self.l2cap_requested = true;
-        self.send_blob_request(
-            &fetch.blob,
-            "GET",
-            &id,
-            &[("range".to_string(), format!("bytes={start}-{end}"))],
-        )
     }
 
     /// Whether the shell should be told to open L2CAP for this link, once.
     pub fn take_l2cap_request(&mut self) -> bool {
-        std::mem::take(&mut self.l2cap_requested)
+        self.blobs.take_l2cap_request()
     }
 
     /// The battery level in percent, which gates blob transfers.
     pub fn set_battery(&mut self, level: Option<u8>) {
-        self.battery = level;
-    }
-
-    /// Queue one Blossom request on the sync channel.
-    fn send_blob_request(
-        &mut self,
-        blob: &Blob,
-        method: &str,
-        id: &str,
-        headers: &[(String, String)],
-    ) -> Result<()> {
-        let request = crate::sync::message::BlossomRequest {
-            id: id.to_string(),
-            method: method.to_string(),
-            path: format!("/{}", blob.sha256),
-            headers: headers.to_vec(),
-            body: Vec::new(),
-        };
-
-        self.send_sync(&Message::BlossomRequest(Box::new(request)))
+        self.blobs.set_battery(level);
     }
 
     /// Offer a just-stored event to every subscription the peer has open, if the
@@ -716,8 +530,8 @@ impl Session {
     /// Driven by the store's event channel, so anything that stores an own event —
     /// a publish, or an own event coming home through an ingest — reaches every
     /// connected peer without the writer knowing.
-    pub fn offer_event(&mut self, event: &HashedEvent) -> Result<()> {
-        if self.state == State::Draining {
+    pub fn offer_event(&mut self, db: &Db, event: &HashedEvent) -> Result<()> {
+        if !self.state.is_open() {
             return Ok(());
         }
 
@@ -725,111 +539,43 @@ impl Session {
             return Ok(());
         };
 
-        let subscriptions: Vec<SubscriptionId> = self.subscriptions.keys().cloned().collect();
+        // The same two tests the relay half applies: any of the subscription's
+        // filters, and what the peer may be served. Own events are always in
+        // the Own register, so the registers need no check here.
+        if !peer.may_be_served(event) {
+            return Ok(());
+        }
 
-        for subscription in subscriptions {
-            let Some(filters) = self.subscriptions.get(&subscription).cloned() else {
-                continue;
-            };
+        for subscription in self.relay.matching(event) {
+            let mut messages = vec![Message::Event(
+                subscription.clone(),
+                Box::new(event.clone()),
+            )];
 
-            // The same two tests the relay half applies: any of the sub's
-            // filters, and what the peer may be served. Own events are always
-            // in the Own register, so the registers need no check here.
-            if filters.iter().any(|filter| filter.matches(event)) && peer.may_be_served(event) {
-                self.send_sync(&Message::Event(
-                    subscription.clone(),
-                    Box::new(event.clone()),
-                ))?;
-                self.attach_own_signature(&peer, &subscription, event)?;
+            relay::attach(
+                db,
+                &peer,
+                &self.identity,
+                &subscription,
+                event,
+                &mut messages,
+            )?;
+
+            for message in messages {
+                self.send_sync(&message)?;
             }
         }
 
         Ok(())
     }
 
-    /// Attach this device's signature over its own event, naming the peer, so
-    /// the peer can forward it one more hop.
-    fn attach_own_signature(
-        &mut self,
-        peer: &Peer,
-        subscription: &SubscriptionId,
-        event: &HashedEvent,
-    ) -> Result<()> {
-        let Some(peer_key) = peer.pubkeys().next().copied() else {
-            return Ok(());
-        };
-
-        let signature = crate::model::RecipientSignature::sign(&self.identity, event.id, peer_key);
-
-        self.send_sync(&Message::RecipientSignature(
-            subscription.clone(),
-            event.id,
-            Box::new(signature.sig),
-        ))
-    }
-
-    /// Try the relay half. Returns `true` when the message was consumed.
-    #[allow(clippy::explicit_auto_deref)]
-    fn try_relay(&mut self, db: &Db, peer: &Peer, message: &Message, quota: Quota) -> Result<bool> {
-        match message {
-            Message::Req(..) | Message::Close(..) | Message::NegOpen(..) | Message::Publish(..) => {
-                let replies = relay::handle(
-                    &crate::sync::Ctx {
-                        db,
-                        spending: &*self.spending,
-                    },
-                    peer,
-                    &self.identity,
-                    message.clone(),
-                    quota,
-                    &mut self.used,
-                    &mut self.subscriptions,
-                )?;
-
-                for reply in replies {
-                    self.send_sync(&reply)?;
-                }
-
-                Ok(true)
-            }
-            // A NEG-MSG names the negotiation it belongs to: one this device
-            // opened goes to the client half, whatever else it looks like.
-            // One the peer opened is registered on our relay half.
-            Message::NegMsg(subscription, _)
-                if self.client.negotiations.contains_key(subscription) =>
-            {
-                Ok(false)
-            }
-            Message::NegMsg(..) => {
-                let replies = relay::handle(
-                    &crate::sync::Ctx {
-                        db,
-                        spending: &*self.spending,
-                    },
-                    peer,
-                    &self.identity,
-                    message.clone(),
-                    quota,
-                    &mut self.used,
-                    &mut self.subscriptions,
-                )?;
-
-                for reply in replies {
-                    self.send_sync(&reply)?;
-                }
-
-                Ok(true)
-            }
-            _ => Ok(false),
-        }
-    }
-
     /// Move to [`Draining`](State::Draining): finish what is in flight, start
     /// nothing new.
     pub fn drain(&mut self) {
         if self.state.is_open() {
-            self.state = State::Draining;
-            self.draining_since = Some(clock::now());
+            self.state = State::Draining {
+                since: clock::now(),
+            };
         }
     }
 
@@ -843,37 +589,26 @@ impl Session {
     pub fn expired(&self) -> bool {
         let now = clock::now();
 
-        match self.draining_since {
-            Some(since) => self.outbox.is_idle() || now - since >= DRAIN_CAP_SECONDS,
-            None => {
-                // A gate hold has the same cap as a drain: the doc holds an
-                // unanswered prompt for up to five minutes.
-                if let Some(since) = self.pending_since {
-                    return now - since >= DRAIN_CAP_SECONDS;
-                }
-
-                now - self.last_heard >= HEARTBEAT_TIMEOUT_SECONDS
-            }
+        match self.state {
+            State::Draining { since } => self.wire.is_idle() || now - since >= DRAIN_CAP_SECONDS,
+            // The doc holds an unanswered prompt for the same cap as a drain.
+            State::GatePending { since, .. } => now - since >= DRAIN_CAP_SECONDS,
+            _ => self.heartbeat.timed_out(),
         }
     }
 
     /// When this session next needs attention, for the shell to arm a timer on.
     #[must_use]
     pub fn deadline(&self) -> i64 {
-        match self.draining_since {
-            Some(since) => since + DRAIN_CAP_SECONDS,
-            None => {
-                if let Some(since) = self.pending_since {
-                    return since + DRAIN_CAP_SECONDS;
-                }
-
-                if self.beats() {
-                    self.next_heartbeat_at
-                        .min(self.last_heard + HEARTBEAT_TIMEOUT_SECONDS)
-                } else {
-                    self.last_heard + HEARTBEAT_TIMEOUT_SECONDS
-                }
+        match self.state {
+            State::Draining { since } | State::GatePending { since, .. } => {
+                since + DRAIN_CAP_SECONDS
             }
+            _ if self.beats() => self
+                .heartbeat
+                .next_beat_deadline()
+                .min(self.heartbeat.timeout_deadline()),
+            _ => self.heartbeat.timeout_deadline(),
         }
     }
 
@@ -883,26 +618,19 @@ impl Session {
     /// flight proves it too, so a busy link skips the beat rather than piling
     /// one behind a transfer. Only post-handshake states beat.
     pub fn maybe_heartbeat(&mut self) -> Result<()> {
-        if !self.beats() {
+        if !self.beats() || !self.heartbeat.due() {
             return Ok(());
         }
 
-        let now = clock::now();
-
-        if now < self.next_heartbeat_at {
-            return Ok(());
-        }
+        // Reschedule whether or not a beat goes out, so a long transfer does
+        // not emit one the moment it drains.
+        self.heartbeat.reschedule();
 
         // Traffic on its way out is the heartbeat; a beat would only wait
-        // behind it. Reset the timer either way, so a long transfer does not
-        // emit a beat the moment it drains.
-        if !self.outbox.is_idle() {
-            self.next_heartbeat_at = now + jittered_heartbeat_interval();
-            return Ok(());
+        // behind it.
+        if self.wire.is_idle() {
+            self.send_control(control::HEARTBEAT, &[])?;
         }
-
-        self.send_control(control::HEARTBEAT, &[])?;
-        self.next_heartbeat_at = now + jittered_heartbeat_interval();
 
         Ok(())
     }
@@ -916,7 +644,7 @@ impl Session {
                 | State::DialerIdentified
                 | State::Identified
                 | State::Syncing
-                | State::GatePending
+                | State::GatePending { .. }
         )
     }
 
@@ -924,25 +652,17 @@ impl Session {
     // Handshake
     // ========================================================================
 
-    /// Process a handshake message and advance to [`Secured`] when it
-    /// completes.
+    /// Process a handshake message and advance to [`Secured`](State::Secured)
+    /// when it completes. The wire queues whatever reply the pattern calls
+    /// for.
     fn advance_handshake(&mut self, db: &Db, frame: &Frame) -> Result<()> {
-        let reply = self.noise.read_handshake(&frame.payload)?;
-
-        // A handshake reply goes out plaintext: the peer's handshake state
-        // decrypts it, and transport encryption starts only after the
-        // handshake is fully complete on both sides.
-        if let Some(reply) = reply {
-            self.send_plain(&reply)?;
-        }
-
-        if self.noise.is_complete() {
+        if self.wire.read_handshake(&frame.payload)? {
             self.state = State::Secured;
 
             // The dialer sends its recognition tags and AUTH challenge first.
             if self.role == Role::Dialer {
                 self.send_recognition_tags(db)?;
-                self.send_auth_challenge()?;
+                self.challenge_peer()?;
             }
         }
 
@@ -962,17 +682,17 @@ impl Session {
         match discriminant {
             control::TAGS => self.on_tags(db, payload)?,
             control::CHALLENGE => self.on_challenge(db, payload)?,
-            control::AUTH_EVENT => self.on_auth_response(db, payload)?,
+            control::AUTH_EVENT => self.on_auth_response(payload)?,
             control::HEARTBEAT => {
-                // The write itself refreshed `last_heard` in `receive`; there
-                // is nothing else a liveness beacon carries.
+                // The write itself proved liveness in `receive`; there is
+                // nothing else a beacon carries.
             }
             other => bail!("an unknown control frame {other} arrived"),
         }
 
         // Both identities are bound once the peer is verified and this device
         // has disclosed its own, in whichever order the two happened.
-        if self.peer.is_some() && self.disclosed {
+        if self.peer.is_some() && self.auth.disclosed() {
             self.enter_syncing(db)?;
         }
 
@@ -984,12 +704,14 @@ impl Session {
     fn on_tags(&mut self, db: &Db, payload: &[u8]) -> Result<()> {
         let resolved = self.resolve_recognition(db, payload)?;
 
-        match self.evaluate_gate(db, resolved)? {
-            Gate::Pass => self.gate_passed = true,
-            Gate::Blocked => self.state = State::Closed,
-            Gate::Pending => {
-                self.state = State::GatePending;
-                self.pending_since = Some(clock::now());
+        match self.gate.evaluate(db, &self.policy, resolved)? {
+            Verdict::Pass => {}
+            Verdict::Blocked => self.state = State::Closed,
+            Verdict::Pending => {
+                self.state = State::GatePending {
+                    since: clock::now(),
+                    approval_requested: false,
+                };
             }
         }
 
@@ -997,19 +719,12 @@ impl Session {
     }
 
     /// Take the peer's challenge. The receiver challenges back without
-    /// answering; the dialer answers, identifying first.
+    /// answering; the dialer answers, identifying first. A challenge arriving
+    /// before the gate passes waits; approval resumes the turn.
     fn on_challenge(&mut self, db: &Db, payload: &[u8]) -> Result<()> {
-        let challenge =
-            String::from_utf8(payload.to_vec()).context("an AUTH challenge is not UTF-8")?;
+        self.auth.receive_challenge(payload)?;
 
-        self.peer_challenge = Some(challenge.clone());
-
-        // A held gate defers the turn; approval resumes it.
-        if self.state == State::GatePending {
-            return Ok(());
-        }
-
-        if !self.gate_passed {
+        if !self.gate.passed() {
             return Ok(());
         }
 
@@ -1018,13 +733,13 @@ impl Session {
             // challenge, and answers only after it has seen the dialer.
             Role::Receiver => {
                 self.send_recognition_tags(db)?;
-                self.send_auth_challenge()?;
+                self.challenge_peer()?;
             }
             // The dialer identifies itself first.
             Role::Dialer => {
-                self.send_auth_response(&challenge)?;
-                self.disclosed = true;
-                self.state = State::DialerIdentified;
+                if self.answer_peer_challenge()? {
+                    self.state = State::DialerIdentified;
+                }
             }
         }
 
@@ -1033,66 +748,52 @@ impl Session {
 
     /// Verify the peer's AUTH response. The receiver discloses here, once it
     /// has seen the dialer.
-    fn on_auth_response(&mut self, _db: &Db, payload: &[u8]) -> Result<()> {
-        let event = serde_json::from_slice::<coracle_lib::events::Event>(payload)
-            .context("parsing an AUTH response")?;
+    ///
+    /// Nothing is accepted while the gate holds: a held stranger cannot
+    /// identify itself into being served before the user has answered.
+    fn on_auth_response(&mut self, payload: &[u8]) -> Result<()> {
+        if !self.gate.passed() {
+            bail!("an AUTH response arrived before the gate passed");
+        }
 
-        self.verify_auth_response(event)?;
+        let pubkey = self.auth.verify(payload, self.wire.local_static_key())?;
+
+        self.identify([pubkey]);
 
         if self.state == State::Closed {
             return Ok(());
         }
 
         // The receiver now discloses, having evaluated the dialer's identity.
-        if self.role == Role::Receiver && !self.disclosed {
-            if let Some(challenge) = self.peer_challenge.clone() {
-                self.send_auth_response(&challenge)?;
-                self.disclosed = true;
-            }
+        if self.role == Role::Receiver {
+            self.answer_peer_challenge()?;
         }
 
         Ok(())
     }
 
-    /// What the consent gate does with a resolved peer.
-    fn evaluate_gate(&self, db: &Db, resolved: Option<PublicKey>) -> Result<Gate> {
-        match resolved {
-            // Paired peers pass silently; a blocked one keeps its tags so the
-            // connection can be dropped here, before either side names itself.
-            Some(pubkey) => Ok(
-                if self.policy.graph.standing(&pubkey) == Standing::Blocked {
-                    Gate::Blocked
-                } else {
-                    Gate::Pass
-                },
-            ),
-            // A stranger is admitted by discoverability and the budget, or it
-            // waits on the user.
-            None => Ok(if self.admitted(db)? {
-                Gate::Pass
-            } else {
-                Gate::Pending
-            }),
-        }
+    /// Send a NIP-42 challenge to the peer.
+    fn challenge_peer(&mut self) -> Result<()> {
+        let challenge = self.auth.make_challenge()?;
+
+        self.send_control(control::CHALLENGE, challenge.as_bytes())
     }
 
-    /// Whether an unrecognized peer may proceed without a prompt: the cool-off
-    /// window or a discoverable time admits it, and the disclosure budget has
-    /// headroom.
-    fn admitted(&self, db: &Db) -> Result<bool> {
-        let now = clock::now();
-        let discoverable = self.policy.is_discoverable_at(clock::minute_of_day());
-        let cool_off = self
-            .cool_off_since
-            .is_some_and(|since| now - since < self.policy.cool_off_minutes * 60);
+    /// Answer the peer's challenge, disclosing this device's identity — if one
+    /// is waiting and this device has not disclosed already.
+    fn answer_peer_challenge(&mut self) -> Result<bool> {
+        let remote = self
+            .wire
+            .remote_static_key()
+            .ok_or_else(|| anyhow::anyhow!("the handshake has not completed"))?;
 
-        if !(discoverable || cool_off) {
-            return Ok(false);
+        match self.auth.answer(&self.identity, remote)? {
+            Some(payload) => {
+                self.send_control(control::AUTH_EVENT, &payload)?;
+                Ok(true)
+            }
+            None => Ok(false),
         }
-
-        let spent = crate::db::query::disclosures_since(db, now - DISCLOSURE_WINDOW_SECONDS)?;
-
-        Ok(spent < self.policy.disclosure_budget)
     }
 
     // ========================================================================
@@ -1102,7 +803,7 @@ impl Session {
     /// Send this device's recognition tags, padded to the constant count so the
     /// length does not disclose how many peers this device has paired with.
     fn send_recognition_tags(&mut self, db: &Db) -> Result<()> {
-        let hash = self.noise.handshake_hash()?;
+        let hash = self.wire.handshake_hash()?;
         let secrets = crate::db::query::pair_secrets(db)?;
 
         let mut tags: Vec<recognition::Tag> = secrets
@@ -1126,90 +827,10 @@ impl Session {
     fn resolve_recognition(&self, db: &Db, payload: &[u8]) -> Result<Option<PublicKey>> {
         let offered: recognition::Tags =
             serde_json::from_slice(payload).context("decoding recognition tags")?;
-        let hash = self.noise.handshake_hash()?;
+        let hash = self.wire.handshake_hash()?;
         let secrets = crate::db::query::pair_secrets(db)?;
 
         Ok(recognition::resolve(&offered, &secrets, &hash))
-    }
-
-    // ========================================================================
-    // AUTH
-    // ========================================================================
-
-    /// Send a NIP-42 challenge to the peer.
-    fn send_auth_challenge(&mut self) -> Result<()> {
-        let mut challenge = [0u8; 16];
-        getrandom::getrandom(&mut challenge).context("generating an AUTH challenge")?;
-
-        let challenge = hex::encode(challenge);
-        self.sent_challenge = Some(challenge.clone());
-        self.send_control(control::CHALLENGE, challenge.as_bytes())
-    }
-
-    /// Answer the peer's challenge with a signed kind 22242 event.
-    fn send_auth_response(&mut self, challenge: &str) -> Result<()> {
-        // The relay tag names the party that challenged us — the peer — so
-        // the response binds to the channel their static key established.
-        let remote = self
-            .noise
-            .remote_static_key()
-            .ok_or_else(|| anyhow::anyhow!("the handshake has not completed"))?;
-        let relay = format!("noise://{}", hex::encode(remote));
-
-        let hashed = EventContent::new()
-            .with_content("")
-            .with_tags(
-                NostrTags::new()
-                    .add("challenge", [challenge])
-                    .add("relay", [relay.as_str()]),
-            )
-            .with_kind(22_242)
-            .with_created_at(clock::now())
-            .with_pubkey(self.identity.public_key())
-            .with_id();
-
-        let id = hashed.id;
-        let event = hashed.with_sig(self.identity.sign(id.as_bytes()));
-        let payload = serde_json::to_vec(&event).context("serializing AUTH response")?;
-
-        self.send_control(control::AUTH_EVENT, &payload)
-    }
-
-    /// Verify the peer's AUTH response against our challenge and this channel.
-    fn verify_auth_response(&mut self, event: coracle_lib::events::Event) -> Result<()> {
-        if event.kind != 22_242 {
-            bail!("the AUTH response is not kind 22242");
-        }
-
-        if event.verify().is_err() {
-            bail!("the AUTH response has an invalid signature");
-        }
-
-        let challenge = self.sent_challenge.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("an AUTH response arrived before a challenge was sent")
-        })?;
-
-        let tag_challenge = event
-            .tags
-            .value("challenge")
-            .ok_or_else(|| anyhow::anyhow!("the AUTH response has no challenge tag"))?;
-        if tag_challenge != challenge.as_str() {
-            bail!("the AUTH response carries a different challenge");
-        }
-
-        // We issued the challenge, so the response must name our channel.
-        let relay = format!("noise://{}", hex::encode(self.noise.local_static_key()));
-        let tag_relay = event
-            .tags
-            .value("relay")
-            .ok_or_else(|| anyhow::anyhow!("the AUTH response has no relay tag"))?;
-        if tag_relay != relay.as_str() {
-            bail!("the AUTH response names a different channel");
-        }
-
-        self.identify([event.pubkey]);
-
-        Ok(())
     }
 
     // ========================================================================
@@ -1229,19 +850,6 @@ impl Session {
         })
     }
 
-    /// Queue a handshake payload on the control channel without encryption.
-    /// Only the handshake path uses this.
-    fn send_plain(&mut self, payload: &[u8]) -> Result<()> {
-        let fragments = self.codec.fragment(&Frame {
-            channel: Channel::Control,
-            payload: payload.to_vec(),
-        });
-
-        self.outbox.push(Channel::Control, fragments);
-
-        Ok(())
-    }
-
     /// Queue a sync message as a frame on the sync channel.
     fn send_sync(&mut self, message: &Message) -> Result<()> {
         let payload = message.encode();
@@ -1253,15 +861,6 @@ impl Session {
     }
 }
 
-/// A fresh heartbeat interval, jittered between the documented bounds.
-fn jittered_heartbeat_interval() -> i64 {
-    let mut byte = [0u8; 1];
-    let _ = getrandom::getrandom(&mut byte);
-
-    HEARTBEAT_MIN_SECONDS
-        + i64::from(byte[0] % (HEARTBEAT_MAX_SECONDS - HEARTBEAT_MIN_SECONDS + 1) as u8)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1269,6 +868,7 @@ mod tests {
     use crate::db::query as db_query;
     use crate::fixtures::{author, note, secret};
     use crate::model::Query;
+    use coracle_lib::tags::Tags as NostrTags;
 
     fn policy() -> Policy {
         Policy::new(author(1))
@@ -1299,6 +899,14 @@ mod tests {
         .unwrap()
     }
 
+    /// A session past its handshake, where identification is legal.
+    fn secured_session(policy: Policy) -> Session {
+        let mut session = session(policy);
+        session.state = State::Secured;
+
+        session
+    }
+
     #[test]
     fn nothing_is_proved_before_the_peer_names_itself() {
         assert!(session(policy()).peer().is_none());
@@ -1306,7 +914,7 @@ mod tests {
 
     #[test]
     fn identifying_binds_the_policy_to_every_pubkey_the_peer_proved() {
-        let mut session = session(policy());
+        let mut session = secured_session(policy());
 
         session.identify([author(2), author(3)]);
 
@@ -1320,7 +928,7 @@ mod tests {
 
     #[test]
     fn proving_one_pubkey_twice_does_not_lengthen_the_list() {
-        let mut session = session(policy());
+        let mut session = secured_session(policy());
 
         session.identify([author(2), author(2)]);
 
@@ -1332,7 +940,7 @@ mod tests {
         let mut policy = policy();
         policy.graph.blocked.insert(author(3));
 
-        let mut session = session(policy);
+        let mut session = secured_session(policy);
 
         session.identify([author(2), author(3)]);
 
@@ -1341,9 +949,32 @@ mod tests {
     }
 
     #[test]
+    fn a_policy_change_leaves_an_unidentified_session_alone() {
+        // Mid-handshake, nothing proved: the user toggling a preference must
+        // not move the lifecycle or fabricate a peer.
+        let mut session = session(policy());
+
+        session.set_policy(Arc::new(policy()));
+
+        assert_eq!(session.state(), State::Linked);
+        assert!(session.peer().is_none());
+    }
+
+    #[test]
+    fn a_policy_change_leaves_a_draining_session_draining() {
+        let mut session = secured_session(policy());
+        session.identify([author(2)]);
+        session.drain();
+
+        session.set_policy(Arc::new(policy()));
+
+        assert!(matches!(session.state(), State::Draining { .. }));
+    }
+
+    #[test]
     fn a_silent_session_ages_out_of_the_heartbeat_window() {
         let session = clock::at(1_000, || session(policy()));
-        let timeout = 1_000 + HEARTBEAT_TIMEOUT_SECONDS;
+        let timeout = 1_000 + heartbeat::TIMEOUT_SECONDS;
 
         assert!(clock::at(timeout - 1, || !session.expired()));
         assert!(clock::at(timeout, || session.expired()));
@@ -1377,7 +1008,7 @@ mod tests {
 
     #[test]
     fn blocking_a_peer_mid_session_closes_it() {
-        let mut session = session(policy());
+        let mut session = secured_session(policy());
 
         session.identify([author(2)]);
         assert_eq!(session.state(), State::Identified);
@@ -1395,7 +1026,7 @@ mod tests {
     fn a_trusted_identity_earns_the_trusted_budget_whichever_key_it_proved() {
         let mut policy = policy();
         policy.graph.trusted.insert(author(9));
-        let mut session = session(policy);
+        let mut session = secured_session(policy);
 
         // The trusted pubkey sorts after the stranger one, which is what the
         // old "first policy" reading would have picked instead.
@@ -1406,17 +1037,17 @@ mod tests {
 
     #[test]
     fn a_quiet_session_beats_within_the_jittered_bounds() {
-        let mut session = clock::at(1_000, || session(policy()));
+        let mut session = clock::at(1_000, || secured_session(policy()));
         session.identify([author(2)]);
 
         // Before the minimum interval nothing is due.
-        clock::at(1_000 + HEARTBEAT_MIN_SECONDS - 1, || {
+        clock::at(1_000 + heartbeat::MIN_INTERVAL_SECONDS - 1, || {
             session.maybe_heartbeat().unwrap();
             assert!(session.next_write().is_none());
         });
 
         // Past the maximum it is, and the beat carries the discriminant alone.
-        clock::at(1_000 + HEARTBEAT_MAX_SECONDS + 1, || {
+        clock::at(1_000 + heartbeat::MAX_INTERVAL_SECONDS + 1, || {
             session.maybe_heartbeat().unwrap();
         });
         let fragment = session.next_write().unwrap();
@@ -1428,7 +1059,7 @@ mod tests {
 
     #[test]
     fn a_busy_link_skips_the_beat_and_treats_traffic_as_liveness() {
-        let mut session = clock::at(1_000, || session(policy()));
+        let mut session = clock::at(1_000, || secured_session(policy()));
         session.identify([author(2)]);
 
         // Queued traffic stands in for the beat.
@@ -1439,7 +1070,7 @@ mod tests {
             })
             .unwrap();
 
-        clock::at(1_000 + HEARTBEAT_MAX_SECONDS + 1, || {
+        clock::at(1_000 + heartbeat::MAX_INTERVAL_SECONDS + 1, || {
             session.maybe_heartbeat().unwrap();
         });
 
@@ -1451,7 +1082,7 @@ mod tests {
     #[test]
     fn a_heartbeat_is_absorbed_without_moving_the_session() {
         let db = Db::open_in_memory().unwrap();
-        let mut session = session(policy());
+        let mut session = secured_session(policy());
         session.identify([author(2)]);
 
         let frame = Frame {
@@ -1466,7 +1097,7 @@ mod tests {
     #[test]
     fn an_unknown_control_frame_is_an_error() {
         let db = Db::open_in_memory().unwrap();
-        let mut session = session(policy());
+        let mut session = secured_session(policy());
         session.identify([author(2)]);
 
         let frame = Frame {
@@ -1477,176 +1108,46 @@ mod tests {
         assert!(session.advance(&db, &frame).is_err());
     }
 
-    /// Run one whole blob fetch — HEAD, then GET with the full body — against
-    /// `session`, returning the blob's hash.
-    fn drive_blob_fetch(session: &mut Session, db: &Db, bytes: &[u8]) -> String {
-        use crate::sync::message::BlossomResponse;
-        use sha2::{Digest as _, Sha256};
-
-        let hash = hex::encode(Sha256::digest(bytes));
-        let event = note(
-            author(1),
-            1,
-            "with a blob",
-            NostrTags::new().add(
-                "imeta",
-                [format!("x {hash}"), format!("size {}", bytes.len())],
-            ),
-        );
-        crate::db::command::publish_event(db, &event, &author(1), 1).unwrap();
-
-        // The fetch begins with a HEAD.
-        session.maybe_fetch_blob(db).unwrap();
-        let head = session.next_write().unwrap();
-        session.acknowledge_write();
-        let Message::BlossomRequest(head_req) = Message::decode(&head[2..]).unwrap() else {
-            panic!("expected a HEAD request");
-        };
-        assert_eq!(head_req.method, "HEAD");
-
-        // The HEAD answers with the length, and a GET follows.
-        session
-            .on_blossom_response(
-                db,
-                &BlossomResponse {
-                    id: head_req.id.clone(),
-                    status: 200,
-                    headers: vec![("content-length".into(), bytes.len().to_string())],
-                    body: vec![],
-                },
-            )
-            .unwrap();
-
-        let get = session.next_write().unwrap();
-        session.acknowledge_write();
-        let Message::BlossomRequest(get_req) = Message::decode(&get[2..]).unwrap() else {
-            panic!("expected a GET request");
-        };
-        assert_eq!(get_req.method, "GET");
-
-        // The GET answers with the bytes, the whole blob now held and complete.
-        session
-            .on_blossom_response(
-                db,
-                &BlossomResponse {
-                    id: get_req.id.clone(),
-                    status: 206,
-                    headers: vec![],
-                    body: bytes.to_vec(),
-                },
-            )
-            .unwrap();
-
-        hash
-    }
-
     #[test]
-    fn a_wanted_blob_is_driven_through_head_and_get() {
-        use crate::blobstore::MemoryBlobStore;
-
-        let db = Db::open_in_memory().unwrap();
-        let store = Arc::new(MemoryBlobStore::default());
-        let mut session = Session::open(
-            LinkId(1),
-            Role::Dialer,
-            4096,
-            Arc::new(policy()),
-            secret(1),
-            store.clone(),
-            spending(),
-        )
-        .unwrap();
-        session.state = State::Syncing;
-
-        let bytes = b"the quick brown fox";
-        let hash = drive_blob_fetch(&mut session, &db, bytes);
-
-        assert_eq!(store.len(&hash).unwrap(), Some(19));
-        assert!(
-            crate::db::query::get_blob(&db, &hash)
-                .unwrap()
-                .unwrap()
-                .complete
-        );
-        assert!(session.blob_fetch.is_none());
-    }
-
-    #[test]
-    fn a_blob_fetch_writes_a_real_file() {
-        use crate::blobstore::FileBlobStore;
-        use std::fs;
-
-        // A fresh store of the same kind the shells use, over a real directory.
-        let dir = std::env::temp_dir().join(format!(
-            "dip-session-blobs-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let store = Arc::new(FileBlobStore::open(&dir).unwrap());
-
-        let db = Db::open_in_memory().unwrap();
-        let mut session = Session::open(
-            LinkId(1),
-            Role::Dialer,
-            4096,
-            Arc::new(policy()),
-            secret(1),
-            store.clone(),
-            spending(),
-        )
-        .unwrap();
-        session.state = State::Syncing;
-
-        let bytes = b"the quick brown fox";
-        let hash = drive_blob_fetch(&mut session, &db, bytes);
-
-        // The bytes are on disk, one file named by the hash, and the record is
-        // complete — the file-backed store is what a real session uses.
-        assert_eq!(store.len(&hash).unwrap(), Some(19));
-        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
-        assert!(dir.join(&hash).is_file());
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn the_battery_floor_gates_blob_fetches() {
-        use crate::db::command as db_command;
-        use sha2::{Digest as _, Sha256};
-
+    fn approval_is_requested_once_and_refusal_closes() {
         let db = Db::open_in_memory().unwrap();
         let mut session = session(policy());
-        session.state = State::Syncing;
+        session.state = State::GatePending {
+            since: clock::now(),
+            approval_requested: false,
+        };
 
-        let bytes = b"below the floor";
-        let hash = hex::encode(Sha256::digest(bytes));
-        let event = note(
-            author(1),
-            1,
-            "with a blob",
-            NostrTags::new().add("imeta", [format!("x {hash}")]),
-        );
-        db_command::publish_event(&db, &event, &author(1), 1).unwrap();
+        assert!(session.request_approval());
+        assert!(!session.request_approval(), "the prompt is one-shot");
 
-        session.set_battery(Some(crate::sync::blob::BLOB_MIN_BATTERY - 1));
-        session.maybe_fetch_blob(&db).unwrap();
-        assert!(
-            session.next_write().is_none(),
-            "a low battery fetches nothing"
-        );
+        session.approve(&db, false).unwrap();
+        assert_eq!(session.state(), State::Closed);
+    }
 
-        session.set_battery(Some(crate::sync::blob::BLOB_MIN_BATTERY));
-        session.maybe_fetch_blob(&db).unwrap();
-        assert!(session.next_write().is_some());
+    #[test]
+    fn an_auth_response_during_the_gate_hold_is_refused() {
+        let db = Db::open_in_memory().unwrap();
+        let mut session = session(policy());
+        session.state = State::GatePending {
+            since: clock::now(),
+            approval_requested: false,
+        };
+
+        // A held stranger volunteering an identity must not be accepted: that
+        // would bypass the hold and open the relay half without approval.
+        let frame = Frame {
+            channel: crate::transport::Channel::Control,
+            payload: vec![control::AUTH_EVENT, 0x7B],
+        };
+
+        assert!(session.advance(&db, &frame).is_err());
+        assert!(session.peer().is_none());
     }
 
     #[test]
     fn a_draining_session_takes_no_new_work() {
         let db = Db::open_in_memory().unwrap();
-        let mut session = session(policy());
+        let mut session = secured_session(policy());
 
         session.identify([author(2)]);
         session.drain();
@@ -1672,7 +1173,7 @@ mod tests {
     #[test]
     fn a_negotiation_reply_goes_to_the_client_half() {
         let db = Db::open_in_memory().unwrap();
-        let mut session = session(policy());
+        let mut session = secured_session(policy());
 
         session.identify([author(2)]);
 
@@ -1759,8 +1260,8 @@ mod tests {
             .advance(&Db::open_in_memory().unwrap(), &frame)
             .unwrap();
 
-        assert!(dialer.noise.is_complete());
-        assert!(receiver.noise.is_complete());
+        assert!(dialer.wire.is_secured());
+        assert!(receiver.wire.is_secured());
         assert_eq!(dialer.state(), State::Secured);
         assert_eq!(receiver.state(), State::Secured);
     }
@@ -1812,26 +1313,8 @@ mod tests {
     #[test]
     fn a_pair_reaches_syncing_through_mutual_auth() {
         let db = Db::open_in_memory().unwrap();
-        let mut dialer = Session::open(
-            LinkId(1),
-            Role::Dialer,
-            4096,
-            Arc::new(policy()),
-            secret(1),
-            blobs(),
-            spending(),
-        )
-        .unwrap();
-        let mut receiver = Session::open(
-            LinkId(2),
-            Role::Receiver,
-            4096,
-            Arc::new(policy()),
-            secret(2),
-            blobs(),
-            spending(),
-        )
-        .unwrap();
+        let mut dialer = pair(4096, Role::Dialer, 1);
+        let mut receiver = pair(4096, Role::Receiver, 2);
 
         // The cool-off admits the strangers, or the gate holds the pair.
         let now = clock::now();
@@ -1923,83 +1406,6 @@ mod tests {
     }
 
     #[test]
-    fn the_gate_blocks_a_resolved_peer() {
-        let db = Db::open_in_memory().unwrap();
-        let mut policy = policy();
-        policy.graph.blocked.insert(author(2));
-        let session = session(policy);
-
-        assert!(matches!(
-            session.evaluate_gate(&db, Some(author(2))).unwrap(),
-            Gate::Blocked
-        ));
-    }
-
-    #[test]
-    fn the_gate_passes_a_paired_peer_whatever_the_discoverability() {
-        let db = Db::open_in_memory().unwrap();
-        let session = session(policy());
-
-        assert!(matches!(
-            session.evaluate_gate(&db, Some(author(2))).unwrap(),
-            Gate::Pass
-        ));
-    }
-
-    #[test]
-    fn the_gate_admits_a_stranger_during_the_cool_off() {
-        let db = Db::open_in_memory().unwrap();
-        let mut session = session(policy());
-        session.set_cool_off_since(Some(clock::now()));
-
-        assert!(matches!(
-            session.evaluate_gate(&db, None).unwrap(),
-            Gate::Pass
-        ));
-    }
-
-    #[test]
-    fn the_gate_holds_a_stranger_without_admission() {
-        let db = Db::open_in_memory().unwrap();
-        let session = session(policy());
-
-        assert!(matches!(
-            session.evaluate_gate(&db, None).unwrap(),
-            Gate::Pending
-        ));
-    }
-
-    #[test]
-    fn the_gate_honors_the_disclosure_budget() {
-        let db = Db::open_in_memory().unwrap();
-        let mut policy = policy();
-        policy.disclosure_budget = 1;
-        let mut session = session(policy);
-        session.set_cool_off_since(Some(clock::now()));
-
-        // One stranger already disclosed to spends the budget of one.
-        crate::db::command::pair_with(&db, &[author(9)], &[0u8; 32], clock::now()).unwrap();
-
-        assert!(matches!(
-            session.evaluate_gate(&db, None).unwrap(),
-            Gate::Pending
-        ));
-    }
-
-    #[test]
-    fn approval_is_requested_once_and_refusal_closes() {
-        let db = Db::open_in_memory().unwrap();
-        let mut session = session(policy());
-        session.state = State::GatePending;
-
-        assert!(session.request_approval());
-        assert!(!session.request_approval(), "the prompt is one-shot");
-
-        session.approve(&db, false).unwrap();
-        assert_eq!(session.state(), State::Closed);
-    }
-
-    #[test]
     fn a_stranger_without_admission_is_held_and_can_be_approved() {
         let db = Db::open_in_memory().unwrap();
         let mut dialer = pair(4096, Role::Dialer, 1);
@@ -2016,8 +1422,11 @@ mod tests {
         pump(&mut dialer, &mut receiver, &db); // dialer tags: the gate holds
         pump(&mut dialer, &mut receiver, &db); // dialer challenge: held too
 
-        assert_eq!(receiver.state(), State::GatePending);
-        assert!(!receiver.disclosed, "nothing disclosed before approval");
+        assert!(matches!(receiver.state(), State::GatePending { .. }));
+        assert!(
+            !receiver.auth.disclosed(),
+            "nothing disclosed before approval"
+        );
 
         // The user admits the stranger, and the exchange completes.
         receiver.approve(&db, true).unwrap();
