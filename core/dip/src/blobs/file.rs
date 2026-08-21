@@ -1,41 +1,13 @@
-//! The blob bytes: read, appended, and deleted through a store.
-//!
-//! Metadata — hashes, permissions, progress — lives in SQLite; this is only
-//! the file itself. The core ships a file-backed store over the directory the
-//! shell provides, the same way it opens the SQLite store in one; the trait is
-//! what lets tests run on memory and a shell slot in a custom backing (an
-//! encrypted one, say) without touching the sync layer.
-//! `docs/sync.md#blob-sync`.
+//! The store the app ships with: one file per blob under a directory.
 
-use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 
+use crate::blobs::BlobStore;
 use crate::model::BlobHash;
-
-/// Where blob bytes go.
-///
-/// Every method is keyed on a [`BlobHash`], so an implementation names a file
-/// by it without a check of its own: a hash that could reach outside the
-/// store's directory does not parse in the first place.
-pub trait BlobStore: Send + Sync {
-    /// Whether the blob's bytes are held.
-    fn has(&self, sha256: &BlobHash) -> Result<bool>;
-    /// The length of the held blob, or `None` if it is not held.
-    fn len(&self, sha256: &BlobHash) -> Result<Option<u64>>;
-    /// Read `len` bytes from `offset`, or as many as are there. A read past
-    /// the end is empty rather than an error, and `len` may name the whole
-    /// rest of the file.
-    fn read(&self, sha256: &BlobHash, offset: u64, len: u64) -> Result<Vec<u8>>;
-    /// Append bytes to the blob, creating it if missing.
-    fn append(&self, sha256: &BlobHash, bytes: &[u8]) -> Result<()>;
-    /// Delete the blob's bytes, if any are held.
-    fn delete(&self, sha256: &BlobHash) -> Result<()>;
-}
 
 /// A blob store over a directory the shell provides.
 pub struct FileBlobStore {
@@ -143,67 +115,6 @@ impl BlobStore for FileBlobStore {
     }
 }
 
-/// An in-memory store, for tests and tooling.
-///
-/// Answers exactly what [`FileBlobStore`] answers, out-of-range reads
-/// included: the sync layer is tested against this one and shipped against
-/// that one, so a difference between them is a bug that only appears on a
-/// phone.
-#[derive(Debug, Default)]
-pub struct MemoryBlobStore {
-    blobs: Mutex<HashMap<BlobHash, Vec<u8>>>,
-}
-
-impl BlobStore for MemoryBlobStore {
-    fn has(&self, sha256: &BlobHash) -> Result<bool> {
-        Ok(self.blobs.lock().unwrap().contains_key(sha256))
-    }
-
-    fn len(&self, sha256: &BlobHash) -> Result<Option<u64>> {
-        Ok(self
-            .blobs
-            .lock()
-            .unwrap()
-            .get(sha256)
-            .map(|bytes| bytes.len() as u64))
-    }
-
-    fn read(&self, sha256: &BlobHash, offset: u64, len: u64) -> Result<Vec<u8>> {
-        let blobs = self.blobs.lock().unwrap();
-        let Some(bytes) = blobs.get(sha256) else {
-            return Ok(Vec::new());
-        };
-
-        // Saturating throughout: a caller asking for the rest of the file
-        // passes `u64::MAX`, and adding that to an offset is an overflow.
-        let start = usize::try_from(offset)
-            .unwrap_or(usize::MAX)
-            .min(bytes.len());
-        let take = usize::try_from(len)
-            .unwrap_or(usize::MAX)
-            .min(bytes.len() - start);
-
-        Ok(bytes[start..start + take].to_vec())
-    }
-
-    fn append(&self, sha256: &BlobHash, bytes: &[u8]) -> Result<()> {
-        self.blobs
-            .lock()
-            .unwrap()
-            .entry(sha256.clone())
-            .or_default()
-            .extend_from_slice(bytes);
-
-        Ok(())
-    }
-
-    fn delete(&self, sha256: &BlobHash) -> Result<()> {
-        self.blobs.lock().unwrap().remove(sha256);
-
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,14 +123,6 @@ mod tests {
 
     fn key(bytes: &[u8]) -> BlobHash {
         BlobHash::digest(bytes)
-    }
-
-    /// Both implementations, so a test can assert they answer alike.
-    fn stores(dir: &TempDir) -> (FileBlobStore, MemoryBlobStore) {
-        (
-            FileBlobStore::open(&dir.0).unwrap(),
-            MemoryBlobStore::default(),
-        )
     }
 
     #[test]
@@ -266,37 +169,6 @@ mod tests {
 
         assert_eq!(store.read(&hash, 0, 100).unwrap(), Vec::<u8>::new());
         assert_eq!(store.len(&hash).unwrap(), None);
-    }
-
-    #[test]
-    fn the_two_stores_answer_the_same_reads() {
-        let dir = TempDir::new("blobs");
-        let (file, memory) = stores(&dir);
-        let hash = key(b"short");
-
-        file.append(&hash, b"short").unwrap();
-        memory.append(&hash, b"short").unwrap();
-
-        // `u64::MAX` is what a rangeless GET asks for, and it is where an
-        // `offset + len` in either implementation would overflow.
-        for (offset, len) in [
-            (0, u64::MAX),
-            (2, u64::MAX),
-            (0, 100),
-            (4, 5),
-            (5, 10),
-            (100, 10),
-            (u64::MAX, u64::MAX),
-        ] {
-            assert_eq!(
-                file.read(&hash, offset, len).unwrap(),
-                memory.read(&hash, offset, len).unwrap(),
-                "the stores disagree on {offset}+{len}"
-            );
-        }
-
-        assert_eq!(file.read(&hash, 0, u64::MAX).unwrap(), b"short");
-        assert_eq!(file.len(&hash).unwrap(), memory.len(&hash).unwrap());
     }
 
     #[test]

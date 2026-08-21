@@ -25,7 +25,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use coracle_lib::filters::Filter;
 
-use crate::blobstore::BlobStore;
+use crate::blobs::BlobStore;
 use crate::clock;
 use crate::db::Db;
 use crate::db::command;
@@ -662,7 +662,7 @@ mod tests {
     use super::*;
     use coracle_lib::tags::Tags;
 
-    use crate::blobstore::MemoryBlobStore;
+    use crate::blobs::MemoryBlobStore;
     use crate::db::{Db, command as db_command};
     use crate::fixtures::{author, note};
     use crate::link::LinkId;
@@ -1107,7 +1107,7 @@ mod tests {
 
     #[test]
     fn a_blob_fetch_writes_a_real_file() {
-        use crate::blobstore::FileBlobStore;
+        use crate::blobs::FileBlobStore;
         use std::fs;
 
         // A fresh store of the same kind the shells use, over a real directory.

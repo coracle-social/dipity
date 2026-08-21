@@ -37,7 +37,7 @@ use coracle_lib::events::HashedEvent;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::{PublicKey, SecretKey};
 
-use crate::blobstore::BlobStore;
+use crate::blobs::BlobStore;
 use crate::clock;
 use crate::db::Db;
 use crate::link::{LinkId, Role};
@@ -925,8 +925,8 @@ mod tests {
         secret(1)
     }
 
-    fn blobs() -> Arc<crate::blobstore::MemoryBlobStore> {
-        Arc::new(crate::blobstore::MemoryBlobStore::default())
+    fn blobs() -> Arc<crate::blobs::MemoryBlobStore> {
+        Arc::new(crate::blobs::MemoryBlobStore::default())
     }
 
     fn spending() -> Arc<SpendingLedger> {

@@ -39,7 +39,7 @@ use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::SecretKey;
 use tokio::sync::broadcast::{self, error::TryRecvError};
 
-use crate::blobstore::{BlobStore, FileBlobStore};
+use crate::blobs::{BlobStore, FileBlobStore};
 use crate::clock;
 use crate::db::command as db_command;
 use crate::db::event::channel::{self, EventChange};
@@ -523,7 +523,7 @@ mod tests {
         Node::new(
             db(),
             SecretKey::generate(),
-            Arc::new(crate::blobstore::MemoryBlobStore::default()),
+            Arc::new(crate::blobs::MemoryBlobStore::default()),
         )
         .unwrap()
     }
@@ -669,7 +669,7 @@ mod tests {
         let mut node = Node::new(
             Arc::clone(&db),
             secret(1),
-            Arc::new(crate::blobstore::MemoryBlobStore::default()),
+            Arc::new(crate::blobs::MemoryBlobStore::default()),
         )
         .unwrap();
         let event = note(author(1), 100, "hello", Tags::new());
@@ -688,7 +688,7 @@ mod tests {
         let mut node = Node::new(
             Arc::clone(&db),
             secret(1),
-            Arc::new(crate::blobstore::MemoryBlobStore::default()),
+            Arc::new(crate::blobs::MemoryBlobStore::default()),
         )
         .unwrap();
         let event = note(author(1), 100, "hello", Tags::new());
@@ -703,7 +703,7 @@ mod tests {
             4096,
             policy,
             secret(2),
-            Arc::new(crate::blobstore::MemoryBlobStore::default()),
+            Arc::new(crate::blobs::MemoryBlobStore::default()),
             spending(),
         )
         .unwrap();
@@ -713,7 +713,7 @@ mod tests {
             4096,
             Arc::new(Policy::new(author(2))),
             secret(3),
-            Arc::new(crate::blobstore::MemoryBlobStore::default()),
+            Arc::new(crate::blobs::MemoryBlobStore::default()),
             spending(),
         )
         .unwrap();
@@ -803,7 +803,7 @@ mod tests {
                 100,
                 policy,
                 SecretKey::generate(),
-                Arc::new(crate::blobstore::MemoryBlobStore::default()),
+                Arc::new(crate::blobs::MemoryBlobStore::default()),
                 spending(),
             )
             .unwrap(),
