@@ -2,7 +2,7 @@
 //!
 //! Everything it has to apply is expressible as a [`Query`]. A peer's `REQ`
 //! becomes a filter, the user's Gossip scope and visibility become a
-//! [`PubkeyPolicy`](crate::model::PubkeyPolicy), and the two authorship registers
+//! [`PeerPolicy`](crate::model::PeerPolicy), and the two authorship registers
 //! that may travel become [`Registers::offerable`]. `db::query::list_events`
 //! takes all three, so there is no second place where what a peer may see is
 //! decided.
@@ -17,7 +17,7 @@ use coracle_lib::sync::{FrameBudget, Item, SyncSet};
 
 use crate::db::Db;
 use crate::db::query as db_query;
-use crate::model::{AuthorshipProof, Query, RecipientSignature, Registers};
+use crate::model::{AuthorshipProof, LocalIdentity, Query, RecipientSignature, Registers};
 use crate::session::Peer;
 use crate::spending::SessionSpending;
 use crate::sync::client::{self, Rejected};
@@ -30,12 +30,21 @@ const PAGE_SIZE: usize = 512;
 /// The cap on one negentropy reply, mirroring the client's.
 const NEG_FRAME_BYTES: usize = 4 * 1024;
 
-/// The relay half's state, held by the session for the life of the link: the
-/// subscriptions the peer has open, which the live-push path reads.
+/// The relay half's state, held by the session for the life of the link.
+///
+/// Subscriptions and negotiations are kept apart because they grant different
+/// things. A `REQ` asks to be served matching events now and as they arrive; a
+/// `NEG-OPEN` asks to diff a set. Holding both in one map let a peer open a
+/// live subscription over everything by sending a reconciliation and no `REQ`
+/// at all.
 #[derive(Default)]
 pub struct Relay {
-    /// Open subscriptions, with every filter each one holds.
+    /// Open subscriptions, with every filter each one holds. The live-push
+    /// path reads these.
     subscriptions: BTreeMap<SubscriptionId, Vec<Filter>>,
+    /// The filter each open reconciliation is bounded by, which its later
+    /// `NEG-MSG` rounds are answered under.
+    negotiations: BTreeMap<SubscriptionId, Filter>,
 }
 
 impl Relay {
@@ -59,13 +68,15 @@ impl Relay {
         quota: Quota,
         spending: &mut SessionSpending,
     ) -> Result<Vec<Message>> {
+        let local = LocalIdentity::new(identity.public_key());
+
         match message {
             Message::Publish(event) => {
-                let (events, bytes) = spending.total(peer);
+                let spent = spending.spent(peer);
 
-                match client::admits(peer, &event, None, quota, events, bytes) {
+                match client::admits(peer, &event, None, quota, spent) {
                     Ok(()) => {
-                        client::ingest(db, peer, &event, None)?;
+                        client::ingest(db, peer, &local, &event, None)?;
                         spending.record(peer, &event);
 
                         Ok(vec![Message::Ok(event.id.to_hex(), true, "stored".into())])
@@ -88,24 +99,27 @@ impl Relay {
             }
             Message::Close(subscription) => {
                 self.subscriptions.remove(&subscription);
+                self.negotiations.remove(&subscription);
 
                 Ok(Vec::new())
             }
             Message::NegOpen(subscription, filter, frame) => {
-                self.subscriptions
-                    .insert(subscription.clone(), vec![filter.clone()]);
+                self.negotiations
+                    .insert(subscription.clone(), filter.clone());
 
-                negotiate(db, peer, &subscription, &filter, &frame)
+                negotiate(db, peer, &local, &subscription, &filter, &frame)
             }
             Message::NegMsg(subscription, frame) => {
-                let Some(filters) = self.subscriptions.get(&subscription) else {
-                    bail!("a NEG-MSG arrived for a subscription that is not open");
+                let Some(filter) = self.negotiations.get(&subscription).cloned() else {
+                    bail!("a NEG-MSG arrived for a negotiation that is not open");
                 };
 
-                // A NEG-OPEN registers one filter, which is all NIP-77 uses.
-                let filter = filters.first().cloned().unwrap_or_default();
+                negotiate(db, peer, &local, &subscription, &filter, &frame)
+            }
+            Message::NegClose(subscription) => {
+                self.negotiations.remove(&subscription);
 
-                negotiate(db, peer, &subscription, &filter, &frame)
+                Ok(Vec::new())
             }
             _ => Ok(Vec::new()),
         }
@@ -115,6 +129,7 @@ impl Relay {
 /// The word a rejection travels as, in the `OK` message's reason slot.
 fn reason(rejected: Rejected) -> &'static str {
     match rejected {
+        Rejected::Forged => "invalid id",
         Rejected::Unauthorized => "unauthorized",
         Rejected::OutOfScope => "outside scope",
         Rejected::OverQuota => "over quota",
@@ -126,32 +141,28 @@ fn reason(rejected: Rejected) -> &'static str {
 ///
 /// The peer's filter is the only part of this that came off the wire. The
 /// registers and the policy are the user's, and a peer cannot widen either.
+///
+/// There is no binding to choose between: [`Peer`] reduced whatever the far
+/// side proved to one standing when it was bound, and the registers are
+/// measured from whichever identities this device is acting as. So this is the
+/// one place that decides what a peer may see, and it decides it once.
 #[must_use]
-pub fn query_for(peer: &Peer, filter: Filter) -> Query {
-    let query = Query::new()
+pub fn query_for(peer: &Peer, local: &LocalIdentity, filter: Filter) -> Query {
+    Query::new()
         .with_filter(filter)
-        .with_registers(Registers::offerable(peer.identity));
-
-    // Blocked wins over every identity: any blocked pubkey the peer proved sinks
-    // the whole session. Otherwise any unblocked one may be served, and the
-    // first is as good as any other — the bindings differ only in standing,
-    // and none of the unblocked ones is blocked.
-    let binding = peer
-        .policies
-        .iter()
-        .find(|policy| policy.is_blocked())
-        .or_else(|| peer.policies.first());
-
-    match binding {
-        Some(policy) => query.with_policy(policy.clone()),
-        None => query,
-    }
+        .with_registers(Registers::offerable(local.pubkeys()))
+        .with_policy(peer.policy().clone())
 }
 
 /// The set the NIP-77 negentropy pass diffs, bounded by the same query as
 /// everything else the relay half serves.
-pub fn reconcilable(db: &Db, peer: &Peer, filter: Filter) -> Result<SyncSet> {
-    let items = db_query::list_events(db, &query_for(peer, filter))?
+pub fn reconcilable(
+    db: &Db,
+    peer: &Peer,
+    local: &LocalIdentity,
+    filter: Filter,
+) -> Result<SyncSet> {
+    let items = db_query::list_events(db, &query_for(peer, local, filter))?
         .into_iter()
         .map(|event| Item {
             timestamp: event.created_at,
@@ -169,15 +180,16 @@ pub fn reconcilable(db: &Db, peer: &Peer, filter: Filter) -> Result<SyncSet> {
 fn negotiate(
     db: &Db,
     peer: &Peer,
+    local: &LocalIdentity,
     subscription: &SubscriptionId,
     filter: &Filter,
     frame: &[u8],
 ) -> Result<Vec<Message>> {
     let incoming = coracle_lib::sync::Message::decode(frame)
         .context("the peer's negentropy frame is malformed")?;
-    let local = reconcilable(db, peer, filter.clone())?;
+    let ours = reconcilable(db, peer, local, filter.clone())?;
     let reply = coracle_lib::sync::reconcile_responder(
-        &local,
+        &ours,
         &incoming,
         FrameBudget::bytes(NEG_FRAME_BYTES),
     );
@@ -198,17 +210,20 @@ pub fn serve(
     subscription: &SubscriptionId,
     filters: &[Filter],
 ) -> Result<Vec<Message>> {
+    let local = LocalIdentity::new(identity.public_key());
     let mut events = Vec::new();
 
     for filter in filters {
         // A filter with a limit serves that many; without it, one page.
         let filter = filter.clone();
-        let mut serves = db_query::list_events(db, &query_for(peer, filter.clone()))?;
+        let mut serves = db_query::list_events(db, &query_for(peer, &local, filter.clone()))?;
         events.append(&mut serves);
     }
 
+    // Sort before deduplicating: `dedup_by` only removes adjacent equals, and
+    // two filters in one REQ put the same event at non-adjacent positions.
+    events.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(a.id.cmp(&b.id)));
     events.dedup_by(|a, b| a.id == b.id);
-    events.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
     let mut messages: Vec<Message> = Vec::new();
 
@@ -241,29 +256,43 @@ pub fn attach(
     event: &coracle_lib::events::HashedEvent,
     messages: &mut Vec<Message>,
 ) -> Result<()> {
-    // The peer's identity is the pubkey it authenticates with, which in the
-    // one-key custody model is the one it proved.
-    let Some(peer_key) = peer.pubkeys().next().copied() else {
-        return Ok(());
-    };
-
+    // One artifact per identity the peer proved. Nothing on the wire says
+    // which of them the peer will verify with, and a signature or proof naming
+    // the wrong one is silently useless to it — the event would simply stop
+    // there. Minting for each is what makes the second hop reachable however
+    // many identities the far side carries.
     if event.pubkey == identity.public_key() {
-        let signature = RecipientSignature::sign(identity, event.id, peer_key);
+        // The signature is transferable evidence, so who gets one is a policy
+        // question and not a consequence of being served the event. A peer
+        // outside the Forward scope still receives the event; it simply stops
+        // with them. `docs/policy.md#forwarding`.
+        if !peer.may_forward() {
+            return Ok(());
+        }
 
-        messages.push(Message::RecipientSignature(
-            subscription.clone(),
-            event.id,
-            Box::new(signature.sig),
-        ));
+        for recipient in peer.pubkeys() {
+            let signature = RecipientSignature::sign(identity, event.id, *recipient);
+
+            messages.push(Message::RecipientSignature(
+                subscription.clone(),
+                event.id,
+                Box::new(signature.sig),
+            ));
+        }
     } else if let Some(signature) = db_query::get_signature(db, &event.id, &identity.public_key())?
     {
-        let proof = AuthorshipProof::prove(&signature, peer_key)?;
+        // A proof is designated to one peer and worthless to anyone else, so
+        // it is not gated: handing one over discloses nothing a third party
+        // could use, which is the whole point of the construction.
+        for verifier in peer.pubkeys() {
+            let proof = AuthorshipProof::prove(&signature, *verifier)?;
 
-        messages.push(Message::AuthorshipProof(
-            subscription.clone(),
-            event.id,
-            Box::new(proof.to_bytes()),
-        ));
+            messages.push(Message::AuthorshipProof(
+                subscription.clone(),
+                event.id,
+                Box::new(proof.to_bytes()),
+            ));
+        }
     }
 
     Ok(())
@@ -419,9 +448,15 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let stored = given(&db, author(1), 100, "mine");
 
+        // Trusted, because the signature is transferable evidence and the
+        // Forward scope defaults to the people the user actually trusts.
+        let mut policy = Policy::new(us());
+        policy.graph.trusted.insert(author(2));
+        let trusted = Peer::bind(LinkId(1), [author(2)], &policy);
+
         let replies = serve(
             &db,
-            &peer(),
+            &trusted,
             &secret(1),
             &SubscriptionId("sub".into()),
             &[Filter::new().add_kinds([1])],
@@ -434,6 +469,84 @@ mod tests {
             Message::RecipientSignature(_, id, _) if *id == stored.id
         ));
         assert!(matches!(&replies[2], Message::Eose(_)));
+    }
+
+    #[test]
+    fn a_peer_that_proved_several_identities_gets_one_artifact_each() {
+        // Nothing on the wire says which identity the peer will verify with,
+        // so naming only one would leave the event dead on arrival whenever
+        // the guess was wrong. One per proved key is what makes the second hop
+        // reachable at all.
+        let db = Db::open_in_memory().unwrap();
+        let stored = given(&db, author(1), 100, "mine");
+
+        let mut policy = Policy::new(us());
+        policy.graph.trusted.insert(author(2));
+        let peer = Peer::bind(LinkId(1), [author(2), author(3)], &policy);
+
+        let replies = serve(
+            &db,
+            &peer,
+            &secret(1),
+            &SubscriptionId("sub".into()),
+            &[Filter::new().add_kinds([1])],
+        )
+        .unwrap();
+
+        let named: Vec<_> = replies
+            .iter()
+            .filter_map(|reply| match reply {
+                Message::RecipientSignature(_, id, sig) if *id == stored.id => Some(**sig),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(named.len(), 2, "one signature per proved identity");
+
+        // Each verifies under the identity it was minted for, and neither is
+        // the other's.
+        for recipient in [author(2), author(3)] {
+            assert!(
+                named.iter().any(|sig| RecipientSignature {
+                    event_id: stored.id,
+                    author_pubkey: us(),
+                    recipient_pubkey: recipient,
+                    sig: *sig,
+                }
+                .verifies()),
+                "nothing verifies for {recipient:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stranger_is_served_the_event_without_the_signature() {
+        // `docs/proofs.md`: only peers who can be trusted not to leak a
+        // signature should receive one. A stranger still gets the event — it
+        // just stops with them instead of travelling a second hop.
+        let db = Db::open_in_memory().unwrap();
+        let stored = given(&db, author(1), 100, "mine");
+
+        let replies = serve(
+            &db,
+            &peer(),
+            &secret(1),
+            &SubscriptionId("sub".into()),
+            &[Filter::new().add_kinds([1])],
+        )
+        .unwrap();
+
+        assert!(
+            matches!(&replies[0], Message::Event(_, event) if event.id == stored.id),
+            "the event itself is still served"
+        );
+        assert!(
+            !replies
+                .iter()
+                .any(|reply| matches!(reply, Message::RecipientSignature(..))),
+            "a stranger was handed the author's signature"
+        );
+        assert!(matches!(&replies[1], Message::Eose(_)));
     }
 
     #[test]
@@ -554,6 +667,70 @@ mod tests {
     }
 
     #[test]
+    fn a_negotiation_does_not_open_a_live_subscription() {
+        // A NEG-OPEN asks to diff a set. A peer that sends one and never sends
+        // a REQ has asked to be served nothing, and must not end up with a
+        // standing subscription over everything.
+        let db = Db::open_in_memory().unwrap();
+        let mut relay = Relay::default();
+        let (_, opening) = crate::sync::client::Negotiation::begin(&db, Filter::new()).unwrap();
+        let Message::NegOpen(subscription, filter, frame) = opening else {
+            panic!("expected NEG-OPEN");
+        };
+
+        relay
+            .handle(
+                &db,
+                &peer(),
+                &secret(1),
+                Message::NegOpen(subscription, filter, frame),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
+
+        let own = note(
+            author(1),
+            100,
+            "written while they are still here",
+            Tags::new(),
+        );
+
+        assert!(
+            relay.matching(&own).is_empty(),
+            "a reconciliation granted a live subscription"
+        );
+    }
+
+    #[test]
+    fn a_req_since_now_catches_what_is_written_next() {
+        // What the live push rides on: once reconciliation has settled the
+        // past, a standing REQ is what carries the next write across.
+        let db = Db::open_in_memory().unwrap();
+        let mut relay = Relay::default();
+
+        relay
+            .handle(
+                &db,
+                &peer(),
+                &secret(1),
+                Message::Req(
+                    SubscriptionId("live".into()),
+                    vec![Filter::new().add_since(100)],
+                ),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
+
+        let fresh = note(author(1), 200, "written after the sync", Tags::new());
+        let stale = note(author(1), 50, "older than the subscription", Tags::new());
+
+        assert_eq!(relay.matching(&fresh), vec![SubscriptionId("live".into())]);
+        assert!(relay.matching(&stale).is_empty());
+    }
+
+    #[test]
     fn a_negotiation_responder_tells_the_client_what_it_lacks() {
         // Bob (relay) has an event Alice (client) does not. Alice opens a
         // negotiation against Bob's relay half; the IDs Bob has and Alice
@@ -562,15 +739,14 @@ mod tests {
         let bobs_note = given(&server, author(2), 200, "bob's");
         let alice = Db::open_in_memory().unwrap();
 
-        // Each device sees the other as the peer. Alice is identity 1 facing
-        // Bob's device (author 2), holding her own store (empty); Bob is
-        // identity 2 facing Alice (author 1), holding his own note.
-        let alice_peer = Peer::bind(LinkId(1), [author(2)], &Policy::new(author(1)));
+        // Bob sees Alice as the peer: identity 2 facing author 1, holding his
+        // own note. Alice's own side of the diff is over everything she holds,
+        // which is nothing, so she needs no peer binding to open it.
         let server_peer = Peer::bind(LinkId(2), [author(1)], &Policy::new(author(2)));
 
         // Alice's side, as the client half builds it.
         let (mut negotiation, opening) =
-            crate::sync::client::Negotiation::begin(&alice, &alice_peer, Filter::new()).unwrap();
+            crate::sync::client::Negotiation::begin(&alice, Filter::new()).unwrap();
         let Message::NegOpen(subscription, filter, frame) = opening else {
             panic!("expected NEG-OPEN");
         };

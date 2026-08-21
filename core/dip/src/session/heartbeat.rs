@@ -5,6 +5,8 @@
 //! transport, so the beat's only job is cleanup and it can afford to be
 //! lenient. `docs/discovery.md#heartbeat-and-teardown`.
 
+use anyhow::{Context, Result};
+
 use crate::clock;
 
 /// How long without hearing from the peer before an idle session drains.
@@ -28,14 +30,13 @@ pub struct Heartbeat {
 
 impl Heartbeat {
     /// A heartbeat starting now, with the first beat jittered out.
-    #[must_use]
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         let now = clock::now();
 
-        Self {
+        Ok(Self {
             last_heard: now,
-            next_beat_at: now + jittered_interval(),
-        }
+            next_beat_at: now + jittered_interval()?,
+        })
     }
 
     /// A frame arrived, whatever it carried: the peer is alive.
@@ -58,8 +59,10 @@ impl Heartbeat {
     /// Push the next beat out one jittered interval — after beating, or after
     /// skipping one, so a long transfer does not emit a beat the moment it
     /// drains.
-    pub fn reschedule(&mut self) {
-        self.next_beat_at = clock::now() + jittered_interval();
+    pub fn reschedule(&mut self) -> Result<()> {
+        self.next_beat_at = clock::now() + jittered_interval()?;
+
+        Ok(())
     }
 
     /// When the peer's silence would time this session out.
@@ -75,19 +78,17 @@ impl Heartbeat {
     }
 }
 
-impl Default for Heartbeat {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// A fresh beat interval, jittered between the documented bounds.
-fn jittered_interval() -> i64 {
+///
+/// An error rather than a fallback, because the fallback is a constant: two
+/// devices that both lost their randomness would beat in lockstep, which is
+/// the one thing the jitter exists to prevent.
+fn jittered_interval() -> Result<i64> {
     let mut byte = [0u8; 1];
-    let _ = getrandom::getrandom(&mut byte);
+    getrandom::getrandom(&mut byte).context("jittering the heartbeat interval")?;
 
-    MIN_INTERVAL_SECONDS
-        + i64::from(byte[0] % (MAX_INTERVAL_SECONDS - MIN_INTERVAL_SECONDS + 1) as u8)
+    Ok(MIN_INTERVAL_SECONDS
+        + i64::from(byte[0] % (MAX_INTERVAL_SECONDS - MIN_INTERVAL_SECONDS + 1) as u8))
 }
 
 #[cfg(test)]
@@ -96,7 +97,7 @@ mod tests {
 
     #[test]
     fn a_silent_peer_times_out_at_the_boundary() {
-        let heartbeat = clock::at(1_000, Heartbeat::new);
+        let heartbeat = clock::at(1_000, Heartbeat::new).unwrap();
         let timeout = 1_000 + TIMEOUT_SECONDS;
 
         assert!(clock::at(timeout - 1, || !heartbeat.timed_out()));
@@ -106,7 +107,7 @@ mod tests {
 
     #[test]
     fn hearing_a_frame_resets_the_timeout() {
-        let mut heartbeat = clock::at(1_000, Heartbeat::new);
+        let mut heartbeat = clock::at(1_000, Heartbeat::new).unwrap();
 
         clock::at(1_030, || heartbeat.heard());
 
@@ -116,7 +117,7 @@ mod tests {
 
     #[test]
     fn a_beat_comes_due_within_the_jittered_bounds() {
-        let heartbeat = clock::at(1_000, Heartbeat::new);
+        let heartbeat = clock::at(1_000, Heartbeat::new).unwrap();
 
         assert!(clock::at(1_000 + MIN_INTERVAL_SECONDS - 1, || !heartbeat.due()));
         assert!(clock::at(1_000 + MAX_INTERVAL_SECONDS, || heartbeat.due()));
@@ -124,9 +125,9 @@ mod tests {
 
     #[test]
     fn rescheduling_pushes_the_next_beat_out() {
-        let mut heartbeat = clock::at(1_000, Heartbeat::new);
+        let mut heartbeat = clock::at(1_000, Heartbeat::new).unwrap();
 
-        clock::at(2_000, || heartbeat.reschedule());
+        clock::at(2_000, || heartbeat.reschedule().unwrap());
 
         assert!(clock::at(2_000 + MIN_INTERVAL_SECONDS - 1, || !heartbeat.due()));
         assert!(clock::at(2_000 + MAX_INTERVAL_SECONDS, || heartbeat.due()));

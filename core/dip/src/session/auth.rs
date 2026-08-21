@@ -125,7 +125,16 @@ impl AuthExchange {
 
     /// Verify the peer's response against our challenge and this channel,
     /// returning the pubkey it proved.
-    pub fn verify(&self, payload: &[u8], local_static: [u8; 32]) -> Result<PublicKey> {
+    /// Consumes the challenge: `p2p-auth.md` requires one be "accepted once",
+    /// so a captured response cannot be replayed against it for the life of
+    /// the session.
+    ///
+    /// The same doc allows a peer to authenticate as several pubkeys over a
+    /// sequence of responses. That needs a fresh challenge per response, and
+    /// the exchange has no step that issues one mid-session — so today a
+    /// second identity is refused rather than accepted unchallenged. Single
+    /// use is the security property; the allowance is the thing left unbuilt.
+    pub fn verify(&mut self, payload: &[u8], local_static: [u8; 32]) -> Result<PublicKey> {
         let event = serde_json::from_slice::<coracle_lib::events::Event>(payload)
             .context("parsing an AUTH response")?;
 
@@ -158,6 +167,10 @@ impl AuthExchange {
         if tag_relay != relay.as_str() {
             bail!("the AUTH response names a different channel");
         }
+
+        // Spent, whatever happens next: a second response has to answer a
+        // challenge of its own.
+        self.sent_challenge = None;
 
         Ok(event.pubkey)
     }
@@ -229,6 +242,28 @@ mod tests {
     }
 
     #[test]
+    fn a_challenge_is_accepted_once() {
+        // `p2p-auth.md`: a challenge "is accepted once". Without that, a peer
+        // could replay one captured response against the same challenge for
+        // the life of the session.
+        let mut challenger = AuthExchange::default();
+        let mut responder = AuthExchange::default();
+
+        let challenge = challenger.make_challenge().unwrap();
+        responder.receive_challenge(challenge.as_bytes()).unwrap();
+        let payload = responder
+            .answer(&secret(1), DIALER_STATIC)
+            .unwrap()
+            .unwrap();
+
+        assert!(challenger.verify(&payload, DIALER_STATIC).is_ok());
+        assert!(
+            challenger.verify(&payload, DIALER_STATIC).is_err(),
+            "the same response was accepted twice"
+        );
+    }
+
+    #[test]
     fn a_response_to_a_different_challenge_is_refused() {
         let mut challenger = AuthExchange::default();
         let mut responder = AuthExchange::default();
@@ -264,7 +299,7 @@ mod tests {
 
     #[test]
     fn a_response_before_any_challenge_was_sent_is_refused() {
-        let challenger = AuthExchange::default();
+        let mut challenger = AuthExchange::default();
         let mut responder = AuthExchange::default();
         responder.receive_challenge(b"abc123").unwrap();
 

@@ -25,6 +25,12 @@ pub(crate) fn peer() -> PublicKey {
     author(200)
 }
 
+/// A blob hash for a seed. Real hex, because [`BlobHash`] holds nothing else,
+/// and ordered by the seed, because the want list and eviction sort on it.
+pub(crate) fn blob_hash(seed: u8) -> crate::model::BlobHash {
+    crate::model::BlobHash::parse(&hex::encode([seed; 32])).expect("a seed is 32 bytes of hex")
+}
+
 /// A kind 1 note.
 pub(crate) fn note(author: PublicKey, created_at: i64, content: &str, tags: Tags) -> HashedEvent {
     event(author, 1, created_at, content, tags)
@@ -51,4 +57,37 @@ pub(crate) fn event(
 /// the same as it did when the store keyed on hex.
 pub(crate) fn id(event: &HashedEvent) -> EventId {
     event.id
+}
+
+/// A directory under the system temp dir, removed when it goes out of scope.
+///
+/// The name carries a process-wide counter as well as the clock, because tests
+/// run in parallel and two of them reading the clock in the same tick would
+/// otherwise share a directory — and a shared directory makes whichever test
+/// asserts on the directory's contents fail, seemingly at random.
+pub(crate) struct TempDir(pub std::path::PathBuf);
+
+impl TempDir {
+    pub(crate) fn new(label: &str) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+
+        let dir = std::env::temp_dir().join(format!(
+            "dip-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a temp directory");
+
+        Self(dir)
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }

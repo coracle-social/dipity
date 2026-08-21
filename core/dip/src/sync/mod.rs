@@ -42,6 +42,22 @@ impl Quota {
         blob_bytes: 0,
     };
 
+    /// What every untrusted peer together may write in the window.
+    ///
+    /// The per-peer stranger budget bounds one pubkey, and a pubkey is free:
+    /// content events carry no signature, so a fresh keypair per encounter
+    /// costs an attacker nothing and resets their meter. This is the ceiling
+    /// that does not reset, because it is not keyed on identity at all —
+    /// `docs/sync.md`: "a hard ceiling that cannot crowd out known peers."
+    ///
+    /// Eight strangers' worth. A crowd passes; a beacon camped in one does not
+    /// keep taking all day.
+    pub const STRANGER_POOL: Self = Self {
+        events: 8 * Self::STRANGER.events,
+        bytes: 8 * Self::STRANGER.bytes,
+        blob_bytes: 0,
+    };
+
     /// What a peer in the user's trust graph gets.
     pub const TRUSTED: Self = Self {
         events: 4096,

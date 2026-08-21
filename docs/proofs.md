@@ -2,6 +2,18 @@
 
 Content events carry no signature. How a recipient learns who wrote one anyway, what lets it travel a second hop, and what stops it going further.
 
+## Events are not signed
+
+A content event carries an id and no `sig`. Authorship is established by the channel it arrived on, not by anything travelling with the event.
+
+Three things follow:
+
+- **Reach is capped by construction.** A signed event is self-authenticating, so anyone holding one can convince anyone else and the hop count is whatever the network's topology allows. An unsigned event is worth nothing to a party that cannot be shown authorship some other way, and the only two ways are a session and a designated-verifier proof, neither of which survives a second forwarding.
+- **Nothing leaks to the open network.** A bug that publishes proximity content to a public relay produces something the relay rejects and no existing client renders.
+- **The author keeps deniability by default.** Signing every event would hand every recipient permanent, transferable attribution. Here the author chooses, per recipient, whether to hand over that evidence at all.
+
+**The id is the only thing an authorization commits to**, so the id has to be the hash of the event. Both registers name an event by id — the session says the peer authored the event with this id, and a recipient signature is over `event_id ‖ recipient_pubkey`. An id that named content it was not the hash of would let one genuine proof authorize anything a forwarder cared to attach to it, so an inbound event whose id is not its own NIP-01 hash is refused before authorization runs.
+
 ## Session AUTH carries the first hop
 
 Mutual NIP-42 proves the party on the other end of the Noise channel holds a given key. An event arriving over that channel whose `pubkey` is one the peer authenticated is proof of authorship to that peer that can't be forwarded.
@@ -16,7 +28,13 @@ sig_A( m )          m = tagged_hash("dip/authorship-signature", event_id ‖ rec
 
 The pair is hashed rather than signed directly because BIP-340 takes a message of any length and the audited binding takes 32 bytes. A tagged hash binds the same two values, and the alternative is hand-rolling the signing.
 
-This signature must never leave B's device, since it is verifiable by anyone. Only peers who can be trusted not to leak a signature should receive one.
+### The author's signature stays with the peer it names
+
+This signature must never leave B's device, since it is verifiable by anyone. It names B, and it attributes the event to A permanently and to everyone — the one artifact in the protocol that defeats the author's deniability outright.
+
+Two rules follow. It is never sent to anyone but the peer it names — a second-hop recipient gets a [proof](#authorship-proofs) built from it instead. And only peers who can be trusted not to leak a signature should receive one: the author chooses, per recipient rather than per event.
+
+Where that guarantee stops is in [`privacy.md`](./privacy.md#what-deniability-covers).
 
 ## Authorship proofs
 

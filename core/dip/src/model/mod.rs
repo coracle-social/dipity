@@ -20,6 +20,7 @@ mod authors;
 mod authorship_proof;
 mod blob;
 mod graph;
+mod identity;
 mod kind;
 mod order;
 mod policy;
@@ -33,14 +34,12 @@ mod visibility;
 
 pub use authors::Authors;
 pub use authorship_proof::{AuthorshipClaim, AuthorshipProof};
-pub use blob::{Blob, BlobRole};
+pub use blob::{Blob, BlobHash, BlobRole};
 pub use graph::{Graph, Standing};
+pub use identity::LocalIdentity;
 pub use kind::{KIND_DELETE, KIND_MUTE, KIND_PROFILE};
 pub use order::Order;
-pub use policy::{
-    DEFAULT_COOL_OFF_MINUTES, DEFAULT_DISCLOSURE_BUDGET, DISCLOSURE_WINDOW_SECONDS, Policy,
-    PubkeyPolicy,
-};
+pub use policy::{DISCLOSURE_WINDOW_SECONDS, PeerPolicy, Policy};
 pub use pref::{Pref, keys};
 pub use provenance::{Provenance, ProvenanceFilter};
 pub use query::Query;

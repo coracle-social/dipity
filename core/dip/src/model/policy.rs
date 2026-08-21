@@ -25,12 +25,6 @@ use coracle_lib::keys::PublicKey;
 use crate::model::{Authors, Graph, Scope, Standing, Visibility};
 use crate::util::Window;
 
-/// How long the device keeps accepting unknown peers after backgrounding.
-pub const DEFAULT_COOL_OFF_MINUTES: i64 = 10;
-
-/// How many new pubkeys the device discloses to per discoverable window.
-pub const DEFAULT_DISCLOSURE_BUDGET: u32 = 10;
-
 /// The window the disclosure budget counts new pubkeys over, in seconds.
 ///
 /// A rolling day, conservative against the doc's "per discoverable window":
@@ -55,22 +49,42 @@ pub struct Policy {
     pub accept: Scope,
     /// Whose events the device relays onward.
     pub gossip: Scope,
+    /// Which peers may be handed the author's signature over an own event,
+    /// which is what lets them forward it one more hop.
+    ///
+    /// Narrower than the others by default, and deliberately: the signature is
+    /// transferable evidence that attributes the event to the user
+    /// permanently and to everyone, so handing one over is irreversible in a
+    /// way that serving the event is not.
+    /// `docs/proofs.md#the-authors-signature-stays-with-the-peer-it-names`.
+    pub forward: Scope,
     /// The trust graph the scopes above are measured against.
     pub graph: Graph,
 }
 
 impl Policy {
-    /// Default settings
+    /// What the device does before the user has said otherwise.
+    ///
+    /// These are the documented defaults and the only place they are written:
+    /// [`db::pref::query::policy`](crate::db::pref::query::policy) starts from
+    /// this and overrides whichever keys have been set, so a default cannot
+    /// drift between the two.
+    ///
+    /// `forward` is the narrow one, and deliberately: the author's signature is
+    /// transferable evidence, so `docs/proofs.md` limits it to peers who can be
+    /// trusted not to leak one. An event handed to anyone else stops with them
+    /// rather than travelling its second hop.
     #[must_use]
     pub fn new(identity: PublicKey) -> Self {
         Self {
             identity,
-            cool_off_minutes: DEFAULT_COOL_OFF_MINUTES,
+            cool_off_minutes: 10,
             discoverable_times: Vec::new(),
-            disclosure_budget: DEFAULT_DISCLOSURE_BUDGET,
+            disclosure_budget: 10,
             visibility: Visibility::default(),
             accept: Scope::Lenient,
             gossip: Scope::Network,
+            forward: Scope::Trusted,
             graph: Graph::default(),
         }
     }
@@ -92,12 +106,22 @@ impl Policy {
 
     /// Bind this policy to a pubkey the peer proved.
     #[must_use]
-    pub fn for_pubkey(self, pubkey: PublicKey) -> PubkeyPolicy {
+    pub fn for_pubkey(self, pubkey: PublicKey) -> PeerPolicy {
         let standing = self.graph.standing(&pubkey);
 
-        PubkeyPolicy {
+        self.for_standing(standing)
+    }
+
+    /// Resolve against a standing already worked out.
+    ///
+    /// A peer may prove several pubkeys, and what the user's settings say about
+    /// it is then a question about the device rather than about any one key —
+    /// [`Standing::combine`](crate::model::Standing::combine) reduces the set to
+    /// the one standing everything below here is decided from.
+    #[must_use]
+    pub fn for_standing(self, standing: Standing) -> PeerPolicy {
+        PeerPolicy {
             policy: self,
-            pubkey,
             standing,
         }
     }
@@ -105,23 +129,16 @@ impl Policy {
 
 /// A [`Policy`] bound to one pubkey a peer proved.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PubkeyPolicy {
+pub struct PeerPolicy {
     policy: Policy,
-    pubkey: PublicKey,
     standing: Standing,
 }
 
-impl PubkeyPolicy {
+impl PeerPolicy {
     /// The policy this was bound from.
     #[must_use]
     pub fn policy(&self) -> &Policy {
         &self.policy
-    }
-
-    /// The pubkey it is bound to.
-    #[must_use]
-    pub fn pubkey(&self) -> &PublicKey {
-        &self.pubkey
     }
 
     /// This device's own pubkey.
@@ -169,6 +186,19 @@ impl PubkeyPolicy {
                 .policy
                 .accept
                 .admits(self.policy.graph.standing(event.pubkey()))
+    }
+
+    /// Whether this peer may be handed the author's signature over an own
+    /// event, which is the capability to forward it one more hop.
+    ///
+    /// Separate from [`should_gossip`](Self::should_gossip) because the two
+    /// grant different things: gossip decides who may *read* an event, this
+    /// decides who may *attribute* it. A peer that leaks a signature ends the
+    /// author's deniability for that event permanently, so the question is not
+    /// whether they may see it but whether they can be trusted with proof.
+    #[must_use]
+    pub fn may_forward(&self) -> bool {
+        !self.is_blocked() && self.policy.forward.admits(self.standing)
     }
 
     /// Whether an event may be shared with this peer.

@@ -17,8 +17,7 @@ use crate::db::event::query as event_query;
 use crate::db::pairing::command as pairing;
 use crate::db::pref::command as pref;
 use crate::db::recipient_signature::command as signature;
-use crate::db::sql::hex_key;
-use crate::model::{Blob, BlobRole, RecipientSignature};
+use crate::model::{Blob, BlobHash, BlobRole, RecipientSignature};
 
 /// Take in an event from a peer, with whatever came alongside it.
 ///
@@ -37,8 +36,6 @@ pub fn receive_event(
     db: &Db,
     event: &HashedEvent,
     seen_from: &[PublicKey],
-    author_signature: Option<&[u8; 64]>,
-    identity: &PublicKey,
     seen_at: i64,
 ) -> Result<bool> {
     db.write(|tx| {
@@ -46,20 +43,6 @@ pub fn receive_event(
 
         if stored {
             record_media(tx, event, event.id)?;
-        }
-
-        if let Some(sig) = author_signature
-            && event_query::exists(tx, &event.id)?
-        {
-            signature::save(
-                tx,
-                &RecipientSignature {
-                    event_id: event.id,
-                    author_pubkey: event.pubkey,
-                    recipient_pubkey: *identity,
-                    sig: *sig,
-                },
-            )?;
         }
 
         Ok(stored)
@@ -115,47 +98,49 @@ pub fn receive_signature(
             return Ok(false);
         };
 
-        signature::save(
-            tx,
-            &RecipientSignature {
-                event_id: *event_id,
-                author_pubkey: event.pubkey,
-                recipient_pubkey: *identity,
-                sig: *sig,
-            },
-        )
+        let signature = RecipientSignature {
+            event_id: *event_id,
+            author_pubkey: event.pubkey,
+            recipient_pubkey: *identity,
+            sig: *sig,
+        };
+
+        // A row here is the forwarding capability itself — it is what puts the
+        // event in the `Forwardable` register and what an authorship proof is
+        // later built from. Verifying at the write means the capability cannot
+        // be minted by a caller that forgot to check, whatever path it came in
+        // on.
+        if !signature.verifies() {
+            return Ok(false);
+        }
+
+        signature::save(tx, &signature)
     })
 }
 
-/// Record verified bytes against a blob mid-transfer.
+/// Record how many bytes of a blob are held mid-transfer.
 ///
-/// `chunks` is the bitmap of chunks that have verified against the BLAKE3 root,
-/// which is what lets a transfer interrupted on BLE resume instead of starting
-/// over. Returns whether the blob is known.
+/// `chunks` is the bitmap per-chunk verification will fill in once it exists
+/// (`docs/nips/imeta-blake3.md`); until then a transfer that drops restarts.
+/// Returns whether the blob is known.
 pub fn record_blob_progress(
     db: &Db,
-    sha256: &str,
+    sha256: &BlobHash,
     stored_bytes: i64,
     chunks: Option<&[u8]>,
 ) -> Result<bool> {
-    let sha256 = hex_key(sha256)?;
-
-    db.write(|tx| blob::record_progress(tx, &sha256, stored_bytes, chunks))
+    db.write(|tx| blob::record_progress(tx, sha256, stored_bytes, chunks))
 }
 
-/// Mark a blob whole: every chunk arrived and verified. Returns whether this
-/// completed it, and `false` if it was already complete.
-pub fn complete_blob(db: &Db, sha256: &str, stored_bytes: i64, at: i64) -> Result<bool> {
-    let sha256 = hex_key(sha256)?;
-
-    db.write(|tx| blob::mark_complete(tx, &sha256, stored_bytes, at))
+/// Mark a blob whole: every byte is held and the file hashes to its address.
+/// Returns whether this completed it, and `false` if it was already complete.
+pub fn complete_blob(db: &Db, sha256: &BlobHash, stored_bytes: i64, at: i64) -> Result<bool> {
+    db.write(|tx| blob::mark_complete(tx, sha256, stored_bytes, at))
 }
 
 /// Note that a blob was read, which is what eviction orders on.
-pub fn touch_blob(db: &Db, sha256: &str, at: i64) -> Result<bool> {
-    let sha256 = hex_key(sha256)?;
-
-    db.write(|tx| blob::touch(tx, &sha256, at))
+pub fn touch_blob(db: &Db, sha256: &BlobHash, at: i64) -> Result<bool> {
+    db.write(|tx| blob::touch(tx, sha256, at))
 }
 
 /// Write a preference. `value` is a JSON document.
@@ -175,7 +160,7 @@ pub fn forget_events_before(db: &Db, cutoff: i64) -> Result<usize> {
 
 /// Evict held originals, until the cache is under `ceiling_bytes`.
 /// Returns the hashes evicted.
-pub fn evict_originals(db: &Db, ceiling_bytes: i64) -> Result<Vec<String>> {
+pub fn evict_originals(db: &Db, ceiling_bytes: i64) -> Result<Vec<BlobHash>> {
     db.write(|tx| {
         let mut held = blob_query::stored_bytes(tx, BlobRole::Original)?;
 

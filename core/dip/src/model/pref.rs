@@ -36,4 +36,8 @@ pub mod keys {
 
     /// Whose events the device relays onward. Default `network`.
     pub const GOSSIP: &str = "policy.gossip";
+
+    /// Which peers may be handed the signature that lets them forward the
+    /// user's events one more hop.
+    pub const FORWARD: &str = "policy.forward";
 }

@@ -15,15 +15,16 @@ pub enum Register {
     Held,
 }
 
-/// A register constraint: which registers qualify, and the device they are
+/// A register constraint: which registers qualify, and the identities they are
 /// measured from.
 ///
-/// The identity is part of the constraint because both registers are relative
-/// to it.
+/// The identities are part of the constraint because both registers are
+/// relative to them — "authored by us" and "signed to us" mean nothing until
+/// "us" is named. A device acting as several is measured against any of them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Registers {
-    /// The device asking.
-    pub identity: PublicKey,
+    /// The identities asking. Never empty.
+    pub identities: BTreeSet<PublicKey>,
     /// The registers admitted. An empty set admits nothing.
     pub registers: BTreeSet<Register>,
 }
@@ -31,9 +32,12 @@ pub struct Registers {
 impl Registers {
     /// A constraint admitting exactly `registers`.
     #[must_use]
-    pub fn new(identity: PublicKey, registers: impl IntoIterator<Item = Register>) -> Self {
+    pub fn new<'a>(
+        identities: impl IntoIterator<Item = &'a PublicKey>,
+        registers: impl IntoIterator<Item = Register>,
+    ) -> Self {
         Self {
-            identity,
+            identities: identities.into_iter().copied().collect(),
             registers: registers.into_iter().collect(),
         }
     }
@@ -41,8 +45,8 @@ impl Registers {
     /// Everything this device is in a position to put on the wire at all: its
     /// own events, and those it holds the author's signature over.
     #[must_use]
-    pub fn offerable(identity: PublicKey) -> Self {
-        Self::new(identity, [Register::Own, Register::Forwardable])
+    pub fn offerable<'a>(identities: impl IntoIterator<Item = &'a PublicKey>) -> Self {
+        Self::new(identities, [Register::Own, Register::Forwardable])
     }
 
     /// Whether this constraint admits `register`.
@@ -54,7 +58,7 @@ impl Registers {
     /// Whether the constraint admits nothing.
     #[must_use]
     pub fn matches_nothing(&self) -> bool {
-        self.registers.is_empty()
+        self.registers.is_empty() || self.identities.is_empty()
     }
 }
 
@@ -66,7 +70,7 @@ mod tests {
 
     #[test]
     fn the_offerable_registers_are_the_two_that_travel() {
-        let registers = Registers::offerable(author(1));
+        let registers = Registers::offerable(&[author(1)]);
 
         assert!(registers.admits(Register::Own));
         assert!(registers.admits(Register::Forwardable));

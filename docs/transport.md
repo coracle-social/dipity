@@ -26,9 +26,25 @@ Our own, directly over GATT. The codec is core-side — pure byte manipulation t
 
 - **Multiplexed.** A channel id in the frame header lets control traffic, event sync, and blob transfer share the one link.
 - **Priority-scheduled.** The ATT queue is per-connection, so separate characteristics would not give QoS isolation. The sender interleaves instead: control frames pre-empt bulk fragments, which keeps the heartbeat alive during a media transfer.
-- **Fragmented.** Chunked to `maximumWriteValueLength(for:)` minus header — roughly 500 bytes usable at a 512-byte MTU, often less.
+- **Fragmented.** Chunked to `maximumWriteValueLength(for:)` minus the header, and minus the AEAD tag once the channel is encrypted — roughly 480 bytes usable at a 512-byte MTU, often less.
 - **Reliable.** Acknowledged ATT writes give ordered reliable delivery on the control and sync channels. The blob channel uses `writeWithoutResponse` with application-level acking and pacing, at 25–30 ms between fragments to avoid loss.
 - **Resumable.** Blob transfers survive disconnection and resume by chunk. See [`sync.md`](./sync.md#blob-sync).
+
+#### The wire format
+
+Every write is one fragment: a two-byte header, then the payload.
+
+| Byte | Is |
+| --- | --- |
+| 0 | Channel: `0` control, `1` sync, `2` blob |
+| 1 | Flags. Bit 0 set means more fragments follow for this frame; the rest are reserved and must be zero |
+| 2.. | Payload, sealed once the channel is encrypted |
+
+A frame is the concatenation of its fragments' payloads. Reassembly is per channel, so an interleaved control frame does not disturb a blob transfer mid-frame. A frame whose fragments exceed 1 MiB is refused rather than buffered, and the link is dropped.
+
+An empty payload is still one fragment: the frame itself is the signal, which is what the heartbeat is.
+
+**The payload is sealed as it leaves the queue, not as it is queued.** The transport cipher steps a nonce per message and keeps no window, while the scheduler lets a control frame overtake queued bulk; sealing at enqueue would hand the peer ciphertext in an order it cannot open. The handshake is the exception: its messages are queued in the clear and stay that way even though the sender's own session may already have finished, because the peer must read them with its handshake state.
 
 ### Throughput
 

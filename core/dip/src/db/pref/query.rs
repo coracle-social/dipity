@@ -16,10 +16,7 @@ use serde::de::DeserializeOwned;
 
 use crate::db::Tx;
 use crate::db::event::query as event;
-use crate::model::{
-    DEFAULT_COOL_OFF_MINUTES, DEFAULT_DISCLOSURE_BUDGET, Graph, KIND_MUTE, Policy, Pref, Scope,
-    Visibility, keys,
-};
+use crate::model::{Graph, KIND_MUTE, Policy, Pref, keys};
 
 /// One preference's raw JSON value, or `None` if it has never been written —
 /// which is how a default is expressed.
@@ -53,10 +50,17 @@ pub fn get_as<T: DeserializeOwned>(tx: &Tx<'_>, key: &str) -> Result<Option<T>> 
     Ok(Some(decoded))
 }
 
-/// One preference, decoded, falling back to `default` when it has never been
-/// written.
-pub fn get_or<T: DeserializeOwned>(tx: &Tx<'_>, key: &str, default: T) -> Result<T> {
-    Ok(get_as(tx, key)?.unwrap_or(default))
+/// Replace `setting` with the written preference, if there is one.
+///
+/// The unwritten case leaves the value alone rather than substituting a
+/// default here, so the defaults live only in [`Policy::new`] and cannot drift
+/// between the two.
+fn override_with<T: DeserializeOwned>(tx: &Tx<'_>, key: &str, setting: &mut T) -> Result<()> {
+    if let Some(value) = get_as(tx, key)? {
+        *setting = value;
+    }
+
+    Ok(())
 }
 
 /// Every preference, by key.
@@ -79,16 +83,19 @@ pub fn all(tx: &Tx<'_>) -> Result<Vec<Pref>> {
 /// per event: a session asks the same questions of the same peer many times,
 /// and the answers cannot change under it while it runs.
 pub fn policy(tx: &Tx<'_>, identity: &PublicKey) -> Result<Policy> {
-    Ok(Policy {
-        identity: *identity,
-        cool_off_minutes: get_or(tx, keys::COOL_OFF_MINUTES, DEFAULT_COOL_OFF_MINUTES)?,
-        discoverable_times: get_or(tx, keys::DISCOVERABLE_TIMES, Vec::new())?,
-        disclosure_budget: get_or(tx, keys::DISCLOSURE_BUDGET, DEFAULT_DISCLOSURE_BUDGET)?,
-        visibility: get_or(tx, keys::VISIBILITY, Visibility::default())?,
-        accept: get_or(tx, keys::ACCEPT, Scope::Lenient)?,
-        gossip: get_or(tx, keys::GOSSIP, Scope::Network)?,
-        graph: graph(tx, identity)?,
-    })
+    let mut policy = Policy::new(*identity);
+
+    override_with(tx, keys::COOL_OFF_MINUTES, &mut policy.cool_off_minutes)?;
+    override_with(tx, keys::DISCOVERABLE_TIMES, &mut policy.discoverable_times)?;
+    override_with(tx, keys::DISCLOSURE_BUDGET, &mut policy.disclosure_budget)?;
+    override_with(tx, keys::VISIBILITY, &mut policy.visibility)?;
+    override_with(tx, keys::ACCEPT, &mut policy.accept)?;
+    override_with(tx, keys::GOSSIP, &mut policy.gossip)?;
+    override_with(tx, keys::FORWARD, &mut policy.forward)?;
+
+    policy.graph = graph(tx, identity)?;
+
+    Ok(policy)
 }
 
 /// The user's trust graph, from the lists they have published.
@@ -147,23 +154,16 @@ mod tests {
     use crate::db::event::command as event_command;
     use crate::db::pref::command as pref_command;
     use crate::fixtures::{author, event, peer};
-    use crate::model::Standing;
+    use crate::model::{Scope, Standing};
 
     #[test]
     fn an_unwritten_policy_is_the_documents_defaults() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        let policy = policy(&tx, &author(1)).unwrap();
-
-        assert_eq!(policy.identity, author(1));
-        assert_eq!(policy.cool_off_minutes, DEFAULT_COOL_OFF_MINUTES);
-        assert_eq!(policy.disclosure_budget, DEFAULT_DISCLOSURE_BUDGET);
-        assert!(policy.discoverable_times.is_empty());
-        assert_eq!(policy.visibility, Visibility::default());
-        assert_eq!(policy.accept, Scope::Lenient);
-        assert_eq!(policy.gossip, Scope::Network);
-        assert_eq!(policy.graph, Graph::default());
+        // Nothing written, so nothing overridden: exactly what `Policy::new`
+        // says, which is the only place a default is spelled out.
+        assert_eq!(policy(&tx, &author(1)).unwrap(), Policy::new(author(1)));
     }
 
     #[test]

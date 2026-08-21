@@ -8,11 +8,34 @@
 //! `docs/sync.md`. The additions for a transport with no URL are in
 //! `docs/nips/p2p-auth.md`.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use base64::Engine as _;
-use coracle_lib::events::{Event, EventId, HashedEvent};
+use coracle_lib::events::{Event, EventContent, EventId, HashedEvent};
 use coracle_lib::filters::Filter;
 use serde_json::{Value, json};
+
+/// Whether an event's id is the NIP-01 hash of the event itself.
+///
+/// The id arrives off the wire as a plain field, and every authorization the
+/// app performs commits to the id rather than to the bytes: an authorship
+/// proof is over `event_id ‖ recipient_pubkey`, and the session register is
+/// keyed on the id too. Without this check a peer holding one genuine proof
+/// could pair it with content of its own and have the event stored under the
+/// author's key. Re-derived through `coracle-lib`'s own builder so the
+/// serialization stays byte-identical with the peer's build.
+/// `docs/proofs.md`, `CLAUDE.md` — "Ids are plain NIP-01 hashes".
+#[must_use]
+pub fn id_is_authentic(event: &HashedEvent) -> bool {
+    let rehashed = EventContent::new()
+        .with_content(event.content.clone())
+        .with_tags(event.tags.clone())
+        .with_kind(event.kind)
+        .with_created_at(event.created_at)
+        .with_pubkey(event.pubkey)
+        .with_id();
+
+    rehashed.id == event.id
+}
 
 /// A subscription id, scoped to one link.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -156,6 +179,17 @@ impl Message {
                 .context("decoding a body")
         }
 
+        fn event(value: &Value) -> Result<HashedEvent> {
+            let event: HashedEvent =
+                serde_json::from_value(value.clone()).context("parsing EVENT")?;
+
+            if !id_is_authentic(&event) {
+                bail!("an event's id is not the hash of its content");
+            }
+
+            Ok(event)
+        }
+
         match kind {
             "REQ" => {
                 let subscription = id(&mut items)?;
@@ -175,20 +209,13 @@ impl Message {
                         let value = items
                             .next()
                             .ok_or_else(|| anyhow::anyhow!("EVENT has no event"))?;
-                        let event: HashedEvent =
-                            serde_json::from_value(value.clone()).context("parsing EVENT")?;
 
                         Ok(Self::Event(
                             SubscriptionId(subscription.clone()),
-                            Box::new(event),
+                            Box::new(event(value)?),
                         ))
                     }
-                    Some(event) => {
-                        let event: HashedEvent =
-                            serde_json::from_value(event.clone()).context("parsing EVENT")?;
-
-                        Ok(Self::Publish(Box::new(event)))
-                    }
+                    Some(value) => Ok(Self::Publish(Box::new(event(value)?))),
                     None => Err(anyhow::anyhow!("EVENT has no event")),
                 }
             }

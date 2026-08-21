@@ -22,8 +22,7 @@ use crate::db::event::query as event;
 use crate::db::pairing::query as pairing;
 use crate::db::pref::query as pref;
 use crate::db::recipient_signature::query as signature;
-use crate::db::sql::hex_key;
-use crate::model::{Blob, BlobRole, Policy, Pref, Provenance, Query, RecipientSignature};
+use crate::model::{Blob, BlobHash, BlobRole, Policy, Pref, Provenance, Query, RecipientSignature};
 
 // ============================================================================
 // Policy and preferences
@@ -137,10 +136,8 @@ pub fn wanted_blobs(db: &Db, limit: usize) -> Result<Vec<Blob>> {
 }
 
 /// One blob's metadata and transfer progress.
-pub fn get_blob(db: &Db, sha256: &str) -> Result<Option<Blob>> {
-    let sha256 = hex_key(sha256)?;
-
-    db.read(|tx| blob::get(tx, &sha256))
+pub fn get_blob(db: &Db, sha256: &BlobHash) -> Result<Option<Blob>> {
+    db.read(|tx| blob::get(tx, sha256))
 }
 
 /// How many bytes of held originals the cache is carrying, which is what the

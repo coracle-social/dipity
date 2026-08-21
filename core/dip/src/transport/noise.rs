@@ -7,7 +7,7 @@
 //! bound to this channel by mutual NIP-42 instead, for the life of one
 //! session. `docs/transport.md#the-static-key-is-generated-per-session`.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use snow::{Builder, HandshakeState, TransportState};
 
 use crate::link::Role;
@@ -35,41 +35,46 @@ pub struct Noise {
 }
 
 impl Noise {
+    /// The ChaCha20-Poly1305 tag every sealed payload carries, which the chunk
+    /// capacity has to leave room for.
+    pub const TAG: usize = 16;
+
     /// Begin a handshake, generating a fresh static key for it.
     ///
-    /// The dialer is the Noise initiator.
-    #[must_use]
-    pub fn begin(role: Role) -> Self {
+    /// The dialer is the Noise initiator. Everything here can fail on a device
+    /// whose entropy source is not answering, and a handshake begins in a
+    /// background wake with no one to see a panic, so it is reported instead.
+    pub fn begin(role: Role) -> Result<Self> {
         let params = PARAMS
             .parse::<snow::params::NoiseParams>()
             .expect("a fixed, valid parameter set");
         let keypair = Builder::new(params.clone())
             .generate_keypair()
-            .expect("fresh randomness");
+            .context("generating a static key for the handshake")?;
         let local_static: [u8; 32] = keypair
             .public
             .as_slice()
             .try_into()
-            .expect("a 32-byte Curve25519 public key");
+            .context("a Curve25519 public key that is not 32 bytes")?;
         let builder = Builder::new(params)
             .local_private_key(&keypair.private)
-            .expect("a build over its own keypair");
+            .context("building over the generated static key")?;
 
         let handshake = if role == Role::Dialer {
             builder.build_initiator()
         } else {
             builder.build_responder()
         }
-        .expect("a builder over its own keypair");
+        .context("building the handshake state")?;
 
-        Self {
+        Ok(Self {
             role,
             local_static,
             remote_static: None,
             hash: None,
             handshake: Some(handshake),
             transport: None,
-        }
+        })
     }
 
     /// The local static public key, for the `noise://` authority in the AUTH
@@ -178,20 +183,23 @@ impl Noise {
         bail!("the hash exists only once the handshake has completed")
     }
 
-    /// Encrypt one frame's payload.
+    /// Encrypt one fragment's payload.
+    ///
+    /// The cipher is a strict sequence — snow steps a nonce per call and keeps
+    /// no window — so calls have to happen in the order the writes go out.
     pub fn encrypt(&mut self, payload: &[u8]) -> Result<Vec<u8>> {
         let Some(transport) = &mut self.transport else {
             bail!("traffic encrypts only once the handshake has completed");
         };
 
         // One AEAD tag over the payload.
-        let mut out = vec![0u8; payload.len() + 16];
+        let mut out = vec![0u8; payload.len() + Self::TAG];
         let written = transport.write_message(payload, &mut out)?;
 
         Ok(out[..written].to_vec())
     }
 
-    /// Decrypt one frame's payload.
+    /// Decrypt one fragment's payload, in the order the peer sealed it.
     pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>> {
         let Some(transport) = &mut self.transport else {
             bail!("traffic decrypts only once the handshake has completed");
@@ -221,8 +229,8 @@ mod tests {
 
     #[test]
     fn the_handshake_hash_is_a_transcript_binding_both_sides_see() {
-        let mut dialer = Noise::begin(Role::Dialer);
-        let mut receiver = Noise::begin(Role::Receiver);
+        let mut dialer = Noise::begin(Role::Dialer).unwrap();
+        let mut receiver = Noise::begin(Role::Receiver).unwrap();
 
         complete(&mut dialer, &mut receiver);
 
@@ -234,8 +242,8 @@ mod tests {
 
     #[test]
     fn both_directions_encrypt_and_decrypt() {
-        let mut dialer = Noise::begin(Role::Dialer);
-        let mut receiver = Noise::begin(Role::Receiver);
+        let mut dialer = Noise::begin(Role::Dialer).unwrap();
+        let mut receiver = Noise::begin(Role::Receiver).unwrap();
 
         complete(&mut dialer, &mut receiver);
 
@@ -248,14 +256,14 @@ mod tests {
 
     #[test]
     fn only_the_dialer_speaks_first() {
-        let mut receiver = Noise::begin(Role::Receiver);
+        let mut receiver = Noise::begin(Role::Receiver).unwrap();
 
         assert!(receiver.first_handshake_message().is_err());
     }
 
     #[test]
     fn nothing_encrypts_before_the_handshake_completes() {
-        let mut dialer = Noise::begin(Role::Dialer);
+        let mut dialer = Noise::begin(Role::Dialer).unwrap();
 
         assert!(dialer.encrypt(b"early").is_err());
         assert!(dialer.handshake_hash().is_err());
@@ -263,8 +271,8 @@ mod tests {
 
     #[test]
     fn a_reply_after_completion_is_an_error() {
-        let mut dialer = Noise::begin(Role::Dialer);
-        let mut receiver = Noise::begin(Role::Receiver);
+        let mut dialer = Noise::begin(Role::Dialer).unwrap();
+        let mut receiver = Noise::begin(Role::Receiver).unwrap();
 
         complete(&mut dialer, &mut receiver);
 

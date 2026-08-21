@@ -17,6 +17,26 @@ pub enum Standing {
     Stranger,
 }
 
+impl Standing {
+    /// Where a device stands, given that it proved two identities.
+    ///
+    /// Blocked is a veto and the rest take the more privileged of the two. The
+    /// asymmetry is the point: blocking is a decision about a person, and a
+    /// device holding a blocked key is that person's device whatever else it
+    /// also signs with. Access runs the other way — proving an extra key is a
+    /// claim to more, never less, and the peer could have made the better claim
+    /// alone, so the union is simply the best of them.
+    #[must_use]
+    pub fn combine(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Blocked, _) | (_, Self::Blocked) => Self::Blocked,
+            (Self::Trusted, _) | (_, Self::Trusted) => Self::Trusted,
+            (Self::Network, _) | (_, Self::Network) => Self::Network,
+            _ => Self::Stranger,
+        }
+    }
+}
+
 /// The user's trust graph: the tiers, as sets of pubkeys.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Graph {

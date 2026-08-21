@@ -13,6 +13,8 @@ Where events live, who can answer a query, and what happens while the app is asl
 | `recipient_signature` | `event_id`, `author_pubkey`, `recipient_pubkey`, `sig`. Unique on (`event_id`, `recipient_pubkey`). The author's signature naming a recipient, held by the peer it names. It is the witness an [authorship proof](./proofs.md#authorship-proofs) is built from, never the proof itself, and it is never served to a peer. The author is carried rather than joined, since a signature without the key it is by neither verifies nor proves; a composite foreign key onto `event (id, pubkey)` is what keeps the copy honest. |
 | `pref` | A key/value store for storing app policies and ui preferences. |
 | `blob` | A mapping of blob sha256 metadata extracted from the first event seen that referenced it. |
+| `pair_secret` | `pubkey`, `secret`, `updated_at`. One row per peer this device has paired with, derived from that session's handshake hash. What a later encounter is [recognized](./discovery.md#recognition) from before either side names a pubkey. Provenance, so it is never served. |
+| `disclosure` | `pubkey`, `disclosed_at`. One row per pubkey this device has disclosed its identity to, bounding the [disclosure budget](./policy.md#discoverability) per window. Provenance, so it is never served. |
 
 ## The sqlite store
 

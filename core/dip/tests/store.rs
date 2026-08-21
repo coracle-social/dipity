@@ -16,14 +16,18 @@ use coracle_lib::tags::Tags;
 
 use dip::db::event::channel::{self, EventChange};
 use dip::db::{Db, command, query};
-use dip::model::{BlobRole, Order, Query, Registers, Scope, keys};
+use dip::model::{BlobHash, BlobRole, Order, Query, RecipientSignature, Registers, Scope, keys};
 
 /// The blob the event below references.
 ///
-/// Shaped like a real sha256 rather than being the word "hash": the store keys
-/// blobs on one and checks the shape on the way in, so a placeholder that could
-/// never name a row would be testing the wrong thing.
+/// Shaped like a real sha256 rather than being the word "hash": nothing but a
+/// real one parses into the [`BlobHash`] every blob call takes.
 const BLOB: &str = "b10bb10bb10bb10bb10bb10bb10bb10bb10bb10bb10bb10bb10bb10bb10bb10b";
+
+/// The same hash as the type the store is keyed on.
+fn blob() -> BlobHash {
+    BlobHash::parse(BLOB).unwrap()
+}
 
 fn database_directory(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("dip-store-test-{}-{name}", std::process::id()))
@@ -31,10 +35,12 @@ fn database_directory(name: &str) -> PathBuf {
 
 /// A key from a seed, so a fixture is reproducible. `PublicKey` holds nothing
 /// that is not a point on the curve, so these are real keys.
+fn secret(seed: u8) -> SecretKey {
+    SecretKey::from_hex(&hex::encode([seed; 32])).unwrap()
+}
+
 fn pubkey(seed: u8) -> PublicKey {
-    SecretKey::from_hex(&hex::encode([seed; 32]))
-        .unwrap()
-        .public_key()
+    secret(seed).public_key()
 }
 
 fn author() -> PublicKey {
@@ -65,7 +71,7 @@ fn id(event: &HashedEvent) -> EventId {
 
 /// Everything this device could put on the wire, whoever were asking.
 fn offerable() -> Query {
-    Query::new().with_registers(Registers::offerable(us()))
+    Query::new().with_registers(Registers::offerable(&[us()]))
 }
 
 #[test]
@@ -97,11 +103,12 @@ fn the_store_serves_its_use_cases() {
             ],
         ),
     );
-    let signature = [7u8; 64];
+    assert!(command::receive_event(&db, &with_media, &[peer()], 100).unwrap());
 
-    assert!(
-        command::receive_event(&db, &with_media, &[peer()], Some(&signature), &us(), 100).unwrap()
-    );
+    // The author's real signature naming this device is what moves the event
+    // into the forwardable register; nothing else can put it there.
+    let naming_us = RecipientSignature::sign(&secret(1), id(&with_media), us());
+    assert!(command::receive_signature(&db, &id(&with_media), &naming_us.sig, &us()).unwrap());
 
     match changes.try_recv() {
         Ok(EventChange::Stored(event)) => assert_eq!(event.id, with_media.id),
@@ -123,7 +130,7 @@ fn the_store_serves_its_use_cases() {
     assert_eq!(feed.len(), 1);
     assert_eq!(feed[0].event, with_media);
     assert_eq!(feed[0].blobs.len(), 1);
-    assert_eq!(feed[0].blobs[0].sha256, BLOB);
+    assert_eq!(feed[0].blobs[0].sha256, blob());
     assert_eq!(feed[0].blobs[0].size, Some(2048));
     assert_eq!(feed[0].blobs[0].blake3.as_deref(), Some("root"));
 
@@ -157,7 +164,7 @@ fn the_store_serves_its_use_cases() {
     // Holding the author's signature is what makes an event forwardable; an
     // event received without one is held for the user and goes no further.
     let unsigned = note(author(), 2_000, "no signature came with this", Tags::new());
-    assert!(command::receive_event(&db, &unsigned, &[peer()], None, &us(), 200).unwrap());
+    assert!(command::receive_event(&db, &unsigned, &[peer()], 200).unwrap());
 
     assert_eq!(
         query::list_events(&db, &offerable()).unwrap(),
@@ -167,19 +174,27 @@ fn the_store_serves_its_use_cases() {
     // Until the signature arrives on a later encounter. The id is an `EventId`
     // rather than a string, so there is no spelling of it that reaches the
     // store as a row that is not there.
-    assert!(command::receive_signature(&db, &id(&unsigned), &[9u8; 64], &us()).unwrap());
+    //
+    // The row is the forwarding capability, so the write verifies it: bytes
+    // that are not the author's signature over this event and this device
+    // leave the event where it was.
+    assert!(!command::receive_signature(&db, &id(&unsigned), &[9u8; 64], &us()).unwrap());
+    assert_eq!(query::list_events(&db, &offerable()).unwrap().len(), 1);
+
+    let signature = RecipientSignature::sign(&secret(1), id(&unsigned), us());
+    assert!(command::receive_signature(&db, &id(&unsigned), &signature.sig, &us()).unwrap());
     assert_eq!(query::list_events(&db, &offerable()).unwrap().len(), 2);
 
-    // Blob hashes are still strings — a sha256 of a file is not an event id —
-    // so they keep their check: a key that could not name a row is an error
-    // rather than a shrug.
-    assert!(query::get_blob(&db, "not a hash").is_err());
+    // A blob hash is its own type — a sha256 of a file is not an event id —
+    // and the check is in the parse: a key that could not name a row never
+    // becomes one to ask after.
+    assert!(BlobHash::parse("not a hash").is_err());
     assert_eq!(
-        query::get_blob(&db, &BLOB.to_uppercase())
+        query::get_blob(&db, &BlobHash::parse(&BLOB.to_uppercase()).unwrap())
             .unwrap()
             .unwrap()
             .sha256,
-        BLOB
+        blob()
     );
 
     // Our own events need no signature: the authenticated session establishes
@@ -205,19 +220,19 @@ fn the_store_serves_its_use_cases() {
     assert_eq!(wanted.len(), 1);
     assert_eq!(wanted[0].role, BlobRole::Original);
 
-    assert!(command::record_blob_progress(&db, BLOB, 1_024, Some(&[0b0000_0011])).unwrap());
+    assert!(command::record_blob_progress(&db, &blob(), 1_024, Some(&[0b0000_0011])).unwrap());
     assert_eq!(
-        query::get_blob(&db, BLOB).unwrap().unwrap().stored_bytes,
+        query::get_blob(&db, &blob()).unwrap().unwrap().stored_bytes,
         1_024
     );
     assert_eq!(query::wanted_blobs(&db, 10).unwrap().len(), 1);
 
-    assert!(command::complete_blob(&db, BLOB, 2_048, 400).unwrap());
+    assert!(command::complete_blob(&db, &blob(), 2_048, 400).unwrap());
     assert!(query::wanted_blobs(&db, 10).unwrap().is_empty());
     assert_eq!(query::cached_bytes(&db).unwrap(), 2_048);
 
     assert!(command::evict_originals(&db, 4_096).unwrap().is_empty());
-    assert_eq!(command::evict_originals(&db, 1_024).unwrap(), [BLOB]);
+    assert_eq!(command::evict_originals(&db, 1_024).unwrap(), [blob()]);
     assert_eq!(query::cached_bytes(&db).unwrap(), 0);
 
     // Preferences. A use case that fails leaves nothing behind: bare text is
@@ -287,7 +302,7 @@ fn two_stores_in_one_process_share_nothing() {
 
     // A write to one store is announced on that store's channel and no other's.
     let note = note(author(), 1_000, "from alice", Tags::new());
-    assert!(command::receive_event(&alice, &note, &[peer()], None, &us(), 100).unwrap());
+    assert!(command::receive_event(&alice, &note, &[peer()], 100).unwrap());
 
     match alice_hears.try_recv() {
         Ok(EventChange::Stored(stored)) => assert_eq!(stored.id, note.id),
@@ -305,7 +320,7 @@ fn two_stores_in_one_process_share_nothing() {
     );
     assert!(query::list_events(&bob, &Query::new()).unwrap().is_empty());
 
-    assert!(command::receive_event(&bob, &note, &[peer()], None, &us(), 200).unwrap());
+    assert!(command::receive_event(&bob, &note, &[peer()], 200).unwrap());
     assert!(matches!(bob_hears.try_recv(), Ok(EventChange::Stored(_))));
 
     fs::remove_dir_all(&hers).unwrap();

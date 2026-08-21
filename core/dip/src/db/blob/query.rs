@@ -9,14 +9,14 @@ use crate::db::Tx;
 use coracle_lib::events::EventId;
 
 use crate::db::sql::{event_id_from_sql, placeholders};
-use crate::model::{Blob, BlobRole};
+use crate::model::{Blob, BlobHash, BlobRole};
 
 /// The blob columns, in the order [`to_blob`] reads them.
 const COLUMNS: &str = "sha256, event_id, role, url, mime_type, size, dim, blurhash, alt, blake3,
      imeta, stored_bytes, chunks, complete, accessed_at";
 
 /// One blob by hash.
-pub fn get(tx: &Tx<'_>, sha256: &str) -> Result<Option<Blob>> {
+pub fn get(tx: &Tx<'_>, sha256: &BlobHash) -> Result<Option<Blob>> {
     let blob = tx
         .prepare_cached(&format!("SELECT {COLUMNS} FROM blob WHERE sha256 = ?1"))?
         .query_row(params![sha256], to_blob)
@@ -30,8 +30,8 @@ pub fn get(tx: &Tx<'_>, sha256: &str) -> Result<Option<Blob>> {
     Ok(blob)
 }
 
-/// Whether every byte of a blob is held and verified.
-pub fn is_complete(tx: &Tx<'_>, sha256: &str) -> Result<bool> {
+/// Whether every byte of a blob is held and hashes to its address.
+pub fn is_complete(tx: &Tx<'_>, sha256: &BlobHash) -> Result<bool> {
     let complete = tx
         .prepare_cached("SELECT COALESCE((SELECT complete FROM blob WHERE sha256 = ?1), 0)")?
         .query_row(params![sha256], |row| row.get::<_, bool>(0))

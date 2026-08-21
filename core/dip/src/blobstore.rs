@@ -15,25 +15,34 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 
+use crate::model::BlobHash;
+
 /// Where blob bytes go.
+///
+/// Every method is keyed on a [`BlobHash`], so an implementation names a file
+/// by it without a check of its own: a hash that could reach outside the
+/// store's directory does not parse in the first place.
 pub trait BlobStore: Send + Sync {
     /// Whether the blob's bytes are held.
-    fn has(&self, sha256: &str) -> Result<bool>;
+    fn has(&self, sha256: &BlobHash) -> Result<bool>;
     /// The length of the held blob, or `None` if it is not held.
-    fn len(&self, sha256: &str) -> Result<Option<u64>>;
-    /// Read `len` bytes from `offset`, or as many as are there.
-    fn read(&self, sha256: &str, offset: u64, len: u64) -> Result<Vec<u8>>;
+    fn len(&self, sha256: &BlobHash) -> Result<Option<u64>>;
+    /// Read `len` bytes from `offset`, or as many as are there. A read past
+    /// the end is empty rather than an error, and `len` may name the whole
+    /// rest of the file.
+    fn read(&self, sha256: &BlobHash, offset: u64, len: u64) -> Result<Vec<u8>>;
     /// Append bytes to the blob, creating it if missing.
-    fn append(&self, sha256: &str, bytes: &[u8]) -> Result<()>;
+    fn append(&self, sha256: &BlobHash, bytes: &[u8]) -> Result<()>;
     /// Delete the blob's bytes, if any are held.
-    fn delete(&self, sha256: &str) -> Result<()>;
+    fn delete(&self, sha256: &BlobHash) -> Result<()>;
 }
 
 /// A blob store over a directory the shell provides, one file per blob named
 /// by its lowercase hex sha256.
 ///
-/// Blobs are content-addressed and appended as verified groups arrive, so the
-/// whole transfer is `create` + `append` until the sync layer marks it done.
+/// Blobs are content-addressed and appended group by group as they arrive, so
+/// the whole transfer is `create` + `append` until the sync layer has the
+/// whole file and checks it against its hash.
 /// The directory is the one the shell already owns, alongside where it tells
 /// the core to open the database.
 pub struct FileBlobStore {
@@ -54,32 +63,27 @@ impl FileBlobStore {
         })
     }
 
-    /// The file a hash lives in. A hash that is not 32 lowercase hex bytes is
-    /// an error rather than a path: reach outside this directory and the
-    /// store would be writing wherever the caller pointed it.
-    fn path(&self, sha256: &str) -> Result<PathBuf> {
-        let key = crate::db::sql::hex_key(sha256)?;
-
-        Ok(self.directory.join(key))
+    /// The file a hash lives in. One path component, never a traversal: a
+    /// [`BlobHash`] is 64 hex characters or it does not exist.
+    fn path(&self, sha256: &BlobHash) -> PathBuf {
+        self.directory.join(sha256.as_str())
     }
 }
 
 impl BlobStore for FileBlobStore {
-    fn has(&self, sha256: &str) -> Result<bool> {
-        Ok(self.path(sha256)?.is_file())
+    fn has(&self, sha256: &BlobHash) -> Result<bool> {
+        Ok(self.path(sha256).is_file())
     }
 
-    fn len(&self, sha256: &str) -> Result<Option<u64>> {
-        let path = self.path(sha256)?;
-
-        match fs::metadata(&path) {
+    fn len(&self, sha256: &BlobHash) -> Result<Option<u64>> {
+        match fs::metadata(self.path(sha256)) {
             Ok(metadata) if metadata.is_file() => Ok(Some(metadata.len())),
             _ => Ok(None),
         }
     }
 
-    fn read(&self, sha256: &str, offset: u64, len: u64) -> Result<Vec<u8>> {
-        let path = self.path(sha256)?;
+    fn read(&self, sha256: &BlobHash, offset: u64, len: u64) -> Result<Vec<u8>> {
+        let path = self.path(sha256);
         let mut file = match File::open(&path) {
             Ok(file) => file,
             Err(_) => return Ok(Vec::new()),
@@ -99,7 +103,7 @@ impl BlobStore for FileBlobStore {
             return Ok(Vec::new());
         }
 
-        let take = take.min(len) as usize;
+        let take = usize::try_from(take.min(len)).unwrap_or(usize::MAX);
         let mut buffer = vec![0u8; take];
         let mut filled = 0;
 
@@ -120,8 +124,8 @@ impl BlobStore for FileBlobStore {
         Ok(buffer)
     }
 
-    fn append(&self, sha256: &str, bytes: &[u8]) -> Result<()> {
-        let path = self.path(sha256)?;
+    fn append(&self, sha256: &BlobHash, bytes: &[u8]) -> Result<()> {
+        let path = self.path(sha256);
 
         let mut file = OpenOptions::new()
             .create(true)
@@ -135,8 +139,8 @@ impl BlobStore for FileBlobStore {
         Ok(())
     }
 
-    fn delete(&self, sha256: &str) -> Result<()> {
-        let path = self.path(sha256)?;
+    fn delete(&self, sha256: &BlobHash) -> Result<()> {
+        let path = self.path(sha256);
 
         // A missing file is a blob already absent, not an error to retry into.
         match fs::remove_file(&path) {
@@ -148,17 +152,22 @@ impl BlobStore for FileBlobStore {
 }
 
 /// An in-memory store, for tests and tooling.
+///
+/// Answers exactly what [`FileBlobStore`] answers, out-of-range reads
+/// included: the sync layer is tested against this one and shipped against
+/// that one, so a difference between them is a bug that only appears on a
+/// phone.
 #[derive(Debug, Default)]
 pub struct MemoryBlobStore {
-    blobs: Mutex<HashMap<String, Vec<u8>>>,
+    blobs: Mutex<HashMap<BlobHash, Vec<u8>>>,
 }
 
 impl BlobStore for MemoryBlobStore {
-    fn has(&self, sha256: &str) -> Result<bool> {
+    fn has(&self, sha256: &BlobHash) -> Result<bool> {
         Ok(self.blobs.lock().unwrap().contains_key(sha256))
     }
 
-    fn len(&self, sha256: &str) -> Result<Option<u64>> {
+    fn len(&self, sha256: &BlobHash) -> Result<Option<u64>> {
         Ok(self
             .blobs
             .lock()
@@ -167,30 +176,36 @@ impl BlobStore for MemoryBlobStore {
             .map(|bytes| bytes.len() as u64))
     }
 
-    fn read(&self, sha256: &str, offset: u64, len: u64) -> Result<Vec<u8>> {
+    fn read(&self, sha256: &BlobHash, offset: u64, len: u64) -> Result<Vec<u8>> {
         let blobs = self.blobs.lock().unwrap();
         let Some(bytes) = blobs.get(sha256) else {
             return Ok(Vec::new());
         };
 
-        let start = offset as usize;
-        let end = (start + len as usize).min(bytes.len());
+        // Saturating throughout: a caller asking for the rest of the file
+        // passes `u64::MAX`, and adding that to an offset is an overflow.
+        let start = usize::try_from(offset)
+            .unwrap_or(usize::MAX)
+            .min(bytes.len());
+        let take = usize::try_from(len)
+            .unwrap_or(usize::MAX)
+            .min(bytes.len() - start);
 
-        Ok(bytes[start.min(bytes.len())..end].to_vec())
+        Ok(bytes[start..start + take].to_vec())
     }
 
-    fn append(&self, sha256: &str, bytes: &[u8]) -> Result<()> {
+    fn append(&self, sha256: &BlobHash, bytes: &[u8]) -> Result<()> {
         self.blobs
             .lock()
             .unwrap()
-            .entry(sha256.to_string())
+            .entry(sha256.clone())
             .or_default()
             .extend_from_slice(bytes);
 
         Ok(())
     }
 
-    fn delete(&self, sha256: &str) -> Result<()> {
+    fn delete(&self, sha256: &BlobHash) -> Result<()> {
         self.blobs.lock().unwrap().remove(sha256);
 
         Ok(())
@@ -201,41 +216,23 @@ impl BlobStore for MemoryBlobStore {
 mod tests {
     use super::*;
 
-    /// A self-cleaning directory under the system temp dir, unique per test.
-    struct TempDir(PathBuf);
+    use crate::fixtures::TempDir;
 
-    impl TempDir {
-        fn new() -> Self {
-            let dir = std::env::temp_dir().join(format!(
-                "dip-blobs-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
-
-            fs::create_dir_all(&dir).unwrap();
-
-            Self(dir)
-        }
+    fn key(bytes: &[u8]) -> BlobHash {
+        BlobHash::digest(bytes)
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
-    fn key(bytes: &[u8]) -> String {
-        use sha2::{Digest, Sha256};
-
-        hex::encode(Sha256::digest(bytes))
+    /// Both implementations, so a test can assert they answer alike.
+    fn stores(dir: &TempDir) -> (FileBlobStore, MemoryBlobStore) {
+        (
+            FileBlobStore::open(&dir.0).unwrap(),
+            MemoryBlobStore::default(),
+        )
     }
 
     #[test]
     fn a_blob_round_trips_through_the_directory() {
-        let dir = TempDir::new();
+        let dir = TempDir::new("blobs");
         let store = FileBlobStore::open(&dir.0).unwrap();
         let hash = key(b"the quick brown fox");
 
@@ -258,7 +255,7 @@ mod tests {
 
     #[test]
     fn read_stops_at_the_end_of_the_file() {
-        let dir = TempDir::new();
+        let dir = TempDir::new("blobs");
         let store = FileBlobStore::open(&dir.0).unwrap();
         let hash = key(b"short");
 
@@ -271,7 +268,7 @@ mod tests {
 
     #[test]
     fn a_missing_blob_reads_empty() {
-        let dir = TempDir::new();
+        let dir = TempDir::new("blobs");
         let store = FileBlobStore::open(&dir.0).unwrap();
         let hash = key(b"never written");
 
@@ -280,17 +277,52 @@ mod tests {
     }
 
     #[test]
+    fn the_two_stores_answer_the_same_reads() {
+        let dir = TempDir::new("blobs");
+        let (file, memory) = stores(&dir);
+        let hash = key(b"short");
+
+        file.append(&hash, b"short").unwrap();
+        memory.append(&hash, b"short").unwrap();
+
+        // `u64::MAX` is what a rangeless GET asks for, and it is where an
+        // `offset + len` in either implementation would overflow.
+        for (offset, len) in [
+            (0, u64::MAX),
+            (2, u64::MAX),
+            (0, 100),
+            (4, 5),
+            (5, 10),
+            (100, 10),
+            (u64::MAX, u64::MAX),
+        ] {
+            assert_eq!(
+                file.read(&hash, offset, len).unwrap(),
+                memory.read(&hash, offset, len).unwrap(),
+                "the stores disagree on {offset}+{len}"
+            );
+        }
+
+        assert_eq!(file.read(&hash, 0, u64::MAX).unwrap(), b"short");
+        assert_eq!(file.len(&hash).unwrap(), memory.len(&hash).unwrap());
+    }
+
+    #[test]
     fn a_hash_is_not_a_path() {
-        let dir = TempDir::new();
+        let dir = TempDir::new("blobs");
         let store = FileBlobStore::open(&dir.0).unwrap();
 
-        // Traversal and non-hex names are refused outright.
-        assert!(store.append("../escape", b"x").is_err());
-        assert!(store.append("../../etc/passwd", b"x").is_err());
-        assert!(store.append("not-hex", b"x").is_err());
-        assert!(store.append(&"ab".repeat(31), b"x").is_err());
+        // Traversal and non-hex names never become a hash, so the store cannot
+        // be handed one: the check is the type, not a guard inside `path`.
+        for name in ["../escape", "../../etc/passwd", "not-hex", &"ab".repeat(31)] {
+            assert!(BlobHash::parse(name).is_err(), "{name} parsed as a hash");
+        }
 
-        // Nothing escaped the directory.
+        // Every path the store can build is one component under its directory.
+        assert_eq!(
+            store.path(&key(b"anything")).parent(),
+            Some(dir.0.as_path())
+        );
         assert!(fs::read_dir(&dir.0).unwrap().next().is_none());
     }
 }

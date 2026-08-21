@@ -8,32 +8,37 @@
 //! Time needs nothing. `coracle-lib` counts seconds in `i64`, which is SQLite's
 //! integer, so a timestamp binds and reads as itself.
 
-use anyhow::{Result, bail};
 use coracle_lib::events::EventId;
 use coracle_lib::keys::PublicKey;
 use rusqlite::Error::FromSqlConversionFailure;
-use rusqlite::types::Type;
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, Type, ValueRef};
 
-/// A blob hash in the form the columns hold it: lowercase, and checked.
+use crate::model::BlobHash;
+
+/// A blob hash binds and reads as the hex the column holds.
 ///
-/// SQLite compares `TEXT` byte for byte, so an uppercase hash is not another
-/// spelling of a row, it is a row that is not there — a read misses, a write
-/// fails its foreign key, and neither says why.
+/// SQLite compares `TEXT` byte for byte, so an uppercase or truncated hash is
+/// not another spelling of a row, it is a row that is not there — a read
+/// misses, a write fails its foreign key, and neither says why. Which is why
+/// the column takes [`BlobHash`] and nothing else: the value is canonical
+/// before it reaches a statement, and a legacy row that is not fails its read
+/// rather than spreading.
 ///
-/// Event ids used to need this too. They are
+/// Event ids used to need the same treatment. They are
 /// [`EventId`](coracle_lib::events::EventId) now, which cannot hold a
-/// non-canonical value in the first place, so this is left covering blob
-/// hashes — sha256 of a file, not an event, and no business of `coracle-lib`'s.
-///
-/// Anything that is not 64 hex characters is an error rather than a miss: a
-/// caller asking after a malformed hash has a bug, and answering "not here"
-/// hides it.
-pub(crate) fn hex_key(key: &str) -> Result<String> {
-    if key.len() != 64 || !key.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        bail!("{key} is not 32 bytes of hex");
+/// non-canonical value in the first place.
+impl ToSql for BlobHash {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::Borrowed(ValueRef::Text(
+            self.as_str().as_bytes(),
+        )))
     }
+}
 
-    Ok(key.to_ascii_lowercase())
+impl FromSql for BlobHash {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        Self::parse(value.as_str()?).map_err(|error| FromSqlError::Other(error.into()))
+    }
 }
 
 /// An event id coming back out of the `column`th column.
@@ -85,24 +90,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_key_comes_back_lowercase() {
-        let lower = "ab".repeat(32);
-        let upper = lower.to_ascii_uppercase();
+    fn a_blob_hash_round_trips_through_a_column() {
+        let hash = BlobHash::parse(&"ab".repeat(32)).unwrap();
+        let db = rusqlite::Connection::open_in_memory().unwrap();
 
-        assert_eq!(hex_key(&lower).unwrap(), lower);
-        assert_eq!(hex_key(&upper).unwrap(), lower);
-        assert_eq!(hex_key("aB".repeat(32).as_str()).unwrap(), lower);
+        let read: BlobHash = db
+            .query_row("SELECT ?1", rusqlite::params![hash], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(read, hash);
     }
 
     #[test]
-    fn a_key_that_is_not_32_bytes_of_hex_is_an_error() {
-        // Not a miss. A caller naming a row that cannot exist has a bug, and
-        // `Ok(None)` is how it would go unnoticed.
-        assert!(hex_key("").is_err());
-        assert!(hex_key(&"ab".repeat(31)).is_err());
-        assert!(hex_key(&"ab".repeat(33)).is_err());
-        assert!(hex_key(&format!("{}zz", "ab".repeat(31))).is_err());
-        assert!(hex_key(&"é".repeat(64)).is_err());
+    fn a_column_that_is_not_a_hash_fails_its_read() {
+        // A row written before the type existed, or by something that never
+        // parsed: it names no file, so it fails here rather than downstream.
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+
+        assert!(
+            db.query_row("SELECT 'AB'", [], |row| row.get::<_, BlobHash>(0))
+                .is_err()
+        );
     }
 
     #[test]

@@ -16,7 +16,7 @@ use crate::db::Tx;
 use crate::db::condition::{Conditions, text};
 use crate::db::sql::{event_id_from_sql, placeholders, pubkey_from_sql};
 use crate::model::{
-    Authors, Order, Provenance, ProvenanceFilter, PubkeyPolicy, Query, Register, Registers, Scope,
+    Authors, Order, PeerPolicy, Provenance, ProvenanceFilter, Query, Register, Registers, Scope,
 };
 
 /// The event columns, in the order [`to_event`] reads them.
@@ -396,19 +396,27 @@ fn push_registers(conditions: &mut Conditions, registers: &Registers) {
         return;
     }
 
-    let index = conditions.bind(text(registers.identity.to_hex()));
+    // Both registers are relative to who is asking, and a device acting as
+    // several identities is in a position to offer what any of them holds.
+    let bound = registers
+        .identities
+        .iter()
+        .map(|identity| format!("?{}", conditions.bind(text(identity.to_hex()))))
+        .collect::<Vec<_>>()
+        .join(", ");
 
+    let ours = format!("e.pubkey IN ({bound})");
     let signed = format!(
-        "EXISTS (SELECT 1 FROM recipient_signature p WHERE p.event_id = e.id AND p.recipient_pubkey = ?{index})"
+        "EXISTS (SELECT 1 FROM recipient_signature p WHERE p.event_id = e.id AND p.recipient_pubkey IN ({bound}))"
     );
 
     let disjuncts = registers
         .registers
         .iter()
         .map(|register| match register {
-            Register::Own => format!("e.pubkey = ?{index}"),
-            Register::Forwardable => format!("(e.pubkey <> ?{index} AND {signed})"),
-            Register::Held => format!("(e.pubkey <> ?{index} AND NOT {signed})"),
+            Register::Own => ours.clone(),
+            Register::Forwardable => format!("(NOT {ours} AND {signed})"),
+            Register::Held => format!("(NOT {ours} AND NOT {signed})"),
         })
         .collect::<Vec<_>>()
         .join(" OR ");
@@ -417,7 +425,7 @@ fn push_registers(conditions: &mut Conditions, registers: &Registers) {
 }
 
 /// Compile the policy governing the peer being answered.
-fn push_policy(conditions: &mut Conditions, policy: &PubkeyPolicy) {
+fn push_policy(conditions: &mut Conditions, policy: &PeerPolicy) {
     if policy.is_blocked() {
         conditions.push_never();
         return;
@@ -439,7 +447,7 @@ fn push_policy(conditions: &mut Conditions, policy: &PubkeyPolicy) {
 }
 
 /// Exclude the user's own events this peer may not see.
-fn push_visibility(conditions: &mut Conditions, policy: &PubkeyPolicy) {
+fn push_visibility(conditions: &mut Conditions, policy: &PeerPolicy) {
     let visibility = &policy.policy().visibility;
     let standing = policy.standing();
     let hides = |scope: Scope| !scope.admits(standing);
@@ -784,27 +792,30 @@ mod tests {
                 .collect::<BTreeSet<_>>()
         };
 
-        assert_eq!(ids(Registers::new(us, [Register::Own])), [id(&mine)].into());
         assert_eq!(
-            ids(Registers::new(us, [Register::Forwardable])),
+            ids(Registers::new(&[us], [Register::Own])),
+            [id(&mine)].into()
+        );
+        assert_eq!(
+            ids(Registers::new(&[us], [Register::Forwardable])),
             [id(&signed)].into()
         );
         assert_eq!(
-            ids(Registers::new(us, [Register::Held])),
+            ids(Registers::new(&[us], [Register::Held])),
             [id(&held)].into()
         );
 
         // What this device can put on the wire at all: the two registers that
         // travel, and nothing else.
         assert_eq!(
-            ids(Registers::offerable(us)),
+            ids(Registers::offerable(&[us])),
             [id(&mine), id(&signed)].into()
         );
-        assert!(ids(Registers::new(us, [])).is_empty());
+        assert!(ids(Registers::new(&[us], [])).is_empty());
 
         // The signature names a recipient, and is worth nothing under another
         // one: the same event is unforwardable from a device it does not name.
-        assert!(ids(Registers::new(author(9), [Register::Forwardable])).is_empty());
+        assert!(ids(Registers::new(&[author(9)], [Register::Forwardable])).is_empty());
     }
 
     #[test]
@@ -825,7 +836,7 @@ mod tests {
 
         let page = list(
             &tx,
-            &matching(Filter::new().add_limit(2)).with_registers(Registers::offerable(us)),
+            &matching(Filter::new().add_limit(2)).with_registers(Registers::offerable(&[us])),
         )
         .unwrap();
 

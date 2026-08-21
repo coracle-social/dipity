@@ -65,6 +65,10 @@ bitchat's `BLEConnectionScheduler.swift` is the reference for this.
                 └─────────┘
 ```
 
+One state sits off this line. **GATE_PENDING** is where an unadmitted stranger waits while the user is asked, entered from SECURED when the tags resolve to nobody and the discoverability preferences do not admit them; approving returns the link to SECURED and the exchange resumes, refusing or the five-minute hold lapsing closes it.
+
+Every state above IDENTIFIED has a deadline of its own as well, independent of the heartbeat: a link that has not named anybody within a minute of connecting is closed, or a peer that completes the handshake and then sends nothing but heartbeats would hold one of the six slots for as long as it keeps beating.
+
 ### Recognition
 
 The first frames on the secured channel are a recognition exchange, and the consent gate reads its result. At pairing, both sides derive a **pair secret** from the authenticated session and store it against the peer. On a later encounter, each proves it holds one without naming it:

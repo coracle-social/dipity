@@ -20,13 +20,29 @@ Sync begins with a NIP 77 NEGENTROPY sync over events accepted from this peer ac
 
 Once the negentropy reconciliation is complete, a regular `REQ` is used to retrieve the desired events. Syncing is paginated in reverse chronological order by `created_at` timestamp with dynamic since/until windows.
 
+### How policy reaches the wire
+
+Policy never becomes a NIP-01 filter. A filter is positive-only, so a scope like "anyone except the people I blocked" has no expression in one, and a filter is something a peer reads — compiling a trust graph into one would hand it over. Scope is applied where the events are read instead.
+
+| Setting | Applied | Where |
+| --- | --- | --- |
+| Gossip, visibility | to what this device serves | the store query answering a peer, before the limit |
+| The two [registers](./proofs.md#authorship-proofs) | to what may travel at all | the same query |
+| Accept | to what this device stores | ingest, per event, against the author |
+
+A peer's `REQ` therefore contributes only its filter. The registers and the scopes are added on this side, and a peer cannot widen either.
+
+Reconciliation is bounded from both ends by the same rule, with one asymmetry. Answering a peer's negotiation uses exactly the query a `REQ` would, so a device never advertises holding something it would refuse to serve. Opening one uses everything this device **holds**, because the question is what it is missing: an event that is already stored has to be in the set even when it is offerable to nobody, or it is reported missing on every encounter and fetched forever.
+
 ### Quotas
 
 Accepting gossiped events is an unbounded write from whoever is standing nearby. Independent of scope:
 
 - Per-peer event-count and byte budgets over a rolling 24 h window. A session's own accepts land in the same window, so one meter bounds the session and the reconnect alike.
 - Per-event size cap.
-- A separate, smaller budget for untrusted peers, with a hard ceiling that cannot crowd out known peers. bitchat's courier trust tiers are the pattern.
+- A separate, smaller budget for untrusted peers, and above it a hard ceiling on what every untrusted peer together may write, which cannot crowd out known peers. bitchat's courier trust tiers are the pattern.
+
+The ceiling is the one that has to hold, because the per-peer budget below it does not bind a stranger. Content events carry no signature, so an identity costs an attacker a keypair: metering per pubkey assumes identity is expensive, and here it is free. The ceiling is keyed on nothing at all, so there is nothing for a burner to reset.
 
 ## Blob sync
 

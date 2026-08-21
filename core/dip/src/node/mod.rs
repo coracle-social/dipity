@@ -46,6 +46,7 @@ use crate::db::event::channel::{self, EventChange};
 use crate::db::{Db, query};
 use crate::link::{LinkId, PeripheralId, Role};
 use crate::model::Policy;
+use crate::session::gate::Presence;
 use crate::session::{Session, State};
 use crate::transport::Channel;
 use scheduler::Scheduler;
@@ -100,8 +101,9 @@ pub struct Node {
     scheduler: Scheduler,
     /// The shared rolling spending ledger, metered across sessions.
     spending: Arc<crate::spending::SpendingLedger>,
-    /// When the app was last foregrounded, for the cool-off admission window.
-    cool_off_since: Option<i64>,
+    /// Where the app is, for the cool-off admission window. `None` until the
+    /// shell first reports it.
+    presence: Option<Presence>,
     /// This store's event channel, so a stored own event is offered to every
     /// connected peer without the writer knowing.
     events: broadcast::Receiver<EventChange>,
@@ -124,7 +126,7 @@ impl Node {
             link_peripheral: BTreeMap::new(),
             scheduler: Scheduler::default(),
             spending: Arc::new(crate::spending::SpendingLedger::default()),
-            cool_off_since: None,
+            presence: None,
         })
     }
 
@@ -160,7 +162,7 @@ impl Node {
     pub fn peripheral_seen(&mut self, peripheral: &PeripheralId, rssi: i16) -> Vec<Action> {
         self.scheduler.seen(peripheral.clone(), rssi);
 
-        match self.scheduler.next_dial(self.sessions.len()) {
+        match self.scheduler.next_dial(self.central_links()) {
             Some(peripheral) => vec![Action::Connect(peripheral)],
             None => Vec::new(),
         }
@@ -190,7 +192,7 @@ impl Node {
             Arc::clone(&self.blobs),
             Arc::clone(&self.spending),
         )?;
-        session.set_cool_off_since(self.cool_off_since);
+        session.set_presence(self.presence);
 
         if let Some(peripheral) = peripheral {
             self.link_peripheral.insert(link, peripheral);
@@ -228,12 +230,21 @@ impl Node {
     /// [`crate::sync`] by channel. A malformed or unauthenticated frame ends
     /// the link rather than being dropped.
     pub fn bytes_received(&mut self, link: LinkId, write: &[u8]) -> Vec<Action> {
-        let result = self.receive_frame(link, write);
+        let Err(error) = self.receive_frame(link, write) else {
+            return self.collect();
+        };
 
-        match result {
-            Ok(()) => self.collect(),
-            Err(_) => vec![Action::Disconnect(link)],
+        log::debug!("dropping link {link:?}: {error:#}");
+
+        // Close rather than only telling the shell to disconnect. The session
+        // is finished either way, and one left in the table would keep its
+        // link-cap slot and go on being swept for heartbeats until the shell
+        // reported the disconnect back.
+        if let Some(session) = self.sessions.get_mut(&link) {
+            session.close();
         }
+
+        self.collect()
     }
 
     /// Reassemble, decrypt, and dispatch one frame off the characteristic.
@@ -282,7 +293,7 @@ impl Node {
         // A queued candidate may now be past its rate limit, its backoff, or
         // the link cap.
         let mut actions = Vec::new();
-        if let Some(peripheral) = self.scheduler.next_dial(self.sessions.len()) {
+        if let Some(peripheral) = self.scheduler.next_dial(self.central_links()) {
             actions.push(Action::Connect(peripheral));
         }
 
@@ -306,13 +317,28 @@ impl Node {
         self.collect()
     }
 
-    /// The app came to the foreground, which starts the cool-off admission
-    /// window for unknown peers.
+    /// The app came to the foreground, which accepts unknown peers outright.
     pub fn notify_foregrounded(&mut self) -> Vec<Action> {
-        self.cool_off_since = Some(clock::now());
+        self.set_presence(Presence::Foreground)
+    }
+
+    /// The app went to the background, which starts the cool-off window.
+    ///
+    /// The window runs from here rather than from foregrounding, so a user who
+    /// reads for a while and pockets the phone still gets the full cool-off.
+    /// `docs/policy.md#discoverability`.
+    pub fn notify_backgrounded(&mut self) -> Vec<Action> {
+        self.set_presence(Presence::Background {
+            since: clock::now(),
+        })
+    }
+
+    /// Record where the app is and rebind it on every live session.
+    fn set_presence(&mut self, presence: Presence) -> Vec<Action> {
+        self.presence = Some(presence);
 
         for session in self.sessions.values_mut() {
-            session.set_cool_off_since(self.cool_off_since);
+            session.set_presence(self.presence);
         }
 
         self.collect()
@@ -362,6 +388,16 @@ impl Node {
     // Draining what the sessions produced
     // ========================================================================
 
+    /// How many links this device dialed.
+    ///
+    /// `docs/discovery.md` caps *central* links, so a peer dialing us must not
+    /// spend one of our slots — six inbound connections would otherwise stop
+    /// this device dialing anyone, which in a crowd is the moment it most
+    /// wants to.
+    fn central_links(&self) -> usize {
+        self.link_peripheral.len()
+    }
+
     /// Sweep every session for work: fragments to write, links to tear down,
     /// and the earliest deadline worth waking for.
     ///
@@ -398,8 +434,20 @@ impl Node {
         }
 
         for session in self.sessions.values_mut() {
-            while let Some(fragment) = session.next_write() {
-                actions.push(Action::Send(session.link, fragment));
+            loop {
+                match session.next_write() {
+                    Ok(Some(fragment)) => actions.push(Action::Send(session.link, fragment)),
+                    Ok(None) => break,
+                    // Sealing a fragment fails only on a wire that can no
+                    // longer carry the session, so nothing more goes out on it.
+                    Err(error) => {
+                        log::error!(
+                            "sealing a fragment on link {:?} failed: {error:#}",
+                            session.link
+                        );
+                        break;
+                    }
+                }
             }
         }
 
@@ -464,7 +512,7 @@ mod tests {
     use super::*;
     use coracle_lib::tags::Tags;
 
-    use crate::fixtures::{author, note, secret};
+    use crate::fixtures::{TempDir, author, note, secret};
     use crate::model::{Policy, Query};
     use crate::session::Session;
     use crate::sync::{Message, SubscriptionId};
@@ -498,47 +546,21 @@ mod tests {
         Sha256::digest(bytes).into()
     }
 
-    /// A self-cleaning directory under the system temp dir.
-    struct TempDir(std::path::PathBuf);
-
-    impl TempDir {
-        fn new() -> Self {
-            let dir = std::env::temp_dir().join(format!(
-                "dip-node-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
-
-            std::fs::create_dir_all(&dir).unwrap();
-
-            Self(dir)
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
     #[test]
     fn a_file_backed_node_puts_blobs_in_the_blob_directory() {
-        let dir = TempDir::new();
+        let dir = TempDir::new("node");
         let node = Node::open(db(), SecretKey::generate(), &dir.0).unwrap();
 
         // The store the node hands its sessions is the file-backed one: what
         // it writes shows up as a file under `<directory>/blobs`, next to the
         // database file the shell already gives the core.
         let bytes = b"the quick brown fox";
-        let hash = hex::encode(sha256(bytes));
+        let hash = crate::model::BlobHash::parse(&hex::encode(sha256(bytes))).unwrap();
 
         node.blobs.append(&hash, bytes).unwrap();
         assert!(node.blobs.has(&hash).unwrap());
         assert_eq!(node.blobs.read(&hash, 0, 100).unwrap(), bytes);
-        assert!(dir.0.join("blobs").join(&hash).is_file());
+        assert!(dir.0.join("blobs").join(hash.as_str()).is_file());
     }
 
     #[test]
@@ -610,29 +632,35 @@ mod tests {
 
     #[test]
     fn the_link_cap_queues_candidates_beyond_max_links() {
-        // Fill the session table to the cap.
+        // Fill the cap with links this device dialed.
         let mut node = node();
-        let policy = Arc::new(Policy::new(author(1)));
 
         for index in 0..MAX_LINKS {
-            node.sessions.insert(
-                LinkId(index as u64),
-                Session::open(
-                    LinkId(index as u64),
-                    Role::Receiver,
-                    100,
-                    Arc::clone(&policy),
-                    SecretKey::generate(),
-                    Arc::new(crate::blobstore::MemoryBlobStore::default()),
-                    spending(),
-                )
-                .unwrap(),
-            );
+            let link = LinkId(index as u64);
+            node.link_up(link, Some(peripheral(index as u8)), Role::Dialer, 100)
+                .unwrap();
+        }
+
+        let actions = node.peripheral_seen(&peripheral(200), -80);
+
+        assert!(actions.is_empty(), "a dial slipped past the link cap");
+    }
+
+    #[test]
+    fn inbound_links_do_not_spend_the_central_cap() {
+        // The doc caps *central* links. Counting peers that dialed us against
+        // it means six inbound connections stop this device dialing anyone —
+        // self-silencing in exactly the crowd it exists for.
+        let mut node = node();
+
+        for index in 0..MAX_LINKS {
+            node.link_up(LinkId(index as u64), None, Role::Receiver, 100)
+                .unwrap();
         }
 
         let actions = node.peripheral_seen(&peripheral(1), -80);
 
-        assert!(actions.is_empty(), "a dial slipped past the link cap");
+        assert_eq!(actions, vec![Action::Connect(peripheral(1))]);
     }
 
     #[test]
@@ -665,7 +693,9 @@ mod tests {
         .unwrap();
         let event = note(author(1), 100, "hello", Tags::new());
 
-        // A session that goes through the real REQ path.
+        // A session that goes through the real REQ path, and the peer at the
+        // other end of its cipher: everything it writes is sealed, so reading
+        // one back takes the device it was sealed for.
         let policy = Arc::new(Policy::new(author(1)));
         let mut session = Session::open(
             LinkId(2),
@@ -677,6 +707,18 @@ mod tests {
             spending(),
         )
         .unwrap();
+        let mut peer = Session::open(
+            LinkId(3),
+            Role::Dialer,
+            4096,
+            Arc::new(Policy::new(author(2))),
+            secret(3),
+            Arc::new(crate::blobstore::MemoryBlobStore::default()),
+            spending(),
+        )
+        .unwrap();
+
+        handshake(&mut peer, &mut session, &db);
         session.identify([author(2)]);
 
         let req = Message::Req(
@@ -700,26 +742,53 @@ mod tests {
                 .iter()
                 .any(|action| matches!(action, Action::Send(LinkId(2), _)))
         );
-        let actions = node.write_complete(LinkId(2));
+        let released = node.write_complete(LinkId(2));
+
+        // Both batches go into the peer in the order the shell would have
+        // written them, which is the order the cipher sealed them in.
+        let mut arrived = Vec::new();
+
+        for action in first.into_iter().chain(released) {
+            if let Action::Send(LinkId(2), fragment) = action
+                && let Some(frame) = peer.receive(&fragment).unwrap()
+            {
+                arrived.push(frame);
+            }
+        }
 
         // The Event carrying the note itself reaches the peer's link.
-        let pushed = actions
+        let pushed = arrived
             .iter()
-            .find_map(|action| match action {
-                Action::Send(link, fragment) if *link == LinkId(2) => {
-                    // No Noise handshake ran in this test, so the fragment is
-                    // plaintext: two header bytes then the sync message.
-                    match Message::decode(&fragment[2..]) {
-                        Ok(Message::Event(subscription, carried)) => Some((subscription, *carried)),
-                        _ => None,
-                    }
-                }
+            .find_map(|frame| match Message::decode(&frame.payload) {
+                Ok(Message::Event(subscription, carried)) => Some((subscription, *carried)),
                 _ => None,
             })
             .expect("the note reached the peer's link");
 
         assert_eq!(pushed.0, SubscriptionId("sub".into()));
         assert_eq!(pushed.1, event);
+    }
+
+    /// Run the Noise handshake between two sessions, leaving both wires
+    /// secured and the peer holding the other end of the cipher.
+    fn handshake(dialer: &mut Session, receiver: &mut Session, db: &Db) {
+        dialer.initiate().unwrap();
+
+        // One fragment per handshake message at this MTU.
+        let opening = dialer.next_write().unwrap().unwrap();
+        dialer.acknowledge_write();
+        let frame = receiver.receive(&opening).unwrap().unwrap();
+        receiver.advance(db, &frame).unwrap();
+
+        let reply = receiver.next_write().unwrap().unwrap();
+        receiver.acknowledge_write();
+        let frame = dialer.receive(&reply).unwrap().unwrap();
+        dialer.advance(db, &frame).unwrap();
+
+        let closing = dialer.next_write().unwrap().unwrap();
+        dialer.acknowledge_write();
+        let frame = receiver.receive(&closing).unwrap().unwrap();
+        receiver.advance(db, &frame).unwrap();
     }
 
     #[test]

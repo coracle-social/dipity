@@ -15,6 +15,6 @@ pub mod frame;
 pub mod noise;
 pub mod wire;
 
-pub use frame::{Channel, Codec, Frame, Outbox};
+pub use frame::{Channel, Codec, Fragment, Frame, Outbox, Secrecy};
 pub use noise::Noise;
 pub use wire::Wire;

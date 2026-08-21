@@ -32,7 +32,6 @@
 //! # fn main() -> anyhow::Result<()> {
 //! # let incoming: coracle_lib::events::HashedEvent = todo!();
 //! # let (peer, identity): (&coracle_lib::keys::PublicKey, &coracle_lib::keys::PublicKey) = todo!();
-//! # let signature = None;
 //! use coracle_lib::filters::Filter;
 //! use dip::db::Db;
 //! use dip::model::{Query, Order, Registers};
@@ -40,7 +39,7 @@
 //! let db = Db::open("/path/the/shell/provides")?;
 //!
 //! let stored = dip::db::command::receive_event(
-//!     &db, &incoming, &[*peer], signature, identity, coracle_lib::util::now(),
+//!     &db, &incoming, &[*peer], coracle_lib::util::now(),
 //! )?;
 //!
 //! // The user's feed: by arrival, since a note handed over today is new to
@@ -57,7 +56,7 @@
 //! let offerable = dip::db::query::list_events(
 //!     &db,
 //!     &Query::new()
-//!         .with_registers(Registers::offerable(*identity))
+//!         .with_registers(Registers::offerable(&[*identity]))
 //!         .with_policy(dip::db::query::policy(&db, identity)?.for_pubkey(*peer)),
 //! )?;
 //! # Ok(())

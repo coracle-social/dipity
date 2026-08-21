@@ -6,7 +6,7 @@
 use tokio::sync::broadcast::{self, Receiver, Sender};
 
 use crate::db::{Db, Tx};
-use crate::model::Blob;
+use crate::model::{Blob, BlobHash};
 
 /// How far a subscriber may fall behind. Progress is reported per group of
 /// chunks rather than per chunk, so this is not the busy channel it looks like.
@@ -19,12 +19,12 @@ pub enum BlobChange {
     /// puts it on the want list. Boxed because every other variant is a handful
     /// of bytes and each subscriber gets its own clone.
     Recorded(Box<Blob>),
-    /// More verified bytes landed, by hash and total held.
-    Progressed(String, i64),
-    /// Every byte is held and verified.
-    Completed(String),
+    /// More bytes landed, by hash and total held.
+    Progressed(BlobHash, i64),
+    /// Every byte is held and hashes to its address.
+    Completed(BlobHash),
     /// The record went — evicted, or its anchoring event was deleted.
-    Removed(String),
+    Removed(BlobHash),
 }
 
 /// This group's channel, one per store.

@@ -92,10 +92,12 @@ mod tests {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
+        // Absent rather than defaulted: a default is `Policy::new`'s to say,
+        // and this layer only reports what was written.
         assert_eq!(query::get(&tx, keys::GOSSIP).unwrap(), None);
         assert_eq!(
-            query::get_or(&tx, keys::COOL_OFF_MINUTES, 10_i64).unwrap(),
-            10
+            query::get_as::<i64>(&tx, keys::COOL_OFF_MINUTES).unwrap(),
+            None
         );
     }
 

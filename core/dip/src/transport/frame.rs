@@ -5,6 +5,12 @@
 //! QoS isolation. The sender interleaves instead, so the heartbeat stays alive
 //! through a media transfer.
 //!
+//! Everything here deals in plaintext. The outbox holds fragments rather than
+//! finished writes because the scheduler reorders them across channels, while
+//! the transport cipher is a strict sequence with no window: a payload has to
+//! be sealed in the order it goes on the wire, which is [`Wire`](super::Wire)'s
+//! job at dequeue.
+//!
 //! Header: one byte of channel, one byte of flags. `docs/transport.md#framing`.
 
 use std::collections::{BTreeMap, VecDeque};
@@ -44,7 +50,10 @@ impl Channel {
 const FLAG_MORE: u8 = 0b0000_0001;
 
 /// The header, which every fragment carries.
-const HEADER: usize = 2;
+///
+/// It stays in the clear: the receiver routes and reassembles on it before
+/// there is a channel to hand the payload to, so it cannot be sealed.
+pub const HEADER: usize = 2;
 
 /// The largest reassembled frame the codec accepts.
 ///
@@ -55,97 +64,133 @@ const HEADER: usize = 2;
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
 /// One message on one channel, before fragmentation or after reassembly.
+///
+/// Always plaintext: sealing is per fragment, either side of the codec.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
     /// Which channel it belongs to.
     pub channel: Channel,
-    /// The message. Ciphertext on the wire; plaintext either side of
-    /// [`Noise`](super::Noise).
+    /// The message.
     pub payload: Vec<u8>,
 }
 
-/// Fragments frames down to the MTU, and reassembles what arrives.
+/// One write's worth of a frame: the header, and the slice of payload under it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fragment {
+    /// The channel of the frame being carried.
+    pub channel: Channel,
+    /// Whether further fragments of the same frame follow.
+    pub more: bool,
+    /// The slice this write carries. Plaintext here; ciphertext only between
+    /// [`Wire`](super::Wire) sealing it and the peer opening it.
+    pub payload: Vec<u8>,
+}
+
+impl Fragment {
+    /// The bytes for the characteristic: the header, then the payload.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        let mut write = Vec::with_capacity(HEADER + self.payload.len());
+
+        write.push(self.channel as u8);
+        write.push(if self.more { FLAG_MORE } else { 0 });
+        write.extend_from_slice(&self.payload);
+
+        write
+    }
+
+    /// Read one write off the characteristic.
+    pub fn decode(write: &[u8]) -> Result<Self> {
+        let [channel, flags, payload @ ..] = write else {
+            bail!(
+                "a write of {} bytes is too short to be a fragment",
+                write.len()
+            );
+        };
+
+        Ok(Self {
+            channel: Channel::from_byte(*channel)?,
+            more: flags & FLAG_MORE != 0,
+            payload: payload.to_vec(),
+        })
+    }
+}
+
+/// Whether a queued fragment is sealed on its way out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Secrecy {
+    /// Sealed with the transport cipher as it leaves the outbox.
+    Sealed,
+    /// Written as it stands. Only handshake messages travel this way: the
+    /// peer's handshake state is what reads them.
+    Clear,
+}
+
+/// Cuts frames into fragments, and reassembles the fragments that arrive.
 ///
-/// One per link, because the MTU is negotiated per connection and the shell
-/// reports it on connect.
+/// One per link, because reassembly is per channel and per connection.
+#[derive(Debug, Default)]
 pub struct Codec {
-    /// Usable payload per write: the MTU the shell reported, less the header.
-    capacity: usize,
     /// Partial frames, one per channel, since channels interleave.
     partial: BTreeMap<Channel, Vec<u8>>,
 }
 
 impl Codec {
-    /// A codec for a link whose negotiated MTU is `mtu` bytes.
-    pub fn new(mtu: usize) -> Result<Self> {
-        let Some(capacity) = mtu.checked_sub(HEADER).filter(|room| *room > 0) else {
-            bail!("an MTU of {mtu} leaves no room for a payload");
-        };
-
-        Ok(Self {
-            capacity,
-            partial: BTreeMap::new(),
-        })
-    }
-
-    /// Cut `frame` into writes, each at most one MTU.
-    #[must_use]
-    pub fn fragment(&self, frame: &Frame) -> Vec<Vec<u8>> {
-        let mut chunks = frame.payload.chunks(self.capacity).peekable();
-        let mut writes = Vec::new();
-
-        // An empty payload is still one write: the frame itself is the signal.
-        if frame.payload.is_empty() {
-            return vec![vec![frame.channel as u8, 0]];
+    /// Cut `frame` into fragments carrying at most `capacity` payload bytes.
+    ///
+    /// The caller passes the capacity because a sealed payload gives up room to
+    /// the AEAD tag and a handshake message does not.
+    pub fn fragment(&self, frame: &Frame, capacity: usize) -> Result<Vec<Fragment>> {
+        if capacity == 0 {
+            bail!("a fragment with room for no payload byte would never finish a frame");
         }
+
+        // An empty payload is still one fragment: the frame itself is the signal.
+        if frame.payload.is_empty() {
+            return Ok(vec![Fragment {
+                channel: frame.channel,
+                more: false,
+                payload: Vec::new(),
+            }]);
+        }
+
+        let mut chunks = frame.payload.chunks(capacity).peekable();
+        let mut fragments = Vec::new();
 
         while let Some(chunk) = chunks.next() {
-            let flags = if chunks.peek().is_some() {
-                FLAG_MORE
-            } else {
-                0
-            };
-            let mut write = Vec::with_capacity(HEADER + chunk.len());
-
-            write.push(frame.channel as u8);
-            write.push(flags);
-            write.extend_from_slice(chunk);
-
-            writes.push(write);
+            fragments.push(Fragment {
+                channel: frame.channel,
+                more: chunks.peek().is_some(),
+                payload: chunk.to_vec(),
+            });
         }
 
-        writes
+        Ok(fragments)
     }
 
-    /// Take one write off the characteristic, returning a frame once its last
-    /// fragment lands.
-    pub fn absorb(&mut self, write: &[u8]) -> Result<Option<Frame>> {
-        let Some((&channel, rest)) = write.split_first() else {
-            bail!("an empty write is not a fragment");
-        };
-        let Some((&flags, payload)) = rest.split_first() else {
-            bail!("a one-byte write is not a fragment");
-        };
-
-        let channel = Channel::from_byte(channel)?;
-        let buffered = self.partial.entry(channel).or_default();
+    /// Take one opened fragment, returning a frame once its last one lands.
+    pub fn absorb(&mut self, fragment: Fragment) -> Result<Option<Frame>> {
+        let buffered = self.partial.entry(fragment.channel).or_default();
 
         // Fragments beyond the frame cap are an attack on unbounded memory, not
         // a frame: the partial buffer clears and the error ends the link.
-        if buffered.len() + payload.len() > MAX_FRAME_BYTES {
-            self.partial.remove(&channel);
-            bail!("a frame on {channel:?} exceeds the reassembly cap");
+        if buffered.len() + fragment.payload.len() > MAX_FRAME_BYTES {
+            self.partial.remove(&fragment.channel);
+            bail!(
+                "a frame on {:?} exceeds the reassembly cap",
+                fragment.channel
+            );
         }
 
-        buffered.extend_from_slice(payload);
+        buffered.extend_from_slice(&fragment.payload);
 
-        if flags & FLAG_MORE != 0 {
+        if fragment.more {
             return Ok(None);
         }
 
         Ok(Some(Frame {
-            channel,
-            payload: self.partial.remove(&channel).unwrap_or_default(),
+            channel: fragment.channel,
+            payload: self.partial.remove(&fragment.channel).unwrap_or_default(),
         }))
     }
 }
@@ -157,7 +202,7 @@ impl Codec {
 #[derive(Debug, Default)]
 pub struct Outbox {
     /// One queue per channel, drained most urgent first.
-    queues: BTreeMap<Channel, VecDeque<Vec<u8>>>,
+    queues: BTreeMap<Channel, VecDeque<(Fragment, Secrecy)>>,
     /// Whether a write is out and unacknowledged. The ATT queue is one deep as
     /// far as the core is concerned: the shell acknowledges each write, which
     /// releases the next.
@@ -167,8 +212,13 @@ pub struct Outbox {
 impl Outbox {
     /// Queue every fragment of a frame, behind whatever its channel already
     /// holds.
-    pub fn push(&mut self, channel: Channel, fragments: Vec<Vec<u8>>) {
-        self.queues.entry(channel).or_default().extend(fragments);
+    pub fn push(&mut self, fragments: Vec<Fragment>, secrecy: Secrecy) {
+        for fragment in fragments {
+            self.queues
+                .entry(fragment.channel)
+                .or_default()
+                .push_back((fragment, secrecy));
+        }
     }
 
     /// The next fragment to write, or `None` if a write is in flight or there
@@ -176,18 +226,18 @@ impl Outbox {
     ///
     /// Marks the returned fragment in flight; [`acknowledge`](Self::acknowledge)
     /// releases the next.
-    pub fn next_write(&mut self) -> Option<Vec<u8>> {
+    pub fn next_write(&mut self) -> Option<(Fragment, Secrecy)> {
         if self.in_flight {
             return None;
         }
 
-        let fragment = Channel::ALL
+        let queued = Channel::ALL
             .iter()
             .find_map(|channel| self.queues.get_mut(channel)?.pop_front())?;
 
         self.in_flight = true;
 
-        Some(fragment)
+        Some(queued)
     }
 
     /// Record that the write the shell was handed has been acknowledged.
@@ -215,19 +265,45 @@ mod tests {
     }
 
     #[test]
+    fn a_fragment_round_trips_through_its_header() {
+        let subject = Fragment {
+            channel: Channel::Blob,
+            more: true,
+            payload: b"bulk".to_vec(),
+        };
+        let write = subject.encode();
+
+        assert_eq!(write.len(), HEADER + 4);
+        assert_eq!(Fragment::decode(&write).unwrap(), subject);
+    }
+
+    #[test]
+    fn a_write_too_short_to_hold_a_header_is_not_a_fragment() {
+        assert!(Fragment::decode(&[]).is_err());
+        assert!(Fragment::decode(&[Channel::Sync as u8]).is_err());
+
+        // Two bytes are a whole fragment: an empty payload is a signal.
+        assert!(Fragment::decode(&[Channel::Sync as u8, 0]).is_ok());
+    }
+
+    #[test]
     fn a_frame_round_trips_through_fragmentation() {
-        let codec = Codec::new(HEADER + 4).unwrap();
+        let codec = Codec::default();
         let subject = frame(Channel::Sync, b"the quick brown fox");
-        let writes = codec.fragment(&subject);
+        let fragments = codec.fragment(&subject, 4).unwrap();
 
-        assert!(writes.len() > 1, "a long payload was not fragmented");
-        assert!(writes.iter().all(|write| write.len() <= HEADER + 4));
+        assert!(fragments.len() > 1, "a long payload was not fragmented");
+        assert!(
+            fragments
+                .iter()
+                .all(|fragment| fragment.encode().len() <= HEADER + 4)
+        );
 
-        let mut reassembling = Codec::new(HEADER + 4).unwrap();
+        let mut reassembling = Codec::default();
         let mut reassembled = None;
 
-        for write in writes {
-            reassembled = reassembling.absorb(&write).unwrap();
+        for fragment in fragments {
+            reassembled = reassembling.absorb(fragment).unwrap();
         }
 
         assert_eq!(reassembled, Some(subject));
@@ -235,68 +311,96 @@ mod tests {
 
     #[test]
     fn channels_reassemble_independently() {
-        let codec = Codec::new(HEADER + 4).unwrap();
-        let bulk = codec.fragment(&frame(Channel::Blob, b"aaaaaaaa"));
-        let beat = codec.fragment(&frame(Channel::Control, b"ping"));
+        let codec = Codec::default();
+        let bulk = codec
+            .fragment(&frame(Channel::Blob, b"aaaaaaaa"), 4)
+            .unwrap();
+        let beat = codec
+            .fragment(&frame(Channel::Control, b"ping"), 4)
+            .unwrap();
 
-        let mut reassembling = Codec::new(HEADER + 4).unwrap();
+        let mut reassembling = Codec::default();
 
         // The heartbeat lands in the middle of the transfer.
-        assert!(reassembling.absorb(&bulk[0]).unwrap().is_none());
+        assert!(reassembling.absorb(bulk[0].clone()).unwrap().is_none());
         assert_eq!(
-            reassembling.absorb(&beat[0]).unwrap(),
+            reassembling.absorb(beat[0].clone()).unwrap(),
             Some(frame(Channel::Control, b"ping"))
         );
         assert_eq!(
-            reassembling.absorb(&bulk[1]).unwrap(),
+            reassembling.absorb(bulk[1].clone()).unwrap(),
             Some(frame(Channel::Blob, b"aaaaaaaa"))
         );
     }
 
     #[test]
     fn control_pre_empts_bulk() {
-        let codec = Codec::new(HEADER + 64).unwrap();
+        let codec = Codec::default();
         let mut outbox = Outbox::default();
 
         outbox.push(
-            Channel::Blob,
-            codec.fragment(&frame(Channel::Blob, b"bulk")),
+            codec.fragment(&frame(Channel::Blob, b"bulk"), 64).unwrap(),
+            Secrecy::Sealed,
         );
         outbox.push(
-            Channel::Control,
-            codec.fragment(&frame(Channel::Control, b"ping")),
+            codec
+                .fragment(&frame(Channel::Control, b"ping"), 64)
+                .unwrap(),
+            Secrecy::Sealed,
         );
 
-        let first = outbox.next_write().unwrap();
-        assert_eq!(Channel::from_byte(first[0]).unwrap(), Channel::Control);
+        let (first, _) = outbox.next_write().unwrap();
+        assert_eq!(first.channel, Channel::Control);
 
         // Nothing else goes out until the shell acknowledges the write.
         assert!(outbox.next_write().is_none());
         outbox.acknowledge();
 
-        let second = outbox.next_write().unwrap();
-        assert_eq!(Channel::from_byte(second[0]).unwrap(), Channel::Blob);
+        let (second, _) = outbox.next_write().unwrap();
+        assert_eq!(second.channel, Channel::Blob);
     }
 
     #[test]
-    fn an_unusable_mtu_is_an_error() {
-        assert!(Codec::new(HEADER).is_err());
-        assert!(Codec::new(0).is_err());
+    fn a_handshake_fragment_keeps_its_secrecy_through_the_queue() {
+        let codec = Codec::default();
+        let mut outbox = Outbox::default();
+
+        outbox.push(
+            codec
+                .fragment(&frame(Channel::Control, b"handshake"), 64)
+                .unwrap(),
+            Secrecy::Clear,
+        );
+
+        let (_, secrecy) = outbox.next_write().unwrap();
+        assert_eq!(secrecy, Secrecy::Clear);
+    }
+
+    #[test]
+    fn a_capacity_with_no_room_for_a_payload_is_an_error() {
+        assert!(
+            Codec::default()
+                .fragment(&frame(Channel::Sync, b"x"), 0)
+                .is_err()
+        );
     }
 
     #[test]
     fn reassembly_stops_at_the_cap() {
-        let mut codec = Codec::new(HEADER + 512).unwrap();
+        let mut codec = Codec::default();
 
         // "More" fragments fed forever must sooner or later be refused.
-        let mut fragment = vec![Channel::Blob as u8, FLAG_MORE];
-        fragment.extend_from_slice(&[0u8; 512]);
+        let fragment = Fragment {
+            channel: Channel::Blob,
+            more: true,
+            payload: vec![0u8; 512],
+        };
 
         for _ in 0..MAX_FRAME_BYTES / 512 {
-            assert!(codec.absorb(&fragment).unwrap().is_none());
+            assert!(codec.absorb(fragment.clone()).unwrap().is_none());
         }
 
         // One more fragment crosses the cap.
-        assert!(codec.absorb(&fragment).is_err());
+        assert!(codec.absorb(fragment).is_err());
     }
 }

@@ -15,10 +15,9 @@ use crate::clock;
 use crate::db::Db;
 use crate::db::command;
 use crate::db::query as db_query;
-use crate::model::{AuthorshipClaim, AuthorshipProof, RecipientSignature};
+use crate::model::{AuthorshipClaim, AuthorshipProof, LocalIdentity, RecipientSignature};
 use crate::session::Peer;
-use crate::spending::{SessionSpending, event_size};
-use crate::sync::relay;
+use crate::spending::{SessionSpending, Spent, event_size};
 use crate::sync::{Message, Quota, SubscriptionId};
 
 /// The largest event the store accepts, whatever the peer's standing.
@@ -29,9 +28,20 @@ pub const MAX_EVENT_BYTES: usize = 64 * 1024;
 /// than a torrent; reconciliation resumes on the next round.
 const NEG_FRAME_BYTES: usize = 4 * 1024;
 
+/// How many forwarded events may wait on their proofs at once.
+///
+/// An event arriving without its proof is unauthorized until one lands, so
+/// holding it is a write a peer gets for free. The cap bounds that write:
+/// past it the oldest waiting event is dropped, and if the proof ever arrives
+/// the event comes back on the next encounter.
+const MAX_PENDING: usize = 64;
+
 /// Why an event this device was offered was not stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rejected {
+    /// The id is not the hash of the event, so nothing that commits to the id
+    /// says anything about these bytes.
+    Forged,
     /// Neither authored by the peer nor carrying a proof designated to this
     /// device.
     Unauthorized,
@@ -63,25 +73,28 @@ pub struct Negotiation {
 impl Negotiation {
     /// Begin diffing against `filter`, returning the opening frame to send.
     ///
-    /// The local set is whatever this device would offer this peer under the
-    /// filter — the same query the relay half serves, since both halves of the
-    /// exchange are over the same store.
-    pub fn begin(db: &Db, peer: &Peer, filter: Filter) -> Result<(Self, Message)> {
-        let local = SyncSet::from_items(
-            db_query::list_events(db, &relay::query_for(peer, filter.clone()))?
-                .into_iter()
-                .map(|event| Item {
-                    timestamp: event.created_at,
-                    id: event.id,
-                }),
-        );
+    /// The local set is everything this device **holds** under the filter, not
+    /// what it would serve this peer. The question a reconciliation answers is
+    /// what this device is missing, so an event it already holds has to be in
+    /// the set whether or not this peer could be offered it — otherwise every
+    /// second-hop event, which sits in the `Held` register and is offerable to
+    /// nobody, is reported missing on every encounter, re-fetched, and
+    /// re-dropped as a duplicate. Reconciliation would never converge, and the
+    /// peer would spend its quota redelivering what this device already has.
+    ///
+    /// The relay half bounds its own answers separately, in
+    /// [`reconcilable`](crate::sync::relay::reconcilable), so nothing here
+    /// widens what this device will serve.
+    pub fn begin(db: &Db, filter: Filter) -> Result<(Self, Message)> {
+        let held = crate::model::Query::new().with_filter(filter.clone());
+        let local = SyncSet::from_items(db_query::list_events(db, &held)?.into_iter().map(
+            |event| Item {
+                timestamp: event.created_at,
+                id: event.id,
+            },
+        ));
 
-        let subscription = {
-            let mut id = [0u8; 8];
-            let _ = getrandom::getrandom(&mut id);
-
-            SubscriptionId(hex::encode(id))
-        };
+        let subscription = fresh_subscription()?;
         let negotiation = Self {
             subscription,
             filter,
@@ -160,6 +173,14 @@ impl Fetch {
     }
 }
 
+/// A fresh subscription id, distinct across sessions and peers.
+fn fresh_subscription() -> Result<SubscriptionId> {
+    let mut id = [0u8; 8];
+    getrandom::getrandom(&mut id).context("generating a subscription id")?;
+
+    Ok(SubscriptionId(hex::encode(id)))
+}
+
 /// The client half's state, held by the session for the life of the link.
 #[derive(Default)]
 pub struct Client {
@@ -168,6 +189,9 @@ pub struct Client {
     /// Fetches in the `REQ` phase, pulling the ids a finished negotiation
     /// found missing.
     fetches: BTreeMap<SubscriptionId, Fetch>,
+    /// The standing subscription for what the peer writes from now on, once
+    /// reconciliation has settled what both sides already held.
+    live: Option<SubscriptionId>,
     /// Events the peer forwarded that are waiting on their authorship proof.
     pending_events: BTreeMap<EventId, HashedEvent>,
     /// Authorship proofs waiting on the event they prove.
@@ -189,11 +213,40 @@ impl Client {
         self.negotiations.contains_key(subscription)
     }
 
+    /// Whether this device is still waiting on the peer for something it asked
+    /// for: a reconciliation round, a page of a fetch, or a proof for an event
+    /// already in hand.
+    #[must_use]
+    pub fn is_awaiting(&self) -> bool {
+        !self.negotiations.is_empty() || !self.fetches.is_empty() || !self.pending_events.is_empty()
+    }
+
+    /// Ask the peer for what it writes from here on, once per session.
+    ///
+    /// Reconciliation settles what the two already hold; without a standing
+    /// subscription a note written while both are still in range would wait
+    /// for the next encounter, which is the one thing being in range is for.
+    /// `docs/storage.md` — a write is gossiped as it happens.
+    fn open_live(&mut self) -> Result<Option<Message>> {
+        if self.live.is_some() {
+            return Ok(None);
+        }
+
+        let subscription = fresh_subscription()?;
+        self.live = Some(subscription.clone());
+
+        Ok(Some(Message::Req(
+            subscription,
+            vec![Filter::new().add_since(clock::now())],
+        )))
+    }
+
     /// Handle a message this device's client half received.
     pub fn handle(
         &mut self,
         db: &Db,
         peer: &Peer,
+        local: &LocalIdentity,
         message: Message,
         quota: Quota,
         spending: &mut SessionSpending,
@@ -201,7 +254,7 @@ impl Client {
         // The quota is tested against the rolling window, which this
         // session's own accepts land in too, so a reconnect cannot refill
         // what a drive-by already spent.
-        let (events, bytes) = spending.total(peer);
+        let spent = spending.spent(peer);
 
         match message {
             Message::Event(subscription, event) => {
@@ -210,20 +263,22 @@ impl Client {
 
                 if let Some(proof) = &proof {
                     // Second hop: the proof authorizes the forwarded event.
-                    if admits(peer, &event, Some(proof), quota, events, bytes).is_ok() {
-                        ingest(db, peer, &event, Some(proof))?;
+                    if admits(peer, &event, Some(proof), quota, spent).is_ok() {
+                        ingest(db, peer, local, &event, Some(proof))?;
                         spending.record(peer, &event);
                     }
                 } else if peer.authored(event.as_ref()) {
                     // First hop: the authenticated session is the proof.
-                    if admits(peer, &event, None, quota, events, bytes).is_ok() {
-                        ingest(db, peer, &event, None)?;
+                    if admits(peer, &event, None, quota, spent).is_ok() {
+                        ingest(db, peer, local, &event, None)?;
                         spending.record(peer, &event);
                     }
-                } else {
+                } else if holdable(peer, &event, quota, spent) {
                     // Forwarded without its proof yet; hold it until one
-                    // arrives.
+                    // arrives, having already checked everything a proof
+                    // cannot change.
                     self.pending_events.insert(id, *event);
+                    bound(&mut self.pending_events);
                 }
 
                 // Whether stored, held or rejected, it is no longer wanted.
@@ -234,7 +289,7 @@ impl Client {
                 Ok(Vec::new())
             }
             Message::RecipientSignature(_, event_id, sig) => {
-                store_signature(db, peer, event_id, &sig);
+                store_signature(db, peer, local, event_id, &sig);
 
                 Ok(Vec::new())
             }
@@ -243,13 +298,14 @@ impl Client {
 
                 match self.pending_events.remove(&event_id) {
                     Some(event) => {
-                        if admits(peer, &event, Some(&proof), quota, events, bytes).is_ok() {
-                            ingest(db, peer, &event, Some(&proof))?;
+                        if admits(peer, &event, Some(&proof), quota, spent).is_ok() {
+                            ingest(db, peer, local, &event, Some(&proof))?;
                             spending.record(peer, &event);
                         }
                     }
                     None => {
                         self.pending_proofs.insert(event_id, proof);
+                        bound(&mut self.pending_proofs);
                     }
                 }
 
@@ -260,18 +316,30 @@ impl Client {
                     bail!("a NEG-MSG arrived for a subscription that is not open");
                 };
 
-                let replies = negotiation.step(&frame)?;
+                let mut replies = negotiation.step(&frame)?;
 
                 // The terminating reply is a REQ on the same subscription: the
                 // exchange is over and the fetch for what it wants begins.
-                if matches!(replies.last(), Some(Message::Req(sub, _)) if *sub == subscription) {
-                    let need = negotiation.need().iter().copied().collect::<BTreeSet<_>>();
+                let terminated =
+                    matches!(replies.last(), Some(Message::Req(sub, _)) if *sub == subscription);
+                let need: BTreeSet<EventId> = if terminated {
+                    negotiation.need().iter().copied().collect()
+                } else {
+                    BTreeSet::new()
+                };
 
+                if terminated {
                     self.negotiations.remove(&subscription);
 
-                    if !need.is_empty() {
+                    if need.is_empty() {
+                        // The terminating REQ would carry an empty id set,
+                        // which matches nothing and is not worth a round trip.
+                        replies.pop();
+                    } else {
                         self.fetches.insert(subscription.clone(), Fetch::new(need));
                     }
+
+                    replies.extend(self.open_live()?);
                 }
 
                 Ok(replies)
@@ -308,9 +376,34 @@ impl Client {
     }
 }
 
+/// Whether a forwarded event is worth holding while its proof is outstanding.
+///
+/// [`admits`] cannot run yet — the proof is the missing half — but everything
+/// it tests that a proof could not change runs now, so a peer cannot make this
+/// device buffer what it could never store. Only the two-register
+/// authorization is deferred.
+fn holdable(peer: &Peer, event: &HashedEvent, quota: Quota, spent: Spent) -> bool {
+    admissible(peer, event, quota, spent).is_ok()
+}
+
+/// Drop the oldest entries until a pending map is back under [`MAX_PENDING`].
+///
+/// Oldest by event id rather than by arrival, which is arbitrary but bounded:
+/// what matters is that a peer cannot grow the map without limit, and anything
+/// evicted returns on the next encounter.
+fn bound<T>(pending: &mut BTreeMap<EventId, T>) {
+    while pending.len() > MAX_PENDING {
+        let Some(oldest) = pending.keys().next().copied() else {
+            return;
+        };
+
+        pending.remove(&oldest);
+    }
+}
+
 /// Store the author's signature over an event, once it verifies against the
 /// stored event and names this device.
-fn store_signature(db: &Db, peer: &Peer, event_id: EventId, sig: &[u8; 64]) {
+fn store_signature(db: &Db, peer: &Peer, local: &LocalIdentity, event_id: EventId, sig: &[u8; 64]) {
     let Ok(Some(event)) = db_query::get_event(db, &event_id) else {
         return;
     };
@@ -320,15 +413,21 @@ fn store_signature(db: &Db, peer: &Peer, event_id: EventId, sig: &[u8; 64]) {
         return;
     }
 
-    let signature = RecipientSignature {
-        event_id,
-        author_pubkey: event.pubkey,
-        recipient_pubkey: peer.identity,
-        sig: *sig,
-    };
+    // Nothing on the wire says which of this device's identities the author
+    // named, so the one it verifies under is the answer.
+    let named = local.pubkeys().find_map(|identity| {
+        let signature = RecipientSignature {
+            event_id,
+            author_pubkey: event.pubkey,
+            recipient_pubkey: *identity,
+            sig: *sig,
+        };
 
-    if signature.verifies() {
-        let _ = command::receive_signature(db, &event_id, sig, &peer.identity);
+        signature.verifies().then_some(*identity)
+    });
+
+    if let Some(identity) = named {
+        let _ = command::receive_signature(db, &event_id, sig, &identity);
     }
 }
 
@@ -344,14 +443,41 @@ pub fn admits(
     event: &HashedEvent,
     proof: Option<&AuthorshipProof>,
     quota: Quota,
-    events: u32,
-    bytes: u64,
+    spent: Spent,
 ) -> Result<(), Rejected> {
-    if peer.is_blocked() {
+    admissible(peer, event, quota, spent)?;
+
+    // The two registers, and nothing else widens them.
+    if !peer.authored(event) && proof.is_none() {
         return Err(Rejected::Unauthorized);
     }
 
-    if !peer.authored(event) && proof.is_none() {
+    Ok(())
+}
+
+/// Everything that disqualifies an event whatever authorizes it.
+///
+/// Split out from [`admits`] so a forwarded event waiting on its proof can be
+/// tested against all of it before this device agrees to hold the event at
+/// all. Authorization is the one thing a later proof can change; integrity,
+/// standing, size, quota and scope are not.
+fn admissible(
+    peer: &Peer,
+    event: &HashedEvent,
+    quota: Quota,
+    spent: Spent,
+) -> Result<(), Rejected> {
+    // Both registers authorize an id, not a body: the session says the peer
+    // authored the event with this id, and a proof commits to the id alone. An
+    // event whose id is not its own hash therefore carries no authorization at
+    // all, whatever else it presents. Checked at the wire boundary too
+    // ([`crate::sync::message::id_is_authentic`]); repeated here because this
+    // is the function that decides what may be stored.
+    if !crate::sync::message::id_is_authentic(event) {
+        return Err(Rejected::Forged);
+    }
+
+    if peer.is_blocked() {
         return Err(Rejected::Unauthorized);
     }
 
@@ -359,7 +485,19 @@ pub fn admits(
         return Err(Rejected::TooLarge);
     }
 
-    if events >= quota.events || bytes + event_size(event) as u64 > quota.bytes {
+    let size = event_size(event) as u64;
+
+    if spent.events >= quota.events || spent.bytes + size > quota.bytes {
+        return Err(Rejected::OverQuota);
+    }
+
+    // A stranger is bounded twice: by its own budget above, and by what every
+    // stranger together has already taken. The second is what a fresh keypair
+    // cannot reset. `docs/sync.md#quotas`.
+    if !peer.is_trusted()
+        && (spent.pooled_events >= Quota::STRANGER_POOL.events
+            || spent.pooled_bytes + size > Quota::STRANGER_POOL.bytes)
+    {
         return Err(Rejected::OverQuota);
     }
 
@@ -377,6 +515,7 @@ pub fn admits(
 pub fn ingest(
     db: &Db,
     peer: &Peer,
+    local: &LocalIdentity,
     event: &HashedEvent,
     proof: Option<&AuthorshipProof>,
 ) -> Result<bool> {
@@ -384,12 +523,17 @@ pub fn ingest(
     // the event with one of the peer's own pubkeys as holder. When the peer
     // authored the event, the session is itself the proof and none is needed.
     if let Some(proof) = proof {
+        // Which of the peer's identities holds the author's signature, and
+        // which of this device's it was designated to, are both unnamed on the
+        // wire — so the pair it verifies under is the pair it was built for.
         let verified = peer.pubkeys().any(|holder| {
-            proof.verifies(&AuthorshipClaim {
-                event_id: event.id,
-                author: event.pubkey,
-                holder: *holder,
-                verifier: peer.identity,
+            local.pubkeys().any(|verifier| {
+                proof.verifies(&AuthorshipClaim {
+                    event_id: event.id,
+                    author: event.pubkey,
+                    holder: *holder,
+                    verifier: *verifier,
+                })
             })
         });
 
@@ -400,7 +544,7 @@ pub fn ingest(
 
     let seen_from: Vec<coracle_lib::keys::PublicKey> = peer.pubkeys().copied().collect();
 
-    command::receive_event(db, event, &seen_from, None, &peer.identity, clock::now())
+    command::receive_event(db, event, &seen_from, clock::now())
 }
 
 #[cfg(test)]
@@ -427,14 +571,17 @@ mod tests {
         Peer::bind(LinkId(1), pubkeys, &Policy::new(us()))
     }
 
+    /// This device's identity in these tests.
+    fn local() -> LocalIdentity {
+        LocalIdentity::new(us())
+    }
+
     fn note_from(n: u8, at: i64) -> HashedEvent {
         note(author(n), at, "content", Tags::new())
     }
 
     fn open(db: &Db, filter: Filter) -> Result<(Negotiation, Message)> {
-        let peer = peer([author(2)]);
-
-        Negotiation::begin(db, &peer, filter)
+        Negotiation::begin(db, filter)
     }
 
     fn spending() -> SessionSpending {
@@ -446,7 +593,10 @@ mod tests {
         let event = note_from(2, 100);
         let peer = peer([author(2)]);
 
-        assert_eq!(admits(&peer, &event, None, Quota::STRANGER, 0, 0), Ok(()));
+        assert_eq!(
+            admits(&peer, &event, None, Quota::STRANGER, Spent::default()),
+            Ok(())
+        );
     }
 
     #[test]
@@ -455,7 +605,7 @@ mod tests {
         let peer = peer([author(2)]);
 
         assert_eq!(
-            admits(&peer, &event, None, Quota::STRANGER, 0, 0),
+            admits(&peer, &event, None, Quota::STRANGER, Spent::default()),
             Err(Rejected::Unauthorized)
         );
     }
@@ -469,7 +619,7 @@ mod tests {
         let event = note_from(2, 100);
 
         assert_eq!(
-            admits(&peer, &event, None, Quota::STRANGER, 0, 0),
+            admits(&peer, &event, None, Quota::STRANGER, Spent::default()),
             Err(Rejected::Unauthorized)
         );
     }
@@ -483,7 +633,7 @@ mod tests {
         let event = note_from(2, 100);
 
         assert_eq!(
-            admits(&peer, &event, None, Quota::STRANGER, 0, 0),
+            admits(&peer, &event, None, Quota::STRANGER, Spent::default()),
             Err(Rejected::OutOfScope)
         );
     }
@@ -499,8 +649,10 @@ mod tests {
                 &event,
                 None,
                 Quota::STRANGER,
-                Quota::STRANGER.events,
-                0
+                Spent {
+                    events: Quota::STRANGER.events,
+                    ..Spent::default()
+                },
             ),
             Err(Rejected::OverQuota)
         );
@@ -512,23 +664,22 @@ mod tests {
 
         // One event admitted now, one just inside the window.
         clock::at(1_000, || {
-            ledger.record(&author(2), 10);
+            ledger.record(&author(2), false, 10);
         });
         clock::at(2_000, || {
-            ledger.record(&author(2), 20);
+            ledger.record(&author(2), false, 20);
 
             // Both are inside the window at one instant past the first.
             let spending = SessionSpending::new(Arc::clone(&ledger));
-            let (events, _) = spending.total(&peer([author(2)]));
-            assert_eq!(events, 2);
+            assert_eq!(spending.spent(&peer([author(2)])).events, 2);
         });
 
         // …and the first has fallen out just past the window.
         clock::at(1_000 + crate::spending::WINDOW_SECONDS + 1, || {
             let spending = SessionSpending::new(Arc::clone(&ledger));
-            let (events, bytes) = spending.total(&peer([author(2)]));
-            assert_eq!(events, 1, "the stale event fell out of the window");
-            assert!(bytes > 0);
+            let spent = spending.spent(&peer([author(2)]));
+            assert_eq!(spent.events, 1, "the stale event fell out of the window");
+            assert!(spent.bytes > 0);
         });
     }
 
@@ -539,12 +690,12 @@ mod tests {
         clock::at(1_000, || {
             // A past session already spent the stranger budget in the window.
             for _ in 0..Quota::STRANGER.events {
-                ledger.record(&author(2), 1);
+                ledger.record(&author(2), false, 1);
             }
 
             // A fresh session sees the same spent budget and is over quota.
             let spending = SessionSpending::new(Arc::clone(&ledger));
-            let (events, bytes) = spending.total(&peer([author(2)]));
+            let spent = spending.spent(&peer([author(2)]));
 
             assert_eq!(
                 admits(
@@ -552,12 +703,51 @@ mod tests {
                     &note_from(2, 200),
                     None,
                     Quota::STRANGER,
-                    events,
-                    bytes,
+                    spent,
                 ),
                 Err(Rejected::OverQuota)
             );
         });
+    }
+
+    #[test]
+    fn the_stranger_pool_refuses_a_peer_whose_own_budget_is_untouched() {
+        // A burner arrives with a clean per-peer meter and is still refused,
+        // because the ceiling it runs into is not keyed on its identity.
+        let event = note_from(2, 100);
+        let peer = peer([author(2)]);
+
+        let spent = Spent {
+            events: 0,
+            bytes: 0,
+            pooled_events: Quota::STRANGER_POOL.events,
+            pooled_bytes: 0,
+        };
+
+        assert_eq!(
+            admits(&peer, &event, None, Quota::STRANGER, spent),
+            Err(Rejected::OverQuota)
+        );
+    }
+
+    #[test]
+    fn a_trusted_peer_passes_a_spent_stranger_pool() {
+        // "A hard ceiling that cannot crowd out known peers": a full pool is
+        // the strangers' problem, not the trusted peer's.
+        let mut policy = Policy::new(us());
+        policy.graph.trusted.insert(author(2));
+        let peer = Peer::bind(LinkId(1), [author(2)], &policy);
+
+        let spent = Spent {
+            pooled_events: Quota::STRANGER_POOL.events,
+            pooled_bytes: Quota::STRANGER_POOL.bytes,
+            ..Spent::default()
+        };
+
+        assert_eq!(
+            admits(&peer, &note_from(2, 100), None, Quota::TRUSTED, spent),
+            Ok(())
+        );
     }
 
     #[test]
@@ -571,7 +761,7 @@ mod tests {
         let peer = peer([author(2)]);
 
         assert_eq!(
-            admits(&peer, &event, None, Quota::STRANGER, 0, 0),
+            admits(&peer, &event, None, Quota::STRANGER, Spent::default()),
             Err(Rejected::TooLarge)
         );
     }
@@ -587,7 +777,7 @@ mod tests {
         let proof = AuthorshipProof::prove(&signature, us()).unwrap();
         let peer = peer([holder]);
 
-        assert!(ingest(&db, &peer, &forwarded, Some(&proof)).unwrap());
+        assert!(ingest(&db, &peer, &local(), &forwarded, Some(&proof)).unwrap());
 
         let stored = db_query::list_events(&db, &Query::new()).unwrap();
         assert_eq!(stored, vec![forwarded]);
@@ -604,7 +794,7 @@ mod tests {
         // The peer proved a different pubkey than the signature names.
         let peer = peer([author(4)]);
 
-        assert!(!ingest(&db, &peer, &forwarded, Some(&proof)).unwrap());
+        assert!(!ingest(&db, &peer, &local(), &forwarded, Some(&proof)).unwrap());
         assert!(
             db_query::list_events(&db, &Query::new())
                 .unwrap()
@@ -623,7 +813,7 @@ mod tests {
         let proof = AuthorshipProof::prove(&signature, author(5)).unwrap();
         let peer = peer([author(2)]);
 
-        assert!(!ingest(&db, &peer, &forwarded, Some(&proof)).unwrap());
+        assert!(!ingest(&db, &peer, &local(), &forwarded, Some(&proof)).unwrap());
     }
 
     #[test]
@@ -697,6 +887,7 @@ mod tests {
             .handle(
                 &db,
                 &peer([author(2)]),
+                &local(),
                 Message::Event(subscription.clone(), Box::new(first.clone())),
                 Quota::STRANGER,
                 &mut spending(),
@@ -709,6 +900,7 @@ mod tests {
             .handle(
                 &db,
                 &peer([author(2)]),
+                &local(),
                 Message::Eose(subscription.clone()),
                 Quota::STRANGER,
                 &mut spending(),
@@ -744,6 +936,7 @@ mod tests {
             .handle(
                 &db,
                 &peer([author(2)]),
+                &local(),
                 Message::Eose(subscription.clone()),
                 Quota::STRANGER,
                 &mut spending(),
@@ -772,6 +965,7 @@ mod tests {
             .handle(
                 &db,
                 &peer([author(2)]),
+                &local(),
                 Message::Event(subscription.clone(), Box::new(event.clone())),
                 Quota::STRANGER,
                 &mut spending(),
@@ -782,6 +976,7 @@ mod tests {
             .handle(
                 &db,
                 &peer([author(2)]),
+                &local(),
                 Message::Eose(subscription.clone()),
                 Quota::STRANGER,
                 &mut spending(),
@@ -810,6 +1005,7 @@ mod tests {
             .handle(
                 &db,
                 &peer([author(2)]),
+                &local(),
                 Message::Event(subscription.clone(), Box::new(forwarded.clone())),
                 Quota::STRANGER,
                 &mut spending(),
@@ -833,6 +1029,7 @@ mod tests {
             .handle(
                 &db,
                 &peer([author(2)]),
+                &local(),
                 Message::AuthorshipProof(subscription, forwarded.id, Box::new(proof.to_bytes())),
                 Quota::STRANGER,
                 &mut spending(),
@@ -856,6 +1053,7 @@ mod tests {
             .handle(
                 &db,
                 &peer([author(2)]),
+                &local(),
                 Message::Event(SubscriptionId("sub".into()), Box::new(forwarded)),
                 Quota::STRANGER,
                 &mut spending(),
@@ -882,6 +1080,7 @@ mod tests {
             .handle(
                 &db,
                 &peer([author(2)]),
+                &local(),
                 Message::RecipientSignature(
                     SubscriptionId("sub".into()),
                     event.id,
