@@ -4,15 +4,17 @@
 //! tables mean to each other
 
 use anyhow::{Context, Result};
+use coracle_kinds::delete::{self, DeleteReader};
 use coracle_lib::addresses::{Address, EventExtensionAddress};
 use coracle_lib::events::{EventId, HashedEvent};
 use coracle_lib::keys::PublicKey;
 use coracle_lib::kinds::is_ephemeral;
+use coracle_lib::readers::Reader;
 use rusqlite::params;
 
 use crate::db::Tx;
 use crate::db::sql::event_id_from_sql;
-use crate::model::{KIND_DELETE, Provenance};
+use crate::model::Provenance;
 
 use super::channel::{self, EventChange};
 use super::query;
@@ -54,7 +56,7 @@ pub fn save(tx: &Tx<'_>, event: &HashedEvent, from: &[PublicKey], seen_at: i64) 
     channel::notify(tx, EventChange::Stored(Box::new(event.clone())));
     record_seen_all(tx, &event.id, from, seen_at)?;
 
-    if event.kind == KIND_DELETE {
+    if event.kind == delete::KIND {
         apply_deletion(tx, event)?;
     }
 
@@ -238,30 +240,27 @@ fn insert(tx: &Tx<'_>, event: &HashedEvent, id: &str, seen_at: i64) -> Result<()
 }
 
 /// Apply a kind 5, deleting the events it names that its author wrote.
-fn apply_deletion(tx: &Tx<'_>, deletion: &HashedEvent) -> Result<()> {
-    for id in deletion.tags.values("e") {
-        let Ok(id) = EventId::from_hex(id) else {
-            continue;
-        };
-        let Some(target) = query::get(tx, &id)? else {
+fn apply_deletion(tx: &Tx<'_>, event: &HashedEvent) -> Result<()> {
+    let Ok(deletion) = DeleteReader::read(event) else {
+        return Ok(());
+    };
+
+    for id in deletion.ids() {
+        let Some(target) = query::get(tx, id)? else {
             continue;
         };
 
-        if target.pubkey == deletion.pubkey {
+        if deletion.matches(&target) {
             delete(tx, &target.id)?;
         }
     }
 
-    for value in deletion.tags.values("a") {
-        let Ok(address) = value.parse::<Address>() else {
+    for address in deletion.addresses() {
+        let Some(target) = query::by_address(tx, address)? else {
             continue;
         };
 
-        let Some(target) = query::by_address(tx, &address)? else {
-            continue;
-        };
-
-        if target.pubkey == deletion.pubkey && target.created_at <= deletion.created_at {
+        if deletion.matches(&target) {
             delete(tx, &target.id)?;
         }
     }
@@ -423,7 +422,7 @@ mod tests {
 
         let deletion = event(
             author(1),
-            KIND_DELETE,
+            delete::KIND,
             200,
             "",
             Tags::new()
@@ -453,7 +452,7 @@ mod tests {
         let address = article.address().unwrap().to_string();
         let deletion = event(
             author(1),
-            KIND_DELETE,
+            delete::KIND,
             200,
             "",
             Tags::new().add("a", [address]),
@@ -471,7 +470,7 @@ mod tests {
         let subject = note(author(1), 100, "deleted", Tags::new());
         let deletion = event(
             author(1),
-            KIND_DELETE,
+            delete::KIND,
             200,
             "",
             Tags::new().add("e", [id(&subject).to_hex()]),

@@ -44,6 +44,18 @@ A frame is the concatenation of its fragments' payloads. Reassembly is per chann
 
 An empty payload is still one fragment: the frame itself is the signal, which is what the heartbeat is.
 
+#### The control channel's header
+
+Channel 0 carries three kinds of application frame, distinguished by a payload byte naming which:
+
+| Byte | Frame | Payload |
+| --- | --- | --- |
+| `0x01` | Recognition tags | The [tag list](./discovery.md#recognition) |
+| `0x02` | Mutual `AUTH` | `["AUTH", <challenge>]` or `["AUTH", <event>]`, exactly as NIP-42 writes them |
+| `0x03` | Heartbeat | Nothing |
+
+Both directions of `AUTH` share one byte, because the message names itself. The handshake travels on the same channel with no byte: its frames are the only ones to arrive before the channel is encrypted, and they are raw Noise messages read by the peer's handshake state rather than by anything that dispatches on a byte. Channels 1 and 2 need no byte either, since both carry NIP-01 arrays, which name themselves in their first element.
+
 **The payload is sealed as it leaves the queue, not as it is queued.** The transport cipher steps a nonce per message and keeps no window, while the scheduler lets a control frame overtake queued bulk; sealing at enqueue would hand the peer ciphertext in an order it cannot open. The handshake is the exception: its messages are queued in the clear and stay that way even though the sender's own session may already have finished, because the peer must read them with its handshake state.
 
 ### Throughput

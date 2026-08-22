@@ -42,7 +42,6 @@ const FILENAME: &str = "dip.sqlite";
 pub struct Db {
     /// The connection, locked for the life of one transaction.
     connection: Mutex<Connection>,
-    /// What this store's writes announce on.
     /// What this store's writes announce on. Used by the domain `channel`
     /// modules to subscribe; nothing else should need it.
     pub(crate) channels: Channels,

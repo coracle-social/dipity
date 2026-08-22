@@ -1,7 +1,9 @@
 //! The types the store is expressed in.
 //!
-//! One file per type, and every type re-exported here, so a caller writes
-//! `crate::model::Policy` and where a type is defined stays an implementation
+//! One file per type — with [`kinds`] the exception, which holds the kinds
+//! this app defines, a reader and a writer each — and every type
+//! re-exported here, so a caller writes `crate::model::Policy` and where a
+//! type is defined stays an implementation
 //! detail. It has to be organized this way round because the reads and writes
 //! are organized the other: [`crate::db`] groups by table, and what a type
 //! means does not have to line up with which table holds it — [`Policy`] is
@@ -21,7 +23,7 @@ mod authorship_proof;
 mod blob;
 mod graph;
 mod identity;
-mod kind;
+mod kinds;
 mod order;
 mod policy;
 mod pref;
@@ -37,7 +39,10 @@ pub use authorship_proof::{AuthorshipClaim, AuthorshipProof};
 pub use blob::{Blob, BlobHash, BlobRole};
 pub use graph::{Graph, Standing};
 pub use identity::Identity;
-pub use kind::{KIND_DELETE, KIND_MUTE, KIND_PROFILE};
+pub use kinds::{
+    BLOCK, BlockListReader, BlockListWriter, MUTE, MuteListReader, MuteListWriter,
+    PeopleListReader, PeopleListWriter, TRUST, TrustListReader, TrustListWriter,
+};
 pub use order::Order;
 pub use policy::{DISCLOSURE_WINDOW_SECONDS, PeerPolicy, Policy};
 pub use pref::{Pref, keys};

@@ -22,6 +22,9 @@ uniffi = "0.32"
 # line for `{ git = "…", rev = "…" }` once coracle-lib ships a release — which
 # has to happen before this app does. See README.md.
 coracle-lib = { path = "../../coracle-rust/coracle-lib" }
+# A reader and a writer per kind, over the vocabulary in `coracle_lib`'s
+# `readers` and `writers`. Same checkout, same caveat.
+coracle-kinds = { path = "../../coracle-rust/coracle-kinds" }
 hex = "0.4"
 
 # Signing and signature verification, on the audited binding — pinned to the

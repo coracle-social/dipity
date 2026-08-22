@@ -26,9 +26,13 @@ The cool-off window carries most of the gate: at its default, checking the app o
 
 There are certain classifications that users may wish to use to tag other users:
 
-- Trust - the user trusts this person (kind xxxxx)
-- Block - the user has blocked this person (kind xxxxx)
+- Trust - the user trusts this person (kind 16017)
+- Block - the user has blocked this person (kind 16018)
 - Mute - the user has muted this person (kind 10000)
+
+Each is a replaceable event whose `p` tags name people, so the current list is one lookup at `<kind>:<pubkey>:` and an edit supersedes what came before. **The first two kinds are ours rather than NIP-51's**, because a trust list here is not a curation of people to read — it decides who is handed the author's signature, which is permanent transferable attribution. A generic list editor in another client must not be able to grant that without knowing it has.
+
+**Neither is encrypted.** NIP-51 keeps private entries as ciphertext in `content`, which would put them beyond the peers who need them — trusted peers read these lists by design. What keeps them from anyone else is [Visibility](#visibility).
 
 Every setting below is expressed on the same tiers, applied either to the peer on the other end of a session or to the author of an event:
 
@@ -36,6 +40,8 @@ Every setting below is expressed on the same tiers, applied either to the peer o
 - **Network** - people the user transitively trusts, two hops out.
 - **Lenient** - anyone who connects, except blocked pubkeys.
 - **Public** - anyone; [proofs are generated](./proofs.md) for whatever the setting covers. Visibility settings only.
+
+Network is the union of the trust lists published by everyone in Trusted. It is derived rather than stored, from whichever of those lists the device holds, so a trusted person whose list has not arrived yet contributes nobody.
 
 ## A device, not a pubkey
 

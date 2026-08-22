@@ -11,12 +11,13 @@ use std::collections::BTreeSet;
 use anyhow::{Context, Result};
 use coracle_lib::addresses::Address;
 use coracle_lib::keys::PublicKey;
+use coracle_lib::readers::Reader;
 use rusqlite::{Row, params};
 use serde::de::DeserializeOwned;
 
 use crate::db::Tx;
 use crate::db::event::query as event;
-use crate::model::{Graph, KIND_MUTE, Policy, Pref, keys};
+use crate::model::{BLOCK, Graph, MUTE, PeopleListReader, Policy, Pref, TRUST, keys};
 
 /// One preference's raw JSON value, or `None` if it has never been written —
 /// which is how a default is expressed.
@@ -100,41 +101,50 @@ pub fn policy(tx: &Tx<'_>, identity: &PublicKey) -> Result<Policy> {
 
 /// The user's trust graph, from the lists they have published.
 ///
-/// Only the mute list is readable today: `docs/policy.md` has yet to assign
-/// kinds to trust and block, so those tiers stay empty and every scope narrower
-/// than `lenient` admits nobody. That is the conservative direction to be wrong
-/// in — a device that trusts no one relays nothing but its own — and it is
-/// where the trust and block lists get read once the kinds exist.
+/// Three of the four tiers are lists the user wrote. The fourth is derived:
+/// `network` is the union of the trust lists of everyone in `trusted`, over
+/// whichever of those lists this device happens to hold — so a trusted person
+/// whose list has not arrived contributes nobody, and the tier grows as the
+/// graph does.
 ///
-/// A NIP-51 list carries private entries encrypted to the author in `content`.
-/// Decrypting is the signing key's job and not this layer's, so what is read
-/// here is the public half.
+/// It stops there. Reading the trust lists of people in `network` would grow
+/// the tier until it meant nothing, and a person two hops out is reachable
+/// rather than trusted. `docs/policy.md#social-graph`.
+///
+/// One indexed lookup per trusted pubkey, plus three. This runs when a session
+/// opens and when a preference changes, not per event.
 fn graph(tx: &Tx<'_>, identity: &PublicKey) -> Result<Graph> {
+    let trusted = listed::<TRUST>(tx, identity)?;
+    let mut network = BTreeSet::new();
+
+    for pubkey in &trusted {
+        network.extend(listed::<TRUST>(tx, pubkey)?);
+    }
+
     Ok(Graph {
-        trusted: BTreeSet::new(),
-        network: BTreeSet::new(),
-        blocked: BTreeSet::new(),
-        muted: listed(tx, identity, KIND_MUTE)?,
+        trusted,
+        network,
+        blocked: listed::<BLOCK>(tx, identity)?,
+        muted: listed::<MUTE>(tx, identity)?,
     })
 }
 
-/// The pubkeys a list the user published names in its public `p` tags.
+/// The pubkeys the list `pubkey` published at `kind` names.
 ///
-/// An entry that is not a pubkey is skipped rather than failing the read: the
-/// list may have been written by another client, and one bad tag should not
-/// cost the user the rest of it.
-fn listed(tx: &Tx<'_>, identity: &PublicKey, kind: u16) -> Result<BTreeSet<PublicKey>> {
-    let address = Address::new(kind, *identity, "");
+/// Both kinds are replaceable, so this is one indexed lookup and the current
+/// list is whatever last superseded the address.
+fn listed<const KIND: u16>(tx: &Tx<'_>, pubkey: &PublicKey) -> Result<BTreeSet<PublicKey>> {
+    let address = Address::new(KIND, *pubkey, "");
 
     let Some(list) = event::by_address(tx, &address)? else {
         return Ok(BTreeSet::new());
     };
 
-    Ok(list
-        .tags
-        .values("p")
-        .filter_map(|value| PublicKey::from_hex(value).ok())
-        .collect())
+    // The event came back from the address, so its kind is KIND and the read
+    // cannot fail on that. Anything else it could fail on leaves no list.
+    Ok(PeopleListReader::<_, KIND>::read(&list)
+        .map(|list| list.pubkeys().iter().copied().collect())
+        .unwrap_or_default())
 }
 
 fn to_pref(row: &Row<'_>) -> rusqlite::Result<Pref> {
@@ -193,6 +203,116 @@ mod tests {
         assert!(policy(&tx, &author(1)).is_err());
     }
 
+    /// Publish `pubkey`'s list of `kind` naming `names`.
+    fn publish_list(tx: &Tx<'_>, pubkey: PublicKey, kind: u16, names: &[PublicKey], at: i64) {
+        let tags = names
+            .iter()
+            .fold(Tags::new(), |tags, named| tags.add("p", [named.to_hex()]));
+
+        event_command::save(tx, &event(pubkey, kind, at, "", tags), &[peer()], at).unwrap();
+    }
+
+    #[test]
+    fn the_graph_reads_the_trust_and_block_lists() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let us = author(1);
+
+        publish_list(&tx, us, TRUST, &[author(2), author(3)], 100);
+        publish_list(&tx, us, BLOCK, &[author(4)], 100);
+
+        let graph = policy(&tx, &us).unwrap().graph;
+
+        assert_eq!(graph.trusted, [author(2), author(3)].into());
+        assert_eq!(graph.blocked, [author(4)].into());
+        assert_eq!(graph.standing(&author(2)), Standing::Trusted);
+        assert_eq!(graph.standing(&author(4)), Standing::Blocked);
+        assert_eq!(graph.standing(&author(9)), Standing::Stranger);
+    }
+
+    #[test]
+    fn network_is_the_union_of_the_trust_lists_of_trusted_people() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let us = author(1);
+
+        publish_list(&tx, us, TRUST, &[author(2), author(3)], 100);
+        publish_list(&tx, author(2), TRUST, &[author(5)], 100);
+        publish_list(&tx, author(3), TRUST, &[author(6)], 100);
+        // A stranger's list reaches nobody, however many people it names.
+        publish_list(&tx, author(9), TRUST, &[author(7)], 100);
+
+        let graph = policy(&tx, &us).unwrap().graph;
+
+        assert_eq!(graph.standing(&author(5)), Standing::Network);
+        assert_eq!(graph.standing(&author(6)), Standing::Network);
+        assert_eq!(graph.standing(&author(7)), Standing::Stranger);
+    }
+
+    #[test]
+    fn trust_stops_at_the_second_hop() {
+        // Reading the lists of people in Network would grow the tier until it
+        // meant nothing, so a person three hops out is a stranger.
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let us = author(1);
+
+        publish_list(&tx, us, TRUST, &[author(2)], 100);
+        publish_list(&tx, author(2), TRUST, &[author(3)], 100);
+        publish_list(&tx, author(3), TRUST, &[author(4)], 100);
+
+        let graph = policy(&tx, &us).unwrap().graph;
+
+        assert_eq!(graph.standing(&author(3)), Standing::Network);
+        assert_eq!(graph.standing(&author(4)), Standing::Stranger);
+    }
+
+    #[test]
+    fn a_trusted_person_whose_list_has_not_arrived_contributes_nobody() {
+        // The tier is derived from what this device holds, so it grows as the
+        // graph does rather than failing when part of it is missing.
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let us = author(1);
+
+        publish_list(&tx, us, TRUST, &[author(2)], 100);
+
+        assert!(policy(&tx, &us).unwrap().graph.network.is_empty());
+
+        publish_list(&tx, author(2), TRUST, &[author(5)], 200);
+
+        assert_eq!(policy(&tx, &us).unwrap().graph.network, [author(5)].into());
+    }
+
+    #[test]
+    fn an_edited_list_supersedes_the_one_before_it() {
+        // What the replaceable kind buys: the current list is one lookup, and
+        // dropping someone actually drops them.
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let us = author(1);
+
+        publish_list(&tx, us, TRUST, &[author(2), author(3)], 100);
+        publish_list(&tx, us, TRUST, &[author(2)], 200);
+
+        assert_eq!(policy(&tx, &us).unwrap().graph.trusted, [author(2)].into());
+    }
+
+    #[test]
+    fn someone_elses_lists_are_not_the_users_own() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let us = author(1);
+
+        publish_list(&tx, peer(), TRUST, &[author(8)], 100);
+        publish_list(&tx, peer(), BLOCK, &[author(2)], 100);
+
+        let graph = policy(&tx, &us).unwrap().graph;
+
+        assert!(graph.trusted.is_empty());
+        assert!(graph.blocked.is_empty());
+    }
+
     #[test]
     fn the_graph_reads_the_lists_the_user_published() {
         let mut db = Db::open_in_memory().unwrap();
@@ -201,7 +321,7 @@ mod tests {
         let us = author(1);
         let mutes = event(
             us,
-            KIND_MUTE,
+            MUTE,
             100,
             "",
             Tags::new()
@@ -223,7 +343,7 @@ mod tests {
         // Someone else's mute list is not the user's.
         let theirs = event(
             peer(),
-            KIND_MUTE,
+            MUTE,
             200,
             "",
             Tags::new().add("p", [author(3).to_hex()]),

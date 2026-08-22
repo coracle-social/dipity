@@ -202,7 +202,9 @@ mod tests {
 
     use crate::fixtures::{author, event};
     use crate::model::graph::tests::graph;
-    use crate::model::{KIND_MUTE, KIND_PROFILE};
+    use coracle_kinds::profile;
+
+    use crate::model::MUTE;
 
     /// The device whose policy is under test.
     fn us() -> PublicKey {
@@ -269,9 +271,9 @@ mod tests {
         let stranger = policy.clone().for_pubkey(author(9));
         let trusted = policy.clone().for_pubkey(author(2));
 
-        let profile = event(us(), KIND_PROFILE, 1, "", Tags::new());
+        let profile = event(us(), profile::KIND, 1, "", Tags::new());
         let note = event(us(), 1, 1, "", Tags::new());
-        let mutes = event(us(), KIND_MUTE, 1, "", Tags::new());
+        let mutes = event(us(), MUTE, 1, "", Tags::new());
 
         // The defaults: the mute list to trusted peers, everything else public.
         assert!(stranger.is_visible(&profile));
@@ -279,10 +281,10 @@ mod tests {
         assert!(!stranger.is_visible(&mutes));
         assert!(trusted.is_visible(&mutes));
 
-        assert!(stranger.should_gossip(&event(us(), KIND_PROFILE, 1, "", Tags::new())));
+        assert!(stranger.should_gossip(&event(us(), profile::KIND, 1, "", Tags::new())));
         assert!(stranger.should_gossip(&event(us(), 1, 1, "", Tags::new())));
-        assert!(!stranger.should_gossip(&event(us(), KIND_MUTE, 1, "", Tags::new())));
-        assert!(trusted.should_gossip(&event(us(), KIND_MUTE, 1, "", Tags::new())));
+        assert!(!stranger.should_gossip(&event(us(), MUTE, 1, "", Tags::new())));
+        assert!(trusted.should_gossip(&event(us(), MUTE, 1, "", Tags::new())));
     }
 
     #[test]
@@ -328,6 +330,6 @@ mod tests {
 
         // Blocked outranks every rule, including one this peer would otherwise
         // fall inside.
-        assert!(!blocked.is_visible(&event(us(), KIND_PROFILE, 1, "", Tags::new())));
+        assert!(!blocked.is_visible(&event(us(), profile::KIND, 1, "", Tags::new())));
     }
 }

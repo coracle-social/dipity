@@ -71,17 +71,28 @@ Every state above IDENTIFIED has a deadline of its own as well, independent of t
 
 ### Recognition
 
-The first frames on the secured channel are a recognition exchange, and the consent gate reads its result. At pairing, both sides derive a **pair secret** from the authenticated session and store it against the peer. On a later encounter, each proves it holds one without naming it:
-
-```
-tag = HMAC(pair_secret, h)      # h is this session's Noise handshake hash
-```
-
-The sender emits one tag per pair secret it holds; the receiver trial-MACs its own secrets against the list. A match identifies the relationship.
+The first frames on the secured channel are a recognition exchange, and the consent gate reads its result. At pairing, both sides derive a **pair secret** from the authenticated session and store it against the peer. On a later encounter, each proves it holds one without naming it, by sending a tag that is an HMAC over the session's handshake hash, keyed on the pair secret. The sender emits one tag per pair secret it holds; the receiver trial-MACs its own secrets against the list. A match identifies the relationship.
 
 The dialer sends first, and the peer answers only if a tag resolves or it is inside a discoverable window. A harvester that dials gets a list of random-looking bytes. A peer who would rather not be recognized omits their tag and arrives as a stranger.
 
 The list is padded to a fixed count, so its length does not disclose how many peers the device has paired with, and a long history does not put more on the wire. Resolution stays cheap against the full set.
+
+#### On the wire
+
+The list is 32 tags of 32 bytes concatenated, so every device sends 1024 bytes on every encounter. Raw bytes rather than JSON, because the MTU is what binds this link and an array of decimal integers costs three times as much.
+
+A device holding fewer than 32 pair secrets fills the rest with bytes from the CSPRNG. One holding more sends a random sample, redrawn each session, so a peer left out of one list is in the running for the next rather than permanently invisible. The list is shuffled either way, so a peer that finds its own tag learns nothing from where it sat.
+
+A list of any other length is refused and the link dropped: a short one is malformed, and a long one is an invitation to trial-MAC against an unbounded set.
+
+The secret each tag is keyed on comes from the session that established it:
+
+```
+pair_secret = SHA256("dip/pair-secret" ‖ h)      # h at pairing time
+tag         = HMAC-SHA256(pair_secret, h)        # h at this encounter
+```
+
+Domain-separated, so the secret cannot collide with any other use of the handshake hash. The first pairing for a peer establishes the secret and later encounters leave it alone.
 
 ### The consent gate
 

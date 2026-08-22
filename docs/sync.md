@@ -20,6 +20,21 @@ Sync begins with a NIP 77 NEGENTROPY sync over events accepted from this peer ac
 
 Once the negentropy reconciliation is complete, a regular `REQ` is used to retrieve the desired events. Syncing is paginated in reverse chronological order by `created_at` timestamp with dynamic since/until windows.
 
+### The additions
+
+`REQ`, `EVENT`, `EOSE`, `CLOSE`, `OK`, `AUTH` and `NEG-*` are NIP-01 and NIP-77 unmodified. Four verbs are ours, in the same shape.
+
+| Message | Carries |
+| --- | --- |
+| `["RECIPIENT-SIGNATURE", <sub>, <event id>, <64-byte sig, hex>]` | An author's signature over `event_id ‖ recipient_pubkey`, for an event the sender wrote |
+| `["AUTHORSHIP-PROOF", <sub>, <event id>, <160-byte proof, hex>]` | A designated-verifier proof, for an event the sender is forwarding |
+| `["BLOSSOM-REQ", <id>, <method>, <path>, <headers>, <body>]` | A Blossom request, wrapped because there is no HTTP on the link |
+| `["BLOSSOM-RES", <id>, <status>, <headers>, <body>]` | Its response, correlated by the shared `<id>` |
+
+The first two exist because an unsigned event needs something alongside it that the relay protocol has no way to carry. The proof's 160 bytes are five 32-byte fields in order: the author's signature nonce point, then the challenge and response of the author branch, then the challenge and response of the verifier branch. [`proofs.md`](./proofs.md#authorship-proofs) has the construction.
+
+At most one of the first two accompanies an event. It follows the `EVENT` on the same subscription, and the receiver keys it on the event id rather than on arrival order, since either may be dropped without the other. A device that has neither sends the bare event, which then goes no further than the peer receiving it. The BLOSSOM pair drives [blob sync](#blob-sync).
+
 ### How policy reaches the wire
 
 Policy never becomes a NIP-01 filter. A filter is positive-only, so a scope like "anyone except the people I blocked" has no expression in one, and a filter is something a peer reads — compiling a trust graph into one would hand it over. Scope is applied where the events are read instead.
@@ -58,7 +73,7 @@ To detect the presence of a blob, we first run `HEAD /<sha256>`. This also gives
 
 We then request each group individually using `GET /<sha256>` with `accept-ranges` and `content-length` headers describing a [Bao](https://github.com/oconnor663/bao) slice over that run of groups.
 
-There is no HTTP on a BLE link, so each request is wrapped as `["BLOSSOM-REQ", <id>, <method>, <path>, <headers>, <body>]` and its answer as `["BLOSSOM-RES", <id>, <status>, <headers>, <body>]`, the two correlated by the shared `<id>`.
+Each exchange then travels as the two BLOSSOM verbs of [the additions](#the-additions).
 
 When an event references a blob, we save a record to the `blob` table which maps the sha256 to the blob's metadata - including everything in the `imeta` tag, as well as the id of the event the blob was first referred to (by `seen_at`, not `created_at`), and whether the blob is a `preview` or an `original`. Blobs inherit the permissions of this event.
 

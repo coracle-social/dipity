@@ -42,8 +42,8 @@ Each shell references the artifacts once, from the Capacitor plugin.
 
 ## Adding a dependency
 
-Heavy dependencies go in `[workspace.dependencies]`, added when the module that needs them arrives so version choices stay in one place: `coracle-lib` for nostr types and negentropy, `rusqlite` for the store, `secp256k1` for authorship and auth signing, `k256` for the authorship proof's explicit group arithmetic, `snow` for Noise XX.
+Heavy dependencies go in `[workspace.dependencies]`, added when the module that needs them arrives so version choices stay in one place: `coracle-lib` for nostr types and negentropy, `coracle-kinds` for the reader/writer pair per event kind, `rusqlite` for the store, `secp256k1` for authorship and auth signing, `k256` for the authorship proof's explicit group arithmetic, `snow` for Noise XX.
 
-`coracle-lib` is a **path dependency on a local checkout of `coracle-rust`, for now**. Its `src/` is tangled from `book/` and gitignored upstream, so there is nothing for a git rev to build against — cargo clones the repo and finds no `lib.rs`. Anything we need there is a chapter edit rather than a patch, and hand-editing the tangled source is lost on the next tangle.
+`coracle-lib` and `coracle-kinds` are **path dependencies on a local checkout of `coracle-rust`, for now**. Their `src/` is tangled from `book/` and gitignored upstream, so there is nothing for a git rev to build against — cargo clones the repo and finds no `lib.rs`. Anything we need there is a chapter edit rather than a patch, and hand-editing the tangled source is lost on the next tangle.
 
-**This has to be resolved before the app ships.** A path resolves on one machine: the core builds on a laptop holding a tangled checkout beside this repo, and not in CI. `coracle-lib` needs a release — tangled source on a branch, a published crate, or vendored output — after which this is `{ git = "…", rev = "…" }` or a version, one line in `[workspace.dependencies]` and nothing else.
+**This has to be resolved before the app ships.** A path resolves on one machine: the core builds on a laptop holding a tangled checkout beside this repo, and not in CI. Both crates need a release — tangled source on a branch, a published crate, or vendored output — after which this is `{ git = "…", rev = "…" }` or a version, one line in `[workspace.dependencies]` and nothing else.

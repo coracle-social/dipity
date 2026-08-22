@@ -3,6 +3,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use anyhow::{Context, Result};
+use coracle_kinds::delete;
 use coracle_lib::addresses::{Address, EventExtensionAddress};
 use coracle_lib::events::{EventId, HashedEvent};
 use coracle_lib::filters::{Filter, TagMatch};
@@ -181,7 +182,7 @@ pub fn is_deleted(tx: &Tx<'_>, event: &HashedEvent) -> Result<bool> {
             "SELECT EXISTS (
                  SELECT 1 FROM event d
                  JOIN event_tag t ON t.event_id = d.id
-                 WHERE d.kind = 5
+                 WHERE d.kind = ?5
                    AND d.pubkey = ?1
                    AND (
                      (t.name = 'e' AND t.value = ?2)
@@ -195,6 +196,7 @@ pub fn is_deleted(tx: &Tx<'_>, event: &HashedEvent) -> Result<bool> {
                 id,
                 event.address().map(|address| address.to_string()),
                 event.created_at,
+                delete::KIND,
             ],
             |row| row.get::<_, bool>(0),
         )
@@ -551,13 +553,13 @@ mod tests {
     use super::*;
     use coracle_lib::events::HasId;
 
+    use coracle_kinds::profile;
+
     use crate::db::Db;
     use crate::db::event::command;
     use crate::db::recipient_signature::command as signature;
     use crate::fixtures::{author, event, id, note, peer};
-    use crate::model::{
-        KIND_MUTE, KIND_PROFILE, Policy, RecipientSignature, Scope, Visibility, VisibilityRule,
-    };
+    use crate::model::{MUTE, Policy, RecipientSignature, Scope, Visibility, VisibilityRule};
 
     /// A query narrowed by a NIP-01 filter and nothing else.
     fn matching(filter: Filter) -> Query {
@@ -855,8 +857,8 @@ mod tests {
         policy.graph.trusted.insert(author(2));
         policy.graph.blocked.insert(author(4));
 
-        let profile = event(us, KIND_PROFILE, 100, "", Tags::new());
-        let mutes = event(us, KIND_MUTE, 200, "", Tags::new());
+        let profile = event(us, profile::KIND, 100, "", Tags::new());
+        let mutes = event(us, MUTE, 200, "", Tags::new());
         let ours = note(us, 300, "ours", Tags::new());
         let trusted = note(author(2), 400, "trusted", Tags::new());
         let stranger = note(author(9), 500, "stranger", Tags::new());
@@ -908,7 +910,7 @@ mod tests {
         private.visibility = Visibility {
             rules: vec![
                 VisibilityRule {
-                    filter: Filter::new().add_kinds([KIND_PROFILE]),
+                    filter: Filter::new().add_kinds([profile::KIND]),
                     scope: Scope::Public,
                 },
                 VisibilityRule {
@@ -939,8 +941,8 @@ mod tests {
         let them = author(9);
 
         let events = [
-            event(us, KIND_PROFILE, 100, "", Tags::new()),
-            event(us, KIND_MUTE, 200, "", Tags::new()),
+            event(us, profile::KIND, 100, "", Tags::new()),
+            event(us, MUTE, 200, "", Tags::new()),
             event(us, 1, 300, "plain", Tags::new()),
             event(us, 1, 400, "tagged", Tags::new().add("t", ["work"])),
             event(us, 30_023, 500, "long", Tags::new().add("d", ["post"])),
@@ -954,7 +956,7 @@ mod tests {
 
         let rules = [
             VisibilityRule {
-                filter: Filter::new().add_kinds([KIND_PROFILE]),
+                filter: Filter::new().add_kinds([profile::KIND]),
                 scope: Scope::Public,
             },
             VisibilityRule {

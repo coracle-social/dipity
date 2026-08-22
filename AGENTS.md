@@ -39,7 +39,7 @@ The central constraint on the whole app: **the view is suspended in the backgrou
 
 **Policy is stored as user preferences and interpreted by the core**, because there is no user to prompt during a background wake. The view edits preferences and computes nothing the core depends on — no author set, no trust graph. [`policy.md`](./docs/policy.md), [`discovery.md`](./docs/discovery.md#the-consent-gate).
 
-Peers speak the **nostr relay wire protocol**: `REQ`/`EVENT`/`EOSE`/`CLOSE`/`OK`/`AUTH`/`NEG-*`. The view does not — it reads the store through a query method that filters on seen time and peer, which the relay protocol cannot express. [`sync.md`](./docs/sync.md), [`storage.md`](./docs/storage.md#the-sqlite-store).
+Peers speak the **nostr relay wire protocol**: `REQ`/`EVENT`/`EOSE`/`CLOSE`/`OK`/`AUTH`/`NEG-*`, plus four verbs of ours in the same NIP-01 shape — `RECIPIENT-SIGNATURE`, `AUTHORSHIP-PROOF`, `BLOSSOM-REQ` and `BLOSSOM-RES`. The view does not — it reads the store through a query method that filters on seen time and peer, which the relay protocol cannot express. [`sync.md`](./docs/sync.md#the-additions), [`storage.md`](./docs/storage.md#the-sqlite-store).
 
 **The view addresses one store, never a peer.** Queries go over the bridge to the core's SQLite; `ble://` exists only in the core, and there is no way to name a peer from TypeScript — peers get proof checking, `AUTH` and policy, none of which the view has. Events crossing the bridge arrive verified; do not re-check them. [`storage.md`](./docs/storage.md).
 

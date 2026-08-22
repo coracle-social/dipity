@@ -136,10 +136,6 @@ impl BlobExchange {
     }
 
     /// Whether a transfer is in flight, waiting on the peer's next answer.
-    ///
-    /// A method rather than a public field: `BlobFetch` is this module's own
-    /// bookkeeping, and publishing it to answer a bool would be the wrong
-    /// trade.
     #[must_use]
     pub fn is_fetching(&self) -> bool {
         self.active.is_some()

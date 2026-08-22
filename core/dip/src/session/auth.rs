@@ -10,7 +10,7 @@
 use std::collections::BTreeSet;
 
 use anyhow::{Context, Result, bail};
-use coracle_lib::events::EventContent;
+use coracle_lib::events::{Event, EventContent};
 use coracle_lib::keys::{PublicKey, SecretKey};
 use coracle_lib::tags::Tags;
 
@@ -50,26 +50,18 @@ impl AuthExchange {
 
     /// Record the challenge the peer sent, to answer when this device
     /// discloses.
-    pub fn receive_challenge(&mut self, payload: &[u8]) -> Result<()> {
-        let challenge =
-            String::from_utf8(payload.to_vec()).context("an AUTH challenge is not UTF-8")?;
-
+    pub fn receive_challenge(&mut self, challenge: String) {
         self.peer_challenge = Some(challenge);
-
-        Ok(())
     }
 
     /// Answer the peer's challenge once, disclosing this device's identity.
     ///
     /// `None` when there is no challenge to answer or it has been answered
-    /// already; otherwise the serialized kind 22242 event. The relay tag names
-    /// the peer's static key — the party that challenged us — binding the
-    /// response to the channel their key established.
-    pub fn answer(
-        &mut self,
-        identity: &SecretKey,
-        peer_static: [u8; 32],
-    ) -> Result<Option<Vec<u8>>> {
+    /// already; otherwise the signed kind 22242 event, which the caller sends
+    /// as NIP-42's own `["AUTH", <event>]`. The relay tag names the peer's
+    /// static key — the party that challenged us — binding the response to the
+    /// channel their key established.
+    pub fn answer(&mut self, identity: &SecretKey, peer_static: [u8; 32]) -> Result<Option<Event>> {
         if self.disclosed {
             return Ok(None);
         }
@@ -93,11 +85,10 @@ impl AuthExchange {
 
         let id = hashed.id;
         let event = hashed.with_sig(identity.sign(id.as_bytes()));
-        let payload = serde_json::to_vec(&event).context("serializing an AUTH response")?;
 
         self.disclosed = true;
 
-        Ok(Some(payload))
+        Ok(Some(event))
     }
 
     /// Verify the peer's response against our challenge and this channel,
@@ -111,10 +102,7 @@ impl AuthExchange {
     /// the exchange has no step that issues one mid-session — so today a
     /// second identity is refused rather than accepted unchallenged. Single
     /// use is the security property; the allowance is the thing left unbuilt.
-    pub fn verify(&mut self, payload: &[u8], local_static: [u8; 32]) -> Result<PublicKey> {
-        let event = serde_json::from_slice::<coracle_lib::events::Event>(payload)
-            .context("parsing an AUTH response")?;
-
+    pub fn verify(&mut self, event: &Event, local_static: [u8; 32]) -> Result<PublicKey> {
         if event.kind != 22_242 {
             bail!("the AUTH response is not kind 22242");
         }
@@ -170,7 +158,7 @@ mod tests {
         let identity = secret(1);
 
         let challenge = challenger.make_challenge().unwrap();
-        responder.receive_challenge(challenge.as_bytes()).unwrap();
+        responder.receive_challenge(challenge.clone());
 
         // The responder names the challenger's channel; the challenger checks
         // its own static key against the relay tag.
@@ -189,7 +177,7 @@ mod tests {
     #[test]
     fn an_answer_is_one_shot() {
         let mut responder = AuthExchange::default();
-        responder.receive_challenge(b"abc123").unwrap();
+        responder.receive_challenge("abc123".to_string());
 
         assert!(
             responder
@@ -227,7 +215,7 @@ mod tests {
         let mut responder = AuthExchange::default();
 
         let challenge = challenger.make_challenge().unwrap();
-        responder.receive_challenge(challenge.as_bytes()).unwrap();
+        responder.receive_challenge(challenge.clone());
         let payload = responder
             .answer(&secret(1), DIALER_STATIC)
             .unwrap()
@@ -246,7 +234,7 @@ mod tests {
         let mut responder = AuthExchange::default();
 
         challenger.make_challenge().unwrap();
-        responder.receive_challenge(b"somebody-elses").unwrap();
+        responder.receive_challenge("somebody-elses".to_string());
 
         let payload = responder
             .answer(&secret(1), DIALER_STATIC)
@@ -262,7 +250,7 @@ mod tests {
         let mut responder = AuthExchange::default();
 
         let challenge = challenger.make_challenge().unwrap();
-        responder.receive_challenge(challenge.as_bytes()).unwrap();
+        responder.receive_challenge(challenge.clone());
 
         // The answer binds to the receiver's channel, not the challenger's, as
         // in a replay onto another link.
@@ -278,7 +266,7 @@ mod tests {
     fn a_response_before_any_challenge_was_sent_is_refused() {
         let mut challenger = AuthExchange::default();
         let mut responder = AuthExchange::default();
-        responder.receive_challenge(b"abc123").unwrap();
+        responder.receive_challenge("abc123".to_string());
 
         let payload = responder
             .answer(&secret(1), DIALER_STATIC)

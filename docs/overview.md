@@ -62,6 +62,7 @@ This project is time-biased. It treats distance as something to articulate rathe
 - **`android.bluetooth`** — Android advertiser, scanner, GATT server and client.
 - **BLE GATT** — the transport, with [our own framing](./transport.md#framing) over one characteristic.
 - **`coracle-lib`** — nostr types for the core: NIP-01 serialization, filters, NIP-77 negentropy. Its event hierarchy separates an unsigned `HashedEvent` from a signed `Event`, which is what [unsigned content events](./proofs.md#events-are-not-signed) need; rust-nostr's mandatory signature cannot express it.
+- **`coracle-kinds`** — a reader and a writer per event kind, over `coracle-lib`'s shared vocabulary. Kind 5 deletions and kind 0 profiles come from here; the [people lists](./policy.md#social-graph) this app defines follow the same arrangement.
 - **`snow`** — Noise XX: Curve25519 / ChaCha20-Poly1305 / SHA-256.
 - **`rusqlite`** — durable event store, indexes, NIP-01 filter matching.
 - **`secp256k1`** — signing and verifying authorship signatures and auth events; **`k256`** for the [authorship proof](./proofs.md#authorship-proofs), which needs explicit group arithmetic that the binding does not expose.

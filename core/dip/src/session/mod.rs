@@ -75,19 +75,19 @@ pub const IDENTIFY_CAP_SECONDS: i64 = 60;
 
 /// Control-frame discriminants, one byte ahead of the payload.
 ///
-/// Recognition tags, an AUTH challenge, an AUTH response and the heartbeat
-/// share the control channel, so the first byte names what follows. The
-/// handshake frames that precede encryption carry no discriminant: they are
-/// raw Noise messages and only [`State::Linked`] ever sees them.
+/// Recognition tags, mutual `AUTH` and the heartbeat share the control
+/// channel, so the first byte names what follows. The handshake frames that
+/// precede encryption carry no discriminant: they are raw Noise messages and
+/// only [`State::Linked`] ever sees them.
 mod control {
     /// A list of 32-byte recognition tags.
     pub const TAGS: u8 = 0x01;
-    /// A NIP-42 challenge string.
-    pub const CHALLENGE: u8 = 0x02;
-    /// A signed kind 22242 event answering a challenge.
-    pub const AUTH_EVENT: u8 = 0x03;
+    /// A NIP-42 message, encoded as the relay protocol encodes it: either
+    /// `["AUTH", <challenge>]` or `["AUTH", <event>]`. The payload says which,
+    /// so both directions share one discriminant.
+    pub const AUTH: u8 = 0x02;
     /// A liveness beacon, carrying nothing.
-    pub const HEARTBEAT: u8 = 0x04;
+    pub const HEARTBEAT: u8 = 0x03;
 }
 
 /// Where a link is in its lifecycle.
@@ -716,8 +716,7 @@ impl Session {
 
         match discriminant {
             control::TAGS => self.on_tags(db, payload)?,
-            control::CHALLENGE => self.on_challenge(db, payload)?,
-            control::AUTH_EVENT => self.on_auth_response(payload)?,
+            control::AUTH => self.on_auth(db, payload)?,
             control::HEARTBEAT => {
                 // The write itself proved liveness in `receive`; there is
                 // nothing else a beacon carries.
@@ -761,11 +760,21 @@ impl Session {
         Ok(())
     }
 
+    /// Dispatch one NIP-42 message, which is a challenge from the peer or its
+    /// response to ours.
+    fn on_auth(&mut self, db: &Db, payload: &[u8]) -> Result<()> {
+        match Message::decode(payload).context("the control channel carried a malformed AUTH")? {
+            Message::AuthChallenge(challenge) => self.on_challenge(db, challenge),
+            Message::AuthResponse(event) => self.on_auth_response(&event),
+            other => bail!("{other:?} is not a NIP-42 message"),
+        }
+    }
+
     /// Take the peer's challenge. The receiver challenges back without
     /// answering; the dialer answers, identifying first. A challenge arriving
     /// before the gate passes waits; approval resumes the turn.
-    fn on_challenge(&mut self, db: &Db, payload: &[u8]) -> Result<()> {
-        self.auth.receive_challenge(payload)?;
+    fn on_challenge(&mut self, db: &Db, challenge: String) -> Result<()> {
+        self.auth.receive_challenge(challenge);
 
         if !self.gate.passed {
             return Ok(());
@@ -794,12 +803,12 @@ impl Session {
     ///
     /// Nothing is accepted while the gate holds: a held stranger cannot
     /// identify itself into being served before the user has answered.
-    fn on_auth_response(&mut self, payload: &[u8]) -> Result<()> {
+    fn on_auth_response(&mut self, event: &coracle_lib::events::Event) -> Result<()> {
         if !self.gate.passed {
             bail!("an AUTH response arrived before the gate passed");
         }
 
-        let pubkey = self.auth.verify(payload, self.wire.noise.local_static)?;
+        let pubkey = self.auth.verify(event, self.wire.noise.local_static)?;
 
         self.identify([pubkey]);
 
@@ -819,7 +828,7 @@ impl Session {
     fn challenge_peer(&mut self) -> Result<()> {
         let challenge = self.auth.make_challenge()?;
 
-        self.send_control(control::CHALLENGE, challenge.as_bytes())
+        self.send_control(control::AUTH, &Message::AuthChallenge(challenge).encode())
     }
 
     /// Answer the peer's challenge, disclosing this device's identity — if one
@@ -832,8 +841,10 @@ impl Session {
             .ok_or_else(|| anyhow::anyhow!("the handshake has not completed"))?;
 
         match self.auth.answer(&self.identity, remote)? {
-            Some(payload) => {
-                self.send_control(control::AUTH_EVENT, &payload)?;
+            Some(event) => {
+                let message = Message::AuthResponse(Box::new(event));
+
+                self.send_control(control::AUTH, &message.encode())?;
                 Ok(true)
             }
             None => Ok(false),
@@ -1310,14 +1321,70 @@ mod tests {
         };
 
         // A held stranger volunteering an identity must not be accepted: that
-        // would bypass the hold and open the relay half without approval.
+        // would bypass the hold and open the relay half without approval. The
+        // response is well formed and genuinely signed, so what refuses it is
+        // the gate rather than the decoder.
+        let hashed = crate::fixtures::event(author(2), 22_242, 100, "", NostrTags::new());
+        let signed = hashed
+            .clone()
+            .with_sig(secret(2).sign(hashed.id.as_bytes()));
+        let mut payload = vec![control::AUTH];
+        payload.extend_from_slice(&Message::AuthResponse(Box::new(signed)).encode());
+
         let frame = Frame {
             channel: crate::transport::Channel::Control,
-            payload: vec![control::AUTH_EVENT, 0x7B],
+            payload,
         };
 
         assert!(session.advance(&db, &frame).is_err());
         assert!(session.peer.as_ref().is_none());
+    }
+
+    #[test]
+    fn auth_travels_as_the_nip_42_message() {
+        // The exchange is NIP-42's own `["AUTH", …]` on the control channel,
+        // not a private encoding of it — `docs/nips/p2p-auth.md` is the
+        // contract, and an implementation reading that doc has to interoperate.
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) = secured_pair(policy());
+
+        dialer.challenge_peer().unwrap();
+
+        let frame = pump_frame(&mut dialer, &mut receiver);
+        let (discriminant, payload) = frame.payload.split_first().unwrap();
+
+        assert_eq!(*discriminant, control::AUTH);
+        assert!(matches!(
+            Message::decode(payload).unwrap(),
+            Message::AuthChallenge(_)
+        ));
+
+        // The response side, which carries the signed event. The dialer
+        // identifies first, so it is the one that answers a challenge outright.
+        dialer.gate.passed = true;
+        dialer
+            .advance(
+                &db,
+                &Frame {
+                    channel: crate::transport::Channel::Control,
+                    payload: [
+                        &[control::AUTH][..],
+                        &Message::AuthChallenge("abc123".into()).encode(),
+                    ]
+                    .concat(),
+                },
+            )
+            .unwrap();
+
+        let response = pump_frame(&mut dialer, &mut receiver);
+        let (discriminant, payload) = response.payload.split_first().unwrap();
+
+        assert_eq!(*discriminant, control::AUTH);
+        assert!(matches!(
+            Message::decode(payload).unwrap(),
+            Message::AuthResponse(_)
+        ));
+        assert_eq!(dialer.state, State::DialerIdentified);
     }
 
     #[test]

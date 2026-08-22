@@ -45,6 +45,7 @@ Transports should also provide confidentiality. Not against replay, which the ru
 ## What it means here
 
 - **The session identifier is `noise://<hex static key>`.** It names a key the BLE handshake established, so the tag is checked against something the handshake produced rather than something the peer claimed. That key is [generated per session](../transport.md#the-static-key-is-generated-per-session), so the identifier is fresh every time and the auth event names a channel that ceases to exist with the session. This app registers no other scheme; the table above is the general registry.
+- **The messages are NIP-42's, on the control channel.** `["AUTH", <challenge>]` and `["AUTH", <event>]` as written, carried on [channel 0](../transport.md#the-control-channels-header) rather than alongside `REQ` and `EVENT`. Only the channel is ours; the message is unmodified.
 - **The party that dialed authenticates first.** A local ordering rule, permitted by the independence of the two directions above. It lets the dialed side evaluate policy against a known pubkey before disclosing its own — see [`discovery.md`](../discovery.md#the-consent-gate).
 - **A captured auth event is useless against a relay.** On these transports the `relay` tag never holds a URL, so no relay will ever match it.
 - **A peer may authenticate as several pubkeys**, since NIP-42 allows a sequence of `AUTH` messages. Ingest therefore tests set membership rather than equality — see [`sync.md`](../sync.md#authorship).
