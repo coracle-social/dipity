@@ -50,6 +50,14 @@ pub const BLOB_MIN_BATTERY: u8 = 20;
 /// `docs/transport.md#the-l2cap-bandwidth-upgrade`.
 pub const L2CAP_THRESHOLD_BYTES: u64 = 4 * BLOB_GROUP_BYTES;
 
+/// What the device holds in fetched originals before the least recently read
+/// are dropped. `docs/sync.md#quotas-1`.
+///
+/// Sixteen trusted peers' blob budget. It bounds the user's disk rather than
+/// naming a target: a group at a time over BLE, filling it takes hours of
+/// contact, and previews are exempt so a feed still renders offline.
+pub const ORIGINAL_CACHE_BYTES: i64 = 256 * 1024 * 1024;
+
 /// One in-flight fetch of one blob.
 #[derive(Debug)]
 struct BlobFetch {
@@ -462,6 +470,11 @@ impl BlobExchange {
                 clock::now(),
             )?;
 
+            // A completed fetch is the only thing that grows the cache, so it
+            // is where the ceiling holds. The node reclaims the bytes off the
+            // blob channel; a file lives as long as its record.
+            command::evict_originals(db, ORIGINAL_CACHE_BYTES)?;
+
             return Ok(());
         }
 
@@ -664,6 +677,7 @@ mod tests {
     use coracle_lib::tags::Tags;
 
     use crate::blobs::MemoryBlobStore;
+    use crate::db::blob::channel::{self as blob_channel, BlobChange};
     use crate::db::{Db, command as db_command};
     use crate::fixtures::{author, note};
     use crate::link::LinkId;
@@ -1104,6 +1118,32 @@ mod tests {
         assert_eq!(store.len(&hash).unwrap(), Some(19));
         assert!(db_query::get_blob(&db, &hash).unwrap().unwrap().complete);
         assert!(blobs.active.is_none());
+    }
+
+    #[test]
+    fn a_completed_fetch_evicts_originals_over_the_cache_ceiling() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut blobs, _) = exchange();
+
+        let mut removals = blob_channel::subscribe(&db);
+
+        // An original held since an earlier session, over the ceiling on its
+        // own, and read longer ago than anything this session touches.
+        let stale = BlobHash::digest(b"a stale original");
+        given_wanted_sized(&db, &stale, ORIGINAL_CACHE_BYTES as u64 + 1);
+        db_command::complete_blob(&db, &stale, ORIGINAL_CACHE_BYTES + 1, 1).unwrap();
+
+        let fetched = drive_fetch(&mut blobs, &db, b"the quick brown fox");
+
+        assert!(db_query::get_blob(&db, &stale).unwrap().is_none());
+        assert!(db_query::get_blob(&db, &fetched).unwrap().unwrap().complete);
+        assert!(db_query::cached_bytes(&db).unwrap() <= ORIGINAL_CACHE_BYTES);
+
+        // The removal is announced, which is what has the node delete the file.
+        assert!(
+            std::iter::from_fn(|| removals.try_recv().ok())
+                .any(|change| matches!(change, BlobChange::Removed(hash) if hash == stale))
+        );
     }
 
     #[test]
