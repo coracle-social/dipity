@@ -63,7 +63,7 @@ The ceiling is the one that has to hold, because the per-peer budget below it do
 
 Blobs follow, on their own channel. They are addressed by the SHA-256 in the event's `imeta` tag and verified against the BLAKE3 root also included in the `imeta` tag ([`nips/imeta-blake3.md`](./nips/imeta-blake3.md)). Content addressing makes transfers resumable, dedupable across peers, and verifiable chunk by chunk as they arrive.
 
-The want list is every hash a stored event references and the device does not hold. There is no per-blob decision: [Accept](./policy.md#accept-and-gossip) gates ingest against the author of each inbound event, so a stored event has already passed the scope check and its blobs are in scope for the same reason its text is. Previews take precedence over originals.
+The want list is every hash a stored event references and the device does not hold. There is no per-blob decision: [Accept](./policy.md#accept-and-gossip) gates ingest against the author of each inbound event, so a stored event has already passed the scope check and its blobs are in scope for the same reason its text is. Previews take precedence over originals, and within a role a partly-fetched blob takes precedence over one not yet started, so the bytes already on disk are the first to be finished.
 
 Each chunk verifies against the BLAKE3 root as it arrives, so a bad chunk costs one chunk and names the peer that sent it. A forwarder cannot alter the root: it rides in `imeta`, and the event id commits to it.
 

@@ -155,8 +155,13 @@ CREATE TABLE blob (
 ) STRICT;
 
 CREATE INDEX blob_event ON blob (event_id);
-CREATE INDEX blob_wanted ON blob (role, accessed_at) WHERE complete = 0;
-CREATE INDEX blob_lru ON blob (role, accessed_at) WHERE complete = 1;
+-- Each mirrors its read's ORDER BY exactly, or the planner sorts the whole partition in a temp b-tree.
+CREATE INDEX blob_wanted ON blob (
+    CASE role WHEN 'preview' THEN 0 ELSE 1 END,
+    stored_bytes DESC,
+    sha256
+) WHERE complete = 0;
+CREATE INDEX blob_lru ON blob (role, accessed_at, sha256) WHERE complete = 1;
 
 -- Pairing: what lets one encounter recognize the next, and what bounds how
 -- many strangers it discloses to.

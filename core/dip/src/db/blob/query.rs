@@ -109,12 +109,7 @@ pub fn all_hashes(tx: &Tx<'_>) -> Result<HashSet<BlobHash>> {
 /// the accept policy, so its blobs are in scope for the same reason its text
 /// is. See `docs/sync.md`.
 pub fn wanted(tx: &Tx<'_>, limit: usize) -> Result<Vec<Blob>> {
-    let mut prepared = tx.prepare_cached(&format!(
-        "SELECT {COLUMNS} FROM blob
-         WHERE complete = 0
-         ORDER BY CASE role WHEN 'preview' THEN 0 ELSE 1 END, stored_bytes DESC, sha256 ASC
-         LIMIT ?1"
-    ))?;
+    let mut prepared = tx.prepare_cached(&wanted_sql())?;
 
     let blobs = prepared
         .query_map(params![i64::try_from(limit).unwrap_or(i64::MAX)], to_blob)?
@@ -122,6 +117,16 @@ pub fn wanted(tx: &Tx<'_>, limit: usize) -> Result<Vec<Blob>> {
         .context("listing wanted blobs")?;
 
     Ok(blobs)
+}
+
+/// The want list read: previews first, then whichever blob has the most bytes already on disk.
+fn wanted_sql() -> String {
+    format!(
+        "SELECT {COLUMNS} FROM blob
+         WHERE complete = 0
+         ORDER BY CASE role WHEN 'preview' THEN 0 ELSE 1 END, stored_bytes DESC, sha256 ASC
+         LIMIT ?1"
+    )
 }
 
 /// How many bytes of held blobs a role accounts for, which is what the cache
@@ -140,12 +145,7 @@ pub fn stored_bytes(tx: &Tx<'_>, role: BlobRole) -> Result<i64> {
 /// Only originals are evicted; previews are kept as long as the events that
 /// reference them, which is what makes a feed still render offline.
 pub fn least_recently_used(tx: &Tx<'_>, role: BlobRole, limit: usize) -> Result<Vec<Blob>> {
-    let mut prepared = tx.prepare_cached(&format!(
-        "SELECT {COLUMNS} FROM blob
-         WHERE role = ?1 AND complete = 1
-         ORDER BY COALESCE(accessed_at, 0) ASC, sha256 ASC
-         LIMIT ?2"
-    ))?;
+    let mut prepared = tx.prepare_cached(&least_recently_used_sql())?;
 
     let blobs = prepared
         .query_map(
@@ -156,6 +156,16 @@ pub fn least_recently_used(tx: &Tx<'_>, role: BlobRole, limit: usize) -> Result<
         .context("listing eviction candidates")?;
 
     Ok(blobs)
+}
+
+/// The eviction read; a never-read blob sorts first, since SQLite orders NULL ahead of a timestamp.
+fn least_recently_used_sql() -> String {
+    format!(
+        "SELECT {COLUMNS} FROM blob
+         WHERE role = ?1 AND complete = 1
+         ORDER BY accessed_at ASC, sha256 ASC
+         LIMIT ?2"
+    )
 }
 
 fn to_blob(row: &Row<'_>) -> rusqlite::Result<Blob> {
@@ -191,4 +201,44 @@ fn to_blob(row: &Row<'_>) -> rusqlite::Result<Blob> {
         complete: row.get("complete")?,
         accessed_at: row.get("accessed_at")?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::db::Db;
+
+    /// What the planner does with a statement, one line per step.
+    fn plan(tx: &Tx<'_>, sql: &str, params: impl rusqlite::Params) -> String {
+        tx.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap()
+            .query_map(params, |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+            .join("\n")
+    }
+
+    /// Both reads take ten rows off the front of an order the index has to supply.
+    #[test]
+    fn the_blob_indexes_are_walked_in_the_order_their_reads_ask_for() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        for (name, plan) in [
+            ("blob_wanted", plan(&tx, &wanted_sql(), params![10])),
+            (
+                "blob_lru",
+                plan(
+                    &tx,
+                    &least_recently_used_sql(),
+                    params![BlobRole::Original.as_str(), 10],
+                ),
+            ),
+        ] {
+            assert!(plan.contains(name), "{name} unused:\n{plan}");
+            assert!(!plan.contains("TEMP B-TREE"), "{name} sorts:\n{plan}");
+        }
+    }
 }
