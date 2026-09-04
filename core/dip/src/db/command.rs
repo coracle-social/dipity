@@ -19,19 +19,17 @@ use crate::db::pref::command as pref;
 use crate::db::recipient_signature::command as signature;
 use crate::model::{Blob, BlobHash, BlobRole, RecipientSignature};
 
-/// Take in an event from a peer, with whatever came alongside it.
+/// Take in an event from a peer, with the media it references.
 ///
 /// Returns whether the event is new to this device.
 ///
-/// One transaction over three models, because they only make sense together:
-/// the event, the author's signature if this device is the recipient it names,
-/// and the media the event references. `identity` is this device's own pubkey —
-/// the party a signature has to name for a proof to be built from it later.
+/// One transaction over two models, because they only make sense together: the
+/// event and the media it names. The author's signature arrives on its own path
+/// and is taken by [`receive_signature`].
 ///
 /// `seen_from` is every pubkey the peer proved on the session, so a peer
 /// holding more than one identity is recorded from all of them rather than
-/// arbitrarily from one. The signature is stored even when the event is not
-/// new, since the two arrive independently.
+/// arbitrarily from one.
 pub fn receive_event(
     db: &Db,
     event: &HashedEvent,
