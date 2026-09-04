@@ -31,7 +31,7 @@ mod scheduler;
 pub use scheduler::{MAX_LINKS, RSSI_FLOOR};
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
@@ -39,6 +39,7 @@ use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::SecretKey;
 use tokio::sync::broadcast::{self, error::TryRecvError};
 
+use crate::backup;
 use crate::blobs::{BlobStore, FileBlobStore, verified};
 use crate::clock;
 use crate::db::blob::channel as blob_channel;
@@ -78,6 +79,12 @@ pub enum Action {
     /// Open an L2CAP channel, once outstanding blob bytes justify the setup
     /// round trip. Bulk moves across; control frames stay on GATT.
     OpenL2cap(LinkId),
+    /// Present the share sheet over a key backup the core has written.
+    ///
+    /// The path is the shell's, not the view's: the view starts the export and
+    /// learns only that it was shared or dismissed, never where the file is.
+    /// `docs/keys.md#backup`.
+    ShareKeyBackup(PathBuf),
     /// Call [`Node::tick`] at or after this unix second.
     ///
     /// Advisory: iOS runs no timer for a suspended app, so the heartbeat and
@@ -119,6 +126,9 @@ pub struct Node {
     blob_changes: broadcast::Receiver<BlobChange>,
     /// When the retention sweep last ran, so ticking often sweeps rarely.
     events_swept_at: Option<i64>,
+    /// The backup file waiting on a share sheet, so the core can delete it
+    /// whichever way the sheet ends.
+    key_backup: Option<PathBuf>,
 }
 
 impl Node {
@@ -141,6 +151,7 @@ impl Node {
             spending: Arc::new(crate::sync::spending::SpendingLedger::default()),
             presence: None,
             events_swept_at: None,
+            key_backup: None,
         };
 
         // Whatever was removed while no node was listening is still on disk.
@@ -390,6 +401,41 @@ impl Node {
     pub fn publish(&mut self, event: &HashedEvent, media: &[&[u8]]) -> Result<Vec<Action>> {
         db_command::publish_event(&self.db, event, &self.identity.public_key(), clock::now())?;
         self.store_own_media(event, media)?;
+
+        Ok(self.collect())
+    }
+
+    /// Write a backup of the identity key into the shell's cache directory and
+    /// ask for the share sheet over it.
+    ///
+    /// `password` encrypts it as a NIP-49 `ncryptsec` and must be at least
+    /// [`backup::MINIMUM_PASSWORD_LENGTH`] characters; without one the file
+    /// carries a plain `nsec`. Either way the key is encoded here and the
+    /// caller is handed no part of it. `docs/keys.md#backup`.
+    pub fn export_key(
+        &mut self,
+        cache: impl AsRef<Path>,
+        password: Option<&str>,
+    ) -> Result<Vec<Action>> {
+        // A retry writes over the last attempt's file, so only the newest is ever on disk.
+        let path = backup::write(&self.identity, cache.as_ref(), password)?;
+
+        self.key_backup = Some(path.clone());
+
+        let mut actions = self.collect();
+        actions.push(Action::ShareKeyBackup(path));
+
+        Ok(actions)
+    }
+
+    /// The share sheet closed, shared or dismissed, so the file goes.
+    ///
+    /// Dismissing counts as not downloaded rather than an error — the view
+    /// leaves its gate closed and the user exports again.
+    pub fn key_export_finished(&mut self) -> Result<Vec<Action>> {
+        if let Some(path) = self.key_backup.take() {
+            backup::remove(&path)?;
+        }
 
         Ok(self.collect())
     }
@@ -1207,5 +1253,37 @@ mod tests {
                 vec![Action::Connect(peer)]
             );
         });
+    }
+
+    #[test]
+    fn exporting_the_key_asks_for_a_share_sheet_and_finishing_takes_the_file_back() {
+        let cache = TempDir::new("export");
+        let mut node = node();
+
+        let actions = node.export_key(&cache.0, None).unwrap();
+        let [Action::ShareKeyBackup(path)] = actions.as_slice() else {
+            panic!("expected one share action, got {actions:?}");
+        };
+
+        assert!(path.is_file());
+        assert!(
+            std::fs::read_to_string(path)
+                .unwrap()
+                .contains(&node.identity.to_nsec())
+        );
+
+        let path = path.clone();
+        node.key_export_finished().unwrap();
+
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_refused_export_leaves_nothing_to_share() {
+        let cache = TempDir::new("export");
+        let mut node = node();
+
+        assert!(node.export_key(&cache.0, Some("short")).is_err());
+        assert!(node.key_backup.is_none());
     }
 }

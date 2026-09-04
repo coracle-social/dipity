@@ -33,6 +33,7 @@ Everything below is under `core/dip/src/`. Modules mirror the design documents o
 | `model/` | The types the store is expressed in: `Policy`, `Query`, `Registers`, `AuthorshipProof`, `Blob`, `Graph` | `policy.md`, `proofs.md` |
 | `db/` | `Db`, `Tx`, `query`, `command`, and one submodule per group of tables | `storage.md` |
 | `blobs/` | The `BlobStore` trait and its file-backed and in-memory implementations, and `verified`, the Bao proofs a range of a blob travels under | `sync.md` |
+| `backup.rs` | The key backup file: `nsec`/`ncryptsec` encoding and the prose around it, written to the shell's cache directory | `keys.md` |
 | `clock.rs` | `now()`, and `at()` for pinning it in a test | |
 | `link.rs` | `LinkId`, `PeripheralId`, `Role`, the names the core and the shell share for a link | |
 
