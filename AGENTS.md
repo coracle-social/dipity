@@ -82,7 +82,7 @@ just ios          # sync, then open Xcode
 just android      # sync, then open Android Studio
 ```
 
-[`.gitea/workflows/ci.yml`](./.gitea/workflows/ci.yml) runs one step per `qa` recipe on every pull request and every push to `master`, in two jobs split by toolchain.
+[`.gitea/workflows/ci.yml`](./.gitea/workflows/ci.yml) runs one step per `qa` recipe on every push to `master`, in two jobs split by toolchain. Pull requests are not built, so `just qa` locally is the gate before opening one.
 
 App ID `social.coracle.dip`. Web assets build to `dist/`; the shells load the *built* output, so `just sync` after web changes or the app runs stale code.
 
