@@ -15,6 +15,7 @@ use std::collections::{BTreeSet, HashSet};
 use anyhow::Result;
 use coracle_lib::events::{EventId, HashedEvent};
 use coracle_lib::keys::PublicKey;
+use coracle_lib::sync::{Item, SyncSet};
 
 use super::Db;
 use crate::db::blob::query as blob;
@@ -76,6 +77,16 @@ pub struct EventDetail {
 /// Events matching every constraint on `query`.
 pub fn list_events(db: &Db, query: &Query) -> Result<Vec<HashedEvent>> {
     db.read(|tx| event::list(tx, query))
+}
+
+/// Events matching `query`, reduced to the `(id, timestamp)` set negentropy diffs.
+pub fn reconciliation_set(db: &Db, query: &Query) -> Result<SyncSet> {
+    Ok(SyncSet::from_items(
+        list_events(db, query)?.into_iter().map(|event| Item {
+            timestamp: event.created_at,
+            id: event.id,
+        }),
+    ))
 }
 
 /// One event, by id, or `None` if it is not stored.

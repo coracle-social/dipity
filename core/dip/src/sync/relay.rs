@@ -13,7 +13,7 @@ use anyhow::{Context, Result, bail};
 use coracle_lib::events::HashedEvent;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::SecretKey;
-use coracle_lib::sync::{FrameBudget, Item, SyncSet};
+use coracle_lib::sync::{FrameBudget, SyncSet};
 
 use crate::db::Db;
 use crate::db::query as db_query;
@@ -154,17 +154,9 @@ pub fn query_for(peer: &Peer, local: &Identity, filter: Filter) -> Query {
         .with_policy(peer.policy.clone())
 }
 
-/// The set the NIP-77 negentropy pass diffs, bounded by the same query as
-/// everything else the relay half serves.
+/// The set the NIP-77 negentropy pass diffs, under the query the relay half serves.
 pub fn reconcilable(db: &Db, peer: &Peer, local: &Identity, filter: Filter) -> Result<SyncSet> {
-    let items = db_query::list_events(db, &query_for(peer, local, filter))?
-        .into_iter()
-        .map(|event| Item {
-            timestamp: event.created_at,
-            id: event.id,
-        });
-
-    Ok(SyncSet::from_items(items))
+    db_query::reconciliation_set(db, &query_for(peer, local, filter))
 }
 
 /// One round of negotiation from the responder's side.

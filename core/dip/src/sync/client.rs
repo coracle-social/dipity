@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context, Result, bail};
 use coracle_lib::events::{EventExtensionId, EventId, HashedEvent};
 use coracle_lib::filters::Filter;
-use coracle_lib::sync::{FrameBudget, Item, SyncSet};
+use coracle_lib::sync::{FrameBudget, SyncSet};
 
 use crate::clock;
 use crate::db::Db;
@@ -88,12 +88,7 @@ impl Negotiation {
     /// widens what this device will serve.
     pub fn begin(db: &Db, filter: Filter) -> Result<(Self, Message)> {
         let held = crate::model::Query::new().with_filter(filter.clone());
-        let local = SyncSet::from_items(db_query::list_events(db, &held)?.into_iter().map(
-            |event| Item {
-                timestamp: event.created_at,
-                id: event.id,
-            },
-        ));
+        let local = db_query::reconciliation_set(db, &held)?;
 
         let subscription = fresh_subscription()?;
         let negotiation = Self {
@@ -532,6 +527,7 @@ pub fn ingest(
 mod tests {
     use super::*;
     use coracle_lib::keys::PublicKey;
+    use coracle_lib::sync::Item;
     use coracle_lib::tags::Tags;
 
     use std::sync::Arc;
