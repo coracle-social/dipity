@@ -2,6 +2,8 @@
 
 Read [`docs/overview.md`](./docs/overview.md) before making design decisions — it carries what the app is, the principles, and the architecture. This file is the short version plus the things that are easy to get wrong.
 
+The [`dip` skill](./.agents/skills/dip/SKILL.md) maps the code the rules apply to: where each subsystem lives, which parts are built and which are still scaffolding, and the conventions a diff has to match. Load it before an edit.
+
 ## Principles
 
 Load-bearing, and stated in full in [`overview.md`](./docs/overview.md#principles). Do not write code that violates them, and flag any request that would.
