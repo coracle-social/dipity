@@ -3,11 +3,12 @@
 use std::collections::{BTreeSet, HashMap};
 
 use anyhow::{Context, Result};
-use coracle_kinds::delete;
+use coracle_kinds::delete::{self, DeleteReader};
 use coracle_lib::addresses::{Address, EventExtensionAddress};
 use coracle_lib::events::{EventId, HashedEvent};
 use coracle_lib::filters::{Filter, TagMatch};
 use coracle_lib::keys::PublicKey;
+use coracle_lib::readers::Reader;
 use coracle_lib::search::SearchQuery;
 use coracle_lib::tags::Tags;
 use rusqlite::types::Value;
@@ -174,35 +175,39 @@ pub fn seen_from(tx: &Tx<'_>, id: &EventId) -> Result<Vec<PublicKey>> {
         .collect())
 }
 
-/// Whether the author has already asked for this event to be deleted.
+/// Whether a stored request has already asked for this event to be deleted.
+///
+/// The mirror of the sweep in [`command`](super::command), which runs when the
+/// request is the event arriving. Both ask [`DeleteReader::matches`], so who
+/// may speak for an event is decided in one place — `coracle-kinds`, where it
+/// is authorship for most kinds and the recipient for a gift wrap, whose
+/// signing key was thrown away. SQL narrows to the requests naming this event
+/// and no further; a second copy of the rule here would be one the two
+/// directions could disagree about.
 pub fn is_deleted(tx: &Tx<'_>, event: &HashedEvent) -> Result<bool> {
     let id = event.id.to_hex();
-    let deleted = tx
-        .prepare_cached(
-            "SELECT EXISTS (
-                 SELECT 1 FROM event d
-                 JOIN event_tag t ON t.event_id = d.id
-                 WHERE d.kind = ?5
-                   AND d.pubkey = ?1
-                   AND (
-                     (t.name = 'e' AND t.value = ?2)
-                     OR (t.name = 'a' AND t.value = ?3 AND d.created_at >= ?4)
-                   )
-             )",
-        )?
-        .query_row(
+    let requests = tx
+        .prepare_cached(&format!(
+            "SELECT DISTINCT {COLUMNS} FROM event e
+             JOIN event_tag t ON t.event_id = e.id
+             WHERE e.kind = ?3
+               AND ((t.name = 'e' AND t.value = ?1) OR (t.name = 'a' AND t.value = ?2))"
+        ))?
+        .query_map(
             params![
-                event.pubkey.to_hex(),
                 id,
                 event.address().map(|address| address.to_string()),
-                event.created_at,
                 delete::KIND,
             ],
-            |row| row.get::<_, bool>(0),
-        )
+            to_event,
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()
         .with_context(|| format!("checking whether {id} is deleted"))?;
 
-    Ok(deleted)
+    Ok(requests
+        .iter()
+        .filter_map(|request| DeleteReader::read(request).ok())
+        .any(|request| request.matches(event)))
 }
 
 /// Assemble a statement from its parts. The limit binds after every other
@@ -707,11 +712,9 @@ mod tests {
         assert_eq!(list(&tx, &matching(requires_nothing)).unwrap().len(), 1);
 
         // An empty `Any` is membership of the empty set, which nothing
-        // satisfies — and the library says so before the query is built.
-        let mut matches_nothing = Filter::new();
-        matches_nothing
-            .tags
-            .insert("#t".to_string(), BTreeSet::new());
+        // satisfies — and the library says so before the query is built. The
+        // builder keeps this one, so it needs no hand-written key.
+        let matches_nothing = Filter::new().set_tag(TagMatch::Any, "t", Vec::<String>::new());
         assert!(matches_nothing.matches_nothing());
         assert!(list(&tx, &matching(matches_nothing)).unwrap().is_empty());
     }

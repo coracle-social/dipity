@@ -16,15 +16,12 @@ uniffi = "0.32"
 # Nostr types and stateless utilities: events, keys, tags, filters, kinds,
 # addresses, NIP-77 negentropy. See ../docs/overview.md.
 #
-# A path dependency, and temporary: `coracle-lib` does not build from a git rev,
-# because its `src/` is tangled from `book/` and gitignored upstream. So the
-# core builds only where that checkout exists and has been tangled. Swap this
-# line for `{ git = "…", rev = "…" }` once coracle-lib ships a release — which
-# has to happen before this app does. See README.md.
-coracle-lib = { path = "../../coracle-rust/coracle-lib" }
+# Published crates, so this builds anywhere. Iterating on the library alongside
+# the app is the `[patch.crates-io]` block at the bottom of this file.
+coracle-lib = "0.1"
 # A reader and a writer per kind, over the vocabulary in `coracle_lib`'s
-# `readers` and `writers`. Same checkout, same caveat.
-coracle-kinds = { path = "../../coracle-rust/coracle-kinds" }
+# `readers` and `writers`.
+coracle-kinds = "0.1"
 hex = "0.4"
 
 # Signing and signature verification, on the audited binding — pinned to the
@@ -71,3 +68,11 @@ all = { level = "warn", priority = -1 }
 lto = true
 codegen-units = 1
 strip = true
+
+# Point the two library crates back at a local checkout, for working on the app
+# and the library at once. Upstream tangles `src/` from `book/`, so a checkout
+# has nothing to build against until `just tangle` runs there.
+#
+# [patch.crates-io]
+# coracle-lib = { path = "../../coracle-rust/coracle-lib" }
+# coracle-kinds = { path = "../../coracle-rust/coracle-kinds" }

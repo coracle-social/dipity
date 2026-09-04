@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result, bail};
-use coracle_lib::events::{EventId, HashedEvent};
+use coracle_lib::events::{EventExtensionId, EventId, HashedEvent};
 use coracle_lib::filters::Filter;
 use coracle_lib::sync::{FrameBudget, Item, SyncSet};
 
@@ -451,10 +451,10 @@ fn admissible(
     // Both registers authorize an id, not a body: the session says the peer
     // authored the event with this id, and a proof commits to the id alone. An
     // event whose id is not its own hash therefore carries no authorization at
-    // all, whatever else it presents. Checked at the wire boundary too
-    // ([`crate::sync::message::id_is_authentic`]); repeated here because this
-    // is the function that decides what may be stored.
-    if !crate::sync::message::id_is_authentic(event) {
+    // all, whatever else it presents. Checked at the wire boundary too;
+    // repeated here because this is the function that decides what may be
+    // stored.
+    if !event.verify_id() {
         return Err(Rejected::Forged);
     }
 

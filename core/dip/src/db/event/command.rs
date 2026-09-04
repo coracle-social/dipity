@@ -485,6 +485,68 @@ mod tests {
     }
 
     #[test]
+    fn a_deletion_by_someone_else_does_not_keep_an_event_out() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        // The mirror of `a_deletion_removes_the_authors_own_events_only`, on
+        // the path that runs when the request is already stored: entitlement
+        // decides in both directions, and only one of them is a sweep.
+        let subject = note(author(1), 100, "not theirs to delete", Tags::new());
+        let deletion = event(
+            author(2),
+            delete::KIND,
+            200,
+            "",
+            Tags::new().add("e", [id(&subject).to_hex()]),
+        );
+
+        save(&tx, &deletion, &[peer()], 10).unwrap();
+
+        assert!(save(&tx, &subject, &[peer()], 20).unwrap());
+        assert!(query::get(&tx, &id(&subject)).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_deletion_by_address_does_not_keep_a_later_version_out() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        // An address names a slot rather than an event, so a request bounds
+        // what it reaches by its own timestamp. A version written afterwards is
+        // not what the author asked to delete.
+        let address = event(
+            author(1),
+            30_023,
+            100,
+            "draft",
+            Tags::new().add("d", ["slug"]),
+        )
+        .address()
+        .unwrap()
+        .to_string();
+        let deletion = event(
+            author(1),
+            delete::KIND,
+            200,
+            "",
+            Tags::new().add("a", [address]),
+        );
+        save(&tx, &deletion, &[peer()], 10).unwrap();
+
+        let later = event(
+            author(1),
+            30_023,
+            300,
+            "after",
+            Tags::new().add("d", ["slug"]),
+        );
+
+        assert!(save(&tx, &later, &[peer()], 20).unwrap());
+        assert!(query::get(&tx, &id(&later)).unwrap().is_some());
+    }
+
+    #[test]
     fn deleting_an_event_takes_its_indexes_with_it() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();

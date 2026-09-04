@@ -273,16 +273,17 @@ impl Session {
 
         // Resume the deferred turn, if its trigger has already arrived.
         match self.role {
-            Role::Receiver if self.auth.peer_challenge.is_some() => {
-                self.send_recognition_tags(db)?;
-                self.challenge_peer()?;
+            Role::Receiver => {
+                if self.auth.peer_challenge.is_some() {
+                    self.send_recognition_tags(db)?;
+                    self.challenge_peer()?;
+                }
             }
             Role::Dialer => {
                 if self.answer_peer_challenge()? {
                     self.state = State::DialerIdentified;
                 }
             }
-            _ => {}
         }
 
         Ok(())

@@ -308,14 +308,19 @@ checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 [[package]]
 name = "coracle-kinds"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7dd9bb0fb389cdf7315510befaedc0b99c8d594b342359f21e6db93002d8fef"
 dependencies = [
  "coracle-lib",
+ "rand",
  "serde_json",
 ]
 
 [[package]]
 name = "coracle-lib"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ddbd5c309e66039fe41c51e30a2aa013a6addce7909f7b3716f305b106fd519"
 dependencies = [
  "base64",
  "bech32",
@@ -1167,6 +1172,16 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
+ "sha2-asm",
+]
+
+[[package]]
+name = "sha2-asm"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
