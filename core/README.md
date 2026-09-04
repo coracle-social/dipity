@@ -20,7 +20,7 @@ Modules mirror the design documents one to one.
 Every recipe lives in the [`justfile`](../justfile) at the repo root, not here.
 
 ```sh
-just setup        # rust targets, npm deps
+just setup        # rust targets, pnpm deps
 just core-test    # host tests
 just bindings     # Swift + Kotlin from the built cdylib
 just ios-lib      # XCFramework, device + simulator

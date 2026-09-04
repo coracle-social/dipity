@@ -22,20 +22,17 @@ jobs:
         with:
           node-version-file: .nvmrc
 
-      - name: Install just
-        run: npm install -g rust-just
-
       - name: Install dependencies
-        run: npm ci
+        run: corepack enable && pnpm install --frozen-lockfile
 
       - name: Check types
-        run: just check
+        run: pnpm exec just check
 
       - name: Lint
-        run: just lint
+        run: pnpm exec just lint
 
       - name: Check formatting
-        run: just format
+        run: pnpm exec just format
 
   core:
     runs-on: ubuntu-latest
@@ -54,8 +51,8 @@ jobs:
         with:
           node-version-file: .nvmrc
 
-      - name: Install just
-        run: npm install -g rust-just
+      - name: Install dependencies
+        run: corepack enable && pnpm install --frozen-lockfile
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -63,10 +60,10 @@ jobs:
           workspaces: core
 
       - name: Check formatting
-        run: just core-fmt
+        run: pnpm exec just core-fmt
 
       - name: Lint
-        run: just core-lint
+        run: pnpm exec just core-lint
 
       - name: Test
-        run: just core-test
+        run: pnpm exec just core-test

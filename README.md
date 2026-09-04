@@ -34,7 +34,7 @@ just android      # sync, then open Android Studio
 just qa           # types, lint, format, clippy, tests — what CI runs
 ```
 
-`just` on its own lists everything. Never run `npx cap sync` directly — it skips the core and bindings build.
+`just` on its own lists everything. Never run `pnpm exec cap sync` directly — it skips the core and bindings build.
 
 Native projects live in `ios/` and `android/` and are committed. After changing web code, `just sync` before building natively; the shells load built assets from `dist/`, not the dev server.
 

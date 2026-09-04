@@ -26,7 +26,7 @@ default:
 
 # Install toolchains and dependencies. Run once after cloning.
 setup:
-    npm ci
+    pnpm install --frozen-lockfile
     rustup target add {{ios_device}} {{ios_sim}}
     @echo
     @echo "Android needs the NDK and cargo-ndk, neither of which this installs:"
@@ -37,22 +37,22 @@ setup:
 
 # Vite dev server. Browser only — no plugin, so no BLE, no store, no peers.
 dev:
-    npx vite
+    pnpm exec vite
 
 # Components are copied into the repo rather than depended on, so this is the
 # only way one arrives. See docs/ui.md.
 
 # Vendor shadcn-svelte components into src/lib/components/ui. No args to choose.
 ui *components:
-    npx shadcn-svelte@latest add {{components}}
+    pnpm dlx shadcn-svelte@latest add {{components}}
 
 # Build web assets to dist/, which the native shells load.
 build:
-    npx vite build
+    pnpm exec vite build
 
 # Serve the built output as the shells see it.
 preview: build
-    npx vite preview
+    pnpm exec vite preview
 
 # ----------------------------------------------------------------------- core
 
@@ -121,35 +121,35 @@ android-lib: bindings
 
 # Core, then bindings, then xcframework, then web assets, then Capacitor.
 sync: ios-lib build
-    npx cap sync
+    pnpm exec cap sync
 
 # Sync, then open Xcode.
 ios: sync
-    npx cap open ios
+    pnpm exec cap open ios
 
 # Sync, then open Android Studio.
 android: sync
-    npx cap open android
+    pnpm exec cap open android
 
 # -------------------------------------------------------------------------- qa
 
 # Types across the webview.
 check:
-    npx svelte-check --tsconfig ./tsconfig.app.json
-    npx tsc -p tsconfig.node.json
+    pnpm exec svelte-check --tsconfig ./tsconfig.app.json
+    pnpm exec tsc -p tsconfig.node.json
 
 # Lint the webview: the UI conventions in docs/ui.md that a machine can check.
 lint:
-    npx eslint .
+    pnpm exec eslint .
 
 # Prettier's opinion of the webview. `just fmt` applies it instead.
 format:
-    npx prettier --check .
+    pnpm exec prettier --check .
 
 # Format both halves in place.
 fmt:
-    npx prettier --write .
-    npx eslint . --fix
+    pnpm exec prettier --write .
+    pnpm exec eslint . --fix
     cd {{core}} && cargo fmt
 
 # Everything a change has to pass. CI runs one step per recipe listed here.

@@ -69,7 +69,7 @@ Capacitor 8 · Svelte 5 · Vite 8 · TypeScript · welshman `0.9.x` · Tailwind 
 **Tasks live in the [`justfile`](./justfile), not in `package.json`** — which has no `scripts` block, deliberately, because half the pipeline is `cargo`. `just` on its own lists everything.
 
 ```sh
-just setup        # rust targets, npm deps — once after cloning
+just setup        # rust targets, pnpm deps — once after cloning
 just dev          # Vite dev server, browser only
 just ui <name>    # vendor a shadcn-svelte component into src/lib/components/ui
 just lint         # eslint over the view
@@ -86,7 +86,7 @@ just android      # sync, then open Android Studio
 
 App ID `social.coracle.dip`. Web assets build to `dist/`; the shells load the *built* output, so `just sync` after web changes or the app runs stale code.
 
-**The core builds before the shells**, and `just sync` enforces the order — `cargo` cross-compiles for each target, `uniffi-bindgen` generates bindings from the *compiled* library, then `cap sync`. Never run `npx cap sync` directly; it skips the first two steps and the shells link against whatever was there before. Generated output stages in `core/target/ffi/` and is never committed. [`core/README.md`](./core/README.md).
+**The core builds before the shells**, and `just sync` enforces the order — `cargo` cross-compiles for each target, `uniffi-bindgen` generates bindings from the *compiled* library, then `cap sync`. Never run `pnpm exec cap sync` directly; it skips the first two steps and the shells link against whatever was there before. Generated output stages in `core/target/ffi/` and is never committed. [`core/README.md`](./core/README.md).
 
 
 Native projects in `ios/` and `android/` are committed and regenerable. Capacitor does not propagate `appId` changes into them — change `capacitor.config.ts`, then delete and re-add the platforms rather than hand-editing.
@@ -95,7 +95,7 @@ Native projects in `ios/` and `android/` are committed and regenerable. Capacito
 
 The view uses [welshman](https://github.com/coracle-social/welshman) `0.9.x` for nostr types and typed kinds. Clone the source into `./ref/welshman` if you need to read or change it — see [Reference materials](#reference-materials).
 
-**Per-package skills are installed** in `.agents/skills/` (symlinked into `.claude/skills/`) — `welshman`, plus `welshman-{app,util,lib,net,store,signer,feeds,domain,content,editor}`. Load the relevant one before working against a package rather than guessing at its API; they are the authoritative reference here. Refresh with `npx skills add coracle-social/welshman`.
+**Per-package skills are installed** in `.agents/skills/` (symlinked into `.claude/skills/`) — `welshman`, plus `welshman-{app,util,lib,net,store,signer,feeds,domain,content,editor}`. Load the relevant one before working against a package rather than guessing at its API; they are the authoritative reference here. Refresh with `pnpm dlx skills add coracle-social/welshman`.
 
 The packages in use are listed explicitly in `package.json` rather than resolved transitively.
 
