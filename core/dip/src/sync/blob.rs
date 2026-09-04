@@ -58,6 +58,21 @@ pub const L2CAP_THRESHOLD_BYTES: u64 = 4 * BLOB_GROUP_BYTES;
 /// contact, and previews are exempt so a feed still renders offline.
 pub const ORIGINAL_CACHE_BYTES: i64 = 256 * 1024 * 1024;
 
+/// How much of a blob this device can answer for, and how much there is.
+struct Holding {
+    /// Bytes that may be served, which is what is on disk bounded by `total`.
+    available: u64,
+    /// The whole blob's length, once anything says what it is.
+    total: Option<u64>,
+}
+
+impl Holding {
+    /// Whether what may be served is the entire blob.
+    fn whole(&self) -> bool {
+        self.total.is_some_and(|total| self.available >= total)
+    }
+}
+
 /// One in-flight fetch of one blob.
 #[derive(Debug)]
 struct BlobFetch {
@@ -202,16 +217,18 @@ impl BlobExchange {
             .size
             .and_then(|size| u64::try_from(size).ok())
             .or_else(|| blob.complete.then_some(held));
-        let available = total.map_or(held, |total| held.min(total));
-        let whole = total.is_some_and(|total| available >= total);
+        let holding = Holding {
+            available: total.map_or(held, |total| held.min(total)),
+            total,
+        };
 
-        if available == 0 {
+        if holding.available == 0 {
             return Ok(missing(&request.id));
         }
 
         match request.method.as_str() {
-            "HEAD" => Ok(self.head(request, &blob, available, total, whole)),
-            "GET" => self.get(request, &blob, available, total, whole, budget),
+            "HEAD" => Ok(self.head(request, &blob, &holding)),
+            "GET" => self.get(db, request, &blob, &holding, budget),
             _ => Ok(status(&request.id, 405)),
         }
     }
@@ -221,33 +238,26 @@ impl BlobExchange {
     /// A partial holding answers 206 with the range that is available, so the
     /// fetcher learns the whole length without mistaking a prefix for it.
     /// `docs/sync.md#blob-sync`.
-    fn head(
-        &self,
-        request: &BlossomRequest,
-        blob: &Blob,
-        available: u64,
-        total: Option<u64>,
-        whole: bool,
-    ) -> BlossomResponse {
+    fn head(&self, request: &BlossomRequest, blob: &Blob, holding: &Holding) -> BlossomResponse {
         let mut headers = vec![
             ("accept-ranges".to_string(), "bytes".to_string()),
-            ("content-length".to_string(), available.to_string()),
+            ("content-length".to_string(), holding.available.to_string()),
         ];
 
         if let Some(mime) = &blob.mime_type {
             headers.push(("content-type".to_string(), mime.clone()));
         }
 
-        if !whole {
+        if !holding.whole() {
             headers.push((
                 "content-range".to_string(),
-                content_range(0, available - 1, total),
+                content_range(0, holding.available - 1, holding.total),
             ));
         }
 
         BlossomResponse {
             id: request.id.clone(),
-            status: if whole { 200 } else { 206 },
+            status: if holding.whole() { 200 } else { 206 },
             headers,
             body: Vec::new(),
         }
@@ -256,11 +266,10 @@ impl BlobExchange {
     /// Answer a `GET`, whole or by range, up to what the peer's budget allows.
     fn get(
         &mut self,
+        db: &Db,
         request: &BlossomRequest,
         blob: &Blob,
-        available: u64,
-        total: Option<u64>,
-        whole: bool,
+        holding: &Holding,
         budget: u64,
     ) -> Result<BlossomResponse> {
         let Some(wanted) = requested_range(request) else {
@@ -273,7 +282,9 @@ impl BlobExchange {
         };
 
         // Inclusive on both ends, per HTTP, and never past what is here.
-        let last = end.unwrap_or(available - 1).min(available - 1);
+        let last = end
+            .unwrap_or(holding.available - 1)
+            .min(holding.available - 1);
 
         if start > last {
             return Ok(status(&request.id, 416));
@@ -286,6 +297,8 @@ impl BlobExchange {
             return Ok(missing(&request.id));
         }
 
+        command::touch_blob(db, &blob.sha256, clock::now())?;
+
         self.served_bytes = self.served_bytes.saturating_add(bytes.len() as u64);
 
         let last = start + bytes.len() as u64 - 1;
@@ -297,14 +310,16 @@ impl BlobExchange {
 
         // Only an answer that is the entire blob is a 200; anything less is a
         // range, and says which one it is.
-        let entire = whole && matches!(wanted, Requested::Whole) && bytes.len() as u64 == available;
+        let entire = holding.whole()
+            && matches!(wanted, Requested::Whole)
+            && bytes.len() as u64 == holding.available;
 
         if entire {
             headers.push(("accept-ranges".to_string(), "bytes".to_string()));
         } else {
             headers.push((
                 "content-range".to_string(),
-                content_range(start, last, total),
+                content_range(start, last, holding.total),
             ));
         }
 
@@ -885,6 +900,35 @@ mod tests {
         assert_eq!(get.status, 200);
         assert_eq!(get.body, bytes);
         assert_eq!(header(&get.headers, "content-range"), None);
+    }
+
+    /// Serving bytes is a read, so eviction orders on it, not on completion.
+    #[test]
+    fn serving_a_blob_moves_it_off_the_head_of_the_eviction_queue() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut blobs, store) = exchange();
+        let older = given_blob(&db, &store, b"the first blob bytes");
+        let newer = given_blob(&db, &store, b"the second blob bytes");
+
+        db_command::complete_blob(&db, &older.sha256, 20, 1).unwrap();
+        db_command::complete_blob(&db, &newer.sha256, 21, 2).unwrap();
+
+        let get = blobs
+            .serve(
+                &db,
+                &peer(),
+                &local(),
+                &ask("GET", &format!("/{}", older.sha256), &[]),
+                quota(1024),
+            )
+            .unwrap();
+
+        assert_eq!(get.status, 200);
+
+        // Room for one of the two, and the older one was just read.
+        let evicted = db_command::evict_originals(&db, 21).unwrap();
+
+        assert_eq!(evicted, vec![newer.sha256]);
     }
 
     #[test]

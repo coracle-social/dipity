@@ -84,4 +84,4 @@ That anchor is also the blob's lifetime: the record goes when the event does, an
 Blob quotas are separate from and much tighter than event quotas:
 
 - Per-peer bytes per session and per rolling 24 h.
-- A `original` cache ceiling in bytes, evicted LRU. Previews are kept as long as their events are.
+- A `original` cache ceiling in bytes, evicted LRU. Previews are kept as long as their events are. Serving a blob's bytes to a peer is what marks it used, and is the only read of them the core has.
