@@ -187,8 +187,8 @@ pub fn evict_originals(db: &Db, ceiling_bytes: i64) -> Result<Vec<BlobHash>> {
 /// claims for itself.
 fn record_media(tx: &Tx<'_>, event: &HashedEvent, id: EventId) -> Result<()> {
     for tag in event.tags.find_all("imeta") {
-        if let Some(media) = Blob::from_imeta(tag, id) {
-            blob::record(tx, &media)?;
+        if let Some(media) = Blob::from_imeta(tag) {
+            blob::record(tx, &media, &id)?;
         }
     }
 

@@ -891,24 +891,18 @@ fn requested_range(request: &BlossomRequest) -> Option<Requested> {
     })
 }
 
-/// The blob a request path names, if this device knows it and the peer may be
-/// served its anchor.
+/// The blob a request path names, if the peer may be served every event that references it. `docs/sync.md#blob-sync`.
 fn offerable_blob(db: &Db, peer: &Peer, local: &Identity, hash: &BlobHash) -> Result<Option<Blob>> {
     let Some(blob) = db_query::get_blob(db, hash)? else {
         return Ok(None);
     };
 
-    // The anchoring event's permissions are the blob's: a peer that could not
-    // be served the event cannot fetch its media. The same query the relay
-    // half builds, so one place decides what a peer may see — a blocked
-    // binding included.
-    let query = relay::query_for(peer, local, Filter::new().add_ids([blob.event_id]));
-    let anchor = db_query::list_events(db, &query)?;
+    let referencing = db_query::events_referencing_blob(db, hash)?;
+    let query = relay::query_for(peer, local, Filter::new().add_ids(referencing.clone()));
+    let servable = db_query::list_events(db, &query)?;
+    let offerable = !referencing.is_empty() && servable.len() == referencing.len();
 
-    Ok(anchor
-        .iter()
-        .any(|event| event.id == blob.event_id)
-        .then_some(blob))
+    Ok(offerable.then_some(blob))
 }
 
 /// A bodyless answer carrying only its status.
@@ -1818,6 +1812,49 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status, 404);
+    }
+
+    /// The narrowest referencing event wins, or a peer could publish an event
+    /// naming somebody else's hash and be served their media.
+    #[test]
+    fn a_second_event_the_peer_may_not_be_served_takes_the_blob_with_it() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut blobs, store) = exchange();
+        let blob = given_blob(&db, &store, b"the quick brown fox");
+        let path = format!("/{}", blob.sha256);
+
+        let offered = blobs
+            .serve(
+                &db,
+                &peer(),
+                &local(),
+                &ask("HEAD", &path, &[]),
+                quota(1024),
+            )
+            .unwrap();
+
+        assert_eq!(offered.status, 200);
+
+        let held = note(
+            author(3),
+            2,
+            "the same media",
+            Tags::new().add("imeta", [format!("x {}", blob.sha256)]),
+        );
+
+        db_command::receive_event(&db, &held, &[author(3)], 2).unwrap();
+
+        let narrowed = blobs
+            .serve(
+                &db,
+                &peer(),
+                &local(),
+                &ask("HEAD", &path, &[]),
+                quota(1024),
+            )
+            .unwrap();
+
+        assert_eq!(narrowed.status, 404);
     }
 
     /// The BLAKE3 root of `bytes`, the way an `imeta` tag carries it.

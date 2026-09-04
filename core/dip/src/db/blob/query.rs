@@ -1,4 +1,4 @@
-//! Reads over `blob`.
+//! Reads over `blob` and `blob_reference`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -12,13 +12,13 @@ use crate::db::sql::{event_id_from_sql, placeholders};
 use crate::model::{Blob, BlobHash, BlobRole};
 
 /// The blob columns, in the order [`to_blob`] reads them.
-const COLUMNS: &str = "sha256, event_id, role, url, mime_type, size, dim, blurhash, alt, blake3,
-     imeta, stored_bytes, complete, accessed_at";
+const COLUMNS: &str = "b.sha256, b.role, b.url, b.mime_type, b.size, b.dim, b.blurhash, b.alt,
+     b.blake3, b.imeta, b.stored_bytes, b.complete, b.accessed_at";
 
 /// One blob by hash.
 pub fn get(tx: &Tx<'_>, sha256: &BlobHash) -> Result<Option<Blob>> {
     let blob = tx
-        .prepare_cached(&format!("SELECT {COLUMNS} FROM blob WHERE sha256 = ?1"))?
+        .prepare_cached(&format!("SELECT {COLUMNS} FROM blob b WHERE b.sha256 = ?1"))?
         .query_row(params![sha256], to_blob)
         .map(Some)
         .or_else(|error| match error {
@@ -43,7 +43,10 @@ pub fn is_complete(tx: &Tx<'_>, sha256: &BlobHash) -> Result<bool> {
 /// Every blob a stored event references.
 pub fn list_for_event(tx: &Tx<'_>, event_id: &EventId) -> Result<Vec<Blob>> {
     let mut prepared = tx.prepare_cached(&format!(
-        "SELECT {COLUMNS} FROM blob WHERE event_id = ?1 ORDER BY sha256 ASC"
+        "SELECT {COLUMNS} FROM blob b
+         JOIN blob_reference r ON r.sha256 = b.sha256
+         WHERE r.event_id = ?1
+         ORDER BY b.sha256 ASC"
     ))?;
 
     let blobs = prepared
@@ -52,6 +55,23 @@ pub fn list_for_event(tx: &Tx<'_>, event_id: &EventId) -> Result<Vec<Blob>> {
         .with_context(|| format!("listing blobs for {event_id}"))?;
 
     Ok(blobs)
+}
+
+/// Every event that references a hash, which is who the blob is kept for and
+/// whose permissions it carries.
+pub fn events_referencing(tx: &Tx<'_>, sha256: &BlobHash) -> Result<Vec<EventId>> {
+    let mut prepared = tx.prepare_cached(
+        "SELECT event_id FROM blob_reference WHERE sha256 = ?1 ORDER BY event_id ASC",
+    )?;
+
+    let events = prepared
+        .query_map(params![sha256], |row| {
+            event_id_from_sql(&row.get::<_, String>("event_id")?, 0)
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .with_context(|| format!("listing the events referencing blob {sha256}"))?;
+
+    Ok(events)
 }
 
 /// Every blob referenced by any of `event_ids`, grouped by the event.
@@ -66,22 +86,30 @@ pub fn list_for_events(tx: &Tx<'_>, event_ids: &[EventId]) -> Result<HashMap<Eve
 
     let placeholders = placeholders(1, event_ids.len());
     let mut prepared = tx.prepare(&format!(
-        "SELECT {COLUMNS} FROM blob WHERE event_id IN ({placeholders}) ORDER BY sha256 ASC"
+        "SELECT r.event_id, {COLUMNS} FROM blob b
+         JOIN blob_reference r ON r.sha256 = b.sha256
+         WHERE r.event_id IN ({placeholders})
+         ORDER BY b.sha256 ASC"
     ))?;
 
     // Ordered by hash across the whole set, so each event's blobs come out in
     // the order `list_for_event` gives them.
     let mut blobs: HashMap<EventId, Vec<Blob>> = HashMap::new();
 
-    for blob in prepared
+    for (event_id, blob) in prepared
         .query_map(
             params_from_iter(event_ids.iter().map(EventId::to_hex)),
-            to_blob,
+            |row| {
+                Ok((
+                    event_id_from_sql(&row.get::<_, String>("event_id")?, 0)?,
+                    to_blob(row)?,
+                ))
+            },
         )?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("listing blobs for a page of events")?
     {
-        blobs.entry(blob.event_id).or_default().push(blob);
+        blobs.entry(event_id).or_default().push(blob);
     }
 
     Ok(blobs)
@@ -122,9 +150,9 @@ pub fn wanted(tx: &Tx<'_>, limit: usize) -> Result<Vec<Blob>> {
 /// The want list read: previews first, then whichever blob has the most bytes already on disk.
 fn wanted_sql() -> String {
     format!(
-        "SELECT {COLUMNS} FROM blob
-         WHERE complete = 0
-         ORDER BY CASE role WHEN 'preview' THEN 0 ELSE 1 END, stored_bytes DESC, sha256 ASC
+        "SELECT {COLUMNS} FROM blob b
+         WHERE b.complete = 0
+         ORDER BY CASE b.role WHEN 'preview' THEN 0 ELSE 1 END, b.stored_bytes DESC, b.sha256 ASC
          LIMIT ?1"
     )
 }
@@ -161,9 +189,9 @@ pub fn least_recently_used(tx: &Tx<'_>, role: BlobRole, limit: usize) -> Result<
 /// The eviction read; a never-read blob sorts first, since SQLite orders NULL ahead of a timestamp.
 fn least_recently_used_sql() -> String {
     format!(
-        "SELECT {COLUMNS} FROM blob
-         WHERE role = ?1 AND complete = 1
-         ORDER BY accessed_at ASC, sha256 ASC
+        "SELECT {COLUMNS} FROM blob b
+         WHERE b.role = ?1 AND b.complete = 1
+         ORDER BY b.accessed_at ASC, b.sha256 ASC
          LIMIT ?2"
     )
 }
@@ -174,10 +202,9 @@ fn to_blob(row: &Row<'_>) -> rusqlite::Result<Blob> {
 
     Ok(Blob {
         sha256: row.get("sha256")?,
-        event_id: event_id_from_sql(&row.get::<_, String>("event_id")?, 1)?,
         role: BlobRole::parse(&role).ok_or_else(|| {
             rusqlite::Error::FromSqlConversionFailure(
-                2,
+                1,
                 rusqlite::types::Type::Text,
                 format!("unknown blob role {role}").into(),
             )
@@ -191,7 +218,7 @@ fn to_blob(row: &Row<'_>) -> rusqlite::Result<Blob> {
         blake3: row.get("blake3")?,
         imeta: serde_json::from_str(&imeta).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
-                10,
+                9,
                 rusqlite::types::Type::Text,
                 Box::new(error),
             )

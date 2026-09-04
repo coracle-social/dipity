@@ -139,6 +139,11 @@ pub fn get_blob(db: &Db, sha256: &BlobHash) -> Result<Option<Blob>> {
     db.read(|tx| blob::get(tx, sha256))
 }
 
+/// Every stored event that references a hash, whose permissions are the blob's.
+pub fn events_referencing_blob(db: &Db, sha256: &BlobHash) -> Result<Vec<EventId>> {
+    db.read(|tx| blob::events_referencing(tx, sha256))
+}
+
 /// How many bytes of held originals the cache is carrying, which is what the
 /// ceiling in `docs/sync.md` is measured against.
 pub fn cached_bytes(db: &Db) -> Result<i64> {

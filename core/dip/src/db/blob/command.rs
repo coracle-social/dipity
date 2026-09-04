@@ -10,26 +10,30 @@ use crate::model::{Blob, BlobHash};
 use super::channel::{self, BlobChange};
 use super::query;
 
-/// Record a blob a stored event references. Returns whether it was new.
+/// Record that `event_id` references a blob. Returns whether the blob was new.
 ///
-/// The first event to reference a hash — by seen time, since that is the order
-/// events arrive in — anchors it, and a later reference changes nothing. The
-/// anchor is what the blob's permissions come from, so moving it on every
-/// mention would let a later event widen who can fetch an earlier one's media.
-pub fn record(tx: &Tx<'_>, blob: &Blob) -> Result<bool> {
+/// The metadata is the first referring event's and a later reference leaves it
+/// alone: the columns are read off an `imeta` tag, and the second event's copy
+/// of it says nothing about the bytes the first one's hash already addresses.
+/// What every reference does add is a claim on the blob's life — the row and
+/// the bytes outlive any one of them — and a say in who may fetch it.
+pub fn record(tx: &Tx<'_>, blob: &Blob, event_id: &EventId) -> Result<bool> {
     let imeta = serde_json::to_string(&blob.imeta)
         .with_context(|| format!("serializing the imeta tag for blob {}", blob.sha256))?;
+
+    tx.prepare_cached("INSERT OR IGNORE INTO blob_reference (sha256, event_id) VALUES (?1, ?2)")?
+        .execute(params![blob.sha256, event_id.to_hex()])
+        .with_context(|| format!("referencing blob {} from {event_id}", blob.sha256))?;
 
     let written = tx
         .prepare_cached(
             "INSERT OR IGNORE INTO blob (
-                 sha256, event_id, role, url, mime_type, size, dim, blurhash, alt, blake3,
+                 sha256, role, url, mime_type, size, dim, blurhash, alt, blake3,
                  imeta, stored_bytes, complete, accessed_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         )?
         .execute(params![
             blob.sha256,
-            blob.event_id.to_hex(),
             blob.role.as_str(),
             blob.url,
             blob.mime_type,
@@ -120,14 +124,23 @@ pub fn remove(tx: &Tx<'_>, sha256: &BlobHash) -> Result<bool> {
     Ok(true)
 }
 
-/// Forget every blob an event anchors, on the way to deleting the event.
+/// Drop an event's references, on the way to deleting the event, and with them
+/// every blob no other event still references.
 ///
-/// The rows would go by cascade anyway, and silently — nothing would announce
-/// them, so nothing would reclaim the bytes. Removing them here is what makes
-/// the deletion say so.
+/// The reference rows would go by cascade anyway, and silently — nothing would
+/// announce the blobs they were the last claim on, so nothing would reclaim the
+/// bytes. Dropping them here is what makes the deletion say so.
 pub fn remove_for_event(tx: &Tx<'_>, event_id: &EventId) -> Result<()> {
-    for blob in query::list_for_event(tx, event_id)? {
-        remove(tx, &blob.sha256)?;
+    let referenced = query::list_for_event(tx, event_id)?;
+
+    tx.prepare_cached("DELETE FROM blob_reference WHERE event_id = ?1")?
+        .execute(params![event_id.to_hex()])
+        .with_context(|| format!("dropping the blob references of {event_id}"))?;
+
+    for blob in referenced {
+        if query::events_referencing(tx, &blob.sha256)?.is_empty() {
+            remove(tx, &blob.sha256)?;
+        }
     }
 
     Ok(())
@@ -143,7 +156,7 @@ mod tests {
     use crate::fixtures::{author, blob_hash, id, note, peer};
     use crate::model::BlobRole;
 
-    /// Store an event to anchor blobs against, and return its id.
+    /// Store an event to reference blobs from, and return its id.
     fn store_event(tx: &Tx<'_>, content: &str) -> EventId {
         let event = note(author(1), 100, content, Tags::new());
 
@@ -153,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn the_first_event_to_reference_a_hash_anchors_it() {
+    fn a_second_reference_is_recorded_and_the_metadata_is_not() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
@@ -161,11 +174,18 @@ mod tests {
         let second = store_event(&tx, "second");
 
         let hash = blob_hash(1);
+        let mut later = Blob::new(hash.clone(), BlobRole::Original);
+        later.alt = Some("read off the second event".into());
 
-        assert!(record(&tx, &Blob::new(hash.clone(), first, BlobRole::Original)).unwrap());
-        assert!(!record(&tx, &Blob::new(hash.clone(), second, BlobRole::Original)).unwrap());
+        assert!(record(&tx, &Blob::new(hash.clone(), BlobRole::Original), &first).unwrap());
+        assert!(!record(&tx, &later, &second).unwrap());
 
-        assert_eq!(query::get(&tx, &hash).unwrap().unwrap().event_id, first);
+        assert_eq!(query::get(&tx, &hash).unwrap().unwrap().alt, None);
+        assert_eq!(
+            query::events_referencing(&tx, &hash).unwrap().len(),
+            2,
+            "the second event did not claim the blob"
+        );
     }
 
     /// The batched read has to answer exactly what the per-event one does,
@@ -186,7 +206,7 @@ mod tests {
             (blob_hash(2), &second),
             (blob_hash(4), &second),
         ] {
-            record(&tx, &Blob::new(sha256, *event_id, BlobRole::Original)).unwrap();
+            record(&tx, &Blob::new(sha256, BlobRole::Original), event_id).unwrap();
         }
 
         let ids = [first, second, bare];
@@ -229,9 +249,9 @@ mod tests {
                 "service nostr.build".into(),
             ],
         );
-        let blob = Blob::from_imeta(&tag, event_id).unwrap();
+        let blob = Blob::from_imeta(&tag).unwrap();
 
-        record(&tx, &blob).unwrap();
+        record(&tx, &blob, &event_id).unwrap();
 
         let stored = query::get(&tx, &blob_hash(1)).unwrap().unwrap();
 
@@ -248,7 +268,7 @@ mod tests {
 
         let event_id = store_event(&tx, "with media");
         let hash = blob_hash(1);
-        record(&tx, &Blob::new(hash.clone(), event_id, BlobRole::Original)).unwrap();
+        record(&tx, &Blob::new(hash.clone(), BlobRole::Original), &event_id).unwrap();
 
         assert!(record_progress(&tx, &hash, 4_096).unwrap());
 
@@ -266,7 +286,7 @@ mod tests {
 
         let event_id = store_event(&tx, "with media");
         let hash = blob_hash(1);
-        record(&tx, &Blob::new(hash.clone(), event_id, BlobRole::Original)).unwrap();
+        record(&tx, &Blob::new(hash.clone(), BlobRole::Original), &event_id).unwrap();
 
         assert_eq!(query::wanted(&tx, 10).unwrap().len(), 1);
         assert!(mark_complete(&tx, &hash, 8_192, 100).unwrap());
@@ -286,8 +306,8 @@ mod tests {
         let tx = db.begin_write().unwrap();
 
         let event_id = store_event(&tx, "with media");
-        record(&tx, &Blob::new(blob_hash(1), event_id, BlobRole::Original)).unwrap();
-        record(&tx, &Blob::new(blob_hash(2), event_id, BlobRole::Preview)).unwrap();
+        record(&tx, &Blob::new(blob_hash(1), BlobRole::Original), &event_id).unwrap();
+        record(&tx, &Blob::new(blob_hash(2), BlobRole::Preview), &event_id).unwrap();
 
         let wanted = query::wanted(&tx, 10).unwrap();
 
@@ -304,7 +324,7 @@ mod tests {
         let event_id = store_event(&tx, "with media");
 
         for hash in [blob_hash(1), blob_hash(2)] {
-            record(&tx, &Blob::new(hash.clone(), event_id, BlobRole::Original)).unwrap();
+            record(&tx, &Blob::new(hash.clone(), BlobRole::Original), &event_id).unwrap();
             mark_complete(&tx, &hash, 1_024, 100).unwrap();
         }
 
@@ -322,41 +342,52 @@ mod tests {
     }
 
     #[test]
-    fn a_blob_record_dies_with_the_event_that_anchors_it() {
+    fn a_blob_dies_with_the_last_event_to_reference_it_and_not_the_first() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        let anchor = store_event(&tx, "first");
-        let other = store_event(&tx, "second");
+        let first = store_event(&tx, "first");
+        let second = store_event(&tx, "second");
         let hash = blob_hash(1);
 
-        record(&tx, &Blob::new(hash.clone(), anchor, BlobRole::Original)).unwrap();
+        record(&tx, &Blob::new(hash.clone(), BlobRole::Original), &first).unwrap();
+        record(&tx, &Blob::new(hash.clone(), BlobRole::Original), &second).unwrap();
 
-        // A second mention changes nothing, the anchor included, so deleting
-        // the anchoring event takes the record with it either way.
-        assert!(!record(&tx, &Blob::new(hash.clone(), other, BlobRole::Original)).unwrap());
+        event_command::delete(&tx, &first).unwrap();
 
-        event_command::delete(&tx, &anchor).unwrap();
+        assert!(
+            query::get(&tx, &hash).unwrap().is_some(),
+            "the second event still references it"
+        );
+        assert_eq!(query::events_referencing(&tx, &hash).unwrap(), [second]);
+        assert_eq!(query::list_for_event(&tx, &second).unwrap().len(), 1);
+
+        event_command::delete(&tx, &second).unwrap();
 
         assert!(query::get(&tx, &hash).unwrap().is_none());
         assert!(query::all_hashes(&tx).unwrap().is_empty());
+        assert!(query::events_referencing(&tx, &hash).unwrap().is_empty());
     }
 
     /// The bytes are reclaimed off this notification, so a deletion that goes
-    /// by cascade and announces nothing leaves them on disk forever.
+    /// by cascade and announces nothing leaves them on disk forever. A blob
+    /// another event still wants must not be announced at all.
     #[test]
-    fn deleting_an_event_announces_every_blob_it_anchored() {
+    fn deleting_an_event_announces_the_blobs_it_was_the_last_claim_on() {
         let mut db = Db::open_in_memory().unwrap();
         let mut changes = channel::subscribe(&db);
 
         let tx = db.begin_write().unwrap();
-        let anchor = store_event(&tx, "with media");
+        let going = store_event(&tx, "with media");
+        let staying = store_event(&tx, "shares one of them");
 
         for hash in [blob_hash(1), blob_hash(2)] {
-            record(&tx, &Blob::new(hash, anchor, BlobRole::Original)).unwrap();
+            record(&tx, &Blob::new(hash, BlobRole::Original), &going).unwrap();
         }
 
-        event_command::delete(&tx, &anchor).unwrap();
+        record(&tx, &Blob::new(blob_hash(2), BlobRole::Original), &staying).unwrap();
+
+        event_command::delete(&tx, &going).unwrap();
         tx.commit().unwrap();
 
         let mut removed = Vec::new();
@@ -369,6 +400,6 @@ mod tests {
 
         removed.sort();
 
-        assert_eq!(removed, [blob_hash(1), blob_hash(2)]);
+        assert_eq!(removed, [blob_hash(1)]);
     }
 }

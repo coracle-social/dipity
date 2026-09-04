@@ -6,7 +6,6 @@ use std::fmt;
 use std::str::FromStr;
 
 use anyhow::{Result, bail};
-use coracle_lib::events::EventId;
 use coracle_lib::tags::Tag;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
@@ -132,14 +131,13 @@ impl BlobRole {
 
 /// A blob this device knows about, whether or not it holds the bytes.
 ///
-/// The row is anchored to the event that first referenced the hash, ordered by
-/// seen time rather than `created_at`, and inherits that event's permissions.
+/// One row per hash, however many events reference it. Which events those are
+/// is `blob_reference`, and both the blob's lifetime and its permissions come
+/// from there.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Blob {
     /// SHA-256 of the whole file. The address it is fetched by.
     pub sha256: BlobHash,
-    /// The event this blob's permissions come from.
-    pub event_id: EventId,
     /// Preview or original.
     pub role: BlobRole,
     /// Where the author said it could be fetched.
@@ -169,10 +167,9 @@ pub struct Blob {
 impl Blob {
     /// A blob known only by hash, with no metadata yet.
     #[must_use]
-    pub fn new(sha256: BlobHash, event_id: EventId, role: BlobRole) -> Self {
+    pub fn new(sha256: BlobHash, role: BlobRole) -> Self {
         Self {
             sha256,
-            event_id,
             role,
             url: None,
             mime_type: None,
@@ -199,7 +196,7 @@ impl Blob {
     /// A `preview-of` that is not a hash names no original, so it is read as
     /// the original it claims not to be — the direction that grants nothing.
     #[must_use]
-    pub fn from_imeta(tag: &Tag, event_id: EventId) -> Option<Self> {
+    pub fn from_imeta(tag: &Tag) -> Option<Self> {
         let imeta = tag.values().to_vec();
         let entries = || imeta.iter().filter_map(|entry| split_entry(entry));
         let role = entries()
@@ -210,7 +207,7 @@ impl Blob {
 
         // The first `x` wins, so a second one cannot redirect the blob.
         let sha256 = entries().find_map(|(key, value)| (key == "x").then_some(value))?;
-        let mut blob = Self::new(BlobHash::parse(sha256).ok()?, event_id, role);
+        let mut blob = Self::new(BlobHash::parse(sha256).ok()?, role);
 
         for (key, value) in entries() {
             match key {
@@ -263,19 +260,16 @@ mod tests {
 
     #[test]
     fn imeta_is_read_key_by_key() {
-        let blob = Blob::from_imeta(
-            &tag(&[
-                "url https://example.com/x.jpg",
-                "m image/jpeg",
-                &format!("x {}", hash(0xab)),
-                "blake3 def456",
-                "size 2048",
-                "dim 640x480",
-                "alt a dog, asleep",
-                "unknown whatever",
-            ]),
-            EventId::new([1u8; 32]),
-        )
+        let blob = Blob::from_imeta(&tag(&[
+            "url https://example.com/x.jpg",
+            "m image/jpeg",
+            &format!("x {}", hash(0xab)),
+            "blake3 def456",
+            "size 2048",
+            "dim 640x480",
+            "alt a dog, asleep",
+            "unknown whatever",
+        ]))
         .unwrap();
 
         assert_eq!(blob.sha256.as_str(), hash(0xab));
@@ -298,8 +292,7 @@ mod tests {
 
     #[test]
     fn a_tag_naming_the_original_it_stands_in_for_is_a_preview() {
-        let id = EventId::new([1u8; 32]);
-        let role = |values: &[&str]| Blob::from_imeta(&tag(values), id).unwrap().role;
+        let role = |values: &[&str]| Blob::from_imeta(&tag(values)).unwrap().role;
 
         assert_eq!(
             role(&[
@@ -328,17 +321,15 @@ mod tests {
 
     #[test]
     fn a_blob_survives_a_json_round_trip() {
-        // The event id is a type now, and it serializes as the hex the column
-        // holds, so a Blob is still a plain JSON object.
-        let blob = Blob::from_imeta(
-            &tag(&[&format!("x {}", hash(3)), "m image/jpeg", "size 2048"]),
-            EventId::new([1u8; 32]),
-        )
+        let blob = Blob::from_imeta(&tag(&[
+            &format!("x {}", hash(3)),
+            "m image/jpeg",
+            "size 2048",
+        ]))
         .unwrap();
 
         let json = serde_json::to_string(&blob).unwrap();
 
-        assert!(json.contains(&blob.event_id.to_hex()));
         assert!(json.contains(blob.sha256.as_str()));
         assert_eq!(serde_json::from_str::<Blob>(&json).unwrap(), blob);
     }
@@ -353,8 +344,6 @@ mod tests {
 
     #[test]
     fn imeta_without_a_usable_hash_is_not_a_blob() {
-        let id = EventId::new([1u8; 32]);
-
         for values in [
             // No `x` at all.
             vec!["url https://example.com/x.jpg", "m image/jpeg"],
@@ -368,7 +357,7 @@ mod tests {
             vec!["x zz"],
         ] {
             assert!(
-                Blob::from_imeta(&tag(&values), id).is_none(),
+                Blob::from_imeta(&tag(&values)).is_none(),
                 "{values:?} became a blob"
             );
         }
@@ -379,8 +368,7 @@ mod tests {
         // SQLite compares TEXT byte for byte, so an uppercase hash stored as it
         // arrived is a row that its own hash cannot read back.
         let upper = hash(0xab).to_uppercase();
-        let blob =
-            Blob::from_imeta(&tag(&[&format!("x {upper}")]), EventId::new([1u8; 32])).unwrap();
+        let blob = Blob::from_imeta(&tag(&[&format!("x {upper}")])).unwrap();
 
         assert_eq!(blob.sha256.as_str(), hash(0xab));
     }

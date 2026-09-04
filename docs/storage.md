@@ -12,7 +12,8 @@ Where events live, who can answer a query, and what happens while the app is asl
 | `event_seen` | `event_id`, `seen_at`, `peer_pubkey`. Unique on (`event_id`, `peer_pubkey`). |
 | `recipient_signature` | `event_id`, `author_pubkey`, `recipient_pubkey`, `sig`. Unique on (`event_id`, `recipient_pubkey`). The author's signature naming a recipient, held by the peer it names. It is the witness an [authorship proof](./proofs.md#authorship-proofs) is built from, never the proof itself, and it is never served to a peer. The author is carried rather than joined, since a signature without the key it is by neither verifies nor proves; a composite foreign key onto `event (id, pubkey)` is what keeps the copy honest. |
 | `pref` | A key/value store for storing app policies and ui preferences. |
-| `blob` | A mapping of blob sha256 metadata extracted from the first event seen that referenced it. |
+| `blob` | A mapping of blob sha256 to the metadata in the `imeta` tag of the first event seen to reference it, plus how much of the file is on disk. |
+| `blob_reference` | `sha256`, `event_id`. One row per event that references a hash. The record and its bytes live as long as any of them, and a peer is served the bytes only when it may be served all of them. |
 | `pair_secret` | `pubkey`, `secret`, `updated_at`. One row per peer this device has paired with, derived from that session's handshake hash. What a later encounter is [recognized](./discovery.md#recognition) from before either side names a pubkey. Provenance, so it is never served. |
 | `disclosure` | `id`, `disclosed_at`. One row per `AUTH` response this device handed an unrecognized peer, bounding the [disclosure budget](./policy.md#discoverability) per window. No recipient: the dialer discloses before the peer has named itself. Rows older than the window are pruned on write. |
 
@@ -34,7 +35,7 @@ Blob bytes are stored outside the event store, keyed by SHA-256 hash. A partial 
 
 The core ships a file-backed store over a directory the shell provides, the same way it opens SQLite in one. It reaches that store through a trait, which is what lets the sync layer be tested against memory rather than a disk.
 
-A file lives exactly as long as the `blob` row for its hash. Both ways a row goes — LRU eviction, and the deletion of the event that anchors it — announce the removal on the blob channel, and the node deletes the bytes when it drains that channel. The channel is lossy and nothing listens on it while the app is closed, so the node also sweeps the store against the table at open and whenever it finds it has fallen behind. The table is the record; the directory is a cache of it.
+A file lives exactly as long as the `blob` row for its hash, and that row lives as long as any event references it. Both ways a row goes — LRU eviction, and the deletion of the last event to reference it — announce the removal on the blob channel, and the node deletes the bytes when it drains that channel. The channel is lossy and nothing listens on it while the app is closed, so the node also sweeps the store against the table at open and whenever it finds it has fallen behind. The table is the record; the directory is a cache of it.
 
 Media is written to disk unsealed, protected by the platform's data-protection class rather than app-layer encryption. See [`privacy.md`](./privacy.md#what-we-do-not-defend-against).
 

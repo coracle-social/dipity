@@ -38,6 +38,10 @@ const MIGRATIONS: &[Migration] = &[
         name: "0003_drop_blob_blake3_tree",
         sql: include_str!("../../migrations/0003_drop_blob_blake3_tree.sql"),
     },
+    Migration {
+        name: "0004_blob_reference",
+        sql: include_str!("../../migrations/0004_blob_reference.sql"),
+    },
 ];
 
 /// The database file's name inside the directory the shell provides.
@@ -313,6 +317,7 @@ mod tests {
             names,
             [
                 "blob",
+                "blob_reference",
                 "disclosure",
                 "event",
                 "event_fts",

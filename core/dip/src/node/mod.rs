@@ -445,7 +445,7 @@ impl Node {
     /// before the row existed.
     fn complete_own_media(&self, event: &HashedEvent) -> Result<()> {
         for tag in event.tags.find_all("imeta") {
-            let Some(blob) = Blob::from_imeta(tag, event.id) else {
+            let Some(blob) = Blob::from_imeta(tag) else {
                 continue;
             };
             // The whole file, not a transfer of someone else's media that
