@@ -21,7 +21,7 @@ pub enum BlobChange {
     /// of bytes and each subscriber gets its own clone.
     Recorded(Box<Blob>),
     /// More bytes landed, by hash and total held.
-    Progressed(BlobHash, i64),
+    Progressed(BlobHash, u64),
     /// Every byte is held and hashes to its address.
     Completed(BlobHash),
     /// The record went — evicted, or its anchoring event was deleted. The

@@ -60,10 +60,10 @@ pub fn record(tx: &Tx<'_>, blob: &Blob, event_id: &EventId) -> Result<bool> {
 
 /// Record how many verified bytes of a blob are held, which is where the next
 /// session's transfer picks the blob up.
-pub fn record_progress(tx: &Tx<'_>, sha256: &BlobHash, stored_bytes: i64) -> Result<bool> {
+pub fn record_progress(tx: &Tx<'_>, sha256: &BlobHash, stored_bytes: u64) -> Result<bool> {
     let written = tx
         .prepare_cached("UPDATE blob SET stored_bytes = ?2 WHERE sha256 = ?1")?
-        .execute(params![sha256, stored_bytes])
+        .execute(params![sha256, column_bytes(stored_bytes)])
         .with_context(|| format!("recording progress for blob {sha256}"))?;
 
     if written == 0 {
@@ -76,14 +76,14 @@ pub fn record_progress(tx: &Tx<'_>, sha256: &BlobHash, stored_bytes: i64) -> Res
 }
 
 /// Mark a blob whole: every byte is held and the file hashes to its address.
-pub fn mark_complete(tx: &Tx<'_>, sha256: &BlobHash, stored_bytes: i64, at: i64) -> Result<bool> {
+pub fn mark_complete(tx: &Tx<'_>, sha256: &BlobHash, stored_bytes: u64, at: i64) -> Result<bool> {
     let written = tx
         .prepare_cached(
             "UPDATE blob
              SET complete = 1, stored_bytes = ?2, size = COALESCE(size, ?2), accessed_at = ?3
              WHERE sha256 = ?1 AND complete = 0",
         )?
-        .execute(params![sha256, stored_bytes, at])
+        .execute(params![sha256, column_bytes(stored_bytes), at])
         .with_context(|| format!("completing blob {sha256}"))?;
 
     if written == 0 {
@@ -103,6 +103,12 @@ pub fn touch(tx: &Tx<'_>, sha256: &BlobHash, at: i64) -> Result<bool> {
         .with_context(|| format!("touching blob {sha256}"))?;
 
     Ok(written > 0)
+}
+
+/// A byte count as the column holds it: SQLite's integers are signed, and no
+/// file this device wrote a group at a time reaches the saturation point.
+fn column_bytes(bytes: u64) -> i64 {
+    i64::try_from(bytes).unwrap_or(i64::MAX)
 }
 
 /// Forget a blob. Returns whether it was there.

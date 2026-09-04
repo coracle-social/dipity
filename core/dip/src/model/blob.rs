@@ -48,7 +48,11 @@ impl BlobHash {
     /// The hash of `bytes` — what a finished transfer is checked against.
     #[must_use]
     pub fn digest(bytes: &[u8]) -> Self {
-        Self(hex::encode(Sha256::digest(bytes)))
+        let mut digest = BlobDigest::new();
+
+        digest.update(bytes);
+
+        digest.finish()
     }
 
     /// The hash as the columns, the wire and the filenames hold it.
@@ -67,6 +71,34 @@ impl BlobHash {
 impl fmt::Display for BlobHash {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
+    }
+}
+
+/// A [`BlobHash`] taken a piece at a time.
+///
+/// The address covers the whole file, and a blob is as large as whatever the
+/// user attached, so the check that a transfer landed the right bytes reads the
+/// store the same way the transfer wrote it — a group at a time — rather than
+/// holding a copy of the file in memory to hash it.
+#[derive(Default)]
+pub struct BlobDigest(Sha256);
+
+impl BlobDigest {
+    /// A digest over no bytes yet.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Take in the next bytes of the file, in the order they appear in it.
+    pub fn update(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    /// The hash of everything taken in.
+    #[must_use]
+    pub fn finish(self) -> BlobHash {
+        BlobHash(hex::encode(self.0.finalize()))
     }
 }
 
@@ -225,6 +257,23 @@ impl Blob {
         blob.imeta = imeta;
 
         Some(blob)
+    }
+
+    /// The whole file's length as the anchoring event committed to it.
+    ///
+    /// The columns are SQLite's signed integers and the transfer counts bytes,
+    /// so the two unit systems meet here rather than at each of the half-dozen
+    /// places a fetch weighs a length. A negative size names no file and is
+    /// read as no claim at all.
+    #[must_use]
+    pub fn declared_size(&self) -> Option<u64> {
+        self.size.and_then(|size| u64::try_from(size).ok())
+    }
+
+    /// How many bytes are on disk, which is where a transfer resumes.
+    #[must_use]
+    pub fn stored(&self) -> u64 {
+        u64::try_from(self.stored_bytes).unwrap_or(0)
     }
 
     /// The value of an `imeta` key, whether or not this build models it.

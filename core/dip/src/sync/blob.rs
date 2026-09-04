@@ -35,7 +35,7 @@ use crate::clock;
 use crate::db::Db;
 use crate::db::command;
 use crate::db::query as db_query;
-use crate::model::{Blob, BlobHash, Identity};
+use crate::model::{Blob, BlobDigest, BlobHash, Identity};
 use crate::session::Peer;
 use crate::sync::Quota;
 use crate::sync::message::{BlossomRequest, BlossomResponse};
@@ -233,8 +233,7 @@ impl BlobExchange {
 
         // The event id commits to the whole file's length; what is served is what is on disk.
         let total = blob
-            .size
-            .and_then(|size| u64::try_from(size).ok())
+            .declared_size()
             .or_else(|| blob.complete.then_some(held));
         let holding = Holding {
             available: total.map_or(held, |total| held.min(total)),
@@ -250,7 +249,7 @@ impl BlobExchange {
 
         match request.method.as_str() {
             "HEAD" => Ok(self.head(request, &blob, &holding, provable)),
-            "GET" => self.get(db, request, &blob, &holding, budget),
+            "GET" => self.get(db, request, &blob, &holding, provable, budget),
             _ => Ok(status(&request.id, 405)),
         }
     }
@@ -303,6 +302,7 @@ impl BlobExchange {
         request: &BlossomRequest,
         blob: &Blob,
         holding: &Holding,
+        provable: bool,
         budget: u64,
     ) -> Result<BlossomResponse> {
         let Some(wanted) = requested_range(request) else {
@@ -326,7 +326,12 @@ impl BlobExchange {
         let len = (last - start + 1).min(budget);
 
         if header(&request.headers, "accept-encoding") == Some(PROOF_ENCODING) {
-            return self.prove(db, request, blob, holding, start, len);
+            // A range is proved out of the outboard over the whole file, so a prefix cannot.
+            if provable {
+                return self.prove(db, request, blob, holding, start, len);
+            }
+
+            return Ok(status(&request.id, 406));
         }
 
         let bytes = self.store.read(&blob.sha256, start, len)?;
@@ -335,9 +340,7 @@ impl BlobExchange {
             return Ok(missing(&request.id));
         }
 
-        command::touch_blob(db, &blob.sha256, clock::now())?;
-
-        self.served_bytes = self.served_bytes.saturating_add(bytes.len() as u64);
+        self.served(db, &blob.sha256, bytes.len() as u64)?;
 
         let last = start + bytes.len() as u64 - 1;
         let mut headers = vec![("content-length".to_string(), bytes.len().to_string())];
@@ -383,17 +386,10 @@ impl BlobExchange {
         start: u64,
         len: u64,
     ) -> Result<BlossomResponse> {
-        // The tree went between the `HEAD` that offered proofs and this request.
-        if self.store.outboard_len(&blob.sha256)?.is_none() {
-            return Ok(status(&request.id, 406));
-        }
-
         let body = verified::slice(self.store.as_ref(), &blob.sha256, start, len)?;
 
-        command::touch_blob(db, &blob.sha256, clock::now())?;
-
         // The proof rides the same radio as the bytes, so the budget covers what was sent.
-        self.served_bytes = self.served_bytes.saturating_add(body.len() as u64);
+        self.served(db, &blob.sha256, body.len() as u64)?;
 
         let mut headers = vec![
             ("content-length".to_string(), body.len().to_string()),
@@ -415,6 +411,19 @@ impl BlobExchange {
             headers,
             body,
         })
+    }
+
+    /// Note bytes going out to the peer: the read that orders eviction, and the
+    /// spend against the peer's budget.
+    ///
+    /// Both answers pay for what went on the radio rather than for the content
+    /// they carry, so a proof is charged for like the bytes it proves.
+    fn served(&mut self, db: &Db, sha256: &BlobHash, bytes: u64) -> Result<()> {
+        command::touch_blob(db, sha256, clock::now())?;
+
+        self.served_bytes = self.served_bytes.saturating_add(bytes);
+
+        Ok(())
     }
 
     /// Start the next fetch if none is in flight, returning the `HEAD` that
@@ -452,10 +461,9 @@ impl BlobExchange {
     /// group by group, and a store that disagrees with the record cannot be
     /// resumed into either, so both start over rather than corrupt a re-fetch.
     fn resume_from(&self, db: &Db, blob: &Blob) -> Result<u64> {
-        let recorded = u64::try_from(blob.stored_bytes).unwrap_or(0);
+        let recorded = blob.stored();
         let held = self.store.len(&blob.sha256)?.unwrap_or(0);
-        let declared = blob.size.and_then(|size| u64::try_from(size).ok());
-        let whole_groups = recorded % GROUP_BYTES == 0 || declared == Some(recorded);
+        let whole_groups = recorded % GROUP_BYTES == 0 || blob.declared_size() == Some(recorded);
 
         if declared_root(blob).is_some() && recorded == held && whole_groups {
             return Ok(recorded);
@@ -623,11 +631,7 @@ impl BlobExchange {
             .fetched_bytes
             .saturating_add(response.body.len() as u64);
 
-        command::record_blob_progress(
-            db,
-            &fetch.blob.sha256,
-            i64::try_from(fetch.stored).unwrap_or(i64::MAX),
-        )?;
+        command::record_blob_progress(db, &fetch.blob.sha256, fetch.stored)?;
 
         Ok(true)
     }
@@ -662,12 +666,7 @@ impl BlobExchange {
     /// Mark a fetch whole after verifying the assembled bytes.
     fn finish(&mut self, db: &Db, peer: &Peer, fetch: &BlobFetch) -> Result<()> {
         if self.assembled(fetch)? {
-            command::complete_blob(
-                db,
-                &fetch.blob.sha256,
-                i64::try_from(fetch.stored).unwrap_or(i64::MAX),
-                clock::now(),
-            )?;
+            command::complete_blob(db, &fetch.blob.sha256, fetch.stored, clock::now())?;
 
             // A completed fetch is the only thing that grows the cache, so the ceiling is here.
             command::evict_originals(db, ORIGINAL_CACHE_BYTES)?;
@@ -796,15 +795,17 @@ fn probed(fetch: &BlobFetch, response: &BlossomResponse) -> Option<(u64, u64)> {
     let available: u64 = header(&response.headers, "content-length")?.parse().ok()?;
     let total = match response.status {
         200 => available,
-        206 if fetch.blob.blake3.is_some() => {
+        206 if fetch.root.is_some() => {
             complete_length(header(&response.headers, "content-range")?)?
         }
         _ => return None,
     };
-    let declared = fetch.blob.size.and_then(|size| u64::try_from(size).ok());
 
     // The event committed to the size; another length is another file.
-    if total == 0 || available > total || declared.is_some_and(|size| size != total) {
+    if total == 0
+        || available > total
+        || fetch.blob.declared_size().is_some_and(|size| size != total)
+    {
         return None;
     }
 
@@ -887,14 +888,31 @@ fn missing(id: &str) -> BlossomResponse {
 }
 
 /// Whether a whole blob verifies against the `x` hash its record names.
+///
+/// Read a group at a time, the way the transfer wrote it: a blob is as large as
+/// whatever the author attached, and holding a second copy of it in memory to
+/// hash it is the sort of allocation a phone refuses at the worst moment.
 fn verifies(blob: &Blob, store: &dyn BlobStore) -> Result<bool> {
     let Some(len) = store.len(&blob.sha256)? else {
         return Ok(false);
     };
 
-    let bytes = store.read(&blob.sha256, 0, len)?;
+    let mut digest = BlobDigest::new();
+    let mut read = 0;
 
-    Ok(BlobHash::digest(&bytes) == blob.sha256)
+    while read < len {
+        let group = store.read(&blob.sha256, read, GROUP_BYTES)?;
+
+        // The store is shorter than it just said it was, so there is nothing to verify.
+        if group.is_empty() {
+            return Ok(false);
+        }
+
+        read += group.len() as u64;
+        digest.update(&group);
+    }
+
+    Ok(digest.finish() == blob.sha256)
 }
 
 #[cfg(test)]
@@ -1259,6 +1277,53 @@ mod tests {
         assert!(blobs.poll(&db, quota).unwrap().is_none());
     }
 
+    /// A prefix is only worth taking from a peer that can prove it, and a root
+    /// that does not parse proves nothing — so the blob is fetched as though
+    /// the event had named none, which passes a partial holding by.
+    #[test]
+    fn a_root_that_does_not_parse_leaves_the_blob_unrooted() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut blobs, _) = exchange();
+        let quota = quota(4 * 1024 * 1024);
+        let hash = BlobHash::digest(b"a big file");
+        let event = note(
+            author(1),
+            1,
+            "with a blob",
+            Tags::new().add(
+                "imeta",
+                [
+                    format!("x {hash}"),
+                    "size 2097152".to_string(),
+                    "blake3 not a root".to_string(),
+                ],
+            ),
+        );
+
+        db_command::publish_event(&db, &event, &author(1), 1).unwrap();
+
+        let head = blobs.poll(&db, quota).unwrap().unwrap();
+        let next = blobs
+            .on_response(
+                &db,
+                &peer(),
+                &answer(
+                    &head.id,
+                    206,
+                    &[
+                        ("content-length", "32768"),
+                        ("content-range", "bytes 0-32767/2097152"),
+                    ],
+                    &[],
+                ),
+                quota,
+            )
+            .unwrap();
+
+        assert!(next.is_none());
+        assert!(blobs.poll(&db, quota).unwrap().is_none());
+    }
+
     #[test]
     fn an_unknown_hash_is_a_404() {
         let db = Db::open_in_memory().unwrap();
@@ -1379,7 +1444,7 @@ mod tests {
         // An original held since an earlier session, over the ceiling and least recently read.
         let stale = BlobHash::digest(b"a stale original");
         given_wanted_sized(&db, &stale, ORIGINAL_CACHE_BYTES as u64 + 1);
-        db_command::complete_blob(&db, &stale, ORIGINAL_CACHE_BYTES + 1, 1).unwrap();
+        db_command::complete_blob(&db, &stale, ORIGINAL_CACHE_BYTES as u64 + 1, 1).unwrap();
 
         let fetched = drive_fetch(&mut blobs, &db, b"the quick brown fox");
 
@@ -2033,7 +2098,7 @@ mod tests {
 
         store.append(&hash, &bytes).unwrap();
         verified::build(store.as_ref(), &hash).unwrap();
-        db_command::complete_blob(&db, &hash, bytes.len() as i64, 1).unwrap();
+        db_command::complete_blob(&db, &hash, bytes.len() as u64, 1).unwrap();
 
         let probe = blobs
             .serve(

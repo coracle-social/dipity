@@ -117,13 +117,13 @@ pub fn receive_signature(
 
 /// Record how many verified bytes of a blob are held, which is where the next
 /// session's transfer picks it up. Returns whether the blob is known.
-pub fn record_blob_progress(db: &Db, sha256: &BlobHash, stored_bytes: i64) -> Result<bool> {
+pub fn record_blob_progress(db: &Db, sha256: &BlobHash, stored_bytes: u64) -> Result<bool> {
     db.write(|tx| blob::record_progress(tx, sha256, stored_bytes))
 }
 
 /// Mark a blob whole: every byte is held and the file hashes to its address.
 /// Returns whether this completed it, and `false` if it was already complete.
-pub fn complete_blob(db: &Db, sha256: &BlobHash, stored_bytes: i64, at: i64) -> Result<bool> {
+pub fn complete_blob(db: &Db, sha256: &BlobHash, stored_bytes: u64, at: i64) -> Result<bool> {
     db.write(|tx| blob::mark_complete(tx, sha256, stored_bytes, at))
 }
 

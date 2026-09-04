@@ -36,7 +36,7 @@ mod visibility;
 
 pub use authors::Authors;
 pub use authorship_proof::{AuthorshipClaim, AuthorshipProof};
-pub use blob::{Blob, BlobHash, BlobRole};
+pub use blob::{Blob, BlobDigest, BlobHash, BlobRole};
 pub use graph::{Graph, Standing};
 pub use identity::Identity;
 pub use kinds::{

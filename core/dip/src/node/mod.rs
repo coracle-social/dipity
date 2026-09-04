@@ -426,19 +426,12 @@ impl Node {
 
         for blob in attached {
             // A prefix marked whole is how a device comes to serve half a file as the whole of it.
-            let whole = blob.size
-                == self
-                    .blobs
-                    .len(&blob.sha256)?
-                    .and_then(|held| i64::try_from(held).ok());
+            let Some(size) = blob.declared_size() else {
+                continue;
+            };
 
-            if whole {
-                db_command::complete_blob(
-                    &self.db,
-                    &blob.sha256,
-                    blob.size.unwrap_or_default(),
-                    clock::now(),
-                )?;
+            if self.blobs.len(&blob.sha256)? == Some(size) {
+                db_command::complete_blob(&self.db, &blob.sha256, size, clock::now())?;
             }
         }
 

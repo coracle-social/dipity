@@ -56,7 +56,7 @@ db::query / db::command                    take a Db, own the transaction
 - **`Query` is where authorization rides.** It carries a `Filter` (what was asked for), a `ProvenanceFilter` and a seen-time (local only, and inexpressible to a peer), `Registers` (how far an event may travel), a `PeerPolicy` (what this peer is owed) and an `Order`. `sync::relay` builds one and hands it to `list_events`, so what a peer may see is decided in one place.
 - **Writes announce on a channel per group** once their transaction commits. The view re-reads to stay live, and the session layer forwards a newly stored event to whoever is connected, so gossip moves without waiting for the next reconciliation.
 
-The schema is one file, `core/dip/migrations/0001_init.sql`, applied in order and recorded in SQLite's `user_version`. Tables are `STRICT`. Ids, pubkeys and signatures are lowercase hex `TEXT`, and `db/sql.rs` is the only place that conversion lives; timestamps are `i64` and need no conversion.
+The schema is `core/dip/migrations/`, listed in `db/core.rs::MIGRATIONS`, applied in order and recorded in SQLite's `user_version`. Tables are `STRICT`. Ids, pubkeys and signatures are lowercase hex `TEXT`, and `db/sql.rs` is the only place that conversion lives; timestamps are `i64` and need no conversion. Byte counts are `u64` everywhere above the store — a length is not negative and the wire counts in `u64` — and the narrowing to the column's signed integer happens in the command that writes it.
 
 `event_seen` is provenance: one row per event per peer it has been seen from, written once and never updated. It is never part of an event and never served. `event.seen_at` denormalizes the earliest of those rows so arrival order can be indexed.
 
