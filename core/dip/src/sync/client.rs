@@ -21,7 +21,7 @@ use crate::sync::spending::{SessionSpending, Spent, event_size};
 use crate::sync::{Message, Quota, SubscriptionId};
 
 /// The largest event the store accepts, whatever the peer's standing.
-/// `docs/sync.md#quotas` names the cap; this is its value.
+/// `docs/sync.md#quotas`.
 pub const MAX_EVENT_BYTES: usize = 64 * 1024;
 
 /// The cap on one negentropy frame, so a reply stays a few fragments rather
