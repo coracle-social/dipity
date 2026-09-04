@@ -13,11 +13,15 @@
 //! read of their battery in the other, so neither runs on trust alone.
 //! `docs/sync.md#quotas-1`.
 //!
-//! Verification is whole-file for now: the completed transfer is checked
-//! against the `x` SHA-256 in the blob's `imeta`. Per-chunk BLAKE3 streaming
-//! (`docs/nips/imeta-blake3.md`) slots into the same `record_progress` /
-//! `complete_blob` seams once Bao lands, and until it does a transfer that
-//! drops restarts rather than resuming.
+//! A fetch is three stages: a `HEAD` for the length and how much of it the
+//! peer holds, a `GET` for the [`GroupTree`] the bytes are verified against,
+//! and then a `GET` per group. Each group is checked against its own chaining
+//! value as it arrives, so a bad group costs one group and names the peer,
+//! and what is on disk is verified — which is what lets the next session
+//! resume from it rather than fetch it again. A blob whose `imeta` carries no
+//! BLAKE3 root has no tree to check against: those are still fetched whole
+//! from a peer holding the whole file, checked once against the `x` SHA-256 at
+//! the end, and started over when a transfer drops.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -26,6 +30,7 @@ use anyhow::Result;
 use coracle_lib::filters::Filter;
 
 use crate::blobs::BlobStore;
+use crate::blobs::tree::{self, GROUP_BYTES, GroupTree};
 use crate::clock;
 use crate::db::Db;
 use crate::db::command;
@@ -36,9 +41,6 @@ use crate::sync::Quota;
 use crate::sync::message::{BlossomRequest, BlossomResponse};
 use crate::sync::relay;
 
-/// One GET group's worth of bytes.
-pub const BLOB_GROUP_BYTES: u64 = 16 * 1024;
-
 /// The battery floor, percent, below which blob transfers do not start.
 /// A transfer starves the link for minutes; a low battery makes that worse.
 pub const BLOB_MIN_BATTERY: u8 = 20;
@@ -48,7 +50,10 @@ pub const BLOB_MIN_BATTERY: u8 = 20;
 /// Four groups: below that the transfer is over in fewer round trips than
 /// opening the channel costs, and the shell is asked for nothing.
 /// `docs/transport.md#the-l2cap-bandwidth-upgrade`.
-pub const L2CAP_THRESHOLD_BYTES: u64 = 4 * BLOB_GROUP_BYTES;
+pub const L2CAP_THRESHOLD_BYTES: u64 = 4 * GROUP_BYTES;
+
+/// The path suffix a blob's group tree is fetched under.
+const TREE_PATH: &str = "/blake3";
 
 /// What the device holds in fetched originals before the least recently read
 /// are dropped. `docs/sync.md#quotas-1`.
@@ -73,6 +78,17 @@ impl Holding {
     }
 }
 
+/// Which of a fetch's three round trips is outstanding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    /// The `HEAD` that learns the length and what the peer holds of it.
+    Probing,
+    /// The `GET` for the group tree every group is then checked against.
+    Tree,
+    /// The `GET`s that carry the bytes.
+    Groups,
+}
+
 /// One in-flight fetch of one blob.
 #[derive(Debug)]
 struct BlobFetch {
@@ -80,31 +96,40 @@ struct BlobFetch {
     blob: Blob,
     /// The blob's length once a `HEAD` has answered, if it has.
     total: Option<u64>,
-    /// Bytes held so far, which is where the next GET resumes.
+    /// How much of it this peer holds, which a partial holding caps.
+    available: u64,
+    /// Verified bytes held so far, which is where the next GET resumes.
     stored: u64,
     /// How many bytes the outstanding GET asked for, which bounds its answer.
     requested: u64,
     /// Correlates the outstanding request with its answer.
     request_id: String,
-    /// Whether the outstanding request was the `HEAD` or a `GET`.
-    probing: bool,
+    /// Which round trip is outstanding.
+    stage: Stage,
+    /// The tree each group is checked against, once one folds to the root.
+    tree: Option<GroupTree>,
 }
 
 impl BlobFetch {
-    /// A fresh fetch, resuming from nothing: without per-chunk verification,
-    /// any partial bytes from a dead transfer cannot be trusted, so they start
-    /// over rather than corrupt the re-fetch.
-    fn begin(blob: Blob) -> Self {
+    /// A fetch picking `blob` up from the `stored` bytes already verified.
+    fn begin(blob: Blob, stored: u64) -> Self {
         let request_id = format!("blob-{}", blob.sha256.short());
 
         Self {
             blob,
             total: None,
-            stored: 0,
+            available: 0,
+            stored,
             requested: 0,
             request_id,
-            probing: true,
+            stage: Stage::Probing,
+            tree: None,
         }
+    }
+
+    /// The group the next `GET` asks for.
+    fn group(&self) -> u64 {
+        self.stored / GROUP_BYTES
     }
 }
 
@@ -196,15 +221,27 @@ impl BlobExchange {
             return Ok(status(&request.id, 429));
         }
 
+        let path = request.path.trim_start_matches('/');
+        let (path, wants_tree) = match path.strip_suffix(TREE_PATH) {
+            Some(path) => (path, true),
+            None => (path, false),
+        };
+
         // A path that is not a hash names nothing, and is answered like
         // anything else this device does not hold.
-        let Ok(hash) = BlobHash::parse(request.path.trim_start_matches('/')) else {
+        let Ok(hash) = BlobHash::parse(path) else {
             return Ok(missing(&request.id));
         };
 
         let Some(blob) = offerable_blob(db, peer, local, &hash)? else {
             return Ok(missing(&request.id));
         };
+
+        // The tree is answered before the bytes are looked at: a device part
+        // way through a transfer of its own holds one and no whole file.
+        if wants_tree {
+            return self.serve_tree(db, request, &blob, budget);
+        }
 
         let Some(held) = self.store.len(&blob.sha256)? else {
             return Ok(missing(&request.id));
@@ -231,6 +268,62 @@ impl BlobExchange {
             "GET" => self.get(db, request, &blob, &holding, budget),
             _ => Ok(status(&request.id, 405)),
         }
+    }
+
+    /// Answer a `GET` for the blob's group tree, which is what makes the part
+    /// of it this device holds provable to the peer.
+    fn serve_tree(
+        &mut self,
+        db: &Db,
+        request: &BlossomRequest,
+        blob: &Blob,
+        budget: u64,
+    ) -> Result<BlossomResponse> {
+        if request.method != "GET" {
+            return Ok(status(&request.id, 405));
+        }
+
+        let Some(encoded) = self.tree_for(db, blob)? else {
+            return Ok(missing(&request.id));
+        };
+
+        let length = encoded.len() as u64;
+
+        if length > budget {
+            return Ok(status(&request.id, 429));
+        }
+
+        self.served_bytes = self.served_bytes.saturating_add(length);
+
+        Ok(BlossomResponse {
+            id: request.id.clone(),
+            status: 200,
+            headers: vec![("content-length".to_string(), length.to_string())],
+            body: encoded,
+        })
+    }
+
+    /// The blob's tree: the one a transfer of ours verified, or one built from
+    /// the whole file and kept, since building it reads every byte.
+    fn tree_for(&self, db: &Db, blob: &Blob) -> Result<Option<Vec<u8>>> {
+        if let Some(encoded) = &blob.blake3_tree {
+            return Ok(Some(encoded.clone()));
+        }
+
+        let Some(held) = self.store.len(&blob.sha256)? else {
+            return Ok(None);
+        };
+
+        if !blob.complete || !tree::spans_groups(held) {
+            return Ok(None);
+        }
+
+        let bytes = self.store.read(&blob.sha256, 0, held)?;
+        let encoded = GroupTree::build(&bytes)?.encode();
+
+        command::record_blob_tree(db, &blob.sha256, &encoded)?;
+
+        Ok(Some(encoded))
     }
 
     /// Answer a `HEAD`: the content type, and how much of the blob is here.
@@ -352,20 +445,36 @@ impl BlobExchange {
             return Ok(None);
         };
 
-        // Partial bytes from a dead transfer cannot be trusted without
-        // per-chunk verification, so a re-fetch starts clean — record
-        // included, or the row would claim bytes the store no longer holds.
-        if self.store.has(&wanted.sha256)? {
-            self.store.delete(&wanted.sha256)?;
-            command::record_blob_progress(db, &wanted.sha256, 0, None)?;
-        }
-
-        let fetch = BlobFetch::begin(wanted);
+        let stored = self.resume_from(db, &wanted)?;
+        let fetch = BlobFetch::begin(wanted, stored);
         let head = request(&fetch, "HEAD", &[]);
 
         self.active = Some(fetch);
 
         Ok(Some(head))
+    }
+
+    /// Where a fetch of `blob` picks up: the bytes already on disk, verified.
+    ///
+    /// Bytes fetched with no root to check them against were never verified
+    /// group by group, and a store that disagrees with the record cannot be
+    /// resumed into either, so both start over rather than corrupt a re-fetch.
+    fn resume_from(&self, db: &Db, blob: &Blob) -> Result<u64> {
+        let recorded = u64::try_from(blob.stored_bytes).unwrap_or(0);
+        let held = self.store.len(&blob.sha256)?.unwrap_or(0);
+        let declared = blob.size.and_then(|size| u64::try_from(size).ok());
+        let whole_groups = recorded % GROUP_BYTES == 0 || declared == Some(recorded);
+
+        if blob.blake3.is_some() && recorded == held && whole_groups {
+            return Ok(recorded);
+        }
+
+        if held > 0 {
+            self.store.delete(&blob.sha256)?;
+            command::record_blob_progress(db, &blob.sha256, 0)?;
+        }
+
+        Ok(0)
     }
 
     /// The next wanted blob this peer has not already failed on.
@@ -404,75 +513,207 @@ impl BlobExchange {
             return Ok(None);
         }
 
-        if fetch.probing {
-            let Some(total) = probed_total(&fetch, response) else {
-                self.give_up(peer, &fetch.blob.sha256, "cannot serve the whole blob");
-                return Ok(None);
-            };
+        let advanced = match fetch.stage {
+            Stage::Probing => self.on_probe(peer, &mut fetch, response, quota)?,
+            Stage::Tree => self.on_tree(db, peer, &mut fetch, response)?,
+            Stage::Groups => self.on_group(db, peer, &mut fetch, response, quota)?,
+        };
 
-            // A blob that cannot fit in what is left of the budget is not
-            // started: the bytes would be spent without ever completing it.
-            if total > quota.blob_bytes.saturating_sub(self.fetched_bytes) {
-                self.give_up(peer, &fetch.blob.sha256, "is larger than the budget left");
-                return Ok(None);
-            }
+        if !advanced {
+            return Ok(None);
+        }
 
-            self.consider_l2cap(total);
+        if fetch.total.is_some_and(|total| fetch.stored >= total) {
+            return self.finish(db, peer, &fetch).map(|()| None);
+        }
 
-            fetch.total = Some(total);
-            fetch.probing = false;
-        } else if response.status == 200 || response.status == 206 {
-            let allowed = fetch
-                .requested
-                .min(fetch.total.unwrap_or(0).saturating_sub(fetch.stored))
-                .min(quota.blob_bytes.saturating_sub(self.fetched_bytes));
+        // Whatever this peer or this session has no more of waits for the
+        // next one, which is what the bytes on disk are kept for.
+        let Some(next) = self.next_request(&mut fetch, quota) else {
+            self.unavailable.insert(fetch.blob.sha256);
+            return Ok(None);
+        };
 
-            // More than was asked for, more than the event declared, or more
-            // than the budget allows: writing it is what makes a blob transfer
-            // an unbounded write to the user's disk.
-            if response.body.is_empty() || response.body.len() as u64 > allowed {
-                self.give_up(
-                    peer,
-                    &fetch.blob.sha256,
-                    "answered a range it was not asked",
-                );
-                return Ok(None);
-            }
+        self.active = Some(fetch);
 
-            self.store.append(&fetch.blob.sha256, &response.body)?;
-            fetch.stored += response.body.len() as u64;
-            self.fetched_bytes = self
-                .fetched_bytes
-                .saturating_add(response.body.len() as u64);
+        Ok(Some(next))
+    }
 
-            command::record_blob_progress(
-                db,
+    /// Take the `HEAD` answer: what the blob's length is, how much of it this
+    /// peer holds, and whether a tree is needed before any of it is trusted.
+    fn on_probe(
+        &mut self,
+        peer: &Peer,
+        fetch: &mut BlobFetch,
+        response: &BlossomResponse,
+        quota: Quota,
+    ) -> Result<bool> {
+        let Some((total, available)) = probed(fetch, response) else {
+            self.give_up(peer, &fetch.blob.sha256, "cannot serve the blob");
+            return Ok(false);
+        };
+
+        let outstanding = total.saturating_sub(fetch.stored);
+        let resumable = verifiable(&fetch.blob, total);
+
+        // A blob too large for what is left of the budget is only started when
+        // the groups it does fetch survive to be picked up later; otherwise
+        // the bytes are spent without ever completing it.
+        if !resumable && outstanding > quota.blob_bytes.saturating_sub(self.fetched_bytes) {
+            self.give_up(peer, &fetch.blob.sha256, "is larger than the budget left");
+            return Ok(false);
+        }
+
+        if available <= fetch.stored {
+            self.give_up(
+                peer,
                 &fetch.blob.sha256,
-                i64::try_from(fetch.stored).unwrap_or(i64::MAX),
-                None,
-            )?;
+                "holds no more of it than this device",
+            );
+            return Ok(false);
+        }
 
-            if fetch.total.is_some_and(|total| fetch.stored >= total) {
-                return self.finish(db, peer, &fetch).map(|()| None);
-            }
+        self.consider_l2cap(outstanding);
 
-            // The budget ran out mid-file; the rest waits for another session.
-            if self.fetched_bytes >= quota.blob_bytes {
-                return Ok(None);
-            }
+        fetch.total = Some(total);
+        fetch.available = available;
+        fetch.tree = held_tree(&fetch.blob, total);
+        fetch.stage = if resumable && fetch.tree.is_none() {
+            Stage::Tree
         } else {
+            Stage::Groups
+        };
+
+        Ok(true)
+    }
+
+    /// Take the tree answer, which is trusted only if it folds to the root the
+    /// event committed to.
+    fn on_tree(
+        &mut self,
+        db: &Db,
+        peer: &Peer,
+        fetch: &mut BlobFetch,
+        response: &BlossomResponse,
+    ) -> Result<bool> {
+        let root = fetch.blob.blake3.as_deref().unwrap_or_default();
+        let accepted = (response.status == 200)
+            .then(|| GroupTree::decode(&response.body, fetch.total.unwrap_or(0)).ok())
+            .flatten()
+            .filter(|tree| tree.root().eq_ignore_ascii_case(root));
+
+        let Some(tree) = accepted else {
+            self.give_up(
+                peer,
+                &fetch.blob.sha256,
+                "sent a tree that is not this blob's",
+            );
+            return Ok(false);
+        };
+
+        self.fetched_bytes = self
+            .fetched_bytes
+            .saturating_add(response.body.len() as u64);
+
+        command::record_blob_tree(db, &fetch.blob.sha256, &response.body)?;
+
+        fetch.tree = Some(tree);
+        fetch.stage = Stage::Groups;
+
+        Ok(true)
+    }
+
+    /// Take one group of bytes, verified against the tree before it is written.
+    fn on_group(
+        &mut self,
+        db: &Db,
+        peer: &Peer,
+        fetch: &mut BlobFetch,
+        response: &BlossomResponse,
+        quota: Quota,
+    ) -> Result<bool> {
+        if response.status != 200 && response.status != 206 {
             // A miss or a refusal. The peer is not asked for this hash again
             // this session, which is what keeps the freed slot from putting
             // the same request back on the radio.
             self.give_up(peer, &fetch.blob.sha256, "does not hold it");
-            return Ok(None);
+            return Ok(false);
         }
 
-        let get = next_group(&mut fetch);
+        let allowed = fetch
+            .requested
+            .min(fetch.total.unwrap_or(0).saturating_sub(fetch.stored))
+            .min(quota.blob_bytes.saturating_sub(self.fetched_bytes));
 
-        self.active = Some(fetch);
+        // More than was asked for, more than the event declared, or more than
+        // the budget allows: writing it is what makes a blob transfer an
+        // unbounded write to the user's disk.
+        if response.body.is_empty() || response.body.len() as u64 > allowed {
+            self.give_up(
+                peer,
+                &fetch.blob.sha256,
+                "answered a range it was not asked",
+            );
+            return Ok(false);
+        }
 
-        Ok(Some(get))
+        // A group that fails its chaining value costs that group and the peer
+        // that sent it; every group already on disk stands.
+        if let Some(tree) = &fetch.tree
+            && !tree.accepts(fetch.group(), &response.body)
+        {
+            self.give_up(
+                peer,
+                &fetch.blob.sha256,
+                "sent a group that failed its hash",
+            );
+            return Ok(false);
+        }
+
+        self.store.append(&fetch.blob.sha256, &response.body)?;
+        fetch.stored += response.body.len() as u64;
+        self.fetched_bytes = self
+            .fetched_bytes
+            .saturating_add(response.body.len() as u64);
+
+        command::record_blob_progress(
+            db,
+            &fetch.blob.sha256,
+            i64::try_from(fetch.stored).unwrap_or(i64::MAX),
+        )?;
+
+        Ok(true)
+    }
+
+    /// The next request of the fetch, or `None` when there is nothing this
+    /// peer can still be asked for inside what is left of the budget.
+    fn next_request(&self, fetch: &mut BlobFetch, quota: Quota) -> Option<BlossomRequest> {
+        if fetch.stage == Stage::Tree {
+            let mut ask = request(fetch, "GET", &[]);
+
+            ask.path.push_str(TREE_PATH);
+
+            return Some(ask);
+        }
+
+        let total = fetch.total?;
+        let wanted = total.saturating_sub(fetch.stored).min(GROUP_BYTES);
+
+        // A whole group at a time: a part of one cannot be checked against a
+        // chaining value, so a budget or a holding short of one buys nothing.
+        if wanted == 0
+            || fetch.stored + wanted > fetch.available
+            || wanted > quota.blob_bytes.saturating_sub(self.fetched_bytes)
+        {
+            return None;
+        }
+
+        fetch.requested = wanted;
+
+        let end = fetch.stored + wanted - 1;
+        let range = format!("bytes={}-{end}", fetch.stored);
+
+        Some(request(fetch, "GET", &[("range".to_string(), range)]))
     }
 
     /// Mark a fetch whole after verifying the assembled bytes.
@@ -497,7 +738,7 @@ impl BlobExchange {
         // they go and the peer that sent them is not asked for this blob
         // again this session.
         self.store.delete(&fetch.blob.sha256)?;
-        command::record_blob_progress(db, &fetch.blob.sha256, 0, None)?;
+        command::record_blob_progress(db, &fetch.blob.sha256, 0)?;
         self.give_up(
             peer,
             &fetch.blob.sha256,
@@ -556,47 +797,50 @@ fn request(fetch: &BlobFetch, method: &str, headers: &[(String, String)]) -> Blo
     }
 }
 
-/// The `GET` for the next group of a probe-completed fetch, recording how much
-/// it asked for so the answer can be held to it.
-fn next_group(fetch: &mut BlobFetch) -> BlossomRequest {
-    let start = fetch.stored;
-    let remaining = fetch
-        .total
-        .map_or(BLOB_GROUP_BYTES, |total| total.saturating_sub(start));
-
-    // Never zero: a range is inclusive, so a zero-length one has no spelling.
-    fetch.requested = remaining.clamp(1, BLOB_GROUP_BYTES);
-
-    let end = start + fetch.requested - 1;
-
-    request(
-        fetch,
-        "GET",
-        &[("range".to_string(), format!("bytes={start}-{end}"))],
-    )
+/// Whether a blob of `total` bytes can be verified group by group: it has a
+/// root to check a tree against, and more than the one group that is the root.
+fn verifiable(blob: &Blob, total: u64) -> bool {
+    blob.blake3.is_some() && tree::spans_groups(total)
 }
 
-/// What a `HEAD` answer says the whole blob's length is, or `None` when this
-/// peer cannot serve it whole.
-///
-/// A 206 means the peer holds a prefix. Without per-chunk verification a
-/// prefix can be neither trusted nor resumed, so there is nothing to fetch
-/// from it and the hash waits for a peer that holds the file.
-fn probed_total(fetch: &BlobFetch, response: &BlossomResponse) -> Option<u64> {
-    if response.status != 200 {
-        return None;
-    }
+/// The tree already recorded against a blob, if it still folds to its root.
+fn held_tree(blob: &Blob, total: u64) -> Option<GroupTree> {
+    let root = blob.blake3.as_deref()?;
 
-    let total: u64 = header(&response.headers, "content-length")?.parse().ok()?;
+    GroupTree::decode(blob.blake3_tree.as_deref()?, total)
+        .ok()
+        .filter(|tree| tree.root().eq_ignore_ascii_case(root))
+}
+
+/// What a `HEAD` answer says the blob's whole length is and how much of it the
+/// peer holds, or `None` when there is nothing here worth fetching from it.
+///
+/// A 206 means the peer holds a prefix, which is worth having only when each
+/// group can be checked as it arrives; otherwise the hash waits for a peer
+/// that holds the file.
+fn probed(fetch: &BlobFetch, response: &BlossomResponse) -> Option<(u64, u64)> {
+    let available: u64 = header(&response.headers, "content-length")?.parse().ok()?;
+    let total = match response.status {
+        200 => available,
+        206 if fetch.blob.blake3.is_some() => {
+            complete_length(header(&response.headers, "content-range")?)?
+        }
+        _ => return None,
+    };
     let declared = fetch.blob.size.and_then(|size| u64::try_from(size).ok());
 
     // The event committed to the size; a peer claiming a different one is not
     // offering the file the event references.
-    if total == 0 || declared.is_some_and(|size| size != total) {
+    if total == 0 || available > total || declared.is_some_and(|size| size != total) {
         return None;
     }
 
-    Some(total)
+    Some((total, available))
+}
+
+/// The whole blob's length out of a `content-range`, which `*` withholds.
+fn complete_length(value: &str) -> Option<u64> {
+    value.rsplit_once('/')?.1.trim().parse().ok()
 }
 
 /// A header's value, matched the way HTTP matches header names.
@@ -1414,8 +1658,8 @@ mod tests {
     fn the_fetch_budget_stops_a_transfer_it_cannot_finish() {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, _) = exchange();
-        let quota = quota(BLOB_GROUP_BYTES);
-        let bytes = vec![3u8; 2 * BLOB_GROUP_BYTES as usize];
+        let quota = quota(GROUP_BYTES);
+        let bytes = vec![3u8; 2 * GROUP_BYTES as usize];
 
         given_wanted(&db, &bytes);
 
@@ -1567,5 +1811,340 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status, 404);
+    }
+
+    /// The BLAKE3 root of `bytes`, the way an `imeta` tag carries it.
+    fn root_of(bytes: &[u8]) -> String {
+        blake3::hash(bytes).to_hex().to_string()
+    }
+
+    /// `len` bytes of something that is not all one byte.
+    fn filler(len: usize) -> Vec<u8> {
+        (0..len).map(|index| (index % 251) as u8).collect()
+    }
+
+    /// Publish an event wanting a blob over `bytes`, carrying the root that
+    /// lets each group be verified as it arrives.
+    fn given_wanted_verifiable(db: &Db, bytes: &[u8]) -> BlobHash {
+        let hash = BlobHash::digest(bytes);
+        let event = note(
+            author(1),
+            1,
+            "with a blob",
+            Tags::new().add(
+                "imeta",
+                [
+                    format!("x {hash}"),
+                    format!("size {}", bytes.len()),
+                    format!("blake3 {}", root_of(bytes)),
+                ],
+            ),
+        );
+
+        db_command::publish_event(db, &event, &author(1), 1).unwrap();
+
+        hash
+    }
+
+    /// What a peer holding the first `available` bytes of `bytes` answers.
+    fn answer_as_peer(ask: &BlossomRequest, bytes: &[u8], available: usize) -> BlossomResponse {
+        let total = bytes.len();
+
+        if ask.path.ends_with(TREE_PATH) {
+            let tree = GroupTree::build(bytes).unwrap().encode();
+
+            return answer(&ask.id, 200, &[], &tree);
+        }
+
+        if ask.method == "HEAD" {
+            let length = available.to_string();
+
+            if available == total {
+                return answer(&ask.id, 200, &[("content-length", &length)], &[]);
+            }
+
+            let range = format!("bytes 0-{}/{total}", available - 1);
+
+            return answer(
+                &ask.id,
+                206,
+                &[("content-length", &length), ("content-range", &range)],
+                &[],
+            );
+        }
+
+        let (start, end) = match requested_range(ask).unwrap() {
+            Requested::Range { start, end } => (start as usize, end.unwrap() as usize),
+            Requested::Whole => (0, total - 1),
+        };
+
+        answer(&ask.id, 206, &[], &bytes[start..=end.min(available - 1)])
+    }
+
+    /// Drive a fetch to a stop against a peer holding `available` bytes of
+    /// `bytes`, returning every request the fetcher made.
+    fn drive_against(
+        blobs: &mut BlobExchange,
+        db: &Db,
+        bytes: &[u8],
+        available: usize,
+        quota: Quota,
+    ) -> Vec<BlossomRequest> {
+        let mut made = Vec::new();
+        let mut next = blobs.poll(db, quota).unwrap();
+
+        while let Some(ask) = next {
+            let response = answer_as_peer(&ask, bytes, available);
+
+            made.push(ask);
+            next = blobs.on_response(db, &peer(), &response, quota).unwrap();
+        }
+
+        made
+    }
+
+    /// The tree comes first and every group is checked against it, which is
+    /// what makes the bytes on disk worth keeping.
+    #[test]
+    fn a_blob_with_a_root_is_fetched_group_by_group() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut blobs, store) = exchange();
+        let bytes = filler(3 * GROUP_BYTES as usize + 7);
+        let hash = given_wanted_verifiable(&db, &bytes);
+
+        let made = drive_against(&mut blobs, &db, &bytes, bytes.len(), quota(1 << 20));
+
+        assert_eq!(made[0].method, "HEAD");
+        assert!(made[1].path.ends_with(TREE_PATH));
+        assert_eq!(made.len(), 2 + 4);
+
+        assert_eq!(store.read(&hash, 0, u64::MAX).unwrap(), bytes);
+
+        let blob = db_query::get_blob(&db, &hash).unwrap().unwrap();
+
+        assert!(blob.complete);
+        // The tree is kept, so the next peer can be handed the same proof.
+        assert_eq!(
+            GroupTree::decode(&blob.blake3_tree.unwrap(), bytes.len() as u64)
+                .unwrap()
+                .root(),
+            root_of(&bytes)
+        );
+    }
+
+    /// The bytes a budget stopped short of are picked up by the next session
+    /// rather than fetched again.
+    #[test]
+    fn a_transfer_resumes_from_the_groups_it_verified() {
+        let db = Db::open_in_memory().unwrap();
+        let store = Arc::new(MemoryBlobStore::default());
+        let bytes = filler(4 * GROUP_BYTES as usize);
+        let hash = given_wanted_verifiable(&db, &bytes);
+        let tree_bytes = GroupTree::build(&bytes).unwrap().encode().len() as u64;
+
+        let mut first = BlobExchange::new(store.clone());
+        drive_against(
+            &mut first,
+            &db,
+            &bytes,
+            bytes.len(),
+            quota(tree_bytes + 2 * GROUP_BYTES),
+        );
+
+        assert_eq!(store.len(&hash).unwrap(), Some(2 * GROUP_BYTES));
+        assert_eq!(
+            db_query::get_blob(&db, &hash)
+                .unwrap()
+                .unwrap()
+                .stored_bytes,
+            2 * GROUP_BYTES as i64
+        );
+
+        let mut second = BlobExchange::new(store.clone());
+        let made = drive_against(&mut second, &db, &bytes, bytes.len(), quota(1 << 20));
+
+        // The tree it already holds is not asked for a second time, and the
+        // first GET picks up where the last one stopped.
+        assert!(!made.iter().any(|ask| ask.path.ends_with(TREE_PATH)));
+        assert_eq!(
+            requested_range(&made[1]).unwrap(),
+            Requested::Range {
+                start: 2 * GROUP_BYTES,
+                end: Some(3 * GROUP_BYTES - 1),
+            }
+        );
+
+        assert_eq!(store.read(&hash, 0, u64::MAX).unwrap(), bytes);
+        assert!(db_query::get_blob(&db, &hash).unwrap().unwrap().complete);
+    }
+
+    /// A prefix is worth taking once each group of it verifies, which is what
+    /// a 206 was refused for before.
+    #[test]
+    fn a_peer_holding_a_verifiable_prefix_is_fetched_from() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut blobs, store) = exchange();
+        let bytes = filler(4 * GROUP_BYTES as usize);
+        let hash = given_wanted_verifiable(&db, &bytes);
+
+        // Two and a half groups, of which only the whole groups can be checked.
+        let available = 2 * GROUP_BYTES as usize + 512;
+        let made = drive_against(&mut blobs, &db, &bytes, available, quota(1 << 20));
+
+        assert_eq!(made[0].method, "HEAD");
+        assert_eq!(store.len(&hash).unwrap(), Some(2 * GROUP_BYTES));
+
+        let blob = db_query::get_blob(&db, &hash).unwrap().unwrap();
+
+        assert_eq!(blob.stored_bytes, 2 * GROUP_BYTES as i64);
+        assert!(!blob.complete);
+    }
+
+    /// A bad group costs that group and the peer, not the whole transfer.
+    #[test]
+    fn a_group_that_fails_its_chaining_value_leaves_the_prefix_alone() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut blobs, store) = exchange();
+        let bytes = filler(3 * GROUP_BYTES as usize);
+        let hash = given_wanted_verifiable(&db, &bytes);
+        let quota = quota(1 << 20);
+
+        let mut next = blobs.poll(&db, quota).unwrap();
+        let mut groups = 0;
+
+        while let Some(ask) = next {
+            let mut response = answer_as_peer(&ask, &bytes, bytes.len());
+
+            if ask.method == "GET" && !ask.path.ends_with(TREE_PATH) {
+                groups += 1;
+
+                // The second group arrives altered by one bit.
+                if groups == 2 {
+                    response.body[3] ^= 1;
+                }
+            }
+
+            next = blobs.on_response(&db, &peer(), &response, quota).unwrap();
+        }
+
+        assert_eq!(groups, 2);
+        assert_eq!(store.len(&hash).unwrap(), Some(GROUP_BYTES));
+
+        let blob = db_query::get_blob(&db, &hash).unwrap().unwrap();
+
+        assert_eq!(blob.stored_bytes, GROUP_BYTES as i64);
+        assert!(!blob.complete);
+        // Nothing else is asked of this peer, so the slot does not livelock.
+        assert!(blobs.poll(&db, quota).unwrap().is_none());
+    }
+
+    /// A tree is only worth anything if it folds to the root the event id
+    /// commits to, so one that does not ends the fetch before any bytes move.
+    #[test]
+    fn a_tree_that_misses_the_root_is_refused() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut blobs, store) = exchange();
+        let bytes = filler(3 * GROUP_BYTES as usize);
+        let hash = given_wanted_verifiable(&db, &bytes);
+        let quota = quota(1 << 20);
+
+        let head = blobs.poll(&db, quota).unwrap().unwrap();
+        let ask = blobs
+            .on_response(
+                &db,
+                &peer(),
+                &answer_as_peer(&head, &bytes, bytes.len()),
+                quota,
+            )
+            .unwrap()
+            .unwrap();
+
+        assert!(ask.path.ends_with(TREE_PATH));
+
+        let mut tree = GroupTree::build(&bytes).unwrap().encode();
+        tree[0] ^= 1;
+
+        assert!(
+            blobs
+                .on_response(&db, &peer(), &answer(&ask.id, 200, &[], &tree), quota)
+                .unwrap()
+                .is_none()
+        );
+
+        assert!(!store.has(&hash).unwrap());
+        assert!(
+            db_query::get_blob(&db, &hash)
+                .unwrap()
+                .unwrap()
+                .blake3_tree
+                .is_none()
+        );
+    }
+
+    /// A device holding the whole file builds the tree for it, and keeps it,
+    /// since building one reads every byte.
+    #[test]
+    fn a_held_blob_serves_the_tree_its_root_commits_to() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut blobs, store) = exchange();
+        let bytes = filler(5 * GROUP_BYTES as usize + 3);
+        let hash = BlobHash::digest(&bytes);
+        let event = note(
+            author(1),
+            1,
+            "with a blob",
+            Tags::new().add(
+                "imeta",
+                [
+                    format!("x {hash}"),
+                    format!("size {}", bytes.len()),
+                    format!("blake3 {}", root_of(&bytes)),
+                ],
+            ),
+        );
+
+        db_command::publish_event(&db, &event, &author(1), 1).unwrap();
+        store.append(&hash, &bytes).unwrap();
+        db_command::complete_blob(&db, &hash, bytes.len() as i64, 1).unwrap();
+
+        let path = format!("/{hash}{TREE_PATH}");
+        let response = blobs
+            .serve(
+                &db,
+                &peer(),
+                &local(),
+                &ask("GET", &path, &[]),
+                quota(1 << 20),
+            )
+            .unwrap();
+
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            GroupTree::decode(&response.body, bytes.len() as u64)
+                .unwrap()
+                .root(),
+            root_of(&bytes)
+        );
+
+        // Built once and kept, so the next peer is answered off the record.
+        assert_eq!(
+            db_query::get_blob(&db, &hash).unwrap().unwrap().blake3_tree,
+            Some(response.body)
+        );
+    }
+
+    /// A blob of one group is its own root, so there is no tree to ask for.
+    #[test]
+    fn a_blob_of_one_group_is_fetched_without_a_tree() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut blobs, store) = exchange();
+        let bytes = filler(GROUP_BYTES as usize);
+        let hash = given_wanted_verifiable(&db, &bytes);
+
+        let made = drive_against(&mut blobs, &db, &bytes, bytes.len(), quota(1 << 20));
+
+        assert!(!made.iter().any(|ask| ask.path.ends_with(TREE_PATH)));
+        assert_eq!(store.read(&hash, 0, u64::MAX).unwrap(), bytes);
+        assert!(db_query::get_blob(&db, &hash).unwrap().unwrap().complete);
     }
 }

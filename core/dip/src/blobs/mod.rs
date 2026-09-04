@@ -18,14 +18,17 @@
 //! | `trait` | [`BlobStore`], the interface the sync layer holds one through |
 //! | [`mod@file`] | [`FileBlobStore`], the shipped store over a directory |
 //! | [`mod@memory`] | [`MemoryBlobStore`], the one tests and tooling run on |
+//! | [`mod@tree`] | [`GroupTree`], the BLAKE3 values a group verifies against |
 
 pub mod file;
 pub mod memory;
 pub mod r#trait;
+pub mod tree;
 
 pub use file::FileBlobStore;
 pub use memory::MemoryBlobStore;
 pub use r#trait::BlobStore;
+pub use tree::{GROUP_BYTES, GroupTree};
 
 #[cfg(test)]
 mod tests {

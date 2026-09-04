@@ -36,6 +36,9 @@ k256 = { version = "0.13", default-features = false, features = [
   "std",
 ] }
 sha2 = "0.10"
+# The merkle hash blob transfers are verified group by group against, over
+# the crate's `hazmat` subtree API. See docs/sync.md#blob-sync.
+blake3 = "1.8"
 # HMAC-SHA256 for the recognition tags; see docs/discovery.md#recognition.
 hmac = "0.12"
 # Auxiliary randomness for the proof nonce, and nothing else. The derivation is

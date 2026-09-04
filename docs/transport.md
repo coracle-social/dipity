@@ -28,7 +28,7 @@ Our own, directly over GATT. The codec is core-side — pure byte manipulation t
 - **Priority-scheduled.** The ATT queue is per-connection, so separate characteristics would not give QoS isolation. The sender interleaves instead: control frames pre-empt bulk fragments, which keeps the heartbeat alive during a media transfer.
 - **Fragmented.** Chunked to `maximumWriteValueLength(for:)` minus the header, and minus the AEAD tag once the channel is encrypted — roughly 480 bytes usable at a 512-byte MTU, often less.
 - **Reliable.** Acknowledged ATT writes give ordered reliable delivery on the control and sync channels. The blob channel uses `writeWithoutResponse` with application-level acking and pacing, at 25–30 ms between fragments to avoid loss.
-- **Resumable.** Blob transfers survive disconnection and resume by chunk, once per-chunk verification lands; today one that dies with the link starts over. See [`sync.md`](./sync.md#blob-sync).
+- **Resumable.** Blob transfers survive disconnection and resume by group, each of which is verified as it arrives. See [`sync.md`](./sync.md#blob-sync).
 
 #### The wire format
 

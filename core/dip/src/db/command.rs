@@ -119,18 +119,15 @@ pub fn receive_signature(
     })
 }
 
-/// Record how many bytes of a blob are held mid-transfer.
-///
-/// `chunks` is the bitmap per-chunk verification will fill in once it exists
-/// (`docs/nips/imeta-blake3.md`); until then a transfer that drops restarts.
-/// Returns whether the blob is known.
-pub fn record_blob_progress(
-    db: &Db,
-    sha256: &BlobHash,
-    stored_bytes: i64,
-    chunks: Option<&[u8]>,
-) -> Result<bool> {
-    db.write(|tx| blob::record_progress(tx, sha256, stored_bytes, chunks))
+/// Record how many verified bytes of a blob are held, which is where the next
+/// session's transfer picks it up. Returns whether the blob is known.
+pub fn record_blob_progress(db: &Db, sha256: &BlobHash, stored_bytes: i64) -> Result<bool> {
+    db.write(|tx| blob::record_progress(tx, sha256, stored_bytes))
+}
+
+/// Record the group chaining values a transfer verified against its root.
+pub fn record_blob_tree(db: &Db, sha256: &BlobHash, tree: &[u8]) -> Result<bool> {
+    db.write(|tx| blob::record_tree(tx, sha256, tree))
 }
 
 /// Mark a blob whole: every byte is held and the file hashes to its address.

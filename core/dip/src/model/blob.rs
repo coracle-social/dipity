@@ -154,15 +154,14 @@ pub struct Blob {
     pub blurhash: Option<String>,
     /// Alt text.
     pub alt: Option<String>,
-    /// BLAKE3 root, lowercase hex, for the per-chunk verification
-    /// `docs/nips/imeta-blake3.md` describes. Nothing reads it yet.
+    /// BLAKE3 root, lowercase hex, that each group is verified against.
     pub blake3: Option<String>,
     /// The `imeta` tag as it arrived, minus the tag name.
     pub imeta: Vec<String>,
-    /// How many bytes are on disk.
+    /// How many bytes are on disk, which is where a transfer resumes.
     pub stored_bytes: i64,
-    /// Bitmap of verified chunks, for the same future. Nothing writes it yet.
-    pub chunks: Option<Vec<u8>>,
+    /// The verified chaining value of every group, once a transfer has one.
+    pub blake3_tree: Option<Vec<u8>>,
     /// Whether the whole file is held and hashes to its address.
     pub complete: bool,
     /// When it was last read, for LRU eviction.
@@ -186,7 +185,7 @@ impl Blob {
             blake3: None,
             imeta: Vec::new(),
             stored_bytes: 0,
-            chunks: None,
+            blake3_tree: None,
             complete: false,
             accessed_at: None,
         }

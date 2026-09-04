@@ -135,9 +135,7 @@ CREATE TABLE blob (
     dim          TEXT,
     blurhash     TEXT,
     alt          TEXT,
-    -- BLAKE3 root, for the verified streaming that is not built yet. Nothing
-    -- reads it; whole-file sha256 is what a finished transfer is checked
-    -- against today.
+    -- BLAKE3 root, which a transfer verifies each group against as it arrives.
     blake3       TEXT,
     -- The imeta tag as it arrived, JSON, minus the tag name. The columns above
     -- are the keys this build reads; this is everything the event carried, so a
@@ -145,9 +143,8 @@ CREATE TABLE blob (
     -- survives to be read later without a migration to recover it.
     imeta        TEXT    NOT NULL DEFAULT '[]',
     stored_bytes INTEGER NOT NULL DEFAULT 0,
-    -- Where per-chunk verification will record what it has checked, which is
-    -- what will make an interrupted transfer resumable. Nothing writes it yet,
-    -- so a transfer that drops starts over.
+    -- Reserved for a bitmap of verified chunks; dropped in 0002, where
+    -- `stored_bytes` turned out to be the resume point on its own.
     chunks       BLOB,
     complete     INTEGER NOT NULL DEFAULT 0,
     -- Last read, for LRU eviction of originals.

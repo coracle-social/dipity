@@ -220,7 +220,7 @@ fn the_store_serves_its_use_cases() {
     assert_eq!(wanted.len(), 1);
     assert_eq!(wanted[0].role, BlobRole::Original);
 
-    assert!(command::record_blob_progress(&db, &blob(), 1_024, Some(&[0b0000_0011])).unwrap());
+    assert!(command::record_blob_progress(&db, &blob(), 1_024).unwrap());
     assert_eq!(
         query::get_blob(&db, &blob()).unwrap().unwrap().stored_bytes,
         1_024

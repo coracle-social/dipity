@@ -24,7 +24,7 @@ pub fn record(tx: &Tx<'_>, blob: &Blob) -> Result<bool> {
         .prepare_cached(
             "INSERT OR IGNORE INTO blob (
                  sha256, event_id, role, url, mime_type, size, dim, blurhash, alt, blake3,
-                 imeta, stored_bytes, chunks, complete, accessed_at
+                 imeta, stored_bytes, blake3_tree, complete, accessed_at
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         )?
         .execute(params![
@@ -40,7 +40,7 @@ pub fn record(tx: &Tx<'_>, blob: &Blob) -> Result<bool> {
             blob.blake3,
             imeta,
             blob.stored_bytes,
-            blob.chunks,
+            blob.blake3_tree,
             blob.complete,
             blob.accessed_at,
         ])
@@ -55,21 +55,12 @@ pub fn record(tx: &Tx<'_>, blob: &Blob) -> Result<bool> {
     Ok(true)
 }
 
-/// Record how much of a blob is held.
-///
-/// `chunks` is the bitmap per-chunk verification will record itself in
-/// (`docs/nips/imeta-blake3.md`); nothing writes it yet, so a transfer that
-/// drops mid-file starts over rather than resuming. Called per group of bytes
-/// rather than per chunk.
-pub fn record_progress(
-    tx: &Tx<'_>,
-    sha256: &BlobHash,
-    stored_bytes: i64,
-    chunks: Option<&[u8]>,
-) -> Result<bool> {
+/// Record how many verified bytes of a blob are held, which is where the next
+/// session's transfer picks the blob up.
+pub fn record_progress(tx: &Tx<'_>, sha256: &BlobHash, stored_bytes: i64) -> Result<bool> {
     let written = tx
-        .prepare_cached("UPDATE blob SET stored_bytes = ?2, chunks = ?3 WHERE sha256 = ?1")?
-        .execute(params![sha256, stored_bytes, chunks])
+        .prepare_cached("UPDATE blob SET stored_bytes = ?2 WHERE sha256 = ?1")?
+        .execute(params![sha256, stored_bytes])
         .with_context(|| format!("recording progress for blob {sha256}"))?;
 
     if written == 0 {
@@ -79,6 +70,16 @@ pub fn record_progress(
     channel::notify(tx, BlobChange::Progressed(sha256.clone(), stored_bytes));
 
     Ok(true)
+}
+
+/// Record the group chaining values a transfer verified against its root.
+pub fn record_tree(tx: &Tx<'_>, sha256: &BlobHash, tree: &[u8]) -> Result<bool> {
+    let written = tx
+        .prepare_cached("UPDATE blob SET blake3_tree = ?2 WHERE sha256 = ?1")?
+        .execute(params![sha256, tree])
+        .with_context(|| format!("recording the tree for blob {sha256}"))?;
+
+    Ok(written > 0)
 }
 
 /// Mark a blob whole: every byte is held and the file hashes to its address.
@@ -251,9 +252,6 @@ mod tests {
         assert_eq!(stored.imeta_value("service"), Some("nostr.build"));
     }
 
-    /// The bitmap column is not written by anything yet — per-chunk
-    /// verification is what will fill it — but it round trips, so the read
-    /// side is ready for it.
     #[test]
     fn progress_short_of_the_whole_file_is_recorded() {
         let mut db = Db::open_in_memory().unwrap();
@@ -263,12 +261,13 @@ mod tests {
         let hash = blob_hash(1);
         record(&tx, &Blob::new(hash.clone(), event_id, BlobRole::Original)).unwrap();
 
-        assert!(record_progress(&tx, &hash, 4_096, Some(&[0b0000_0111])).unwrap());
+        assert!(record_progress(&tx, &hash, 4_096).unwrap());
+        assert!(record_tree(&tx, &hash, &[7u8; 64]).unwrap());
 
         let blob = query::get(&tx, &hash).unwrap().unwrap();
 
         assert_eq!(blob.stored_bytes, 4_096);
-        assert_eq!(blob.chunks.as_deref(), Some(&[0b0000_0111][..]));
+        assert_eq!(blob.blake3_tree.as_deref(), Some(&[7u8; 64][..]));
         assert!(!blob.complete);
         assert!(!query::is_complete(&tx, &hash).unwrap());
     }
