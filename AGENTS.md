@@ -99,11 +99,11 @@ The packages in use are listed explicitly in `package.json` rather than resolved
 
 ### What welshman is and is not used for
 
-**Used for:** `@welshman/util` (event types, kinds, tags, filters), `@welshman/lib` (standalone helpers), and `@welshman/domain` (typed reader/writer pairs per kind). This is nostr knowledge, consumed unmodified.
+**Used for:** `@welshman/util` (event types, kinds, tags, filters), `@welshman/lib` (standalone helpers), and `@welshman/domain` (typed reader/writer pairs per kind). This is nostr knowledge, consumed unmodified. `@welshman/store` carries the shared reactive state runes cannot hold outside a component. [`ui.md`](./docs/ui.md#runes-stay-in-components).
 
-**`@welshman/app` is not used.** It assumes an in-memory event store, and there is none. [`ui.md`](./docs/ui.md#organizing-against-welshman).
+**`@welshman/app` is not a dependency.** It assumes an in-memory event store, and there is none. [`ui.md`](./docs/ui.md#organizing-against-welshman).
 
-**Not used for the peer protocol, either half.** Sync begins when a peer appears, which the view is not around for, so `@welshman/net` is not on that path — the core reimplements NIP-77 and NIP-42 against the same specifications, taking the negentropy algorithm from `coracle-lib`. [`sync.md`](./docs/sync.md#event-sync).
+**Not used for the peer protocol, either half.** Sync begins when a peer appears, which the view is not around for, so `@welshman/net` is not a dependency either — the core reimplements NIP-77 and NIP-42 against the same specifications, taking the negentropy algorithm from `coracle-lib`. [`sync.md`](./docs/sync.md#event-sync).
 
 **`@welshman/signer` survives as an interface only.** Authorship signatures and auth events are signed in the core. Nothing on the gossip path goes through TypeScript.
 

@@ -51,7 +51,7 @@ This project is time-biased. It treats distance as something to articulate rathe
 
 - **TypeScript / Svelte 5** — the view: UI and reactivity.
 - **Tailwind 4 / shadcn-svelte** — design tokens and vendored components. See [`ui.md`](./ui.md).
-- **welshman** — `util`, `lib` and `domain` for nostr types, kinds and typed readers. Not `app`, and not the peer protocol — see [architecture](#architecture).
+- **welshman** — `util`, `lib` and `domain` for nostr types, kinds and typed readers, `store` for shared reactive state, `signer` for its interface. Not `app`, and not the peer protocol — see [architecture](#architecture).
 - **nostr-tools** — NIP-19 encoding for display.
 - **Vite 8** — bundles the web assets to `dist/`, which the shells load.
 - **Capacitor 8** — the shell, and the JSON bridge between view and core.

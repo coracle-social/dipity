@@ -62,7 +62,7 @@ Outside components, layout, spacing and type utilities remain available. The all
 
 `$state`, `$derived`, `$effect`, `$props` and friends are compiler syntax, and the compiler only runs on `.svelte` files. In a plain `.ts` module they are an undefined global that fails at runtime rather than at build, so the linter rejects them there.
 
-Shared reactive state goes in a plain Svelte store instead, which works identically in a module and in a component. That also keeps `.svelte.ts` out of the tree, where a rune-bearing module would be a second reactivity system running alongside the controller's stores.
+Shared reactive state goes in a store from `@welshman/store` instead, which works identically in a module and in a component. That also keeps `.svelte.ts` out of the tree, where a rune-bearing module would be a second reactivity system running alongside the controller's stores.
 
 Vendored `ui/` is exempt — upstream ships `.svelte.ts` files and they are not ours to restructure.
 
@@ -188,7 +188,7 @@ Styling happens in Tailwind utilities, or in the theme. A component-scoped rule 
 
 ## Organizing against welshman
 
-`@welshman/util` supplies event types, kinds, tags and filters; `@welshman/lib` the standalone helpers; `@welshman/domain` the typed reader/writer pairs. `@welshman/app` is not used at all — its `App`, `Repository` and derived-store layer assume an in-memory event store, and there isn't one ([`storage.md`](./storage.md#the-sqlite-store)).
+`@welshman/util` supplies event types, kinds, tags and filters; `@welshman/lib` the standalone helpers; `@welshman/domain` the typed reader/writer pairs; `@welshman/store` the stores shared reactive state lives in. `@welshman/app` is not a dependency — its `App`, `Repository` and derived-store layer assume an in-memory event store, and there isn't one ([`storage.md`](./storage.md#the-sqlite-store)).
 
 ### Domain kinds
 
