@@ -95,7 +95,9 @@ pub struct Node {
     battery: Option<u8>,
     /// Live sessions, keyed on link
     sessions: BTreeMap<LinkId, Session>,
-    /// The peripheral each dialed link came from, for grading its outcome.
+    /// The peripheral each live dialed link came from, for grading its
+    /// outcome. One entry per dialed session, dropped with it, since its
+    /// length is the central-link cap.
     link_peripheral: BTreeMap<LinkId, PeripheralId>,
     /// Decides which advertised peers to dial, and when.
     scheduler: Scheduler,
@@ -189,12 +191,12 @@ impl Node {
         )?;
         session.gate.presence = self.presence;
 
-        if let Some(peripheral) = peripheral {
-            self.link_peripheral.insert(link, peripheral);
-        }
-
         if role == Role::Dialer {
             session.initiate()?;
+        }
+
+        if let Some(peripheral) = peripheral {
+            self.link_peripheral.insert(link, peripheral);
         }
 
         self.sessions.insert(link, session);
@@ -214,11 +216,7 @@ impl Node {
             session.close(Ending::WalkedAway);
         }
 
-        // The peripheral outlives `collect`, which is what grades the dial.
-        let actions = self.collect();
-        self.link_peripheral.remove(&link);
-
-        actions
+        self.collect()
     }
 
     /// One write arrived off the characteristic.
@@ -460,13 +458,15 @@ impl Node {
 
         // Every teardown passes through here, so grading is one decision. In
         // `link_down` a link this device dropped read as a peer walking away.
+        // Taking the peripheral is what frees the link-cap slot: the shell owes
+        // no disconnect report for a teardown the core decided.
         for (link, ending) in closed {
             self.sessions.remove(&link);
 
-            if let Some(peripheral) = self.link_peripheral.get(&link) {
+            if let Some(peripheral) = self.link_peripheral.remove(&link) {
                 match ending {
-                    Ending::WalkedAway => self.scheduler.walked_away(peripheral),
-                    Ending::Refused => self.scheduler.refused(peripheral),
+                    Ending::WalkedAway => self.scheduler.walked_away(&peripheral),
+                    Ending::Refused => self.scheduler.refused(&peripheral),
                 }
             }
 
@@ -655,6 +655,28 @@ mod tests {
         let actions = node.peripheral_seen(&peripheral(200), -80);
 
         assert!(actions.is_empty(), "a dial slipped past the link cap");
+    }
+
+    #[test]
+    fn a_link_the_core_closed_frees_its_slot_without_a_disconnect_report() {
+        // The shell is told to disconnect and may never report back, so the
+        // slot has to come back when the session goes, not when the radio
+        // says so.
+        let mut node = node();
+
+        for index in 0..MAX_LINKS {
+            let link = LinkId(index as u64);
+            node.link_up(link, Some(peripheral(index as u8)), Role::Dialer, 100)
+                .unwrap();
+
+            // Garbage off the characteristic: the core drops the link.
+            let actions = node.bytes_received(link, &[0xff; 16]);
+            assert!(actions.contains(&Action::Disconnect(link)));
+        }
+
+        let actions = node.peripheral_seen(&peripheral(200), -80);
+
+        assert_eq!(actions, vec![Action::Connect(peripheral(200))]);
     }
 
     #[test]
