@@ -8,6 +8,7 @@ use crate::db::Tx;
 use crate::model::{Blob, BlobHash};
 
 use super::channel::{self, BlobChange};
+use super::query;
 
 /// Record a blob a stored event references. Returns whether it was new.
 ///
@@ -110,20 +111,6 @@ pub fn touch(tx: &Tx<'_>, sha256: &BlobHash, at: i64) -> Result<bool> {
     Ok(written > 0)
 }
 
-/// Move a blob's anchor to another stored event.
-///
-/// For the case where the anchoring event is deleted while something else still
-/// references the hash: without this the record goes with it, by cascade, and
-/// the bytes on disk are orphaned.
-pub fn reanchor(tx: &Tx<'_>, sha256: &BlobHash, event_id: &EventId) -> Result<bool> {
-    let written = tx
-        .prepare_cached("UPDATE blob SET event_id = ?2 WHERE sha256 = ?1")?
-        .execute(params![sha256, event_id.to_hex()])
-        .with_context(|| format!("reanchoring blob {sha256} to {event_id}"))?;
-
-    Ok(written > 0)
-}
-
 /// Forget a blob. Returns whether it was there.
 ///
 /// Only the record goes; deleting the bytes is the blob store's job, and it
@@ -143,13 +130,25 @@ pub fn remove(tx: &Tx<'_>, sha256: &BlobHash) -> Result<bool> {
     Ok(true)
 }
 
+/// Forget every blob an event anchors, on the way to deleting the event.
+///
+/// The rows would go by cascade anyway, and silently — nothing would announce
+/// them, so nothing would reclaim the bytes. Removing them here is what makes
+/// the deletion say so.
+pub fn remove_for_event(tx: &Tx<'_>, event_id: &EventId) -> Result<()> {
+    for blob in query::list_for_event(tx, event_id)? {
+        remove(tx, &blob.sha256)?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use coracle_lib::tags::{Tag, Tags};
 
     use crate::db::Db;
-    use crate::db::blob::query;
     use crate::db::event::command as event_command;
     use crate::fixtures::{author, blob_hash, id, note, peer};
     use crate::model::BlobRole;
@@ -341,18 +340,49 @@ mod tests {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        let first = store_event(&tx, "first");
-        let second = store_event(&tx, "second");
+        let anchor = store_event(&tx, "first");
+        let other = store_event(&tx, "second");
         let hash = blob_hash(1);
-        record(&tx, &Blob::new(hash.clone(), first, BlobRole::Original)).unwrap();
 
-        // Unless something else still references it, which is what reanchoring
-        // is for — the bytes are on disk either way.
-        assert!(reanchor(&tx, &hash, &second).unwrap());
-        event_command::delete(&tx, &first).unwrap();
-        assert!(query::get(&tx, &hash).unwrap().is_some());
+        record(&tx, &Blob::new(hash.clone(), anchor, BlobRole::Original)).unwrap();
 
-        event_command::delete(&tx, &second).unwrap();
+        // A second mention changes nothing, the anchor included, so deleting
+        // the anchoring event takes the record with it either way.
+        assert!(!record(&tx, &Blob::new(hash.clone(), other, BlobRole::Original)).unwrap());
+
+        event_command::delete(&tx, &anchor).unwrap();
+
         assert!(query::get(&tx, &hash).unwrap().is_none());
+        assert!(query::all_hashes(&tx).unwrap().is_empty());
+    }
+
+    /// The bytes are reclaimed off this notification, so a deletion that goes
+    /// by cascade and announces nothing leaves them on disk forever.
+    #[test]
+    fn deleting_an_event_announces_every_blob_it_anchored() {
+        let mut db = Db::open_in_memory().unwrap();
+        let mut changes = channel::subscribe(&db);
+
+        let tx = db.begin_write().unwrap();
+        let anchor = store_event(&tx, "with media");
+
+        for hash in [blob_hash(1), blob_hash(2)] {
+            record(&tx, &Blob::new(hash, anchor, BlobRole::Original)).unwrap();
+        }
+
+        event_command::delete(&tx, &anchor).unwrap();
+        tx.commit().unwrap();
+
+        let mut removed = Vec::new();
+
+        while let Ok(change) = changes.try_recv() {
+            if let BlobChange::Removed(sha256) = change {
+                removed.push(sha256);
+            }
+        }
+
+        removed.sort();
+
+        assert_eq!(removed, [blob_hash(1), blob_hash(2)]);
     }
 }

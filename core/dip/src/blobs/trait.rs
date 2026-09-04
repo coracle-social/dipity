@@ -22,4 +22,9 @@ pub trait BlobStore: Send + Sync {
     fn append(&self, sha256: &BlobHash, bytes: &[u8]) -> Result<()>;
     /// Delete the blob's bytes, if any are held.
     fn delete(&self, sha256: &BlobHash) -> Result<()>;
+    /// Every hash the store holds bytes for.
+    ///
+    /// The store is a cache of what the `blob` table records, so this is what
+    /// a sweep compares the table against to find bytes nothing references.
+    fn hashes(&self) -> Result<Vec<BlobHash>>;
 }

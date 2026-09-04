@@ -69,4 +69,8 @@ impl BlobStore for MemoryBlobStore {
 
         Ok(())
     }
+
+    fn hashes(&self) -> Result<Vec<BlobHash>> {
+        Ok(self.blobs.lock().unwrap().keys().cloned().collect())
+    }
 }

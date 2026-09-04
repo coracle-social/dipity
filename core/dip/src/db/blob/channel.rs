@@ -1,7 +1,8 @@
 //! Change notifications for the `blob` table.
 //!
 //! The transfer layer listens for what to fetch next; the view listens for
-//! progress and for the moment an image becomes displayable.
+//! progress and for the moment an image becomes displayable; the node listens
+//! for [`BlobChange::Removed`] and deletes the bytes.
 
 use tokio::sync::broadcast::{self, Receiver, Sender};
 
@@ -23,7 +24,9 @@ pub enum BlobChange {
     Progressed(BlobHash, i64),
     /// Every byte is held and hashes to its address.
     Completed(BlobHash),
-    /// The record went — evicted, or its anchoring event was deleted.
+    /// The record went — evicted, or its anchoring event was deleted. The
+    /// bytes go with it, and a subscriber that misses this is why
+    /// [`Node`](crate::node::Node) also sweeps.
     Removed(BlobHash),
 }
 

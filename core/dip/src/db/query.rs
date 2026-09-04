@@ -10,7 +10,7 @@
 //! than which function is called. [`with_details`] is the follow-up read for a
 //! caller that wants what the store knows about an event beyond the event.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 use anyhow::Result;
 use coracle_lib::events::{EventId, HashedEvent};
@@ -143,4 +143,10 @@ pub fn get_blob(db: &Db, sha256: &BlobHash) -> Result<Option<Blob>> {
 /// ceiling in `docs/sync.md` is measured against.
 pub fn cached_bytes(db: &Db) -> Result<i64> {
     db.read(|tx| blob::stored_bytes(tx, BlobRole::Original))
+}
+
+/// Every blob hash the store has a record for, which is every hash a blob
+/// store is entitled to be holding bytes for.
+pub fn recorded_blob_hashes(db: &Db) -> Result<HashSet<BlobHash>> {
+    db.read(blob::all_hashes)
 }

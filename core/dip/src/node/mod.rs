@@ -41,6 +41,8 @@ use tokio::sync::broadcast::{self, error::TryRecvError};
 
 use crate::blobs::{BlobStore, FileBlobStore};
 use crate::clock;
+use crate::db::blob::channel as blob_channel;
+use crate::db::blob::channel::BlobChange;
 use crate::db::command as db_command;
 use crate::db::event::channel::{self, EventChange};
 use crate::db::{Db, query};
@@ -109,6 +111,9 @@ pub struct Node {
     /// This store's event channel, so a stored own event is offered to every
     /// connected peer without the writer knowing.
     events: broadcast::Receiver<EventChange>,
+    /// This store's blob channel, so bytes are reclaimed when their record
+    /// goes without whoever removed it holding the blob store.
+    blob_changes: broadcast::Receiver<BlobChange>,
 }
 
 impl Node {
@@ -117,8 +122,9 @@ impl Node {
     pub fn new(db: Arc<Db>, identity: SecretKey, blobs: Arc<dyn BlobStore>) -> Result<Self> {
         let policy = Arc::new(query::policy(&db, &identity.public_key())?);
 
-        Ok(Self {
+        let node = Self {
             events: channel::subscribe(&db),
+            blob_changes: blob_channel::subscribe(&db),
             db,
             identity,
             policy,
@@ -129,7 +135,14 @@ impl Node {
             scheduler: Scheduler::default(),
             spending: Arc::new(crate::sync::spending::SpendingLedger::default()),
             presence: None,
-        })
+        };
+
+        // Whatever was removed while no node was listening is still on disk.
+        if let Err(error) = node.sweep_blobs() {
+            log::error!("sweeping the blob store at open failed: {error:#}");
+        }
+
+        Ok(node)
     }
 
     /// Build a node with the file-backed blob store, under the same directory
@@ -403,6 +416,7 @@ impl Node {
     /// flush a session it advanced.
     fn collect(&mut self) -> Vec<Action> {
         self.offer_saved_events();
+        self.reclaim_removed_blobs();
 
         // Heartbeats go out before writes are drained, so a quiet session
         // still proves it is alive within its jittered interval.
@@ -512,6 +526,53 @@ impl Node {
             }
         }
     }
+
+    /// Delete the bytes of blobs whose record has gone.
+    ///
+    /// Drains the store's blob channel, which eviction and event deletion both
+    /// announce on. The record is what references the file, so a store holds
+    /// bytes for exactly as long as the `blob` table says to — and whoever
+    /// removed the row does not have to hold the blob store to say so.
+    fn reclaim_removed_blobs(&mut self) {
+        loop {
+            match self.blob_changes.try_recv() {
+                Ok(BlobChange::Removed(sha256)) => {
+                    if let Err(error) = self.blobs.delete(&sha256) {
+                        log::error!("deleting the bytes of blob {sha256} failed: {error:#}");
+                    }
+                }
+                // Recording, progress and completion are the transfer layer's
+                // and the view's.
+                Ok(_) => {}
+                Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+                // A dropped removal would orphan its bytes for good, so the
+                // sweep answers for the whole window that was missed.
+                Err(TryRecvError::Lagged(_)) => {
+                    if let Err(error) = self.sweep_blobs() {
+                        log::error!("sweeping the blob store after a lag failed: {error:#}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Delete every byte held for a hash the `blob` table has no record of.
+    ///
+    /// The channel is the prompt path and it is lossy: a subscriber that falls
+    /// behind misses removals, and nothing is listening at all while the app is
+    /// closed. The table is the record either way, so it is what settles which
+    /// files may stay.
+    fn sweep_blobs(&self) -> Result<()> {
+        let recorded = query::recorded_blob_hashes(&self.db)?;
+
+        for sha256 in self.blobs.hashes()? {
+            if !recorded.contains(&sha256) {
+                self.blobs.delete(&sha256)?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -524,7 +585,7 @@ mod tests {
     use coracle_lib::tags::Tags;
 
     use crate::fixtures::{TempDir, author, note, secret};
-    use crate::model::{Policy, Query};
+    use crate::model::{BlobHash, Policy, Query};
     use crate::session::Session;
     use crate::sync::{Message, SubscriptionId};
     use crate::transport::Frame;
@@ -572,6 +633,60 @@ mod tests {
         assert!(node.blobs.has(&hash).unwrap());
         assert_eq!(node.blobs.read(&hash, 0, 100).unwrap(), bytes);
         assert!(dir.0.join("blobs").join(hash.as_str()).is_file());
+    }
+
+    /// Publish an event anchoring `bytes` and write them to the node's store.
+    fn given_held(node: &mut Node, bytes: &[u8]) -> BlobHash {
+        let hash = BlobHash::digest(bytes);
+        let event = note(
+            author(1),
+            100,
+            "with media",
+            Tags::new().add("imeta", [format!("x {hash}")]),
+        );
+
+        clock::at(1_000, || node.publish(&event)).unwrap();
+        node.blobs.append(&hash, bytes).unwrap();
+
+        hash
+    }
+
+    #[test]
+    fn deleting_an_event_deletes_the_bytes_of_the_blob_it_anchored() {
+        let mut node = node();
+        let hash = given_held(&mut node, b"media");
+
+        db_command::forget_events_before(&node.db, 2_000).unwrap();
+
+        // Nothing is reclaimed until the node drains the channel the removal
+        // was announced on, which every entry point does.
+        assert!(node.blobs.has(&hash).unwrap());
+
+        node.tick();
+
+        assert!(!node.blobs.has(&hash).unwrap());
+    }
+
+    /// A removal announced while no node was listening is still delivered, by
+    /// the store being reconciled against the table rather than by the channel.
+    #[test]
+    fn a_file_no_record_references_is_swept_at_open() {
+        let db = db();
+        let blobs = Arc::new(crate::blobs::MemoryBlobStore::default());
+
+        let mut node = Node::new(Arc::clone(&db), SecretKey::generate(), blobs.clone()).unwrap();
+        let partial = given_held(&mut node, b"half a transfer");
+        let orphan = BlobHash::digest(b"nothing references this");
+
+        blobs.append(&orphan, b"nothing references this").unwrap();
+
+        drop(node);
+        Node::new(db, SecretKey::generate(), blobs.clone()).unwrap();
+
+        assert!(!blobs.has(&orphan).unwrap());
+        // A transfer in flight has a record from the moment its event was
+        // stored, so an unfinished one is not an orphan.
+        assert!(blobs.has(&partial).unwrap());
     }
 
     #[test]

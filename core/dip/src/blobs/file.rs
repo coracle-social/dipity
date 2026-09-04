@@ -113,6 +113,28 @@ impl BlobStore for FileBlobStore {
             Err(error) => Err(error).with_context(|| format!("deleting blob {path:?}")),
         }
     }
+
+    fn hashes(&self) -> Result<Vec<BlobHash>> {
+        let entries = fs::read_dir(&self.directory).with_context(|| {
+            format!("listing blob store directory {}", self.directory.display())
+        })?;
+
+        let mut hashes = Vec::new();
+
+        for entry in entries {
+            let name = entry
+                .context("reading a blob store directory entry")?
+                .file_name();
+
+            // A name that is not a hash was not written by `append`, so it is
+            // not the store's to report and not a sweep's to delete.
+            if let Some(hash) = name.to_str().and_then(|name| BlobHash::parse(name).ok()) {
+                hashes.push(hash);
+            }
+        }
+
+        Ok(hashes)
+    }
 }
 
 #[cfg(test)]

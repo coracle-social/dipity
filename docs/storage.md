@@ -34,4 +34,6 @@ Blob bytes are stored outside the event store, keyed by SHA-256 hash. Partial tr
 
 The core ships a file-backed store over a directory the shell provides, the same way it opens SQLite in one. It reaches that store through a trait, which is what lets the sync layer be tested against memory rather than a disk.
 
+A file lives exactly as long as the `blob` row for its hash. Both ways a row goes — LRU eviction, and the deletion of the event that anchors it — announce the removal on the blob channel, and the node deletes the bytes when it drains that channel. The channel is lossy and nothing listens on it while the app is closed, so the node also sweeps the store against the table at open and whenever it finds it has fallen behind. The table is the record; the directory is a cache of it.
+
 Media is written to disk unsealed, protected by the platform's data-protection class rather than app-layer encryption. See [`privacy.md`](./privacy.md#what-we-do-not-defend-against).

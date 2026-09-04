@@ -234,6 +234,9 @@ fn the_store_serves_its_use_cases() {
     assert!(command::evict_originals(&db, 4_096).unwrap().is_empty());
     assert_eq!(command::evict_originals(&db, 1_024).unwrap(), [blob()]);
     assert_eq!(query::cached_bytes(&db).unwrap(), 0);
+    // What a blob store sweeps against: an evicted blob is no longer a hash
+    // this device is entitled to be holding bytes for.
+    assert!(query::recorded_blob_hashes(&db).unwrap().is_empty());
 
     // Preferences. A use case that fails leaves nothing behind: bare text is
     // not JSON, and a preference that reads fine but decodes into nothing would

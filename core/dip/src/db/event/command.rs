@@ -13,6 +13,7 @@ use coracle_lib::readers::Reader;
 use rusqlite::params;
 
 use crate::db::Tx;
+use crate::db::blob::command as blob;
 use crate::db::sql::event_id_from_sql;
 use crate::model::Provenance;
 
@@ -125,6 +126,11 @@ pub fn record_seen(
 /// The tag, provenance, signature and blob rows go by cascade; the full-text row is
 /// deleted by hand, since a virtual table has no foreign keys.
 pub fn delete(tx: &Tx<'_>, id: &EventId) -> Result<bool> {
+    // Ahead of the row the foreign key hangs off, so each blob announces its
+    // own removal instead of going silently by cascade. The announcement is
+    // the only thing that reclaims the bytes on disk.
+    blob::remove_for_event(tx, id)?;
+
     tx.prepare_cached("DELETE FROM event_fts WHERE event_id = ?1")?
         .execute(params![id.to_hex()])
         .with_context(|| format!("removing {id} from the search index"))?;

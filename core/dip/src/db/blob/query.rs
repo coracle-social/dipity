@@ -1,6 +1,6 @@
 //! Reads over `blob`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result};
 use rusqlite::{Row, params, params_from_iter};
@@ -85,6 +85,21 @@ pub fn list_for_events(tx: &Tx<'_>, event_ids: &[EventId]) -> Result<HashMap<Eve
     }
 
     Ok(blobs)
+}
+
+/// Every hash the table has a record for.
+///
+/// What a blob store sweep is settled against: bytes held for a hash that is
+/// not here are referenced by nothing and are the sweep's to delete.
+pub fn all_hashes(tx: &Tx<'_>) -> Result<HashSet<BlobHash>> {
+    let mut prepared = tx.prepare_cached("SELECT sha256 FROM blob")?;
+
+    let hashes = prepared
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<HashSet<_>>>()
+        .context("listing every recorded blob hash")?;
+
+    Ok(hashes)
 }
 
 /// The want list: blobs a stored event references and this device does not
