@@ -40,4 +40,7 @@ pub mod keys {
     /// Which peers may be handed the signature that lets them forward the
     /// user's events one more hop.
     pub const FORWARD: &str = "policy.forward";
+
+    /// How long a carried event outlives the last peer to hand it over. Default 30 days.
+    pub const RETENTION_DAYS: &str = "policy.retention_days";
 }

@@ -81,3 +81,7 @@ It is therefore its own setting, and a narrow one. At the default a peer outside
 ## Visibility
 
 Who can see what the user publishes. By default social graph metadata is only shared with `trusted` peers, while everything else a user publishes is `public`.
+
+## Retention
+
+How long an event carried for someone else outlives the last peer to hand it over is a preference too: `policy.retention_days`, 30 by default. What the sweep spares, and why it measures circulation rather than age, is in [`storage.md`](./storage.md#retention).

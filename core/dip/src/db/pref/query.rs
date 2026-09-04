@@ -93,6 +93,7 @@ pub fn policy(tx: &Tx<'_>, identity: &PublicKey) -> Result<Policy> {
     override_with(tx, keys::ACCEPT, &mut policy.accept)?;
     override_with(tx, keys::GOSSIP, &mut policy.gossip)?;
     override_with(tx, keys::FORWARD, &mut policy.forward)?;
+    override_with(tx, keys::RETENTION_DAYS, &mut policy.retention_days)?;
 
     policy.graph = graph(tx, identity)?;
 

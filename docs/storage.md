@@ -37,3 +37,16 @@ The core ships a file-backed store over a directory the shell provides, the same
 A file lives exactly as long as the `blob` row for its hash. Both ways a row goes — LRU eviction, and the deletion of the event that anchors it — announce the removal on the blob channel, and the node deletes the bytes when it drains that channel. The channel is lossy and nothing listens on it while the app is closed, so the node also sweeps the store against the table at open and whenever it finds it has fallen behind. The table is the record; the directory is a cache of it.
 
 Media is written to disk unsealed, protected by the platform's data-protection class rather than app-layer encryption. See [`privacy.md`](./privacy.md#what-we-do-not-defend-against).
+
+## Retention
+
+[Forgetting is the default](./overview.md#principles). An event carried for someone else is kept while it is still circulating and dropped once it stops: the sweep forgets those whose most recent sighting is older than the retention window, 30 days unless the user sets `policy.retention_days`.
+
+The cutoff reads the latest row in `event_seen` rather than the `event.seen_at` the feed orders by, which is the earliest. A sighting is written once per peer, so an event that keeps arriving from peers it has not arrived from before keeps refreshing — repeated propagation, in the only unit a proximity network has. Keying on arrival instead would forget an event on its birthday no matter how many people were still passing it around.
+
+Two things are never swept:
+
+- Events the user wrote. This device is their origin and no peer hands one back, so a sweep would not be letting a copy go, it would be deleting the last one.
+- Replaceable events, which are state rather than content. A trust list arrives once and is never offered again, so a sweep reading only circulation would take the [graph](./policy.md#social-graph) that policy is measured against.
+
+It runs when the core opens and at most hourly after that. Opening is the moment that always happens — a device meeting nobody never ticks — and an hour is far below a window measured in days. The query groups `event_seen` by event, which no index answers — affordable at that cadence, and the reason `event.seen_at` is cached on the row for the reads where it would not be.

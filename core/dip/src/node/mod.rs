@@ -53,6 +53,9 @@ use crate::session::{Ending, Session, State};
 use crate::transport::Channel;
 use scheduler::Scheduler;
 
+/// Minimum gap between retention sweeps, against a window measured in days.
+const SWEEP_INTERVAL_SECONDS: i64 = 60 * 60;
+
 /// Something the shell does on the core's behalf.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -114,6 +117,8 @@ pub struct Node {
     /// This store's blob channel, so bytes are reclaimed when their record
     /// goes without whoever removed it holding the blob store.
     blob_changes: broadcast::Receiver<BlobChange>,
+    /// When the retention sweep last ran, so ticking often sweeps rarely.
+    events_swept_at: Option<i64>,
 }
 
 impl Node {
@@ -122,7 +127,7 @@ impl Node {
     pub fn new(db: Arc<Db>, identity: SecretKey, blobs: Arc<dyn BlobStore>) -> Result<Self> {
         let policy = Arc::new(query::policy(&db, &identity.public_key())?);
 
-        let node = Self {
+        let mut node = Self {
             events: channel::subscribe(&db),
             blob_changes: blob_channel::subscribe(&db),
             db,
@@ -135,12 +140,16 @@ impl Node {
             scheduler: Scheduler::default(),
             spending: Arc::new(crate::sync::spending::SpendingLedger::default()),
             presence: None,
+            events_swept_at: None,
         };
 
         // Whatever was removed while no node was listening is still on disk.
         if let Err(error) = node.sweep_blobs() {
             log::error!("sweeping the blob store at open failed: {error:#}");
         }
+
+        // A device that meets nobody never ticks, so opening is the sure sweep.
+        node.sweep_events();
 
         Ok(node)
     }
@@ -300,6 +309,8 @@ impl Node {
                 }
             }
         }
+
+        self.sweep_events();
 
         // A queued candidate may now be past its rate limit, its backoff, or
         // the link cap.
@@ -573,6 +584,25 @@ impl Node {
 
         Ok(())
     }
+
+    /// Forget what stopped circulating, at most once an interval.
+    fn sweep_events(&mut self) {
+        let now = clock::now();
+        let due = self
+            .events_swept_at
+            .is_none_or(|last| now - last >= SWEEP_INTERVAL_SECONDS);
+
+        if due {
+            self.events_swept_at = Some(now);
+
+            let cutoff = now - i64::from(self.policy.retention_days) * 86_400;
+
+            match db_command::forget_events_unseen_since(&self.db, &self.identity(), cutoff) {
+                Ok(forgotten) => log::debug!("the retention sweep forgot {forgotten} events"),
+                Err(error) => log::error!("the retention sweep failed: {error:#}"),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -656,7 +686,7 @@ mod tests {
         let mut node = node();
         let hash = given_held(&mut node, b"media");
 
-        db_command::forget_events_before(&node.db, 2_000).unwrap();
+        db_command::forget_events_unseen_since(&node.db, &node.identity(), 2_000).unwrap();
 
         // Nothing is reclaimed until the node drains the channel the removal
         // was announced on, which every entry point does.
@@ -665,6 +695,30 @@ mod tests {
         node.tick();
 
         assert!(!node.blobs.has(&hash).unwrap());
+    }
+
+    /// The retention window has a caller: time passing is the whole prompt.
+    #[test]
+    fn ticking_forgets_what_stopped_circulating() {
+        let db = db();
+        let mut node = clock::at(1_000, || {
+            Node::new(
+                Arc::clone(&db),
+                SecretKey::generate(),
+                Arc::new(crate::blobs::MemoryBlobStore::default()),
+            )
+            .unwrap()
+        });
+
+        let carried = note(author(1), 100, "nobody passed it on", Tags::new());
+
+        db_command::receive_event(&db, &carried, &[author(200)], 1_000).unwrap();
+
+        let past_the_window = 1_000 + i64::from(node.policy.retention_days) * 86_400 + 1;
+
+        clock::at(past_the_window, || node.tick());
+
+        assert!(query::get_event(&db, &carried.id).unwrap().is_none());
     }
 
     /// A removal announced while no node was listening is still delivered, by

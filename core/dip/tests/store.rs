@@ -267,8 +267,11 @@ fn the_store_serves_its_use_cases() {
     assert!(command::clear_preference(&db, keys::ACCEPT).unwrap());
     assert!(query::preferences(&db).unwrap().is_empty());
 
-    // Forgetting is by arrival, and takes the event's rows with it.
-    assert_eq!(command::forget_events_before(&db, 250).unwrap(), 2);
+    // Forgetting goes by the last peer to hand an event over, and spares ours.
+    assert_eq!(
+        command::forget_events_unseen_since(&db, &us(), 250).unwrap(),
+        2
+    );
     assert_eq!(query::list_events(&db, &Query::new()).unwrap().len(), 1);
     assert!(
         query::list_events(

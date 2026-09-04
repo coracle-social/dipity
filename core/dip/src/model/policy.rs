@@ -51,6 +51,8 @@ pub struct Policy {
     pub gossip: Scope,
     /// Which peers may be handed the author's signature over an own event.
     pub forward: Scope,
+    /// How long a carried event outlives the last peer to hand it over.
+    pub retention_days: u32,
     /// The trust graph the scopes above are measured against.
     pub graph: Graph,
 }
@@ -68,6 +70,7 @@ impl Policy {
             accept: Scope::Lenient,
             gossip: Scope::Network,
             forward: Scope::Trusted,
+            retention_days: 30,
             graph: Graph::default(),
         }
     }

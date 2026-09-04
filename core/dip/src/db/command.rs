@@ -154,9 +154,9 @@ pub fn clear_preference(db: &Db, key: &str) -> Result<bool> {
     db.write(|tx| pref::remove(tx, key))
 }
 
-/// Forget events first seen before `cutoff`. Returns how many were deleted.
-pub fn forget_events_before(db: &Db, cutoff: i64) -> Result<usize> {
-    db.write(|tx| event::forget_seen_before(tx, cutoff))
+/// Forget events last handed over before `cutoff`. Returns how many went.
+pub fn forget_events_unseen_since(db: &Db, identity: &PublicKey, cutoff: i64) -> Result<usize> {
+    db.write(|tx| event::forget_unseen_since(tx, identity, cutoff))
 }
 
 /// Evict held originals, until the cache is under `ceiling_bytes`.

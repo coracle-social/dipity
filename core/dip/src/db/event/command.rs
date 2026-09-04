@@ -8,7 +8,7 @@ use coracle_kinds::delete::{self, DeleteReader};
 use coracle_lib::addresses::{Address, EventExtensionAddress};
 use coracle_lib::events::{EventId, HashedEvent};
 use coracle_lib::keys::PublicKey;
-use coracle_lib::kinds::is_ephemeral;
+use coracle_lib::kinds::{is_ephemeral, is_replaceable};
 use coracle_lib::readers::Reader;
 use rusqlite::params;
 
@@ -149,21 +149,30 @@ pub fn delete(tx: &Tx<'_>, id: &EventId) -> Result<bool> {
     Ok(true)
 }
 
-/// Forget events first seen before `cutoff`. Returns how many went.
-pub fn forget_seen_before(tx: &Tx<'_>, cutoff: i64) -> Result<usize> {
-    let mut prepared = tx.prepare("SELECT id FROM event WHERE seen_at < ?1")?;
+/// Forget events last handed over before `cutoff`. `docs/storage.md#retention`.
+pub fn forget_unseen_since(tx: &Tx<'_>, identity: &PublicKey, cutoff: i64) -> Result<usize> {
+    let mut prepared = tx.prepare(
+        "SELECT event.id, event.kind FROM event
+         JOIN event_seen ON event_seen.event_id = event.id
+         WHERE event.pubkey <> ?1
+         GROUP BY event.id
+         HAVING MAX(event_seen.seen_at) < ?2",
+    )?;
 
     let stale = prepared
-        .query_map(params![cutoff], |row| {
-            event_id_from_sql(&row.get::<_, String>(0)?, 0)
+        .query_map(params![identity.to_hex(), cutoff], |row| {
+            Ok((
+                event_id_from_sql(&row.get::<_, String>(0)?, 0)?,
+                row.get::<_, u16>(1)?,
+            ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("finding events to forget")?;
 
     let mut forgotten = 0;
 
-    for id in stale {
-        if delete(tx, &id)? {
+    for (id, _) in stale.iter().filter(|(_, kind)| !is_replaceable(*kind)) {
+        if delete(tx, id)? {
             forgotten += 1;
         }
     }
@@ -583,9 +592,48 @@ mod tests {
         save(&tx, &old_but_fresh, &[peer()], 900).unwrap();
         save(&tx, &new_but_stale, &[peer()], 100).unwrap();
 
-        assert_eq!(forget_seen_before(&tx, 500).unwrap(), 1);
+        assert_eq!(forget_unseen_since(&tx, &author(2), 500).unwrap(), 1);
         assert!(query::get(&tx, &id(&old_but_fresh)).unwrap().is_some());
         assert!(query::get(&tx, &id(&new_but_stale)).unwrap().is_none());
+    }
+
+    /// Principle 3 keeps what is repeatedly invoked, whatever its age.
+    #[test]
+    fn a_still_circulating_event_outlives_its_arrival() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        let circulating = note(author(1), 100, "still going around", Tags::new());
+        let forgotten = note(author(1), 100, "nobody repeated it", Tags::new());
+
+        save(&tx, &circulating, &[author(201)], 100).unwrap();
+        save(&tx, &circulating, &[author(202)], 900).unwrap();
+        save(&tx, &forgotten, &[author(201)], 100).unwrap();
+
+        assert_eq!(forget_unseen_since(&tx, &author(2), 500).unwrap(), 1);
+        assert!(query::get(&tx, &id(&circulating)).unwrap().is_some());
+        assert!(query::get(&tx, &id(&forgotten)).unwrap().is_none());
+    }
+
+    /// Both have one sighting that never refreshes, so both read as stale.
+    #[test]
+    fn a_sweep_keeps_own_events_and_replaceable_state() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        let us = author(9);
+        let ours = note(us, 100, "we wrote this", Tags::new());
+        let their_trust_list = event(author(1), 16_017, 100, "", Tags::new());
+        let their_note = note(author(1), 100, "we carried this", Tags::new());
+
+        save(&tx, &ours, &[us], 100).unwrap();
+        save(&tx, &their_trust_list, &[peer()], 100).unwrap();
+        save(&tx, &their_note, &[peer()], 100).unwrap();
+
+        assert_eq!(forget_unseen_since(&tx, &us, 500).unwrap(), 1);
+        assert!(query::get(&tx, &id(&ours)).unwrap().is_some());
+        assert!(query::get(&tx, &id(&their_trust_list)).unwrap().is_some());
+        assert!(query::get(&tx, &id(&their_note)).unwrap().is_none());
     }
 
     /// `event.seen_at` is a cache of the earliest row in `event_seen`, and the
