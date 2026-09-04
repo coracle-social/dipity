@@ -47,7 +47,7 @@ use crate::db::{Db, query};
 use crate::link::{LinkId, PeripheralId, Role};
 use crate::model::Policy;
 use crate::session::gate::Presence;
-use crate::session::{Session, State};
+use crate::session::{Ending, Session, State};
 use crate::transport::Channel;
 use scheduler::Scheduler;
 
@@ -206,17 +206,19 @@ impl Node {
     /// reliable: the link is gone and nothing on it will ever finish, so the
     /// session closes rather than waiting out a drain that cannot complete.
     ///
-    /// A peer that walked away is redialed soon: they usually come back.
+    /// A peer that walked away is redialed soon: they usually come back. A
+    /// teardown this device decided has already been graded by then, in
+    /// [`collect`](Self::collect), and keeps its own backoff.
     pub fn link_down(&mut self, link: LinkId) -> Vec<Action> {
         if let Some(session) = self.sessions.get_mut(&link) {
-            session.close();
+            session.close(Ending::WalkedAway);
         }
 
-        if let Some(peripheral) = self.link_peripheral.remove(&link) {
-            self.scheduler.walked_away(&peripheral);
-        }
+        // The peripheral outlives `collect`, which is what grades the dial.
+        let actions = self.collect();
+        self.link_peripheral.remove(&link);
 
-        self.collect()
+        actions
     }
 
     /// One write arrived off the characteristic.
@@ -236,7 +238,7 @@ impl Node {
         // link-cap slot and go on being swept for heartbeats until the shell
         // reported the disconnect back.
         if let Some(session) = self.sessions.get_mut(&link) {
-            session.close();
+            session.close(Ending::Refused);
         }
 
         self.collect()
@@ -278,8 +280,11 @@ impl Node {
             if session.expired() {
                 match session.state {
                     // A gate hold and a drain both close outright on their cap:
-                    // there is nothing in flight to finish, only to drop.
-                    State::GatePending { .. } | State::Draining { .. } => session.close(),
+                    // there is nothing in flight to finish, only to drop. A
+                    // lapsed hold is this device's decision, a spent drain the
+                    // peer already gone.
+                    State::GatePending { .. } => session.close(Ending::Refused),
+                    State::Draining { .. } => session.close(Ending::WalkedAway),
                     _ => session.drain(),
                 }
             }
@@ -446,15 +451,25 @@ impl Node {
             }
         }
 
-        let closed: Vec<LinkId> = self
+        let closed: Vec<(LinkId, Ending)> = self
             .sessions
             .iter()
             .filter(|(_, session)| session.state == State::Closed)
-            .map(|(link, _)| *link)
+            .map(|(link, session)| (*link, session.ending))
             .collect();
 
-        for link in closed {
+        // Every teardown passes through here, so grading is one decision. In
+        // `link_down` a link this device dropped read as a peer walking away.
+        for (link, ending) in closed {
             self.sessions.remove(&link);
+
+            if let Some(peripheral) = self.link_peripheral.get(&link) {
+                match ending {
+                    Ending::WalkedAway => self.scheduler.walked_away(peripheral),
+                    Ending::Refused => self.scheduler.refused(peripheral),
+                }
+            }
+
             actions.push(Action::Disconnect(link));
         }
 
@@ -502,7 +517,8 @@ impl Node {
 #[cfg(test)]
 mod tests {
     use super::scheduler::{
-        DECLINED_BACKOFF_SECONDS, NEVER_ANSWERED_BACKOFF_SECONDS, WALKED_AWAY_BACKOFF_SECONDS,
+        DECLINED_BACKOFF_SECONDS, NEVER_ANSWERED_BACKOFF_SECONDS, REFUSED_BACKOFF_SECONDS,
+        WALKED_AWAY_BACKOFF_SECONDS,
     };
     use super::*;
     use coracle_lib::tags::Tags;
@@ -867,6 +883,40 @@ mod tests {
             assert_eq!(
                 node.peripheral_seen(&silent, -80),
                 vec![Action::Connect(silent)]
+            );
+        });
+    }
+
+    #[test]
+    fn a_peer_this_device_dropped_is_not_redialed_at_walk_away_speed() {
+        let mut node = clock::at(1_000, node);
+        let peer = peripheral(1);
+
+        clock::at(1_000, || {
+            assert_eq!(
+                node.peripheral_seen(&peer, -80),
+                vec![Action::Connect(peer.clone())]
+            );
+        });
+
+        // The link comes up and the peer sends something the wire cannot
+        // carry, so this device drops it and the shell reports back.
+        clock::at(1_030, || {
+            node.link_up(LinkId(9), Some(peer.clone()), Role::Dialer, 100)
+                .unwrap();
+            node.bytes_received(LinkId(9), b"not a fragment");
+            node.link_down(LinkId(9));
+        });
+
+        // Graded as a walk-away this would have been dialable at 1045, and as
+        // never-answered at 1060.
+        clock::at(1_060, || {
+            assert!(node.peripheral_seen(&peer, -80).is_empty());
+        });
+        clock::at(1_030 + REFUSED_BACKOFF_SECONDS, || {
+            assert_eq!(
+                node.peripheral_seen(&peer, -80),
+                vec![Action::Connect(peer)]
             );
         });
     }

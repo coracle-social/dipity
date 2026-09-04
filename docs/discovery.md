@@ -26,6 +26,7 @@ Attempts are rate-limited, candidates are ordered by RSSI so the nearest strange
 - Concurrent central links capped at 6.
 - Connect rate limiting, roughly one attempt per 0.5 s globally.
 - Distinct backoff for "never answered a connect" versus "was connected and walked away." The second recovers fast, because those peers usually come back.
+- A teardown this device decided is not a walk-away and does not recover fast. Policy blocking the peer, a consent gate lapsing, a frame the wire cannot carry: redialing in fifteen seconds only reaches the same refusal, so it waits a minute. A gate the user refused outright waits longer still.
 
 bitchat's `BLEConnectionScheduler.swift` is the reference for this.
 

@@ -30,6 +30,14 @@ pub(crate) const NEVER_ANSWERED_BACKOFF_SECONDS: i64 = 60;
 /// come back, so this is short. `docs/discovery.md#connection-scheduling`.
 pub(crate) const WALKED_AWAY_BACKOFF_SECONDS: i64 = 15;
 
+/// How long after the core itself dropped a link before redialing.
+///
+/// Long enough that the redial does not undo the decision inside the same
+/// encounter, short enough that a peer refused for a passing reason — a gate
+/// that lapsed while the user was away — is not shut out for the length of a
+/// whole gathering. `docs/discovery.md#connection-scheduling`.
+pub(crate) const REFUSED_BACKOFF_SECONDS: i64 = 60;
+
 /// How long after a consent-gate refusal before trying again. Hard, since the
 /// user just said no.
 pub(crate) const DECLINED_BACKOFF_SECONDS: i64 = 5 * 60;
@@ -64,6 +72,9 @@ enum Tier {
     NeverAnswered,
     /// A peer that was connected and walked away.
     WalkedAway,
+    /// A peer the core dropped: policy blocks it, its consent gate lapsed, or
+    /// its frames stopped being ones the wire could carry.
+    Refused,
     /// A peer the user declined at the consent gate.
     Declined,
 }
@@ -146,6 +157,12 @@ impl Scheduler {
     /// back.
     pub fn walked_away(&mut self, peripheral: &PeripheralId) {
         self.record(peripheral, Tier::WalkedAway, WALKED_AWAY_BACKOFF_SECONDS);
+    }
+
+    /// A peer this device dropped rather than lost: hold off longer than a
+    /// walk-away, so the redial does not undo the decision.
+    pub fn refused(&mut self, peripheral: &PeripheralId) {
+        self.record(peripheral, Tier::Refused, REFUSED_BACKOFF_SECONDS);
     }
 
     /// A peer whose gate was refused: leave them alone.

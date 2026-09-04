@@ -129,6 +129,21 @@ impl State {
     }
 }
 
+/// Why a session ended, which grades the dial that opened it.
+///
+/// The distinction the scheduler needs is whose decision the teardown was: a
+/// peer that left comes back and is worth redialing at once, while one this
+/// device refused would only be refused again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ending {
+    /// The peer stopped answering, or the shell reported the link gone.
+    WalkedAway,
+    /// This device tore the link down: policy blocks the peer, the consent
+    /// gate lapsed or was refused, or a frame arrived the wire could not
+    /// carry.
+    Refused,
+}
+
 /// One link, and everything the core knows about it.
 pub struct Session {
     /// The link this session runs over.
@@ -137,6 +152,8 @@ pub struct Session {
     pub role: Role,
     /// Where the link is in its lifecycle.
     pub state: State,
+    /// Why the session ended, read once the state is `Closed`.
+    pub ending: Ending,
     /// When the link came up, which bounds how long it may go unidentified.
     opened_at: i64,
     /// The encrypted pipe the session talks through.
@@ -182,6 +199,7 @@ impl Session {
             link,
             role,
             state: State::Linked,
+            ending: Ending::WalkedAway,
             opened_at: clock::now(),
             wire: Wire::new(role, mtu)?,
             heartbeat: Heartbeat::new()?,
@@ -239,7 +257,7 @@ impl Session {
         let peer = Peer::bind(self.link, self.auth.proved.iter().copied(), &self.policy);
 
         if peer.policy.is_blocked() {
-            self.state = State::Closed;
+            self.close(Ending::Refused);
         }
 
         self.peer = Some(peer);
@@ -264,7 +282,7 @@ impl Session {
         }
 
         if !approved {
-            self.state = State::Closed;
+            self.close(Ending::Refused);
             return Ok(());
         }
 
@@ -590,8 +608,9 @@ impl Session {
         }
     }
 
-    /// Tear the session down.
-    pub fn close(&mut self) {
+    /// Tear the session down, recording whose decision it was.
+    pub fn close(&mut self, ending: Ending) {
+        self.ending = ending;
         self.state = State::Closed;
     }
 
@@ -748,7 +767,7 @@ impl Session {
 
         match self.gate.evaluate(db, &self.policy, &resolved)? {
             Verdict::Pass => {}
-            Verdict::Blocked => self.state = State::Closed,
+            Verdict::Blocked => self.close(Ending::Refused),
             Verdict::Pending => {
                 self.state = State::GatePending {
                     since: clock::now(),
