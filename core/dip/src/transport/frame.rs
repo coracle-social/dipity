@@ -49,6 +49,9 @@ impl Channel {
 /// Set on every fragment but the last of a frame.
 const FLAG_MORE: u8 = 0b0000_0001;
 
+/// The bits `docs/transport.md#the-wire-format` requires to be zero.
+const FLAG_RESERVED: u8 = !FLAG_MORE;
+
 /// The header, which every fragment carries.
 ///
 /// It stays in the clear: the receiver routes and reassembles on it before
@@ -110,9 +113,17 @@ impl Fragment {
 
         Ok(Self {
             channel: Channel::from_byte(*channel)?,
-            more: flags & FLAG_MORE != 0,
+            more: Self::more_from_flags(*flags)?,
             payload: payload.to_vec(),
         })
+    }
+
+    /// Whether more fragments follow, refusing a reserved bit.
+    fn more_from_flags(flags: u8) -> Result<bool> {
+        match flags & FLAG_RESERVED {
+            0 => Ok(flags & FLAG_MORE != 0),
+            reserved => bail!("frame sets reserved flag bits {reserved:#010b}"),
+        }
     }
 }
 
@@ -284,6 +295,18 @@ mod tests {
 
         // Two bytes are a whole fragment: an empty payload is a signal.
         assert!(Fragment::decode(&[Channel::Sync as u8, 0]).is_ok());
+    }
+
+    #[test]
+    fn a_reserved_flag_bit_is_refused() {
+        for bit in 1..8 {
+            assert!(
+                Fragment::decode(&[Channel::Sync as u8, 1 << bit]).is_err(),
+                "flag bit {bit} is reserved and was accepted"
+            );
+        }
+
+        assert!(Fragment::decode(&[Channel::Sync as u8, FLAG_MORE]).is_ok());
     }
 
     #[test]

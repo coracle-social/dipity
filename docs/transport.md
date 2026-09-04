@@ -37,7 +37,7 @@ Every write is one fragment: a two-byte header, then the payload.
 | Byte | Is |
 | --- | --- |
 | 0 | Channel: `0` control, `1` sync, `2` blob |
-| 1 | Flags. Bit 0 set means more fragments follow for this frame; the rest are reserved and must be zero |
+| 1 | Flags. Bit 0 set means more fragments follow for this frame; the rest are reserved, must be zero, and a fragment that sets one is refused |
 | 2.. | Payload, sealed once the channel is encrypted |
 
 A frame is the concatenation of its fragments' payloads. Reassembly is per channel, so an interleaved control frame does not disturb a blob transfer mid-frame. A frame whose fragments exceed 1 MiB is refused rather than buffered, and the link is dropped.
