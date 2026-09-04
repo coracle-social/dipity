@@ -37,6 +37,8 @@ The core ships a file-backed store over a directory the shell provides, the same
 
 A file lives exactly as long as the `blob` row for its hash, and that row lives as long as any event references it. Both ways a row goes — LRU eviction, and the deletion of the last event to reference it — announce the removal on the blob channel, and the node deletes the bytes when it drains that channel. The channel is lossy and nothing listens on it while the app is closed, so the node also sweeps the store against the table at open and whenever it finds it has fallen behind. The table is the record; the directory is a cache of it.
 
+That holds for the device's own media too, so the bytes the user attaches reach the core with the event that names them rather than while the post is being written. The BLAKE3 root has to be known before the event is signed, so the core answers the `imeta` entries from the bytes alone and stores nothing until there is a row to keep them: an abandoned composition leaves the store as it found it.
+
 Media is written to disk unsealed, protected by the platform's data-protection class rather than app-layer encryption. See [`privacy.md`](./privacy.md#what-we-do-not-defend-against).
 
 ## Retention

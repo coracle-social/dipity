@@ -43,6 +43,11 @@ pub fn root(value: &str) -> Result<Root> {
     Root::from_hex(value).map_err(|_| anyhow!("{value} is not a BLAKE3 root"))
 }
 
+/// The root bytes hash to, for a tag that has to name them before anything holds them.
+pub fn hash(bytes: &[u8]) -> Root {
+    bao::encode::outboard(bytes).1
+}
+
 /// Build the outboard tree over the bytes the store holds, returning the root
 /// they hash to.
 ///
@@ -211,8 +216,8 @@ mod tests {
         let (hash, bytes) = blob(&store, 40 * 1024);
         let root = build(&store, &hash).unwrap();
 
-        // The root is BLAKE3 over the whole file, whatever built it.
-        assert_eq!(root, blake3_root(&bytes));
+        // The root is BLAKE3 over the whole file, whether or not a store holds it.
+        assert_eq!(root, super::hash(&bytes));
 
         for (start, len) in [
             (0, 16 * 1024),
@@ -284,11 +289,5 @@ mod tests {
             "an outboard of {outboard} bytes over {} is not worth keeping",
             bytes.len()
         );
-    }
-
-    fn blake3_root(bytes: &[u8]) -> Root {
-        let (_, root) = bao::encode::outboard(bytes);
-
-        root
     }
 }

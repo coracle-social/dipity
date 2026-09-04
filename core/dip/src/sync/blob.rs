@@ -1859,12 +1859,7 @@ mod tests {
 
     /// The BLAKE3 root of `bytes`, the way an `imeta` tag carries it.
     fn root_of(bytes: &[u8]) -> String {
-        let store = MemoryBlobStore::default();
-        let hash = BlobHash::digest(bytes);
-
-        store.append(&hash, bytes).unwrap();
-
-        verified::build(&store, &hash).unwrap().to_hex().to_string()
+        verified::hash(bytes).to_hex().to_string()
     }
 
     /// `len` bytes of something that is not all one byte.
