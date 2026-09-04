@@ -124,7 +124,7 @@ just dev          # Vite, browser only: no plugin, so no BLE, no store, no peers
 
 ## Traps
 
-- **`docs/` and `package.json` disagree about welshman.** `AGENTS.md` and `docs/overview.md` say `util`, `lib` and `domain` are used and that `@welshman/app` is not; `package.json` also carries `app`, `net`, `store`, `signer` and `feeds`. The documents are the intent, since `app` assumes an in-memory event store and there is none. A package's presence in `package.json` is not permission to import it.
+- **`@welshman/net` and `@welshman/feeds` are installed without being dependencies.** `@welshman/domain` lists them as peers, so npm puts them in `node_modules` and an import of either resolves. `AGENTS.md` rules both out by name. Presence in `node_modules` is not permission to import.
 - **`.claude/skills/` is symlinks into `.agents/skills/`.** A new skill needs the directory and the symlink both, or anything reading `.claude/skills/` never sees it. `skills-lock.json` records skills vendored from GitHub by `npx skills add` and is not where a hand-written one goes.
 - **`ref/` is gitignored read-only prior art**, and manyverse is MPL-2.0. Read it for design, never copy from it.
 - **The core cross-compiles before `cap sync`, always.** `npx cap sync` on its own links the shells against whatever was there before. Go through `just sync`.
