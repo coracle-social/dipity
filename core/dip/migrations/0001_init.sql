@@ -171,10 +171,11 @@ CREATE TABLE pair_secret (
     updated_at INTEGER NOT NULL
 ) STRICT;
 
--- The disclosure budget: each pubkey this device has disclosed its identity
--- to, with when. A harvester that reconnects under a fresh burner pubkey is
--- bounded by how many first-time disclosures fall inside one window.
+-- The disclosure budget: one row per AUTH response this device handed to an
+-- unrecognized peer, with when. No pubkey — the dialer discloses before the
+-- peer has named itself, and a harvester that never answers would otherwise
+-- cost nothing. Rows outside the current window are pruned on write.
 CREATE TABLE disclosure (
-    pubkey       TEXT PRIMARY KEY,
+    id           INTEGER PRIMARY KEY,
     disclosed_at INTEGER NOT NULL
 ) STRICT;

@@ -53,8 +53,7 @@ pub fn pair_secrets(db: &Db) -> Result<Vec<(PublicKey, [u8; 32])>> {
     db.read(pairing::secrets)
 }
 
-/// How many distinct pubkeys this device first disclosed to at or after
-/// `cutoff`.
+/// How many times this device disclosed its identity at or after `cutoff`.
 pub fn disclosures_since(db: &Db, cutoff: i64) -> Result<u32> {
     db.read(|tx| pairing::disclosures_since(tx, cutoff))
 }

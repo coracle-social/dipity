@@ -6,6 +6,11 @@
 //! on standing alone; a stranger is admitted by the cool-off window or a
 //! discoverable time, and only while the disclosure budget has headroom.
 //! `docs/discovery.md#the-consent-gate`.
+//!
+//! The gate reads the budget; the session spends it, when it answers the
+//! peer's challenge. Charging on admission instead would let a stranger that
+//! connects and drops without ever asking for an identity close the device to
+//! everyone else.
 
 use anyhow::Result;
 use coracle_lib::keys::PublicKey;
@@ -51,6 +56,11 @@ pub struct Gate {
     /// Nothing that names an identity — a challenge answered, an `AUTH`
     /// response accepted — happens before it has.
     pub passed: bool,
+    /// Whether the peer got in as an unrecognized stranger on discoverability
+    /// alone, which is what spends the disclosure budget. A recognized peer
+    /// passes on standing and never consulted the budget; a stranger the user
+    /// approved by hand was looked at by the person the budget stands in for.
+    pub spends_budget: bool,
     /// Where the app is, or `None` if it has not been in the foreground this
     /// run — in which case there is no cool-off to spend.
     pub presence: Option<Presence>,
@@ -68,6 +78,7 @@ impl Gate {
             // A stranger is admitted by discoverability and the budget, or it
             // waits on the user.
             if self.admits_stranger(db, policy)? {
+                self.spends_budget = true;
                 Verdict::Pass
             } else {
                 Verdict::Pending
@@ -240,9 +251,33 @@ mod tests {
             ..Default::default()
         };
 
-        // One stranger already disclosed to spends the budget of one.
-        crate::db::command::pair_with(&db, &[author(9)], &[0u8; 32], clock::now()).unwrap();
+        // One disclosure already made spends the budget of one.
+        crate::db::command::record_disclosure(&db, clock::now()).unwrap();
 
         assert_eq!(gate.evaluate(&db, &policy, &[]).unwrap(), Verdict::Pending);
+        assert!(!gate.spends_budget);
+    }
+
+    #[test]
+    fn only_a_stranger_spends_the_budget() {
+        let db = Db::open_in_memory().unwrap();
+        let mut gate = Gate {
+            presence: Some(Presence::Foreground),
+            ..Default::default()
+        };
+
+        assert_eq!(gate.evaluate(&db, &policy(), &[]).unwrap(), Verdict::Pass);
+        assert!(gate.spends_budget);
+
+        let mut recognized = Gate {
+            presence: Some(Presence::Foreground),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            recognized.evaluate(&db, &policy(), &[author(2)]).unwrap(),
+            Verdict::Pass
+        );
+        assert!(!recognized.spends_budget);
     }
 }

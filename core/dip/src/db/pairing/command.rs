@@ -5,6 +5,7 @@ use coracle_lib::keys::PublicKey;
 use rusqlite::params;
 
 use crate::db::Tx;
+use crate::model::DISCLOSURE_WINDOW_SECONDS;
 
 /// Store a pair secret for a pubkey. The first pairing wins: a later encounter
 /// derives the same secret, and overwriting it would only risk desyncing the
@@ -20,13 +21,21 @@ pub fn save_secret(tx: &Tx<'_>, pubkey: &PublicKey, secret: &[u8; 32], at: i64) 
     Ok(written > 0)
 }
 
-/// Record that this device disclosed its identity to `pubkey`. First-time only,
-/// so the budget counts new pubkeys rather than every encounter.
-pub fn record_disclosure(tx: &Tx<'_>, pubkey: &PublicKey, at: i64) -> Result<bool> {
-    let written = tx
-        .prepare_cached("INSERT OR IGNORE INTO disclosure (pubkey, disclosed_at) VALUES (?1, ?2)")?
-        .execute(params![pubkey.to_hex(), at])
-        .with_context(|| format!("recording a disclosure to {pubkey}"))?;
+/// Record that this device disclosed its identity, naming no recipient: the
+/// dialer discloses before the peer has named itself, so the budget counts the
+/// act rather than who received it.
+///
+/// Rows outside the current window are dropped on the way past. Nothing reads
+/// them, and a standing count of how many strangers the user has met is the
+/// kind of thing `docs/privacy.md` keeps off the device.
+pub fn record_disclosure(tx: &Tx<'_>, at: i64) -> Result<()> {
+    tx.prepare_cached("DELETE FROM disclosure WHERE disclosed_at < ?1")?
+        .execute(params![at - DISCLOSURE_WINDOW_SECONDS])
+        .context("pruning spent disclosures")?;
 
-    Ok(written > 0)
+    tx.prepare_cached("INSERT INTO disclosure (disclosed_at) VALUES (?1)")?
+        .execute(params![at])
+        .context("recording a disclosure")?;
+
+    Ok(())
 }

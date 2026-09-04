@@ -25,8 +25,8 @@ pub fn secrets(tx: &Tx<'_>) -> Result<Vec<(PublicKey, [u8; 32])>> {
     Ok(secrets)
 }
 
-/// How many distinct pubkeys this device first disclosed to at or after
-/// `cutoff`. The disclosure budget asks this of the current window.
+/// How many times this device disclosed its identity at or after `cutoff`. The
+/// disclosure budget asks this of the current window.
 pub fn disclosures_since(tx: &Tx<'_>, cutoff: i64) -> Result<u32> {
     let count = tx
         .prepare_cached("SELECT COUNT(*) FROM disclosure WHERE disclosed_at >= ?1")?
@@ -43,6 +43,7 @@ mod tests {
     use crate::db::Db;
     use crate::db::pairing::command;
     use crate::fixtures::author;
+    use crate::model::DISCLOSURE_WINDOW_SECONDS;
 
     #[test]
     fn a_pair_secret_is_stored_once_per_pubkey() {
@@ -57,16 +58,31 @@ mod tests {
     }
 
     #[test]
-    fn disclosures_count_distinct_pubkeys_in_the_window() {
+    fn every_disclosure_in_the_window_counts() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
+        let base = DISCLOSURE_WINDOW_SECONDS;
 
-        command::record_disclosure(&tx, &author(1), 100).unwrap();
-        command::record_disclosure(&tx, &author(2), 200).unwrap();
-        // A repeat is not a new pubkey.
-        command::record_disclosure(&tx, &author(1), 300).unwrap();
+        command::record_disclosure(&tx, base + 100).unwrap();
+        command::record_disclosure(&tx, base + 200).unwrap();
+        // A second disclosure to the same peer is a second AUTH event handed
+        // over, and the ledger cannot tell them apart anyway.
+        command::record_disclosure(&tx, base + 300).unwrap();
 
-        assert_eq!(disclosures_since(&tx, 0).unwrap(), 2);
-        assert_eq!(disclosures_since(&tx, 150).unwrap(), 1);
+        assert_eq!(disclosures_since(&tx, 0).unwrap(), 3);
+        assert_eq!(disclosures_since(&tx, base + 150).unwrap(), 2);
+    }
+
+    #[test]
+    fn a_disclosure_older_than_the_window_is_pruned() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let base = 2 * DISCLOSURE_WINDOW_SECONDS;
+
+        command::record_disclosure(&tx, base - DISCLOSURE_WINDOW_SECONDS - 1).unwrap();
+        assert_eq!(disclosures_since(&tx, 0).unwrap(), 1);
+
+        command::record_disclosure(&tx, base).unwrap();
+        assert_eq!(disclosures_since(&tx, 0).unwrap(), 1);
     }
 }

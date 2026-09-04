@@ -16,7 +16,9 @@ Otherwise, the user has a few preferences they can set for controlling backgroun
 
 - Cool-off window - when the app is foregrounded, it begins accepting connections. This cool-off period determines how long the app will continue accepting unknown connections after the app is backgrounded. 10 minutes by default.
 - Discoverable times - times of day, in the device's local timezone, when the user is willing to be passively discoverable. Empty by default.
-- Disclosure budget - the number of new pubkeys the device will disclose to per discoverable window. 10 by default. Bounds what a harvester camped in a busy place collects, without needing to know who anyone is; nothing else can, since a burner pubkey defeats any per-identity limit. See [the consent gate](./discovery.md#the-consent-gate).
+- Disclosure budget - the number of times the device will hand its identity to an unrecognized peer per discoverable window. 10 by default. Bounds what a harvester camped in a busy place collects, without needing to know who anyone is; nothing else can, since a burner pubkey defeats any per-identity limit. See [the consent gate](./discovery.md#the-consent-gate).
+
+A unit is spent when the device sends its `AUTH` response, not when the exchange completes. The dialer identifies first and does not learn the peer's pubkey until afterwards, so a budget counting recipients could not charge the harvester the gate exists to bound: it would collect an auth event, decline to name itself, and cost nothing. Counting the act instead means a peer the user has not paired with costs a unit on every attempt, including a retry after a dropped link. Peers the user has approved by hand do not spend it — the budget stands in for a decision nobody was there to make.
 
 An unknown peer is admitted if either of the first two preferences allows it and the budget has not been spent.
 

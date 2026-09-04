@@ -66,18 +66,21 @@ pub fn publish_event(db: &Db, event: &HashedEvent, identity: &PublicKey, at: i64
 }
 
 /// Store the pair secret derived from a completed session against every pubkey
-/// the peer proved, and record the disclosure of this device's identity to
-/// them. One transaction, because pairing and the budget it feeds are one
-/// event.
+/// the peer proved.
 pub fn pair_with(db: &Db, pubkeys: &[PublicKey], secret: &[u8; 32], at: i64) -> Result<()> {
     db.write(|tx| {
         for pubkey in pubkeys {
             pairing::save_secret(tx, pubkey, secret, at)?;
-            pairing::record_disclosure(tx, pubkey, at)?;
         }
 
         Ok(())
     })
+}
+
+/// Spend one unit of the disclosure budget, for an identity this device has
+/// just handed to an unrecognized peer.
+pub fn record_disclosure(db: &Db, at: i64) -> Result<()> {
+    db.write(|tx| pairing::record_disclosure(tx, at))
 }
 
 /// Store the author's signature over an event this device already holds.

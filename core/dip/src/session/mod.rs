@@ -280,7 +280,7 @@ impl Session {
                 }
             }
             Role::Dialer => {
-                if self.answer_peer_challenge()? {
+                if self.answer_peer_challenge(db)? {
                     self.state = State::DialerIdentified;
                 }
             }
@@ -477,8 +477,8 @@ impl Session {
         Ok(())
     }
 
-    /// Once both identities are bound, store the pair secret and the
-    /// disclosure, and open the reconciliation.
+    /// Once both identities are bound, store the pair secret and open the
+    /// reconciliation.
     ///
     /// Runs once: [`identify`](Self::identify) never regresses a session that
     /// is already syncing, so the first arrival here is the only one. The
@@ -496,9 +496,8 @@ impl Session {
         self.maybe_fetch_blob(db)
     }
 
-    /// Store the pair secret derived from this session and record the
-    /// disclosure of this device's identity, against every pubkey the peer
-    /// proved. The first pairing for a pubkey establishes its secret.
+    /// Store the pair secret derived from this session against every pubkey the
+    /// peer proved. The first pairing for a pubkey establishes its secret.
     fn pair(&mut self, db: &Db) -> Result<()> {
         let Some(peer) = self.peer.as_ref() else {
             return Ok(());
@@ -766,7 +765,7 @@ impl Session {
     fn on_auth(&mut self, db: &Db, payload: &[u8]) -> Result<()> {
         match Message::decode(payload).context("the control channel carried a malformed AUTH")? {
             Message::AuthChallenge(challenge) => self.on_challenge(db, challenge),
-            Message::AuthResponse(event) => self.on_auth_response(&event),
+            Message::AuthResponse(event) => self.on_auth_response(db, &event),
             other => bail!("{other:?} is not a NIP-42 message"),
         }
     }
@@ -790,7 +789,7 @@ impl Session {
             }
             // The dialer identifies itself first.
             Role::Dialer => {
-                if self.answer_peer_challenge()? {
+                if self.answer_peer_challenge(db)? {
                     self.state = State::DialerIdentified;
                 }
             }
@@ -804,7 +803,7 @@ impl Session {
     ///
     /// Nothing is accepted while the gate holds: a held stranger cannot
     /// identify itself into being served before the user has answered.
-    fn on_auth_response(&mut self, event: &coracle_lib::events::Event) -> Result<()> {
+    fn on_auth_response(&mut self, db: &Db, event: &coracle_lib::events::Event) -> Result<()> {
         if !self.gate.passed {
             bail!("an AUTH response arrived before the gate passed");
         }
@@ -819,7 +818,7 @@ impl Session {
 
         // The receiver now discloses, having evaluated the dialer's identity.
         if self.role == Role::Receiver {
-            self.answer_peer_challenge()?;
+            self.answer_peer_challenge(db)?;
         }
 
         Ok(())
@@ -834,7 +833,12 @@ impl Session {
 
     /// Answer the peer's challenge, disclosing this device's identity — if one
     /// is waiting and this device has not disclosed already.
-    fn answer_peer_challenge(&mut self) -> Result<bool> {
+    ///
+    /// This is where the disclosure budget is spent, because it is where the
+    /// identity leaves the device. The dialer discloses first and cannot name
+    /// the recipient yet, so a peer that collects the auth event and walks away
+    /// costs a unit all the same. `docs/policy.md#discoverability`.
+    fn answer_peer_challenge(&mut self, db: &Db) -> Result<bool> {
         let remote = self
             .wire
             .noise
@@ -846,6 +850,11 @@ impl Session {
                 let message = Message::AuthResponse(Box::new(event));
 
                 self.send_control(control::AUTH, &message.encode())?;
+
+                if self.gate.spends_budget {
+                    crate::db::command::record_disclosure(db, clock::now())?;
+                }
+
                 Ok(true)
             }
             None => Ok(false),
@@ -1685,5 +1694,55 @@ mod tests {
 
         assert_eq!(dialer.state, State::Syncing);
         assert_eq!(receiver.state, State::Syncing);
+
+        // The dialer's cool-off admitted a stranger, so its disclosure is the
+        // budget's. The receiver's was the user's own decision.
+        assert_eq!(crate::db::query::disclosures_since(&db, 0).unwrap(), 1);
+    }
+
+    #[test]
+    fn a_peer_that_collects_the_auth_event_and_walks_away_spends_the_budget() {
+        // The harvester the budget exists to bound is passive: it advertises,
+        // takes the auth event the dialer offers first, and never names itself,
+        // so the session never reaches Syncing. Charging the disclosure rather
+        // than the completed pairing is what makes that cost a unit.
+        let db = Db::open_in_memory().unwrap();
+        let mut dialer = pair(4096, Role::Dialer, 1);
+        let mut receiver = pair(4096, Role::Receiver, 2);
+
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
+
+        dialer.initiate().unwrap();
+        pump(&mut dialer, &mut receiver, &db); // handshake msg1
+        pump(&mut receiver, &mut dialer, &db); // handshake reply
+        pump(&mut dialer, &mut receiver, &db); // msg3
+        pump(&mut dialer, &mut receiver, &db); // dialer tags
+        pump(&mut dialer, &mut receiver, &db); // dialer challenge
+        pump(&mut receiver, &mut dialer, &db); // receiver tags: dialer admits
+        pump(&mut receiver, &mut dialer, &db); // receiver challenge: dialer answers
+
+        assert_eq!(dialer.state, State::DialerIdentified);
+        assert_eq!(crate::db::query::disclosures_since(&db, 0).unwrap(), 1);
+    }
+
+    #[test]
+    fn a_recognized_peer_spends_nothing_on_a_later_encounter() {
+        let db = Db::open_in_memory().unwrap();
+
+        let mut dialer = pair(4096, Role::Dialer, 1);
+        let mut receiver = pair(4096, Role::Receiver, 2);
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
+        full_exchange(&mut dialer, &mut receiver, &db);
+
+        // Both sides were strangers and both disclosed.
+        assert_eq!(crate::db::query::disclosures_since(&db, 0).unwrap(), 2);
+
+        let mut dialer = pair(4096, Role::Dialer, 1);
+        let mut receiver = pair(4096, Role::Receiver, 2);
+        full_exchange(&mut dialer, &mut receiver, &db);
+
+        assert_eq!(crate::db::query::disclosures_since(&db, 0).unwrap(), 2);
     }
 }

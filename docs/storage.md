@@ -14,7 +14,7 @@ Where events live, who can answer a query, and what happens while the app is asl
 | `pref` | A key/value store for storing app policies and ui preferences. |
 | `blob` | A mapping of blob sha256 metadata extracted from the first event seen that referenced it. |
 | `pair_secret` | `pubkey`, `secret`, `updated_at`. One row per peer this device has paired with, derived from that session's handshake hash. What a later encounter is [recognized](./discovery.md#recognition) from before either side names a pubkey. Provenance, so it is never served. |
-| `disclosure` | `pubkey`, `disclosed_at`. One row per pubkey this device has disclosed its identity to, bounding the [disclosure budget](./policy.md#discoverability) per window. Provenance, so it is never served. |
+| `disclosure` | `id`, `disclosed_at`. One row per `AUTH` response this device handed an unrecognized peer, bounding the [disclosure budget](./policy.md#discoverability) per window. No recipient: the dialer discloses before the peer has named itself. Rows older than the window are pruned on write. |
 
 ## The sqlite store
 
