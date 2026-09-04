@@ -46,13 +46,15 @@ An empty payload is still one fragment: the frame itself is the signal, which is
 
 #### The control channel's header
 
-Channel 0 carries three kinds of application frame, distinguished by a payload byte naming which:
+Channel 0 carries several kinds of application frame, distinguished by a payload byte naming which:
 
 | Byte | Frame | Payload |
 | --- | --- | --- |
 | `0x01` | Recognition tags | The [tag list](./discovery.md#recognition) |
 | `0x02` | Mutual `AUTH` | `["AUTH", <challenge>]` or `["AUTH", <event>]`, exactly as NIP-42 writes them |
 | `0x03` | Heartbeat | Nothing |
+| `0x04` | Reserved | |
+| `0x05` | [L2CAP upgrade](#the-l2cap-bandwidth-upgrade) | A step byte — `0x01` request, `0x02` published, `0x03` unavailable — and, for a publication, the PSM as two big-endian bytes |
 
 Both directions of `AUTH` share one byte, because the message names itself. The handshake travels on the same channel with no byte: its frames are the only ones to arrive before the channel is encrypted, and they are raw Noise messages read by the peer's handshake state rather than by anything that dispatches on a byte. Channels 1 and 2 need no byte either, since both carry NIP-01 arrays, which name themselves in their first element.
 
@@ -77,5 +79,18 @@ What opening one takes:
 - **Unencrypted at the link layer, deliberately.** The encrypted variants require LE Secure Connections bonding, and a bond is a durable pairing record on both devices. Confidentiality is Noise's job, and the channel is already inside a Noise session.
 - **The PSM is assigned at publish time**, so it is not known in advance and goes to the peer over the existing GATT channel once there is bulk to move.
 - **Opened on demand**, once outstanding blob bytes justify the setup round trip, rather than on connect — a drive-by would not recover the cost.
-- **Control frames stay on GATT**, so the heartbeat keeps defining session lifetime. Bulk `EVENT` streams and blob fragments move across.
-- **Framing is unchanged.** The codec already fragments and multiplexes; only the chunk size moves.
+- **Control frames stay on GATT**, so the heartbeat keeps defining session lifetime. Blob fragments — channel 2 — move across, and nothing else does: a fragment naming another channel on the bulk pipe is a peer misbehaving and ends the link.
+- **Framing is unchanged**, with one addition. The codec already fragments and multiplexes and only the chunk size moves, but L2CAP is a byte stream on both platforms, so a bulk write carries its length ahead of it as two big-endian bytes. GATT needs no prefix: one ATT write is one fragment.
+- **The two pipes are independent.** Each has one write in flight at a time, acknowledged separately, so a slow ATT write does not stall the transfer and vice versa.
+
+#### Who publishes, and how the PSM crosses
+
+The platform decides, not whoever wants the bandwidth: the GATT peripheral publishes and the central connects. So the receiver publishes and the dialer opens, whichever of the two raised the need.
+
+| Step | Sent by | Means |
+| --- | --- | --- |
+| `0x01` request | The dialer | It wants bulk and cannot publish |
+| `0x02` published | The receiver | A channel is open at this PSM |
+| `0x03` unavailable | Either | This end cannot, so the link stays on GATT |
+
+A receiver that wants bulk publishes without being asked, so a `published` may arrive with no request behind it. Every failure path is `unavailable` rather than a teardown: the upgrade is bandwidth, and a link that never gets one still syncs. If an open channel goes away, bulk returns to GATT and whatever had been cut to the larger MTU is dropped — the fragments would overrun an ATT write, and the transfer resumes from what the store already holds.

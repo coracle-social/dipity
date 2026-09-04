@@ -44,6 +44,29 @@ impl Channel {
             other => bail!("frame names channel {other}, which does not exist"),
         }
     }
+
+    /// Which pipe this channel leaves on. Only the blob channel ever moves.
+    fn pipe(self, bulk: bool) -> Pipe {
+        match (self, bulk) {
+            (Channel::Blob, true) => Pipe::Bulk,
+            _ => Pipe::Gatt,
+        }
+    }
+}
+
+/// Which of a link's two pipes a fragment travels on.
+///
+/// GATT carries everything until an L2CAP channel opens; from then on the blob
+/// channel rides the bulk pipe and the rest stay where they are. The two are
+/// independent — a write in flight on one does not hold up the other, which is
+/// most of the point of opening the second.
+/// `docs/transport.md#the-l2cap-bandwidth-upgrade`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Pipe {
+    /// The GATT characteristic, which every link has.
+    Gatt,
+    /// An open L2CAP channel, which carries bulk only.
+    Bulk,
 }
 
 /// Set on every fragment but the last of a frame.
@@ -203,6 +226,11 @@ impl Codec {
             payload: self.partial.remove(&fragment.channel).unwrap_or_default(),
         }))
     }
+
+    /// Throw away whatever of a channel has arrived but not completed a frame.
+    pub fn forget(&mut self, channel: Channel) {
+        self.partial.remove(&channel);
+    }
 }
 
 /// What is waiting to go out on one link, and the order it goes.
@@ -213,10 +241,12 @@ impl Codec {
 pub struct Outbox {
     /// One queue per channel, drained most urgent first.
     queues: BTreeMap<Channel, VecDeque<(Fragment, Secrecy)>>,
-    /// Whether a write is out and unacknowledged. The ATT queue is one deep as
-    /// far as the core is concerned: the shell acknowledges each write, which
-    /// releases the next.
-    in_flight: bool,
+    /// Which pipes have an unacknowledged write out. Each is one deep as far as
+    /// the core is concerned: the shell acknowledges a write, which releases the
+    /// next on that pipe alone.
+    in_flight: BTreeMap<Pipe, bool>,
+    /// Whether the blob channel has an L2CAP channel of its own to ride.
+    bulk: bool,
 }
 
 impl Outbox {
@@ -231,35 +261,51 @@ impl Outbox {
         }
     }
 
-    /// The next fragment to write, or `None` if a write is in flight or there
-    /// is nothing queued.
+    /// Throw away everything queued on a channel.
+    pub fn discard(&mut self, channel: Channel) {
+        self.queues.remove(&channel);
+    }
+
+    /// Move the blob channel onto its own pipe, or back onto GATT.
+    ///
+    /// Whatever is already queued goes with it: the fragments are the same
+    /// either way and only the pipe they leave on changes.
+    pub fn set_bulk(&mut self, open: bool) {
+        self.bulk = open;
+    }
+
+    /// The next fragment to write on `pipe`, or `None` if a write is in flight
+    /// there or that pipe has nothing queued.
     ///
     /// Marks the returned fragment in flight; [`acknowledge`](Self::acknowledge)
-    /// releases the next.
-    pub fn next_write(&mut self) -> Option<(Fragment, Secrecy)> {
-        if self.in_flight {
+    /// releases the next on that pipe.
+    pub fn next_write(&mut self, pipe: Pipe) -> Option<(Fragment, Secrecy)> {
+        if self.in_flight.get(&pipe).copied().unwrap_or(false) {
             return None;
         }
 
+        let bulk = self.bulk;
         let queued = Channel::ALL
             .iter()
+            .filter(|channel| channel.pipe(bulk) == pipe)
             .find_map(|channel| self.queues.get_mut(channel)?.pop_front())?;
 
-        self.in_flight = true;
+        self.in_flight.insert(pipe, true);
 
         Some(queued)
     }
 
-    /// Record that the write the shell was handed has been acknowledged.
-    pub fn acknowledge(&mut self) {
-        self.in_flight = false;
+    /// Record that the write the shell was handed on `pipe` has been
+    /// acknowledged.
+    pub fn acknowledge(&mut self, pipe: Pipe) {
+        self.in_flight.insert(pipe, false);
     }
 
-    /// Whether anything is queued or in flight.
+    /// Whether anything is queued or in flight on either pipe.
     /// [`Draining`](crate::session::State::Draining) waits on it.
     #[must_use]
     pub fn is_idle(&self) -> bool {
-        !self.in_flight && self.queues.values().all(VecDeque::is_empty)
+        !self.in_flight.values().any(|out| *out) && self.queues.values().all(VecDeque::is_empty)
     }
 }
 
@@ -371,14 +417,14 @@ mod tests {
             Secrecy::Sealed,
         );
 
-        let (first, _) = outbox.next_write().unwrap();
+        let (first, _) = outbox.next_write(Pipe::Gatt).unwrap();
         assert_eq!(first.channel, Channel::Control);
 
         // Nothing else goes out until the shell acknowledges the write.
-        assert!(outbox.next_write().is_none());
-        outbox.acknowledge();
+        assert!(outbox.next_write(Pipe::Gatt).is_none());
+        outbox.acknowledge(Pipe::Gatt);
 
-        let (second, _) = outbox.next_write().unwrap();
+        let (second, _) = outbox.next_write(Pipe::Gatt).unwrap();
         assert_eq!(second.channel, Channel::Blob);
     }
 
@@ -394,7 +440,7 @@ mod tests {
             Secrecy::Clear,
         );
 
-        let (_, secrecy) = outbox.next_write().unwrap();
+        let (_, secrecy) = outbox.next_write(Pipe::Gatt).unwrap();
         assert_eq!(secrecy, Secrecy::Clear);
     }
 

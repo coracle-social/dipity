@@ -24,6 +24,7 @@
 pub mod auth;
 pub mod gate;
 pub mod heartbeat;
+pub mod l2cap;
 pub mod peer;
 pub mod recognition;
 
@@ -47,11 +48,12 @@ use crate::sync::client::Client;
 use crate::sync::relay::{self, Relay};
 use crate::sync::spending::{SessionSpending, SpendingLedger};
 use crate::sync::{Message, Quota};
-use crate::transport::{Channel, Frame, Wire};
+use crate::transport::{Channel, Frame, Pipe, Wire};
 
 use auth::AuthExchange;
 use gate::{Gate, Verdict};
 use heartbeat::Heartbeat;
+use l2cap::{Step, Upgrade};
 
 /// How long a session sits in [`Draining`](State::Draining) before it is
 /// closed, however much is still in flight.
@@ -88,6 +90,9 @@ mod control {
     pub const AUTH: u8 = 0x02;
     /// A liveness beacon, carrying nothing.
     pub const HEARTBEAT: u8 = 0x03;
+    /// One step of the L2CAP upgrade; `0x04` is reserved for the identity
+    /// transfer. `docs/transport.md#the-l2cap-bandwidth-upgrade`.
+    pub const L2CAP: u8 = 0x05;
 }
 
 /// Where a link is in its lifecycle.
@@ -182,6 +187,8 @@ pub struct Session {
     /// What the peer has spent against its quota, this session and this
     /// window.
     spending: SessionSpending,
+    /// Where the L2CAP bandwidth upgrade has got to on this link.
+    upgrade: Upgrade,
 }
 
 impl Session {
@@ -212,6 +219,7 @@ impl Session {
             client: Client::default(),
             blobs: BlobExchange::new(blobs),
             spending: SessionSpending::new(spending),
+            upgrade: Upgrade::new(role),
         })
     }
 
@@ -324,15 +332,17 @@ impl Session {
         self.wire.send(frame)
     }
 
-    /// The next fragment for the shell to write, if the last one has been
-    /// acknowledged. The wire seals it here, in the order it goes out.
-    pub fn next_write(&mut self) -> Result<Option<Vec<u8>>> {
-        self.wire.next_write()
+    /// The next fragment for the shell to write on `pipe`, if the last one
+    /// there has been acknowledged. The wire seals it here, in the order it
+    /// goes out.
+    pub fn next_write(&mut self, pipe: Pipe) -> Result<Option<Vec<u8>>> {
+        self.wire.next_write(pipe)
     }
 
-    /// Record that the fragment the shell was handed has been acknowledged.
-    pub fn acknowledge_write(&mut self) {
-        self.wire.acknowledge_write();
+    /// Record that the fragment the shell was handed on `pipe` has been
+    /// acknowledged.
+    pub fn acknowledge_write(&mut self, pipe: Pipe) {
+        self.wire.acknowledge_write(pipe);
     }
 
     /// Take one write off the characteristic, returning a decrypted frame once
@@ -341,6 +351,21 @@ impl Session {
         self.heartbeat.heard();
 
         self.wire.receive(write)
+    }
+
+    /// Take a slice off the L2CAP stream and handle every frame it completes.
+    ///
+    /// The bulk pipe carries the blob channel and nothing else — the wire
+    /// refuses a fragment that says otherwise — so there is no dispatch to
+    /// make here, unlike the characteristic.
+    pub fn receive_bulk(&mut self, db: &Db, read: &[u8]) -> Result<()> {
+        self.heartbeat.heard();
+
+        for frame in self.wire.receive_bulk(read)? {
+            self.handle_blob(db, &frame)?;
+        }
+
+        Ok(())
     }
 
     /// Advance the lifecycle on an inbound control frame: the handshake, the
@@ -400,29 +425,6 @@ impl Session {
 
         let quota = self.quota();
 
-        // Blobs drive their own channel, metered against the same quota as the event halves.
-        match &message {
-            Message::BlossomRequest(request) => {
-                let reply = self.blobs.serve(db, &peer, &self.local(), request, quota)?;
-
-                self.send_sync(&Message::BlossomResponse(Box::new(reply)))?;
-                return Ok(());
-            }
-            Message::BlossomResponse(response) => {
-                if let Some(request) =
-                    self.blobs
-                        .on_response(db, &peer, response.as_ref(), quota)?
-                {
-                    self.send_sync(&Message::BlossomRequest(Box::new(request)))?;
-                }
-
-                // A finished fetch frees the slot for the next wanted blob.
-                self.maybe_fetch_blob(db)?;
-                return Ok(());
-            }
-            _ => {}
-        }
-
         let replies = if self.is_for_relay(&message) {
             self.relay.handle(
                 db,
@@ -442,6 +444,42 @@ impl Session {
         }
 
         Ok(())
+    }
+
+    /// Handle one frame on the blob channel, which carries the two Blossom
+    /// verbs and nothing else.
+    ///
+    /// Blobs are metered against the same quota as the event halves; what the
+    /// channel buys them is a queue of their own, and an L2CAP channel to ride
+    /// wherever one opens.
+    pub fn handle_blob(&mut self, db: &Db, frame: &Frame) -> Result<()> {
+        let message = Message::decode(&frame.payload)
+            .context("the blob channel carried a malformed message")?;
+
+        let Some(peer) = self.peer.as_ref().cloned() else {
+            bail!("blob traffic before the peer is identified");
+        };
+
+        let quota = self.quota();
+
+        match message {
+            Message::BlossomRequest(request) => {
+                let reply = self
+                    .blobs
+                    .serve(db, &peer, &self.local(), &request, quota)?;
+
+                self.send_blob(&Message::BlossomResponse(Box::new(reply)))
+            }
+            Message::BlossomResponse(response) => {
+                if let Some(request) = self.blobs.on_response(db, &peer, &response, quota)? {
+                    self.send_blob(&Message::BlossomRequest(Box::new(request)))?;
+                }
+
+                // A finished fetch frees the slot for the next wanted blob.
+                self.maybe_fetch_blob(db)
+            }
+            other => bail!("{other:?} arrived on the blob channel"),
+        }
     }
 
     /// Whether the relay half answers this message.
@@ -525,15 +563,71 @@ impl Session {
         let quota = self.quota();
 
         if let Some(request) = self.blobs.poll(db, quota)? {
-            self.send_sync(&Message::BlossomRequest(Box::new(request)))?;
+            self.send_blob(&Message::BlossomRequest(Box::new(request)))?;
         }
 
         Ok(())
     }
 
-    /// Whether the shell should be told to open L2CAP for this link, once.
-    pub fn take_l2cap_request(&mut self) -> bool {
-        self.blobs.take_l2cap_request()
+    // ----------------------- The L2CAP upgrade: docs/transport.md, session/l2cap
+
+    /// Start the upgrade if the blob half has asked for one, and answer with
+    /// whatever the shell has to do next, once.
+    pub fn poll_l2cap(&mut self) -> Result<Option<Step>> {
+        if self.blobs.take_l2cap_request() {
+            self.want_l2cap()?;
+        }
+
+        Ok(self.upgrade.poll())
+    }
+
+    /// The shell published a channel, so the PSM goes to the peer.
+    pub fn l2cap_published(&mut self, psm: u16) -> Result<()> {
+        let announcement = self.upgrade.published(psm);
+
+        self.send_control(control::L2CAP, &announcement)
+    }
+
+    /// The channel is up: bulk moves onto it at its MTU.
+    pub fn l2cap_opened(&mut self, mtu: usize) -> Result<()> {
+        self.wire.open_bulk(mtu)?;
+        self.upgrade.opened();
+
+        Ok(())
+    }
+
+    /// The channel went away, or the shell could not make one.
+    ///
+    /// Either way this link finishes on GATT, and whatever the blob channel had
+    /// queued for the bulk pipe goes back over the characteristic.
+    pub fn l2cap_unavailable(&mut self) -> Result<()> {
+        self.wire.close_bulk();
+
+        let owed = self.upgrade.unavailable();
+
+        self.tell_l2cap(owed)
+    }
+
+    /// Bulk is wanted on this link, from whichever end this is.
+    fn want_l2cap(&mut self) -> Result<()> {
+        let owed = self.upgrade.wanted();
+
+        self.tell_l2cap(owed)
+    }
+
+    /// One step of the upgrade exchange, off the control channel.
+    fn on_l2cap(&mut self, payload: &[u8]) -> Result<()> {
+        let owed = self.upgrade.receive(payload)?;
+
+        self.tell_l2cap(owed)
+    }
+
+    /// Send what the upgrade owes the peer, if it owes anything.
+    fn tell_l2cap(&mut self, owed: Option<Vec<u8>>) -> Result<()> {
+        match owed {
+            Some(payload) => self.send_control(control::L2CAP, &payload),
+            None => Ok(()),
+        }
     }
 
     /// The battery level in percent, which gates blob transfers.
@@ -717,6 +811,7 @@ impl Session {
             control::HEARTBEAT => {
                 // The write itself proved liveness in `receive`; a beacon carries nothing else.
             }
+            control::L2CAP => self.on_l2cap(payload)?,
             other => bail!("an unknown control frame {other} arrived"),
         }
 
@@ -899,6 +994,17 @@ impl Session {
             payload,
         })
     }
+
+    /// Queue a Blossom message as a frame on the blob channel, which is what
+    /// rides L2CAP once one is open.
+    fn send_blob(&mut self, message: &Message) -> Result<()> {
+        let payload = message.encode();
+
+        self.send(&Frame {
+            channel: Channel::Blob,
+            payload,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -979,8 +1085,8 @@ mod tests {
     /// Move every queued handshake fragment from one session to the other,
     /// leaving the lifecycle above the wire alone.
     fn pump_handshake(from: &mut Session, into: &mut Session) {
-        while let Some(write) = from.next_write().unwrap() {
-            from.acknowledge_write();
+        while let Some(write) = from.next_write(Pipe::Gatt).unwrap() {
+            from.acknowledge_write(Pipe::Gatt);
 
             if let Some(frame) = into.wire.receive(&write).unwrap() {
                 into.wire.read_handshake(&frame.payload).unwrap();
@@ -990,8 +1096,8 @@ mod tests {
 
     /// Move fragments from one session to the other until a whole frame lands.
     fn pump_frame(from: &mut Session, into: &mut Session) -> Frame {
-        while let Some(write) = from.next_write().unwrap() {
-            from.acknowledge_write();
+        while let Some(write) = from.next_write(Pipe::Gatt).unwrap() {
+            from.acknowledge_write(Pipe::Gatt);
 
             if let Some(frame) = into.wire.receive(&write).unwrap() {
                 return frame;
@@ -1090,8 +1196,8 @@ mod tests {
         assert!(clock::at(cap, || session.expired()));
 
         // An idle outbox ends the drain early: there is nothing left to finish.
-        while session.next_write().unwrap().is_some() {
-            session.acknowledge_write();
+        while session.next_write(Pipe::Gatt).unwrap().is_some() {
+            session.acknowledge_write(Pipe::Gatt);
         }
 
         assert!(clock::at(1_001, || session.expired()));
@@ -1127,8 +1233,8 @@ mod tests {
 
         // Drain, then let the outbox run dry the way the shell would.
         clock::at(1_000, || session.drain());
-        while session.next_write().unwrap().is_some() {
-            session.acknowledge_write();
+        while session.next_write(Pipe::Gatt).unwrap().is_some() {
+            session.acknowledge_write(Pipe::Gatt);
         }
 
         assert!(
@@ -1215,7 +1321,7 @@ mod tests {
         // Before the minimum interval nothing is due.
         clock::at(1_000 + heartbeat::MIN_INTERVAL_SECONDS - 1, || {
             session.maybe_heartbeat().unwrap();
-            assert!(session.next_write().unwrap().is_none());
+            assert!(session.next_write(Pipe::Gatt).unwrap().is_none());
         });
 
         // Past the maximum it is, and the beat carries the discriminant alone.
@@ -1250,7 +1356,7 @@ mod tests {
         });
 
         // The first fragment out is the queued traffic, not a beat.
-        let fragment = session.next_write().unwrap().unwrap();
+        let fragment = session.next_write(Pipe::Gatt).unwrap().unwrap();
         assert_eq!(fragment[0], Channel::Sync as u8);
     }
 
@@ -1386,7 +1492,7 @@ mod tests {
         session.handle_sync(&db, &publish).unwrap();
 
         // No OK travels back and nothing is stored: the publish waits for the next encounter.
-        assert!(session.next_write().unwrap().is_none());
+        assert!(session.next_write(Pipe::Gatt).unwrap().is_none());
         assert!(
             db_query::list_events(&db, &Query::new())
                 .unwrap()
@@ -1427,7 +1533,7 @@ mod tests {
 
         // Routed to the client half rather than misread as a reply this device never hosted.
         session.handle_sync(&db, &reply).unwrap();
-        assert!(session.next_write().unwrap().is_some());
+        assert!(session.next_write(Pipe::Gatt).unwrap().is_some());
     }
 
     #[test]
@@ -1455,16 +1561,16 @@ mod tests {
         .unwrap();
 
         dialer.initiate().unwrap();
-        let msg1 = dialer.next_write().unwrap().unwrap();
-        dialer.acknowledge_write();
+        let msg1 = dialer.next_write(Pipe::Gatt).unwrap().unwrap();
+        dialer.acknowledge_write(Pipe::Gatt);
 
         let frame = receiver.receive(&msg1).unwrap().unwrap();
         receiver
             .advance(&Db::open_in_memory().unwrap(), &frame)
             .unwrap();
 
-        let reply = receiver.next_write().unwrap().unwrap();
-        receiver.acknowledge_write();
+        let reply = receiver.next_write(Pipe::Gatt).unwrap().unwrap();
+        receiver.acknowledge_write(Pipe::Gatt);
 
         let frame = dialer.receive(&reply).unwrap().unwrap();
         dialer
@@ -1472,8 +1578,8 @@ mod tests {
             .unwrap();
 
         // Only the dialer's final handshake message is part of the exchange under test.
-        let final_msg = dialer.next_write().unwrap().unwrap();
-        dialer.acknowledge_write();
+        let final_msg = dialer.next_write(Pipe::Gatt).unwrap().unwrap();
+        dialer.acknowledge_write(Pipe::Gatt);
 
         let frame = receiver.receive(&final_msg).unwrap().unwrap();
         receiver
@@ -1489,10 +1595,10 @@ mod tests {
     /// Pump one queued fragment from `sender` into `receiver`, advancing it.
     fn pump(sender: &mut Session, receiver: &mut Session, db: &Db) {
         let fragment = sender
-            .next_write()
+            .next_write(Pipe::Gatt)
             .unwrap()
             .expect("a queued fragment to pump");
-        sender.acknowledge_write();
+        sender.acknowledge_write(Pipe::Gatt);
 
         let frame = receiver
             .receive(&fragment)
@@ -1586,7 +1692,7 @@ mod tests {
         );
 
         // The payload is encrypted; the frame header is not.
-        let opening = dialer.next_write().unwrap().unwrap();
+        let opening = dialer.next_write(Pipe::Gatt).unwrap().unwrap();
         assert_eq!(opening[0], Channel::Sync as u8);
     }
 
@@ -1701,5 +1807,64 @@ mod tests {
         full_exchange(&mut dialer, &mut receiver, &db);
 
         assert_eq!(crate::db::query::disclosures_since(&db, 0).unwrap(), 2);
+    }
+
+    #[test]
+    fn the_upgrade_exchange_crosses_on_the_control_channel() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) = secured_pair(policy());
+
+        // The central cannot publish, so wanting bulk is a request rather than a PSM.
+        dialer.want_l2cap().unwrap();
+        assert_eq!(dialer.poll_l2cap().unwrap(), None);
+
+        pump(&mut dialer, &mut receiver, &db);
+        assert_eq!(receiver.poll_l2cap().unwrap(), Some(Step::Publish));
+
+        receiver.l2cap_published(0x0080).unwrap();
+        pump(&mut receiver, &mut dialer, &db);
+        assert_eq!(dialer.poll_l2cap().unwrap(), Some(Step::Open(0x0080)));
+
+        dialer.l2cap_opened(512).unwrap();
+        assert!(dialer.wire.bulk_is_open());
+    }
+
+    #[test]
+    fn a_central_asked_to_publish_says_it_cannot_rather_than_dropping_the_link() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) = secured_pair(policy());
+
+        receiver
+            .send_control(control::L2CAP, &[l2cap::message::REQUEST])
+            .unwrap();
+        pump(&mut receiver, &mut dialer, &db);
+
+        assert_eq!(dialer.state, State::Secured);
+
+        // The refusal travels back, so the receiver stops waiting on a channel.
+        pump(&mut dialer, &mut receiver, &db);
+        receiver.want_l2cap().unwrap();
+        assert_eq!(receiver.poll_l2cap().unwrap(), None);
+    }
+
+    #[test]
+    fn a_refused_upgrade_leaves_both_ends_on_gatt() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) = secured_pair(policy());
+
+        dialer.want_l2cap().unwrap();
+        pump(&mut dialer, &mut receiver, &db);
+        receiver.poll_l2cap().unwrap();
+
+        receiver.l2cap_unavailable().unwrap();
+        pump(&mut receiver, &mut dialer, &db);
+
+        // The dialer heard it: a PSM arriving afterwards is not acted on.
+        receiver.l2cap_published(0x0080).unwrap();
+        pump(&mut receiver, &mut dialer, &db);
+
+        assert_eq!(dialer.poll_l2cap().unwrap(), None);
+        assert!(!dialer.wire.bulk_is_open());
+        assert!(!receiver.wire.bulk_is_open());
     }
 }

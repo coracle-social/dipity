@@ -50,8 +50,9 @@ use crate::db::{Db, query};
 use crate::link::{LinkId, PeripheralId, Role};
 use crate::model::{Blob, BlobHash, Policy};
 use crate::session::gate::Presence;
+use crate::session::l2cap::Step;
 use crate::session::{Ending, Session, State};
-use crate::transport::Channel;
+use crate::transport::{Channel, Pipe};
 use scheduler::Scheduler;
 
 /// Minimum gap between retention sweeps, against a window measured in days.
@@ -76,15 +77,29 @@ pub enum Action {
     /// Ask the user whether an unadmitted stranger may connect. Answer with
     /// [`Node::approve`]; the link is held up to the drain cap meanwhile.
     RequestApproval(LinkId),
-    /// Open an L2CAP channel, once outstanding blob bytes justify the setup
-    /// round trip. Bulk moves across; control frames stay on GATT.
-    OpenL2cap(LinkId),
     /// Present the share sheet over a key backup the core has written.
     ///
     /// The path is the shell's, not the view's: the view starts the export and
     /// learns only that it was shared or dismissed, never where the file is.
     /// `docs/keys.md#backup`.
     ShareKeyBackup(PathBuf),
+    /// Write one bulk fragment to this link's L2CAP channel, length-prefixed
+    /// because the channel is a byte stream.
+    ///
+    /// Answered with [`Node::bulk_write_complete`], which releases the next —
+    /// separately from GATT, so a slow ATT write does not stall the transfer.
+    SendBulk(LinkId, Vec<u8>),
+    /// Publish an L2CAP channel and report its PSM with
+    /// [`Node::l2cap_published`], or [`Node::l2cap_unavailable`] if the
+    /// platform will not.
+    ///
+    /// Only the GATT peripheral publishes. Raised once outstanding blob bytes
+    /// justify the setup round trip.
+    /// `docs/transport.md#the-l2cap-bandwidth-upgrade`.
+    PublishL2cap(LinkId),
+    /// Open the L2CAP channel the peer published at this PSM, and report the
+    /// result with [`Node::l2cap_opened`] or [`Node::l2cap_unavailable`].
+    OpenL2cap(LinkId, u16),
     /// Call [`Node::tick`] at or after this unix second.
     ///
     /// Advisory: iOS runs no timer for a suspended app, so the heartbeat and
@@ -256,7 +271,24 @@ impl Node {
     /// [`crate::sync`] by channel. A malformed or unauthenticated frame ends
     /// the link rather than being dropped.
     pub fn bytes_received(&mut self, link: LinkId, write: &[u8]) -> Vec<Action> {
-        let Err(error) = self.receive_frame(link, write) else {
+        let received = self.receive_frame(link, write);
+
+        self.after_receiving(link, received)
+    }
+
+    /// A slice arrived off this link's L2CAP channel.
+    ///
+    /// The channel is a byte stream, so a read may hold several fragments, part
+    /// of one, or both; the wire keeps what does not complete one.
+    pub fn bulk_received(&mut self, link: LinkId, read: &[u8]) -> Vec<Action> {
+        let received = self.receive_bulk(link, read);
+
+        self.after_receiving(link, received)
+    }
+
+    /// End the link if reading it failed, and collect either way.
+    fn after_receiving(&mut self, link: LinkId, received: Result<()>) -> Vec<Action> {
+        let Err(error) = received else {
             return self.collect();
         };
 
@@ -268,6 +300,14 @@ impl Node {
         }
 
         self.collect()
+    }
+
+    /// Reassemble, decrypt, and dispatch every frame a bulk read completed.
+    fn receive_bulk(&mut self, link: LinkId, read: &[u8]) -> Result<()> {
+        match self.sessions.get_mut(&link) {
+            Some(session) => session.receive_bulk(&self.db, read),
+            None => Ok(()),
+        }
     }
 
     /// Reassemble, decrypt, and dispatch one frame off the characteristic.
@@ -283,7 +323,7 @@ impl Node {
         match frame.channel {
             Channel::Control => session.advance(&self.db, &frame)?,
             Channel::Sync => session.handle_sync(&self.db, &frame)?,
-            Channel::Blob => {} // blob transfers are not yet wired
+            Channel::Blob => session.handle_blob(&self.db, &frame)?,
         }
 
         Ok(())
@@ -292,8 +332,54 @@ impl Node {
     /// The write the shell was handed has been acknowledged, which releases the
     /// next fragment.
     pub fn write_complete(&mut self, link: LinkId) -> Vec<Action> {
+        self.acknowledge(link, Pipe::Gatt)
+    }
+
+    /// The bulk write the shell was handed has been acknowledged, which
+    /// releases the next one on the L2CAP channel alone.
+    pub fn bulk_write_complete(&mut self, link: LinkId) -> Vec<Action> {
+        self.acknowledge(link, Pipe::Bulk)
+    }
+
+    /// The shell published an L2CAP channel; the PSM goes to the peer.
+    pub fn l2cap_published(&mut self, link: LinkId, psm: u16) -> Result<Vec<Action>> {
+        self.on_session(link, |session| session.l2cap_published(psm))
+    }
+
+    /// The L2CAP channel is up, with the MTU it negotiated. Bulk moves onto it.
+    pub fn l2cap_opened(&mut self, link: LinkId, mtu: usize) -> Result<Vec<Action>> {
+        self.on_session(link, |session| session.l2cap_opened(mtu))
+    }
+
+    /// The upgrade will not happen, or the channel that had it went away.
+    ///
+    /// Both are the same answer: this link finishes on GATT. It is not an
+    /// error — L2CAP is bandwidth, and every device without it still syncs.
+    pub fn l2cap_unavailable(&mut self, link: LinkId) -> Result<Vec<Action>> {
+        self.on_session(link, Session::l2cap_unavailable)
+    }
+
+    /// Carry a shell answer to the session it belongs to, and collect.
+    ///
+    /// The link may already be down — a channel the shell was opening comes
+    /// back after a disconnect as readily as before one — and an answer with no
+    /// session left to hear it is dropped rather than being an error.
+    fn on_session(
+        &mut self,
+        link: LinkId,
+        answer: impl FnOnce(&mut Session) -> Result<()>,
+    ) -> Result<Vec<Action>> {
         if let Some(session) = self.sessions.get_mut(&link) {
-            session.acknowledge_write();
+            answer(session)?;
+        }
+
+        Ok(self.collect())
+    }
+
+    /// Release the next write on one pipe.
+    fn acknowledge(&mut self, link: LinkId, pipe: Pipe) -> Vec<Action> {
+        if let Some(session) = self.sessions.get_mut(&link) {
+            session.acknowledge_write(pipe);
         }
 
         self.collect()
@@ -526,26 +612,20 @@ impl Node {
 
         // A blob transfer is the opening that justifies a bulk channel.
         for session in self.sessions.values_mut() {
-            if session.take_l2cap_request() {
-                actions.push(Action::OpenL2cap(session.link));
+            let link = session.link;
+
+            match session.poll_l2cap() {
+                Ok(step) => actions.extend(step.map(|step| match step {
+                    Step::Publish => Action::PublishL2cap(link),
+                    Step::Open(psm) => Action::OpenL2cap(link, psm),
+                })),
+                // The upgrade is bandwidth; a link that cannot ask for it still syncs.
+                Err(error) => log::error!("asking for L2CAP on link {link:?} failed: {error:#}"),
             }
         }
 
         for session in self.sessions.values_mut() {
-            loop {
-                match session.next_write() {
-                    Ok(Some(fragment)) => actions.push(Action::Send(session.link, fragment)),
-                    Ok(None) => break,
-                    // Sealing fails only on a wire that can no longer carry the session.
-                    Err(error) => {
-                        log::error!(
-                            "sealing a fragment on link {:?} failed: {error:#}",
-                            session.link
-                        );
-                        break;
-                    }
-                }
-            }
+            actions.extend(writes(session));
         }
 
         let closed: Vec<(LinkId, Ending)> = self
@@ -670,6 +750,33 @@ impl Node {
             }
         }
     }
+}
+
+/// Everything one session has ready to write, on each of its [`Pipe`]s.
+///
+/// Sealing fails only on a wire that can no longer carry the session, so a
+/// failure stops that pipe and leaves the other to finish what it has.
+fn writes(session: &mut Session) -> Vec<Action> {
+    let link = session.link;
+    let mut actions = Vec::new();
+
+    for pipe in [Pipe::Gatt, Pipe::Bulk] {
+        loop {
+            match session.next_write(pipe) {
+                Ok(Some(fragment)) => actions.push(match pipe {
+                    Pipe::Gatt => Action::Send(link, fragment),
+                    Pipe::Bulk => Action::SendBulk(link, fragment),
+                }),
+                Ok(None) => break,
+                Err(error) => {
+                    log::error!("sealing a fragment on link {link:?} failed: {error:#}");
+                    break;
+                }
+            }
+        }
+    }
+
+    actions
 }
 
 #[cfg(test)]
@@ -1095,18 +1202,18 @@ mod tests {
         dialer.initiate().unwrap();
 
         // One fragment per handshake message at this MTU.
-        let opening = dialer.next_write().unwrap().unwrap();
-        dialer.acknowledge_write();
+        let opening = dialer.next_write(Pipe::Gatt).unwrap().unwrap();
+        dialer.acknowledge_write(Pipe::Gatt);
         let frame = receiver.receive(&opening).unwrap().unwrap();
         receiver.advance(db, &frame).unwrap();
 
-        let reply = receiver.next_write().unwrap().unwrap();
-        receiver.acknowledge_write();
+        let reply = receiver.next_write(Pipe::Gatt).unwrap().unwrap();
+        receiver.acknowledge_write(Pipe::Gatt);
         let frame = dialer.receive(&reply).unwrap().unwrap();
         dialer.advance(db, &frame).unwrap();
 
-        let closing = dialer.next_write().unwrap().unwrap();
-        dialer.acknowledge_write();
+        let closing = dialer.next_write(Pipe::Gatt).unwrap().unwrap();
+        dialer.acknowledge_write(Pipe::Gatt);
         let frame = receiver.receive(&closing).unwrap().unwrap();
         receiver.advance(db, &frame).unwrap();
     }

@@ -77,7 +77,7 @@ A group is 16 KiB, which is sixteen of Bao's 1 KiB chunks. The chunk size is Bao
 
 A device proves a range out of the outboard tree over its own copy, which it builds once the file is whole and keeps beside the bytes. Only a whole copy can be proved that way, so a `HEAD` offers `accept-encoding: bao` only from one — and a peer holding a prefix of a rooted blob is passed by rather than taken from, since unproved bytes are what the root exists to end. A blob whose `imeta` carries no root at all is fetched from a peer holding the entire file, checked once against the SHA-256 at the end, and started over when a transfer drops.
 
-Each exchange then travels as the two BLOSSOM verbs of [the additions](#the-additions).
+Each exchange then travels as the two BLOSSOM verbs of [the additions](#the-additions), on the blob channel — its own queue, yielding to control and sync, and the one thing that moves to L2CAP where [an upgrade](./transport.md#the-l2cap-bandwidth-upgrade) opens.
 
 When an event references a blob, we save a record to the `blob` table which maps the sha256 to the blob's metadata - including everything in the `imeta` tag, and whether the blob is a `preview` or an `original`. A tag is a `preview` when it names the original it stands in for ([`nips/imeta-preview.md`](./nips/imeta-preview.md)); anything else is an `original`, so a marker that names no blob buys nothing the roles below hand out. The metadata is the first referring event's, by `seen_at` rather than `created_at`: a later event's copy of the tag says nothing about bytes the hash already addresses.
 
