@@ -64,6 +64,14 @@ core-build:
 core-test:
     cd {{core}} && cargo test --workspace
 
+# rustfmt's opinion of the core, read rather than applied. `just fmt` applies it.
+core-fmt:
+    cd {{core}} && cargo fmt --check
+
+# Clippy over the core and its tests, warnings denied.
+core-lint:
+    cd {{core}} && cargo clippy --workspace --all-targets -- -D warnings
+
 # uniffi reads the compiled cdylib rather than the source, so the library is
 # always built first. Stale bindings against a fresh library is the failure this
 # ordering exists to prevent.
@@ -134,18 +142,18 @@ check:
 lint:
     npx eslint .
 
+# Prettier's opinion of the webview. `just fmt` applies it instead.
+format:
+    npx prettier --check .
+
 # Format both halves in place.
 fmt:
     npx prettier --write .
     npx eslint . --fix
     cd {{core}} && cargo fmt
 
-# Everything a change has to pass. What CI runs.
-qa: check lint
-    npx prettier --check .
-    cd {{core}} && cargo fmt --check
-    cd {{core}} && cargo clippy --workspace --all-targets -- -D warnings
-    cd {{core}} && cargo test --workspace
+# Everything a change has to pass. CI runs one step per recipe listed here.
+qa: check lint format core-fmt core-lint core-test
 
 # --------------------------------------------------------------------- cleanup
 

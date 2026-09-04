@@ -110,7 +110,7 @@ just fmt          # prettier --write, eslint --fix, cargo fmt
 just dev          # Vite, browser only: no plugin, so no BLE, no store, no peers
 ```
 
-`clippy -D warnings` is part of `qa`, so a lint is a build failure here. `qa` is described as what CI runs, and the repository has no CI configuration — neither `.gitea/workflows/` nor `.github/workflows/`. Nothing runs it for you.
+`clippy -D warnings` is part of `qa`, so a lint is a build failure here. `qa` is a dependency list and nothing else, and `.gitea/workflows/ci.yml` runs one step per entry, so CI and `just qa` cannot drift.
 
 ## Conventions the code holds itself to
 

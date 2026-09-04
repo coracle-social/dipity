@@ -82,6 +82,8 @@ just ios          # sync, then open Xcode
 just android      # sync, then open Android Studio
 ```
 
+[`.gitea/workflows/ci.yml`](./.gitea/workflows/ci.yml) runs one step per `qa` recipe on every pull request and every push to `master`, in two jobs split by toolchain.
+
 App ID `social.coracle.dip`. Web assets build to `dist/`; the shells load the *built* output, so `just sync` after web changes or the app runs stale code.
 
 **The core builds before the shells**, and `just sync` enforces the order — `cargo` cross-compiles for each target, `uniffi-bindgen` generates bindings from the *compiled* library, then `cap sync`. Never run `npx cap sync` directly; it skips the first two steps and the shells link against whatever was there before. Generated output stages in `core/target/ffi/` and is never committed. [`core/README.md`](./core/README.md).
