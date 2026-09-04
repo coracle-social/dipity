@@ -160,8 +160,6 @@ pub struct Blob {
     pub imeta: Vec<String>,
     /// How many bytes are on disk, which is where a transfer resumes.
     pub stored_bytes: i64,
-    /// The verified chaining value of every group, once a transfer has one.
-    pub blake3_tree: Option<Vec<u8>>,
     /// Whether the whole file is held and hashes to its address.
     pub complete: bool,
     /// When it was last read, for LRU eviction.
@@ -185,7 +183,6 @@ impl Blob {
             blake3: None,
             imeta: Vec::new(),
             stored_bytes: 0,
-            blake3_tree: None,
             complete: false,
             accessed_at: None,
         }

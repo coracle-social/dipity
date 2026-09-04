@@ -39,7 +39,7 @@ use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::SecretKey;
 use tokio::sync::broadcast::{self, error::TryRecvError};
 
-use crate::blobs::{BlobStore, FileBlobStore};
+use crate::blobs::{BlobStore, FileBlobStore, verified};
 use crate::clock;
 use crate::db::blob::channel as blob_channel;
 use crate::db::blob::channel::BlobChange;
@@ -47,7 +47,7 @@ use crate::db::command as db_command;
 use crate::db::event::channel::{self, EventChange};
 use crate::db::{Db, query};
 use crate::link::{LinkId, PeripheralId, Role};
-use crate::model::Policy;
+use crate::model::{Blob, BlobHash, Policy};
 use crate::session::gate::Presence;
 use crate::session::{Ending, Session, State};
 use crate::transport::Channel;
@@ -400,10 +400,74 @@ impl Node {
     /// Store an event the user wrote. The event channel does the offering: what
     /// this write announces is drained in `collect`, so a note written in a
     /// crowd propagates while the crowd is still there.
+    ///
+    /// Media the event references is already in the store, put there by
+    /// [`store_media`](Self::store_media) before the tag naming it was built;
+    /// the row that write is recorded in only exists once the event does, so
+    /// this is where it is marked whole.
     pub fn publish(&mut self, event: &HashedEvent) -> Result<Vec<Action>> {
         db_command::publish_event(&self.db, event, &self.identity.public_key(), clock::now())?;
+        self.complete_own_media(event)?;
 
         Ok(self.collect())
+    }
+
+    /// Take bytes the user is publishing and answer the `imeta` entries an
+    /// event has to carry for a peer to fetch them and check what it gets.
+    ///
+    /// The BLAKE3 root is written here because here is the only place the
+    /// whole file is in hand before the event that commits to it is signed.
+    /// The outboard tree goes in beside the bytes at the same time, so the
+    /// first peer to ask can be answered with a proof rather than with a
+    /// promise. `docs/nips/imeta-blake3.md`.
+    pub fn store_media(&self, bytes: &[u8]) -> Result<Vec<String>> {
+        let sha256 = BlobHash::digest(bytes);
+
+        // Byte-identical media published twice is one file; appending would
+        // make it two copies of itself.
+        self.blobs.delete(&sha256)?;
+        self.blobs.append(&sha256, bytes)?;
+
+        let root = verified::build(self.blobs.as_ref(), &sha256)?;
+
+        Ok(vec![
+            format!("x {sha256}"),
+            format!("size {}", bytes.len()),
+            format!("blake3 {}", root.to_hex()),
+        ])
+    }
+
+    /// Mark whole every blob a just-published event references and this device
+    /// already holds all of.
+    ///
+    /// Without it the author's own media sits on the want list: the row a
+    /// published event writes says nothing is held, since the bytes went in
+    /// before the row existed.
+    fn complete_own_media(&self, event: &HashedEvent) -> Result<()> {
+        for tag in event.tags.find_all("imeta") {
+            let Some(blob) = Blob::from_imeta(tag, event.id) else {
+                continue;
+            };
+            // The whole file, not a transfer of someone else's media that
+            // happens to be under way: marking a prefix complete is how a
+            // device comes to serve half a file as the whole of it.
+            let whole = blob.size
+                == self
+                    .blobs
+                    .len(&blob.sha256)?
+                    .and_then(|held| i64::try_from(held).ok());
+
+            if whole {
+                db_command::complete_blob(
+                    &self.db,
+                    &blob.sha256,
+                    blob.size.unwrap_or_default(),
+                    clock::now(),
+                )?;
+            }
+        }
+
+        Ok(())
     }
 
     // ========================================================================
@@ -679,6 +743,35 @@ mod tests {
         node.blobs.append(&hash, bytes).unwrap();
 
         hash
+    }
+
+    /// The author's end of a verified transfer: the tag the shell puts on the
+    /// event carries the root, and the tree that proves it is already beside
+    /// the bytes when the first peer asks.
+    #[test]
+    fn media_the_user_publishes_carries_a_root_and_is_held_whole() {
+        let mut node = node();
+        let bytes = b"the quick brown fox";
+        let imeta = node.store_media(bytes).unwrap();
+        let hash = BlobHash::digest(bytes);
+
+        assert_eq!(imeta[0], format!("x {hash}"));
+        assert_eq!(imeta[1], "size 19");
+        assert!(imeta[2].starts_with("blake3 "));
+        assert!(node.blobs.outboard_len(&hash).unwrap().is_some());
+
+        // Publishing the event is what writes the row, and the bytes were
+        // already here, so nothing goes looking for them.
+        node.publish(&note(
+            author(1),
+            100,
+            "with media",
+            Tags::new().add("imeta", imeta),
+        ))
+        .unwrap();
+
+        assert!(query::get_blob(&node.db, &hash).unwrap().unwrap().complete);
+        assert!(query::wanted_blobs(&node.db, 10).unwrap().is_empty());
     }
 
     #[test]

@@ -13,7 +13,7 @@ use crate::model::{Blob, BlobHash, BlobRole};
 
 /// The blob columns, in the order [`to_blob`] reads them.
 const COLUMNS: &str = "sha256, event_id, role, url, mime_type, size, dim, blurhash, alt, blake3,
-     imeta, stored_bytes, blake3_tree, complete, accessed_at";
+     imeta, stored_bytes, complete, accessed_at";
 
 /// One blob by hash.
 pub fn get(tx: &Tx<'_>, sha256: &BlobHash) -> Result<Option<Blob>> {
@@ -197,7 +197,6 @@ fn to_blob(row: &Row<'_>) -> rusqlite::Result<Blob> {
             )
         })?,
         stored_bytes: row.get("stored_bytes")?,
-        blake3_tree: row.get("blake3_tree")?,
         complete: row.get("complete")?,
         accessed_at: row.get("accessed_at")?,
     })

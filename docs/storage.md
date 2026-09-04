@@ -30,7 +30,7 @@ On iOS the shell also sets the database's data-protection class, and SQLite's `-
 
 ## Blob store
 
-Blob bytes are stored outside the event store, keyed by SHA-256 hash. A partial transfer persists as the count of verified bytes on disk, beside the group tree they were verified against, so a transfer interrupted on BLE resumes later. Groups are fetched in order, so what is on disk is always a prefix and that count is the whole record of progress. See [`sync.md`](./sync.md#blob-sync).
+Blob bytes are stored outside the event store, keyed by SHA-256 hash. A partial transfer persists as the count of proved bytes on disk, so a transfer interrupted on BLE resumes later. Groups are fetched in order, so what is on disk is always a prefix and that count is the whole record of progress. A blob held whole is stored with the outboard BLAKE3 tree over it beside the bytes, under the same name with an `.obao` suffix; that is what the device proves a range with when a peer asks for one. See [`sync.md`](./sync.md#blob-sync).
 
 The core ships a file-backed store over a directory the shell provides, the same way it opens SQLite in one. It reaches that store through a trait, which is what lets the sync layer be tested against memory rather than a disk.
 

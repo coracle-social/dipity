@@ -125,11 +125,6 @@ pub fn record_blob_progress(db: &Db, sha256: &BlobHash, stored_bytes: i64) -> Re
     db.write(|tx| blob::record_progress(tx, sha256, stored_bytes))
 }
 
-/// Record the group chaining values a transfer verified against its root.
-pub fn record_blob_tree(db: &Db, sha256: &BlobHash, tree: &[u8]) -> Result<bool> {
-    db.write(|tx| blob::record_tree(tx, sha256, tree))
-}
-
 /// Mark a blob whole: every byte is held and the file hashes to its address.
 /// Returns whether this completed it, and `false` if it was already complete.
 pub fn complete_blob(db: &Db, sha256: &BlobHash, stored_bytes: i64, at: i64) -> Result<bool> {

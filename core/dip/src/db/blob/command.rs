@@ -24,8 +24,8 @@ pub fn record(tx: &Tx<'_>, blob: &Blob) -> Result<bool> {
         .prepare_cached(
             "INSERT OR IGNORE INTO blob (
                  sha256, event_id, role, url, mime_type, size, dim, blurhash, alt, blake3,
-                 imeta, stored_bytes, blake3_tree, complete, accessed_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                 imeta, stored_bytes, complete, accessed_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         )?
         .execute(params![
             blob.sha256,
@@ -40,7 +40,6 @@ pub fn record(tx: &Tx<'_>, blob: &Blob) -> Result<bool> {
             blob.blake3,
             imeta,
             blob.stored_bytes,
-            blob.blake3_tree,
             blob.complete,
             blob.accessed_at,
         ])
@@ -70,16 +69,6 @@ pub fn record_progress(tx: &Tx<'_>, sha256: &BlobHash, stored_bytes: i64) -> Res
     channel::notify(tx, BlobChange::Progressed(sha256.clone(), stored_bytes));
 
     Ok(true)
-}
-
-/// Record the group chaining values a transfer verified against its root.
-pub fn record_tree(tx: &Tx<'_>, sha256: &BlobHash, tree: &[u8]) -> Result<bool> {
-    let written = tx
-        .prepare_cached("UPDATE blob SET blake3_tree = ?2 WHERE sha256 = ?1")?
-        .execute(params![sha256, tree])
-        .with_context(|| format!("recording the tree for blob {sha256}"))?;
-
-    Ok(written > 0)
 }
 
 /// Mark a blob whole: every byte is held and the file hashes to its address.
@@ -262,12 +251,10 @@ mod tests {
         record(&tx, &Blob::new(hash.clone(), event_id, BlobRole::Original)).unwrap();
 
         assert!(record_progress(&tx, &hash, 4_096).unwrap());
-        assert!(record_tree(&tx, &hash, &[7u8; 64]).unwrap());
 
         let blob = query::get(&tx, &hash).unwrap().unwrap();
 
         assert_eq!(blob.stored_bytes, 4_096);
-        assert_eq!(blob.blake3_tree.as_deref(), Some(&[7u8; 64][..]));
         assert!(!blob.complete);
         assert!(!query::is_complete(&tx, &hash).unwrap());
     }

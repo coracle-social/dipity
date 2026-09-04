@@ -9,6 +9,11 @@ use anyhow::{Context, Result};
 use crate::blobs::BlobStore;
 use crate::model::BlobHash;
 
+/// What an outboard tree's file is called, over the name of the content it
+/// proves. Not 64 hex characters, so it is never mistaken for a blob by
+/// [`hashes`](BlobStore::hashes) or by the sweep that reads it.
+const OUTBOARD_SUFFIX: &str = ".obao";
+
 /// A blob store over a directory the shell provides.
 pub struct FileBlobStore {
     /// The directory the files live in, created on open.
@@ -32,23 +37,24 @@ impl FileBlobStore {
     fn path(&self, sha256: &BlobHash) -> PathBuf {
         self.directory.join(sha256.as_str())
     }
-}
 
-impl BlobStore for FileBlobStore {
-    fn has(&self, sha256: &BlobHash) -> Result<bool> {
-        Ok(self.path(sha256).is_file())
+    /// The file the outboard tree over that hash lives in.
+    fn outboard_path(&self, sha256: &BlobHash) -> PathBuf {
+        self.directory
+            .join(format!("{}{OUTBOARD_SUFFIX}", sha256.as_str()))
     }
 
-    fn len(&self, sha256: &BlobHash) -> Result<Option<u64>> {
-        match fs::metadata(self.path(sha256)) {
-            Ok(metadata) if metadata.is_file() => Ok(Some(metadata.len())),
-            _ => Ok(None),
+    /// The length of a file this store wrote, or `None` if it wrote none.
+    fn file_len(path: &Path) -> Option<u64> {
+        match fs::metadata(path) {
+            Ok(metadata) if metadata.is_file() => Some(metadata.len()),
+            _ => None,
         }
     }
 
-    fn read(&self, sha256: &BlobHash, offset: u64, len: u64) -> Result<Vec<u8>> {
-        let path = self.path(sha256);
-        let mut file = match File::open(&path) {
+    /// Read `len` bytes from `offset` of one of this store's files.
+    fn read_at(path: &Path, offset: u64, len: u64) -> Result<Vec<u8>> {
+        let mut file = match File::open(path) {
             Ok(file) => file,
             Err(_) => return Ok(Vec::new()),
         };
@@ -87,6 +93,20 @@ impl BlobStore for FileBlobStore {
 
         Ok(buffer)
     }
+}
+
+impl BlobStore for FileBlobStore {
+    fn has(&self, sha256: &BlobHash) -> Result<bool> {
+        Ok(self.path(sha256).is_file())
+    }
+
+    fn len(&self, sha256: &BlobHash) -> Result<Option<u64>> {
+        Ok(Self::file_len(&self.path(sha256)))
+    }
+
+    fn read(&self, sha256: &BlobHash, offset: u64, len: u64) -> Result<Vec<u8>> {
+        Self::read_at(&self.path(sha256), offset, len)
+    }
 
     fn append(&self, sha256: &BlobHash, bytes: &[u8]) -> Result<()> {
         let path = self.path(sha256);
@@ -104,14 +124,16 @@ impl BlobStore for FileBlobStore {
     }
 
     fn delete(&self, sha256: &BlobHash) -> Result<()> {
-        let path = self.path(sha256);
-
         // A missing file is a blob already absent, not an error to retry into.
-        match fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error).with_context(|| format!("deleting blob {path:?}")),
+        for path in [self.path(sha256), self.outboard_path(sha256)] {
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Err(error) => return Err(error).with_context(|| format!("deleting blob {path:?}")),
+            }
         }
+
+        Ok(())
     }
 
     fn hashes(&self) -> Result<Vec<BlobHash>> {
@@ -134,6 +156,20 @@ impl BlobStore for FileBlobStore {
         }
 
         Ok(hashes)
+    }
+
+    fn outboard_len(&self, sha256: &BlobHash) -> Result<Option<u64>> {
+        Ok(Self::file_len(&self.outboard_path(sha256)))
+    }
+
+    fn read_outboard(&self, sha256: &BlobHash, offset: u64, len: u64) -> Result<Vec<u8>> {
+        Self::read_at(&self.outboard_path(sha256), offset, len)
+    }
+
+    fn write_outboard(&self, sha256: &BlobHash, bytes: &[u8]) -> Result<()> {
+        let path = self.outboard_path(sha256);
+
+        fs::write(&path, bytes).with_context(|| format!("writing outboard {path:?}"))
     }
 }
 
