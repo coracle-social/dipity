@@ -146,8 +146,7 @@ pub fn provenance_for(tx: &Tx<'_>, ids: &[EventId]) -> Result<HashMap<EventId, V
          ORDER BY seen_at ASC, pubkey ASC"
     ))?;
 
-    // Ordered across the whole set, so each event's sightings come out in the
-    // order `provenance` gives them.
+    // Ordered across the whole set, so each event's sightings keep `provenance` order.
     let mut sightings: HashMap<EventId, Vec<Provenance>> = HashMap::new();
 
     for sighting in prepared
@@ -295,8 +294,7 @@ fn push_filter(conditions: &mut Conditions, filter: &Filter) {
 
     if let Some(search) = &filter.search {
         match fts_query(search) {
-            // A search of nothing but punctuation and spaces asked for
-            // something no document has, rather than for everything.
+            // Nothing but punctuation asked for something no document has, not for everything.
             None => conditions.push_never(),
             Some(query) => {
                 let index = conditions.bind(Value::Text(query));
@@ -318,8 +316,7 @@ fn push_tag(conditions: &mut Conditions, key: &str, values: &BTreeSet<String>) {
     let (mode, name) = match key.split_at_checked(1) {
         Some(("#", name)) => (TagMatch::Any, name),
         Some(("&", name)) => (TagMatch::All, name),
-        // Not a key any builder produces, so it constrains nothing that can be
-        // stored. Matching nothing is the honest reading.
+        // Not a key any builder produces, so matching nothing is the honest reading.
         _ => {
             conditions.push_never();
             return;
@@ -328,13 +325,9 @@ fn push_tag(conditions: &mut Conditions, key: &str, values: &BTreeSet<String>) {
 
     if values.is_empty() {
         match mode {
-            // Membership of the empty set. `matches_nothing` catches this
-            // before the query is built; the clause is here so compiling a
-            // filter is correct on its own.
+            // Membership of the empty set; `matches_nothing` catches it before the query.
             TagMatch::Any => conditions.push_never(),
-            // Every value of an empty list is present in any event, so this
-            // requires nothing. The builder drops such a constraint; a filter
-            // off the wire may still carry one.
+            // Every value of an empty list is present in any event, so this requires nothing.
             TagMatch::All => {}
         }
 
@@ -403,8 +396,7 @@ fn push_registers(conditions: &mut Conditions, registers: &Registers) {
         return;
     }
 
-    // Both registers are relative to who is asking, and a device acting as
-    // several identities is in a position to offer what any of them holds.
+    // Both registers are relative to who is asking, and a device may act as several.
     let bound = registers
         .identities
         .iter()
@@ -619,8 +611,7 @@ mod tests {
         assert_eq!(window.len(), 1);
         assert_eq!(window[0].created_at, 200);
 
-        // Fields are ANDed: an author and a window that do not overlap match
-        // nothing rather than either one.
+        // Fields are ANDed: an author and a window that do not overlap match nothing.
         let neither = list(
             &tx,
             &matching(
@@ -648,8 +639,7 @@ mod tests {
 
         store(&tx, 1, 100, Tags::new());
 
-        // The distinction that matters for filter composition: no constraint
-        // matches everything, a constraint on the empty set matches nothing.
+        // No constraint matches everything; a constraint on the empty set matches nothing.
         assert_eq!(list(&tx, &everything()).unwrap().len(), 1);
         assert!(
             list(&tx, &matching(Filter::new().add_authors([])))
@@ -701,9 +691,7 @@ mod tests {
 
         store(&tx, 1, 100, Tags::new().add("t", ["town"]));
 
-        // The builder drops an empty `All`, so this is a filter that arrived
-        // off the wire. Every value of an empty list is present in any event,
-        // so it requires nothing and everything matches.
+        // The builder drops an empty `All`, so this is a filter that arrived off the wire.
         let mut requires_nothing = Filter::new();
         requires_nothing
             .tags
@@ -711,9 +699,7 @@ mod tests {
         assert!(!requires_nothing.matches_nothing());
         assert_eq!(list(&tx, &matching(requires_nothing)).unwrap().len(), 1);
 
-        // An empty `Any` is membership of the empty set, which nothing
-        // satisfies — and the library says so before the query is built. The
-        // builder keeps this one, so it needs no hand-written key.
+        // An empty `Any` is membership of the empty set, and the library says so first.
         let matches_nothing = Filter::new().set_tag(TagMatch::Any, "t", Vec::<String>::new());
         assert!(matches_nothing.matches_nothing());
         assert!(list(&tx, &matching(matches_nothing)).unwrap().is_empty());
@@ -762,9 +748,7 @@ mod tests {
             1
         );
 
-        // FTS5 has operators of its own, and a search string can arrive in a
-        // peer's REQ. Neither of these is a syntax error, and neither runs as
-        // an operator: they are terms that match nothing.
+        // FTS5 operators can arrive in a peer's REQ; these are terms that match nothing.
         for hostile in ["hello AND (", "\"unbalanced", "  "] {
             assert!(
                 list(&tx, &matching(Filter::new().add_search(hostile)))
@@ -810,16 +794,14 @@ mod tests {
             [id(&held)].into()
         );
 
-        // What this device can put on the wire at all: the two registers that
-        // travel, and nothing else.
+        // What this device can put on the wire at all: the two registers that travel.
         assert_eq!(
             ids(Registers::offerable(&[us])),
             [id(&mine), id(&signed)].into()
         );
         assert!(ids(Registers::new(&[us], [])).is_empty());
 
-        // The signature names a recipient, and is worth nothing under another
-        // one: the same event is unforwardable from a device it does not name.
+        // A signature is worth nothing under any recipient but the one it names.
         assert!(ids(Registers::new(&[author(9)], [Register::Forwardable])).is_empty());
     }
 
@@ -830,9 +812,7 @@ mod tests {
 
         let us = author(1);
 
-        // Three events this device cannot forward, newer than the one it can.
-        // A constraint applied to the page rather than to the query would
-        // return nothing and call it the end of the set.
+        // A constraint applied to the page rather than the query would call this the end.
         command::save(&tx, &note(us, 100, "mine", Tags::new()), &[us], 100).unwrap();
 
         for created_at in [200, 300, 400] {
@@ -879,8 +859,7 @@ mod tests {
                 .collect::<BTreeSet<_>>()
         };
 
-        // The defaults: gossip reaches the trusted tier and no further, and
-        // metadata is for trusted peers only.
+        // The defaults: gossip reaches the trusted tier, and metadata is trusted-only.
         assert_eq!(
             served(policy.clone(), author(9)),
             [id(&profile), id(&ours), id(&trusted)].into()
@@ -906,9 +885,7 @@ mod tests {
             [id(&profile), id(&ours), id(&trusted), id(&stranger)].into()
         );
 
-        // A rule hiding the user's ordinary notes leaves what earlier rules
-        // matched alone, and touches nobody else's events. The profile rule
-        // sits above the catch-all, so it survives being hidden by it.
+        // A rule hiding the user's notes leaves what earlier rules matched alone.
         let mut private = policy;
         private.visibility = Visibility {
             rules: vec![
@@ -976,8 +953,7 @@ mod tests {
             },
         ];
 
-        // Every ordering of the four, so a rule shadowing another is covered
-        // as well as the orders in which none does.
+        // Every ordering of the four, so a rule shadowing another is covered too.
         for order in permutations(rules.len()) {
             for default in [Scope::Nothing, Scope::Public] {
                 let mut policy = Policy::new(us);
@@ -1040,8 +1016,7 @@ mod tests {
         let carried = note(author(1), 100, "carried around", Tags::new());
         let once = note(author(1), 200, "seen once", Tags::new());
 
-        // Sightings recorded out of time order, so grouping by event cannot be
-        // passing on the order the rows were written in.
+        // Sightings recorded out of time order, so grouping cannot be passing rows through.
         command::save(&tx, &carried, &[author(5)], 900).unwrap();
         command::save(&tx, &once, &[peer()], 400).unwrap();
         command::save(&tx, &carried, &[author(3)], 300).unwrap();
@@ -1059,8 +1034,7 @@ mod tests {
             );
         }
 
-        // Earliest first within the event, and an event we hold nothing for is
-        // simply absent.
+        // Earliest first within the event, and an event we hold nothing for is absent.
         assert_eq!(
             batched[&id(&carried)]
                 .iter()
@@ -1078,8 +1052,7 @@ mod tests {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        // An author whose clock is days out, handed over after a note that
-        // claims to be older.
+        // An author whose clock is days out, handed over after a note claiming to be older.
         let stale = note(author(1), 100, "stale", Tags::new());
         let fresh = note(author(2), 900, "fresh", Tags::new());
 

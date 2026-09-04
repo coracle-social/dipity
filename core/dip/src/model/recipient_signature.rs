@@ -25,13 +25,10 @@ pub struct RecipientSignature {
 
 impl fmt::Debug for RecipientSignature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Enough of the id to correlate a line with an event, and not the whole
-        // of it: what is being debugged here is which signature, not which
-        // event, and the rest is a record of who this device has been near.
+        // Enough of the id to correlate a line with an event, and no more.
         let event_id = format!("{}…", &self.event_id.to_hex()[..8]);
 
-        // Hex, rather than `PublicKey`'s own derive, which prints the internal
-        // secp256k1 representation and is unreadable next to anything else.
+        // Hex rather than `PublicKey`'s derive, which prints the secp256k1 internals.
         let author = self.author_pubkey.to_hex();
         let recipient = self.recipient_pubkey.to_hex();
 
@@ -77,17 +74,14 @@ mod tests {
 
     #[test]
     fn debug_keeps_the_parties() {
-        // Both are public keys, and which peer a signature names is the whole
-        // reason to print one.
+        // Which peer a signature names is the whole reason to print one.
         let printed = format!("{:?}", signature());
 
         assert!(printed.contains(&author(1).to_hex()));
         assert!(printed.contains(&author(2).to_hex()));
     }
 
-    // There is no test for a short or non-hex event id. `EventId` renders 64
-    // lowercase hex characters or does not exist, so the slice this used to
-    // guard cannot be out of bounds or off a character boundary.
+    // No test for a short or non-hex event id: `EventId` is 64 hex characters or nothing.
 
     #[test]
     fn a_secret_key_is_redacted_too() {

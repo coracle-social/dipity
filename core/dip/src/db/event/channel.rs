@@ -56,8 +56,7 @@ pub(crate) fn notify(tx: &Tx<'_>, change: EventChange) {
     let sender = tx.channels.event.clone();
 
     tx.after_commit(move || {
-        // Errors here mean nobody is listening, which is the normal state
-        // during a background wake with no view attached.
+        // Nobody listening is the normal state during a background wake.
         let _ = sender.send(change);
     });
 }

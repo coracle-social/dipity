@@ -148,9 +148,7 @@ mod tests {
 
     #[test]
     fn a_signature_needs_the_author_its_event_names() {
-        // The composite foreign key. An author who did not write the event is
-        // not someone whose signature over it could exist, so the row is
-        // refused rather than kept for a proof that could never verify.
+        // The composite key refuses a signature by an author who did not write the event.
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 

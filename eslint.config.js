@@ -6,8 +6,7 @@ import prettier from "eslint-config-prettier"
 import globals from "globals"
 import svelteConfig from "./svelte.config.js"
 
-// The conventions in docs/ui.md that a machine can check. Anything a reviewer
-// would otherwise have to notice by eye belongs here rather than in the doc.
+// The conventions in docs/ui.md that a machine can check, rather than a reviewer.
 
 /** Utilities that hard-code a value the design system already owns. */
 const RESTRICTED_CLASSES = [
@@ -23,13 +22,7 @@ const RESTRICTED_CLASSES = [
   },
 ]
 
-// A style guide holds for about six files before an agent reaches for
-// `bg-[#3a2f28]` because it is locally convenient. See docs/ui.md.
-//
-// Arbitrary *variants* are fine — `supports-[backdrop-filter]:`, `[&_svg]:`,
-// `group-data-[state=open]:` select things rather than inventing values. The
-// lookahead separates the two: a bracket group followed by `:` is a selector,
-// one that is not is a value.
+// A bracket group followed by `:` selects something; one that is not invents a value.
 const ARBITRARY_VALUE = {
   pattern: "\\[[^\\]]*\\](?![^\\s]*:)",
   message:
@@ -94,8 +87,7 @@ export default ts.config(
     plugins: {"better-tailwindcss": tailwind},
     settings: {
       "better-tailwindcss": {
-        // Resolves the real token set, so `bg-clay` fails while `bg-card`,
-        // `pt-safe-t` and `ease-clay` pass.
+        // Resolves the real token set, so `bg-clay` fails while `bg-card` and `ease-clay` pass.
         entryPoint: "src/app.css",
       },
     },
@@ -111,8 +103,7 @@ export default ts.config(
   {
     files: ["src/**/*.svelte"],
     rules: {
-      // Nostr content is attacker-controlled. Rendering it as HTML is the one
-      // mistake in this app that is remotely exploitable.
+      // Nostr content is attacker-controlled, and this is the one remotely exploitable mistake.
       "svelte/no-at-html-tags": "error",
       "svelte/require-each-key": "error",
       "svelte/no-useless-mustaches": "error",
@@ -130,15 +121,13 @@ export default ts.config(
     },
   },
 
-  // Runes are compiler syntax. In a plain module they are an undefined global
-  // that fails at runtime rather than at build.
+  // Runes are compiler syntax; in a plain module they are an undefined global.
   {
     files: ["src/**/*.ts", "src/**/*.js"],
     rules: {"no-restricted-syntax": ["error", RUNES_ARE_COMPONENT_ONLY]},
   },
 
-  // Feature code composes components; components own the pixels. The split is
-  // by directory because that is the line a linter can see.
+  // Feature code composes components; components own the pixels. Split by directory.
   {
     files: ["src/**"],
     ignores: ["src/lib/components/**"],
@@ -151,10 +140,6 @@ export default ts.config(
   },
 
   // ---------------------------------------------------------- vendored ui --
-  //
-  // Written by `shadcn-svelte add`, not by us. Correctness and accessibility
-  // still apply; the house conventions do not, because the next `add` would
-  // overwrite them and every upgrade would arrive as a formatting conflict.
   {
     files: ["src/lib/components/ui/**"],
     rules: {

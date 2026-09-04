@@ -103,8 +103,7 @@ mod tests {
 
     #[test]
     fn a_column_that_is_not_a_hash_fails_its_read() {
-        // A row written before the type existed, or by something that never
-        // parsed: it names no file, so it fails here rather than downstream.
+        // A row that names no file fails here rather than downstream.
         let db = rusqlite::Connection::open_in_memory().unwrap();
 
         assert!(

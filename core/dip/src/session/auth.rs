@@ -133,8 +133,7 @@ impl AuthExchange {
             bail!("the AUTH response names a different channel");
         }
 
-        // Spent, whatever happens next: a second response has to answer a
-        // challenge of its own.
+        // Spent whatever happens next: a second response has to answer its own challenge.
         self.sent_challenge = None;
 
         Ok(event.pubkey)
@@ -160,8 +159,7 @@ mod tests {
         let challenge = challenger.make_challenge().unwrap();
         responder.receive_challenge(challenge.clone());
 
-        // The responder names the challenger's channel; the challenger checks
-        // its own static key against the relay tag.
+        // The responder names the challenger's channel; the challenger checks its own key.
         let payload = responder
             .answer(&identity, DIALER_STATIC)
             .unwrap()
@@ -208,9 +206,7 @@ mod tests {
 
     #[test]
     fn a_challenge_is_accepted_once() {
-        // `p2p-auth.md`: a challenge "is accepted once". Without that, a peer
-        // could replay one captured response against the same challenge for
-        // the life of the session.
+        // `p2p-auth.md`: a challenge "is accepted once", or a response replays all session.
         let mut challenger = AuthExchange::default();
         let mut responder = AuthExchange::default();
 
@@ -252,8 +248,7 @@ mod tests {
         let challenge = challenger.make_challenge().unwrap();
         responder.receive_challenge(challenge.clone());
 
-        // The answer binds to the receiver's channel, not the challenger's, as
-        // in a replay onto another link.
+        // The answer binds to the receiver's channel, not the challenger's, as in a replay.
         let payload = responder
             .answer(&secret(1), RECEIVER_STATIC)
             .unwrap()

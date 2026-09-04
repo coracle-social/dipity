@@ -105,7 +105,7 @@ Every task is in the `justfile`. `package.json` has no `scripts` block, because 
 
 ```sh
 just core-test    # cargo test --workspace, the fast loop
-just qa           # svelte-check, tsc, eslint, prettier, cargo fmt, clippy -D warnings, cargo test
+just qa           # svelte-check, tsc, eslint, prettier, comments, cargo fmt, clippy, cargo test
 just fmt          # prettier --write, eslint --fix, cargo fmt
 just dev          # Vite, browser only: no plugin, so no BLE, no store, no peers
 ```
@@ -117,7 +117,7 @@ just dev          # Vite, browser only: no plugin, so no BLE, no store, no peers
 `AGENTS.md` states the rules about the design. These are about the shape and the prose, and a diff that ignores them reads as foreign.
 
 - **Every module opens with a `//!` header** saying what it holds and, where one exists, naming the document it implements. Every public item has a doc comment. That is how the code stays legible with so few comments inside the functions.
-- **Comments are a single line**, unless at the top of a module or documenting exceptionally complex behavior. A comment says why, and the why usually belongs in the module header or in `docs/`.
+- **Comments are a single line**, unless at the top of a module, and `just comments` fails a build that says otherwise. `///` and `//!` are documentation and are exempt. A comment says why, and the why usually belongs in the module header or in `docs/`.
 - **Two constants that happen to be equal still get separate names and separate documentation**, because they answer to different rules and will diverge.
 - **`#![forbid(unsafe_code)]`.**
 - **The documents are part of the diff.** `docs/` describes behavior precisely enough that a change makes it wrong, so a change to what a module does carries the document and the `//!` header with it.

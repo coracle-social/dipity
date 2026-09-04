@@ -50,8 +50,7 @@ fn a_forwarder_cannot_reuse_a_proof_for_content_the_author_never_wrote() {
     let bob = SecretKey::generate(); // the first-hop recipient
     let carol = SecretKey::generate(); // this device, the second hop
 
-    // Alice authors a note and hands Bob the signature naming Bob, which is
-    // what lets Bob forward it one hop.
+    // Alice hands Bob the signature naming Bob, which is what lets Bob forward it one hop.
     let real = authored(&alice, "the real note");
     let signature = RecipientSignature::sign(&alice, real.id, bob.public_key());
     let proof = AuthorshipProof::prove(&signature, carol.public_key()).unwrap();
@@ -105,8 +104,7 @@ fn the_wire_refuses_an_event_whose_id_is_not_its_hash() {
     let real = authored(&alice, "the real note");
     let forged = forged_under(&alice, &real, "FORGED");
 
-    // Encoding is this device's own, so it round-trips; the check is on the
-    // way in, where a peer's bytes arrive.
+    // Encoding is this device's own, so it round-trips; the check is on the way in.
     let carrier = Message::Event(SubscriptionId("sub".into()), Box::new(forged));
 
     assert!(

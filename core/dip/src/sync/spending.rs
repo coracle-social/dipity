@@ -202,8 +202,7 @@ impl SessionSpending {
     /// has spent nothing.
     #[must_use]
     pub fn spent(&self, peer: &Peer) -> Spent {
-        // The most-spent identity binds: a device cannot buy headroom by
-        // presenting a quiet key alongside a busy one.
+        // The most-spent identity binds: no headroom bought with a quiet key beside a busy one.
         let (events, bytes) = peer
             .pubkeys
             .iter()
@@ -212,8 +211,7 @@ impl SessionSpending {
                 (events.max(their_events), bytes.max(their_bytes))
             });
 
-        // A trusted peer is not measured against the pool, so reading it would
-        // only cost a lock.
+        // A trusted peer is not measured against the pool, so reading it would only cost a lock.
         let (pooled_events, pooled_bytes) = if peer.policy.standing == Standing::Trusted {
             (0, 0)
         } else {
@@ -297,9 +295,7 @@ mod tests {
 
     #[test]
     fn a_fresh_pubkey_resets_its_own_meter_but_not_the_pool() {
-        // The hole the pool exists to close: content events are unsigned, so a
-        // keypair costs an attacker nothing and a per-peer meter is theirs to
-        // reset at will. The pool is keyed on nobody, so it does not move.
+        // The hole the pool closes: unsigned events make a fresh keypair, and a fresh meter, free.
         let ledger = Arc::new(SpendingLedger::default());
 
         clock::at(1_000, || {
@@ -317,9 +313,7 @@ mod tests {
 
     #[test]
     fn a_trusted_peer_is_not_charged_to_the_stranger_pool() {
-        // The pool is the untrusted ceiling. Charging trusted traffic to it
-        // would let the people the user chose crowd out each other, which is
-        // the opposite of what it is for.
+        // The pool is the untrusted ceiling; charging trusted traffic to it crowds out the chosen.
         let ledger = SpendingLedger::default();
 
         clock::at(1_000, || {
@@ -339,8 +333,7 @@ mod tests {
             // A past session already put one event in the window.
             ledger.record(&author(2), false, 10);
 
-            // This session accepts one more; it lands in the same window and
-            // is not double-counted against the session that accepted it.
+            // This session accepts one more, in the same window and not double-counted.
             let mut spending = SessionSpending::new(Arc::clone(&ledger));
             let event = note(author(2), 100, "counted", coracle_lib::tags::Tags::new());
             spending.record(&peer, &event);

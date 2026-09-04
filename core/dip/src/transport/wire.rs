@@ -37,8 +37,7 @@ impl Wire {
     /// A wire over a link whose negotiated MTU is `mtu` bytes, with a fresh
     /// Noise session for it.
     pub fn new(role: Role, mtu: usize) -> Result<Self> {
-        // Sealed writes are the tighter of the two modes, so an MTU that cannot
-        // carry a sealed payload byte cannot carry the session either.
+        // Sealed writes are the tighter mode, so an MTU too small for one carries no session.
         if mtu <= HEADER + Noise::TAG {
             bail!("an MTU of {mtu} leaves no room for a sealed payload byte");
         }
@@ -89,8 +88,7 @@ impl Wire {
     pub fn receive(&mut self, write: &[u8]) -> Result<Option<Frame>> {
         let mut fragment = Fragment::decode(write)?;
 
-        // Everything after the handshake is sealed, so one that will not open
-        // is not a fragment this peer sent.
+        // Everything after the handshake is sealed, so one that will not open is not theirs.
         if self.noise.is_complete() {
             fragment.payload = self.noise.decrypt(&fragment.payload)?;
         }
@@ -215,8 +213,7 @@ mod tests {
 
     #[test]
     fn a_control_frame_overtakes_queued_bulk_without_losing_the_cipher() {
-        // The MTU is small enough that the sync frame is several fragments, so
-        // the control frame lands in the middle of them.
+        // The MTU is small enough that the sync frame is several fragments.
         let (mut dialer, mut receiver) = secured_pair(HEADER + Noise::TAG + 8);
 
         let bulk = Frame {
@@ -231,8 +228,7 @@ mod tests {
         dialer.send(&bulk).unwrap();
         dialer.send(&beat).unwrap();
 
-        // Sealing at enqueue would have handed the peer these writes out of
-        // nonce order, and the first sync fragment would fail to open.
+        // Sealing at enqueue would hand the peer these writes out of nonce order.
         assert_eq!(pump(&mut dialer, &mut receiver), vec![beat, bulk]);
     }
 

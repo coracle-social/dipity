@@ -141,8 +141,7 @@ fn listed<const KIND: u16>(tx: &Tx<'_>, pubkey: &PublicKey) -> Result<BTreeSet<P
         return Ok(BTreeSet::new());
     };
 
-    // The event came back from the address, so its kind is KIND and the read
-    // cannot fail on that. Anything else it could fail on leaves no list.
+    // The event came back from the address, so its kind is KIND and cannot fail here.
     Ok(PeopleListReader::<_, KIND>::read(&list)
         .map(|list| list.pubkeys().iter().copied().collect())
         .unwrap_or_default())
@@ -172,8 +171,7 @@ mod tests {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        // Nothing written, so nothing overridden: exactly what `Policy::new`
-        // says, which is the only place a default is spelled out.
+        // Nothing written, so nothing overridden: exactly what `Policy::new` says.
         assert_eq!(policy(&tx, &author(1)).unwrap(), Policy::new(author(1)));
     }
 
@@ -197,8 +195,7 @@ mod tests {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        // Written by a build that knew a tier this one does not. Falling back
-        // to the default here would quietly widen the scope the user chose.
+        // Written by a build that knew a tier this one does not; defaulting would widen scope.
         pref_command::set(&tx, keys::GOSSIP, r#""neighbors""#, 10).unwrap();
 
         assert!(policy(&tx, &author(1)).is_err());
@@ -252,8 +249,7 @@ mod tests {
 
     #[test]
     fn trust_stops_at_the_second_hop() {
-        // Reading the lists of people in Network would grow the tier until it
-        // meant nothing, so a person three hops out is a stranger.
+        // Reading the lists of people in Network would grow the tier until it meant nothing.
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
         let us = author(1);
@@ -270,8 +266,7 @@ mod tests {
 
     #[test]
     fn a_trusted_person_whose_list_has_not_arrived_contributes_nobody() {
-        // The tier is derived from what this device holds, so it grows as the
-        // graph does rather than failing when part of it is missing.
+        // The tier is derived from what this device holds, so a missing part shrinks it.
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
         let us = author(1);
@@ -287,8 +282,7 @@ mod tests {
 
     #[test]
     fn an_edited_list_supersedes_the_one_before_it() {
-        // What the replaceable kind buys: the current list is one lookup, and
-        // dropping someone actually drops them.
+        // What the replaceable kind buys: one lookup, and dropping someone drops them.
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
         let us = author(1);

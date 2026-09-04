@@ -244,10 +244,7 @@ mod tests {
 
     #[test]
     fn a_writer_keeps_what_this_build_does_not_model() {
-        // The preservation convention: a tag the writer has no field for
-        // survives, because the writer holds the tag set rather than a parse
-        // of it. Editing the list here must not delete what another client
-        // wrote.
+        // A tag the writer has no field for survives: it holds the tag set, not a parse of it.
         let stored = event(
             author(1),
             TRUST,
@@ -299,9 +296,7 @@ mod tests {
 
     #[test]
     fn the_kinds_are_replaceable_so_one_address_holds_each_list() {
-        // What the graph read depends on: an edit supersedes, and
-        // `by_address` finds the current list in one lookup. An ephemeral or
-        // regular kind would be dropped on ingest or accumulate forever.
+        // An edit supersedes, and `by_address` finds the current list in one lookup.
         for kind in [TRUST, BLOCK, MUTE] {
             assert!(coracle_lib::kinds::is_replaceable(kind), "{kind} is not");
         }

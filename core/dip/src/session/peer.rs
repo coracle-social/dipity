@@ -78,9 +78,7 @@ mod tests {
 
     #[test]
     fn a_device_takes_the_best_standing_it_proved() {
-        // Proving an extra key is a claim to more access, never less, and the
-        // peer could have made the better claim on its own — so the set
-        // reduces to the best of them.
+        // Proving an extra key claims more access, never less, so the set reduces to the best.
         let policy = policy();
 
         assert_eq!(
@@ -103,8 +101,7 @@ mod tests {
 
     #[test]
     fn one_blocked_identity_blocks_the_device() {
-        // The other direction: blocking is a decision about a person, and a
-        // device holding that key is theirs whatever else it also signs with.
+        // The other direction: blocking is about a person, whatever else the device signs with.
         let peer = Peer::bind(LinkId(1), [author(2), author(9)], &policy());
 
         assert!(peer.policy.is_blocked());
@@ -129,8 +126,7 @@ mod tests {
 
     #[test]
     fn forwarding_follows_the_devices_standing() {
-        // `forward` defaults to Trusted, so a device that proved a trusted key
-        // qualifies even alongside one the user has never heard of.
+        // `forward` defaults to Trusted, so one proved trusted key qualifies the device.
         let policy = policy();
 
         assert!(

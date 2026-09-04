@@ -65,8 +65,7 @@ mod tests {
 
         command::record_disclosure(&tx, base + 100).unwrap();
         command::record_disclosure(&tx, base + 200).unwrap();
-        // A second disclosure to the same peer is a second AUTH event handed
-        // over, and the ledger cannot tell them apart anyway.
+        // A second disclosure to the same peer is a second AUTH event handed over.
         command::record_disclosure(&tx, base + 300).unwrap();
 
         assert_eq!(disclosures_since(&tx, 0).unwrap(), 3);

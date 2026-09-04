@@ -258,8 +258,7 @@ mod tests {
             Authors::Only([us(), author(2), author(3)].into())
         );
 
-        // And is never in the set a lenient scope excludes, which would
-        // otherwise hide the user from every peer.
+        // And never in the set a lenient scope excludes, which would hide the user entirely.
         policy.gossip = Scope::Lenient;
         policy.graph.blocked.insert(us());
         assert_eq!(
@@ -295,8 +294,7 @@ mod tests {
         let policy = policy();
         let stranger = policy.clone().for_pubkey(author(9));
 
-        // Default gossip is network, so a stranger's note goes no further
-        // however trusted the peer asking for it is.
+        // Gossip defaults to network, so a stranger's note goes no further whoever asks.
         assert!(stranger.should_gossip(&event(author(2), 1, 1, "", Tags::new())));
         assert!(stranger.should_gossip(&event(author(3), 1, 1, "", Tags::new())));
         assert!(!stranger.should_gossip(&event(author(9), 1, 1, "", Tags::new())));
@@ -331,8 +329,7 @@ mod tests {
         assert!(!blocked.should_gossip(&event(us(), 1, 1, "", Tags::new())));
         assert!(!blocked.should_accept(&event(author(2), 1, 1, "", Tags::new())));
 
-        // Blocked outranks every rule, including one this peer would otherwise
-        // fall inside.
+        // Blocked outranks every rule, including one this peer would otherwise fall inside.
         assert!(!blocked.is_visible(&event(us(), profile::KIND, 1, "", Tags::new())));
     }
 }

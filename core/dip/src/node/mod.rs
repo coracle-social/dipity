@@ -170,9 +170,7 @@ impl Node {
         self.identity.public_key()
     }
 
-    // ========================================================================
-    // Radio events, all from the shell
-    // ========================================================================
+    // --------------------------------------- Radio events, all from the shell
 
     /// A peripheral advertising our service UUID was seen.
     ///
@@ -253,10 +251,7 @@ impl Node {
 
         log::debug!("dropping link {link:?}: {error:#}");
 
-        // Close rather than only telling the shell to disconnect. The session
-        // is finished either way, and one left in the table would keep its
-        // link-cap slot and go on being swept for heartbeats until the shell
-        // reported the disconnect back.
+        // Close rather than only telling the shell: a session left in the table keeps its slot.
         if let Some(session) = self.sessions.get_mut(&link) {
             session.close(Ending::Refused);
         }
@@ -299,10 +294,7 @@ impl Node {
         for session in self.sessions.values_mut() {
             if session.expired() {
                 match session.state {
-                    // A gate hold and a drain both close outright on their cap:
-                    // there is nothing in flight to finish, only to drop. A
-                    // lapsed hold is this device's decision, a spent drain the
-                    // peer already gone.
+                    // A gate hold and a drain both close outright: nothing in flight to finish.
                     State::GatePending { .. } => session.close(Ending::Refused),
                     State::Draining { .. } => session.close(Ending::WalkedAway),
                     _ => session.drain(),
@@ -312,8 +304,7 @@ impl Node {
 
         self.sweep_events();
 
-        // A queued candidate may now be past its rate limit, its backoff, or
-        // the link cap.
+        // A queued candidate may now be past its rate limit, its backoff, or the link cap.
         let mut actions = Vec::new();
         if let Some(peripheral) = self.scheduler.next_dial(self.central_links()) {
             actions.push(Action::Connect(peripheral));
@@ -323,9 +314,7 @@ impl Node {
         actions
     }
 
-    // ========================================================================
-    // The view, through the shell
-    // ========================================================================
+    // -------------------------------------------- The view, through the shell
 
     /// The battery level, percent, as the shell reports it. Blob transfers are
     /// gated on it.
@@ -456,9 +445,7 @@ impl Node {
         Ok(())
     }
 
-    // ========================================================================
-    // Draining what the sessions produced
-    // ========================================================================
+    // ------------------------------------ Draining what the sessions produced
 
     /// How many links this device dialed.
     ///
@@ -479,8 +466,7 @@ impl Node {
         self.offer_saved_events();
         self.reclaim_removed_blobs();
 
-        // Heartbeats go out before writes are drained, so a quiet session
-        // still proves it is alive within its jittered interval.
+        // Heartbeats go out before writes are drained, so a quiet session still proves alive.
         for session in self.sessions.values_mut() {
             if let Err(error) = session.maybe_heartbeat() {
                 log::error!(
@@ -511,8 +497,7 @@ impl Node {
                 match session.next_write() {
                     Ok(Some(fragment)) => actions.push(Action::Send(session.link, fragment)),
                     Ok(None) => break,
-                    // Sealing a fragment fails only on a wire that can no
-                    // longer carry the session, so nothing more goes out on it.
+                    // Sealing fails only on a wire that can no longer carry the session.
                     Err(error) => {
                         log::error!(
                             "sealing a fragment on link {:?} failed: {error:#}",
@@ -531,10 +516,7 @@ impl Node {
             .map(|(link, session)| (*link, session.ending))
             .collect();
 
-        // Every teardown passes through here, so grading is one decision. In
-        // `link_down` a link this device dropped read as a peer walking away.
-        // Taking the peripheral is what frees the link-cap slot: the shell owes
-        // no disconnect report for a teardown the core decided.
+        // Every teardown passes through here, so grading is one decision.
         for (link, ending) in closed {
             self.sessions.remove(&link);
 
@@ -577,11 +559,9 @@ impl Node {
                         }
                     }
                 }
-                // Seen events are not newly stored, and Deleted are gone. Both
-                // are for the view.
+                // Seen events are not newly stored, and Deleted are gone. Both are the view's.
                 Ok(_) => {}
-                // A lag tells the subscriber it missed changes; the next
-                // reconciliation covers them.
+                // A lag says the subscriber missed changes; the next reconciliation covers them.
                 Err(TryRecvError::Empty | TryRecvError::Closed) => break,
                 Err(TryRecvError::Lagged(_)) => {}
             }
@@ -602,12 +582,10 @@ impl Node {
                         log::error!("deleting the bytes of blob {sha256} failed: {error:#}");
                     }
                 }
-                // Recording, progress and completion are the transfer layer's
-                // and the view's.
+                // Recording, progress and completion are the transfer layer's and the view's.
                 Ok(_) => {}
                 Err(TryRecvError::Empty | TryRecvError::Closed) => break,
-                // A dropped removal would orphan its bytes for good, so the
-                // sweep answers for the whole window that was missed.
+                // A dropped removal would orphan its bytes for good, so the sweep answers for it.
                 Err(TryRecvError::Lagged(_)) => {
                     if let Err(error) = self.sweep_blobs() {
                         log::error!("sweeping the blob store after a lag failed: {error:#}");
@@ -703,9 +681,7 @@ mod tests {
         let dir = TempDir::new("node");
         let node = Node::open(db(), SecretKey::generate(), &dir.0).unwrap();
 
-        // The store the node hands its sessions is the file-backed one: what
-        // it writes shows up as a file under `<directory>/blobs`, next to the
-        // database file the shell already gives the core.
+        // The store the node hands its sessions is file-backed, under `<directory>/blobs`.
         let bytes = b"the quick brown fox";
         let hash = crate::model::BlobHash::parse(&hex::encode(sha256(bytes))).unwrap();
 
@@ -803,8 +779,7 @@ mod tests {
 
         db_command::forget_events_unseen_since(&node.db, &node.identity(), 2_000).unwrap();
 
-        // Nothing is reclaimed until the node drains the channel the removal
-        // was announced on, which every entry point does.
+        // Nothing is reclaimed until the node drains the channel the removal was announced on.
         assert!(node.blobs.has(&hash).unwrap());
 
         node.tick();
@@ -853,8 +828,7 @@ mod tests {
         Node::new(db, SecretKey::generate(), blobs.clone()).unwrap();
 
         assert!(!blobs.has(&orphan).unwrap());
-        // A transfer in flight has a record from the moment its event was
-        // stored, so an unfinished one is not an orphan.
+        // A transfer in flight has a record from the moment its event was stored.
         assert!(blobs.has(&partial).unwrap());
     }
 
@@ -911,8 +885,7 @@ mod tests {
             );
         });
 
-        // The dial went unanswered; a fresh advertisement is held until the
-        // backoff lapses.
+        // The dial went unanswered; a fresh advertisement is held until the backoff lapses.
         clock::at(1_005, || {
             assert!(node.peripheral_seen(&peripheral(1), -80).is_empty());
         });
@@ -943,9 +916,7 @@ mod tests {
 
     #[test]
     fn a_link_the_core_closed_frees_its_slot_without_a_disconnect_report() {
-        // The shell is told to disconnect and may never report back, so the
-        // slot has to come back when the session goes, not when the radio
-        // says so.
+        // The shell may never report back, so the slot returns when the session goes.
         let mut node = node();
 
         for index in 0..MAX_LINKS {
@@ -965,9 +936,7 @@ mod tests {
 
     #[test]
     fn inbound_links_do_not_spend_the_central_cap() {
-        // The doc caps *central* links. Counting peers that dialed us against
-        // it means six inbound connections stop this device dialing anyone —
-        // self-silencing in exactly the crowd it exists for.
+        // The doc caps *central* links; counting inbound ones would self-silence in a crowd.
         let mut node = node();
 
         for index in 0..MAX_LINKS {
@@ -1000,8 +969,7 @@ mod tests {
     #[test]
     fn a_saved_own_event_reaches_a_subscribed_peer() {
         let db = db();
-        // Node 1 authors; a peer's session is attached to the same node (as in
-        // a single device with a live link).
+        // Node 1 authors, and a peer's session is attached to the same node.
         let mut node = Node::new(
             Arc::clone(&db),
             secret(1),
@@ -1010,9 +978,7 @@ mod tests {
         .unwrap();
         let event = note(author(1), 100, "hello", Tags::new());
 
-        // A session that goes through the real REQ path, and the peer at the
-        // other end of its cipher: everything it writes is sealed, so reading
-        // one back takes the device it was sealed for.
+        // Everything a session writes is sealed, so reading one back takes its peer.
         let policy = Arc::new(Policy::new(author(1)));
         let mut session = Session::open(
             LinkId(2),
@@ -1052,8 +1018,7 @@ mod tests {
         // Publishing the own event flows through the channel into the offer.
         let first = node.publish(&event, &[]).unwrap();
 
-        // The REQ serve's own EOSE was in flight; the shell's write_complete
-        // acknowledgment releases what the offer queued behind it.
+        // The REQ serve's own EOSE was in flight; write_complete releases what queued behind.
         assert!(
             first
                 .iter()
@@ -1061,8 +1026,7 @@ mod tests {
         );
         let released = node.write_complete(LinkId(2));
 
-        // Both batches go into the peer in the order the shell would have
-        // written them, which is the order the cipher sealed them in.
+        // Both batches arrive in the order the shell wrote them, which is the seal order.
         let mut arrived = Vec::new();
 
         for action in first.into_iter().chain(released) {
@@ -1128,8 +1092,7 @@ mod tests {
 
         let actions = node.link_down(LinkId(1));
 
-        // The link is gone and the session with it; a redundant Disconnect is
-        // the only action, and the session no longer occupies the table.
+        // The link is gone and the session with it; a redundant Disconnect is the only action.
         assert!(matches!(
             actions.as_slice(),
             [Action::Disconnect(LinkId(1))]
@@ -1172,16 +1135,14 @@ mod tests {
             node.link_down(LinkId(9));
         });
 
-        // The walker is admissible at the short walked-away backoff… which was set
-        // at 1001, so the deadline is 1001 + WALKED_AWAY_BACKOFF_SECONDS.
+        // The walker is admissible at 1001 + WALKED_AWAY_BACKOFF_SECONDS, set at 1001.
         clock::at(1_001 + WALKED_AWAY_BACKOFF_SECONDS, || {
             assert_eq!(
                 node.peripheral_seen(&walker, -80),
                 vec![Action::Connect(walker.clone())]
             );
         });
-        // …while the silent one must wait out the never-answered backoff,
-        // which was set at 1000.
+        // …while the silent one waits out the never-answered backoff, set at 1000.
         clock::at(1_001 + WALKED_AWAY_BACKOFF_SECONDS + 1, || {
             assert!(node.peripheral_seen(&silent, -80).is_empty());
         });
@@ -1205,8 +1166,7 @@ mod tests {
             );
         });
 
-        // The link comes up and the peer sends something the wire cannot
-        // carry, so this device drops it and the shell reports back.
+        // The peer sends something the wire cannot carry, so this device drops the link.
         clock::at(1_030, || {
             node.link_up(LinkId(9), Some(peer.clone()), Role::Dialer, 100)
                 .unwrap();
@@ -1214,8 +1174,7 @@ mod tests {
             node.link_down(LinkId(9));
         });
 
-        // Graded as a walk-away this would have been dialable at 1045, and as
-        // never-answered at 1060.
+        // Graded as a walk-away this would be dialable at 1045, and as never-answered at 1060.
         clock::at(1_060, || {
             assert!(node.peripheral_seen(&peer, -80).is_empty());
         });
@@ -1241,8 +1200,7 @@ mod tests {
             node.approve(LinkId(9), false).unwrap();
         });
 
-        // A decline outlasts the walked-away tier even if the disconnect
-        // report arrives after the refusal.
+        // A decline outlasts the walked-away tier even if the report arrives after it.
         clock::at(1_000, || {
             node.link_down(LinkId(9));
         });

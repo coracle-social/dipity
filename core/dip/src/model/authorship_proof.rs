@@ -158,9 +158,7 @@ impl AuthorshipProof {
     pub fn prove(signature: &RecipientSignature, verifier: PublicKey) -> Result<Self> {
         let claim = AuthorshipClaim::from_signature(signature, verifier);
 
-        // R.x is public; the scalar beside it is the whole capability, so it is
-        // wrapped rather than dropped by hand — every path out of here from the
-        // next line on is an early return.
+        // R.x is public and the scalar beside it is the whole capability, so it is wrapped.
         let mut nonce_point = [0u8; 32];
         nonce_point.copy_from_slice(&signature.sig[..32]);
 
@@ -178,9 +176,7 @@ impl AuthorshipProof {
             bail!("the signature is not over this event, recipient and author");
         }
 
-        // Which branch is real is not a secret — B is forwarding, so B proves
-        // the signature branch and simulates the verifier's. Only the transcript
-        // has to hide it, and it does: the branches are ordered by role.
+        // Which branch is real is not a secret; only the transcript hides it, ordered by role.
         statement.assemble_proof(Branch::Author, &witness, nonce_point)
     }
 
@@ -356,8 +352,7 @@ impl Statement {
         let (nonce, simulated_challenge, simulated_response) =
             self.nonces(witness).context("deriving the proof nonce")?;
 
-        // The simulated branch picks its challenge and response and solves for
-        // the commitment; the real one commits first and answers afterwards.
+        // The simulated branch solves for its commitment; the real one commits first.
         let simulated_commitment = ProjectivePoint::GENERATOR * simulated_response
             - self.point(other(branch)) * simulated_challenge;
         let real_commitment = ProjectivePoint::GENERATOR * *nonce;
@@ -426,11 +421,7 @@ impl Statement {
     fn nonces(&self, witness: &Scalar) -> Result<(Zeroizing<Scalar>, Scalar, Scalar)> {
         let mut aux = Zeroizing::new([0u8; 32]);
 
-        // Safe to carry on without it — the derivation is deterministic anyway,
-        // so proofs repeat byte for byte rather than repeating a nonce under a
-        // moving challenge. Not safe to say nothing: an RNG that never works is
-        // a platform fault reaching well past this module, and this is the only
-        // place positioned to notice.
+        // Deterministic anyway, so carrying on is safe; an RNG that never works is worth saying.
         if let Err(error) = getrandom::getrandom(&mut *aux) {
             log::error!("the OS RNG refused ({error}); proof nonces are deterministic");
         }
@@ -676,10 +667,7 @@ mod tests {
 
     #[test]
     fn the_signed_message_is_pinned() {
-        // A known-answer vector over `m`. Nothing enforces the tag string or
-        // the order of the two values it covers — a peer running the other
-        // platform's build just fails to verify anything, quietly — so the
-        // bytes are pinned here rather than left to agree by inspection.
+        // A known-answer vector over `m`: nothing enforces the tag string or the value order.
         let event_id = EventId::new([0xabu8; 32]);
 
         assert_eq!(
@@ -690,11 +678,7 @@ mod tests {
 
     #[test]
     fn a_signature_is_pinned() {
-        // The same vector carried through the binding. BIP-340 signing is
-        // deterministic, so this is stable, and it covers the whole path: the
-        // tag, the layout, and that signing goes through `sign_schnorr` with no
-        // aux randomness. Changing any of them is a cross-platform break, and
-        // this is what says so.
+        // The same vector through the binding, which pins the tag, the layout and the signing.
         let event_id = EventId::new([0xabu8; 32]);
         let signature = RecipientSignature::sign(&a(), event_id, b().public_key());
 
@@ -716,10 +700,7 @@ mod tests {
 
     #[test]
     fn the_challenge_agrees_with_the_binding() {
-        // The one place this implementation has to match libsecp256k1 byte for
-        // byte: `e`. If it drifts, `S` is not the point the signature is over,
-        // no proof this device makes ever verifies, and nothing else in the
-        // module would notice.
+        // The one place this has to match libsecp256k1 byte for byte: `e`. Drift is silent.
         let signature = signature();
         let statement =
             Statement::assemble(&claim(), &signature.sig[..32].try_into().unwrap()).unwrap();
@@ -752,8 +733,7 @@ mod tests {
 
     #[test]
     fn a_proof_over_the_wrong_recipient_is_rejected() {
-        // The holder is what A signed over. Claiming a different one asks the
-        // verifier to reconstruct a point nobody knows the discrete log of.
+        // The holder is what A signed over; another asks for a discrete log nobody knows.
         let proof = proof();
         let mut claim = claim();
         claim.holder = secret(4).public_key();
@@ -781,11 +761,7 @@ mod tests {
 
     #[test]
     fn both_branches_simulated_is_rejected() {
-        // Simulating a branch is free: pick the challenge and the response, and
-        // the commitment they imply satisfies that branch by construction. Do
-        // it on both and the only thing left unsatisfied is the one condition
-        // that ties them together — the two challenge shares adding up to a
-        // hash over the commitments those very shares determine.
+        // Simulating one branch is free; what ties the two together is the challenge shares.
         let proof = AuthorshipProof {
             nonce_point: signature().sig[..32].try_into().unwrap(),
             author_challenge: scalar_bytes(&scalar_from_hash(&[11u8; 32])),
@@ -857,39 +833,29 @@ mod tests {
 
     #[test]
     fn a_nonce_point_above_the_field_prime_is_rejected() {
-        // All-ones exceeds p, so it is not a field element at all and never
-        // reaches the curve equation. The half of "malformed points" that a
-        // coordinate off the curve does not cover.
+        // All-ones exceeds p, so it is not a field element and never reaches the curve.
         assert!(!with_nonce_point([0xff; 32]).verifies(&claim()));
     }
 
     #[test]
     fn a_nonce_point_off_the_curve_is_rejected() {
-        // x = 5 is a perfectly good field element with no y to go with it:
-        // 5³ + 7 is not a square mod p. x = 1, 2 and 3 all are, which is why
-        // this is 5 — a valid point would test something else entirely.
+        // x = 5 is a field element with no y: 5³ + 7 is not a square mod p, where 1, 2 and 3 are.
         assert!(!with_nonce_point(x_of(5)).verifies(&claim()));
     }
 
     #[test]
     fn a_nonce_point_that_is_not_the_signature_is_rejected() {
-        // On the curve, so it lifts, and wrong, so it names a point whose
-        // discrete log nobody knows. Rejected for a different reason than the
-        // two above, which is worth keeping separate.
+        // On the curve, so it lifts, and wrong, so its discrete log is nobody's.
         assert!(!with_nonce_point(x_of(1)).verifies(&claim()));
     }
 
-    // There is no test for a malformed event id. `EventId` cannot hold one, so
-    // the case it covered — a signature whose id is not 32 bytes of hex — is
-    // now unrepresentable rather than rejected at runtime.
+    // No test for a malformed event id: `EventId` cannot hold one.
 
     // ------------------------------------------------------ zero knowledge
 
     #[test]
     fn the_verifier_could_have_produced_the_proof_itself() {
-        // The simulator property, which is what "designated" means: C's own key
-        // makes a transcript that passes the same check B's does. D watching
-        // the verification learns nothing, because it cannot rule this out.
+        // The simulator property: C's own key makes a transcript that passes B's check.
         let nonce_point: [u8; 32] = signature().sig[..32].try_into().unwrap();
         let simulated = AuthorshipProof::simulate(&claim(), &nonce_point, &c()).unwrap();
 
@@ -905,8 +871,7 @@ mod tests {
 
     #[test]
     fn a_simulated_proof_does_not_convince_a_third_party() {
-        // C can fabricate for itself and only for itself. Forwarding on would
-        // mean a proof designated to D, which takes knowledge C does not have.
+        // C can fabricate for itself only; forwarding on takes knowledge C does not have.
         let nonce_point: [u8; 32] = signature().sig[..32].try_into().unwrap();
         let simulated = AuthorshipProof::simulate(&claim(), &nonce_point, &c()).unwrap();
 
@@ -955,15 +920,7 @@ mod tests {
 
     #[test]
     fn no_two_proofs_of_one_statement_share_a_commitment() {
-        // The nonce is derived, not sampled, so a bug here is a nonce that
-        // holds still while the challenge moves — which hands over the witness
-        // and the two-hop bound with it. Distinct commitments is the visible
-        // consequence of getting it right.
-        //
-        // Both branches of both producers, in one set. The simulator mixes
-        // auxiliary randomness through the same derivation, so it has to come
-        // out just as fresh: a simulated proof that repeated would be a proof
-        // C could be caught having made.
+        // A nonce that held still while the challenge moved would hand over the witness.
         let signature = signature();
         let nonce_point: [u8; 32] = signature.sig[..32].try_into().unwrap();
         let statement = Statement::assemble(&claim(), &nonce_point).unwrap();
@@ -1014,19 +971,9 @@ mod tests {
 
     #[test]
     fn real_and_simulated_proofs_are_drawn_alike() {
-        // The distributional half of the simulator property. Both populations
-        // are uniform subject to one constraint — the challenge shares summing
-        // to the transcript hash — so no field of either should look like
-        // anything but coin flips, and no field should tell the two apart.
-        //
-        // A soundness bug shows up as a proof that fails. This is the other
-        // kind: a proof that verifies every time while a field holds still, or
-        // tracks the witness, or says which branch was real. Verification
-        // cannot see any of that, so nothing above would catch it.
+        // The distributional half: no field should look like anything but coin flips.
         const SAMPLES: usize = 64;
-        // 64 x 256 bits a field, so one standard error is about 0.004 and this
-        // is a seven-sigma band: it will not flake, and nothing degenerate
-        // enough to matter fits inside it.
+        // 64 x 256 bits a field, so one standard error is ~0.004 and this is seven sigma.
         const TOLERANCE: f64 = 0.03;
 
         let signature = signature();

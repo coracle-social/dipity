@@ -233,9 +233,7 @@ impl Session {
         self.auth.prove(pubkeys);
         self.bind_peer();
 
-        // A newly proved identity moves a secured link to Identified. A
-        // session already syncing stays where it is, and a blocked one was
-        // closed by the binding above.
+        // A newly proved identity moves a secured link to Identified; a syncing one stays.
         if matches!(
             self.state,
             State::Secured | State::DialerIdentified | State::Identified
@@ -352,9 +350,7 @@ impl Session {
     pub fn advance(&mut self, db: &Db, frame: &Frame) -> Result<()> {
         match self.state {
             State::Linked => self.advance_handshake(db, frame)?,
-            // Control frames keep arriving after identification — heartbeats
-            // above all, and a peer proving a second identity — so the secured
-            // states share one dispatcher, including the gate hold.
+            // Control frames keep arriving after identification, so the secured states share one.
             State::Secured
             | State::DialerIdentified
             | State::Identified
@@ -394,11 +390,7 @@ impl Session {
             bail!("sync traffic before the peer is identified");
         };
 
-        // Draining finishes what is in flight and starts nothing new: a
-        // publish, a fresh subscription or a fresh negotiation waits for the
-        // next encounter, while replies to work already underway pass. A
-        // Blossom request passes too: the peer's own in-flight fetch asks for
-        // its groups one request at a time.
+        // Draining finishes what is in flight and starts nothing new.
         if matches!(self.state, State::Draining { .. }) {
             match &message {
                 Message::Publish(_) | Message::Req(..) | Message::NegOpen(..) => return Ok(()),
@@ -408,9 +400,7 @@ impl Session {
 
         let quota = self.quota();
 
-        // Blobs answer and drive their own channel: a request is served from
-        // the store, a response advances the fetch in flight. Both directions
-        // are metered against the same quota the event halves get.
+        // Blobs drive their own channel, metered against the same quota as the event halves.
         match &message {
             Message::BlossomRequest(request) => {
                 let reply = self.blobs.serve(db, &peer, &self.local(), request, quota)?;
@@ -480,9 +470,7 @@ impl Session {
             return Ok(());
         }
 
-        // The diff itself is over everything this device holds, but opening one
-        // before the peer is bound would start a sync nothing is authorized to
-        // answer.
+        // Opening a diff before the peer is bound starts a sync nothing is authorized to answer.
         if self.peer.is_none() {
             bail!("a negotiation needs the peer to be identified");
         }
@@ -568,9 +556,7 @@ impl Session {
             return Ok(());
         };
 
-        // The same two tests the relay half applies: any of the subscription's
-        // filters, and what the peer may be served. Own events are always in
-        // the Own register, so the registers need no check here.
+        // The same two tests the relay half applies: the filters, and what the peer may see.
         if !peer.policy.should_gossip(event) {
             return Ok(());
         }
@@ -624,9 +610,7 @@ impl Session {
                 !self.has_work_in_flight() || now - since >= DRAIN_CAP_SECONDS
             }
             State::GatePending { since, .. } => now - since >= GATE_HOLD_SECONDS,
-            // A link that has not named anyone cannot sync, and its heartbeat
-            // would keep it alive indefinitely, so the pre-identification phase
-            // has a deadline of its own.
+            // A link that has not named anyone cannot sync, so the phase has its own deadline.
             State::Linked | State::Secured | State::DialerIdentified => {
                 self.heartbeat.timed_out() || now - self.opened_at >= IDENTIFY_CAP_SECONDS
             }
@@ -676,12 +660,10 @@ impl Session {
             return Ok(());
         }
 
-        // Reschedule whether or not a beat goes out, so a long transfer does
-        // not emit one the moment it drains.
+        // Reschedule whether or not a beat goes out, so a long transfer does not emit one.
         self.heartbeat.reschedule()?;
 
-        // Traffic on its way out is the heartbeat; a beat would only wait
-        // behind it.
+        // Traffic on its way out is the heartbeat; a beat would only wait behind it.
         if self.wire.outbox.is_idle() {
             self.send_control(control::HEARTBEAT, &[])?;
         }
@@ -702,9 +684,7 @@ impl Session {
         )
     }
 
-    // ========================================================================
-    // Handshake
-    // ========================================================================
+    // -------------------------------------------------------------- Handshake
 
     /// Process a handshake message and advance to [`Secured`](State::Secured)
     /// when it completes. The wire queues whatever reply the pattern calls
@@ -723,9 +703,7 @@ impl Session {
         Ok(())
     }
 
-    // ========================================================================
-    // Secured: recognition, then the gate, then mutual AUTH
-    // ========================================================================
+    // ------------------ Secured: recognition, then the gate, then mutual AUTH
 
     /// Dispatch one post-handshake control frame by its discriminant byte.
     fn on_control_frame(&mut self, db: &Db, frame: &Frame) -> Result<()> {
@@ -737,14 +715,12 @@ impl Session {
             control::TAGS => self.on_tags(db, payload)?,
             control::AUTH => self.on_auth(db, payload)?,
             control::HEARTBEAT => {
-                // The write itself proved liveness in `receive`; there is
-                // nothing else a beacon carries.
+                // The write itself proved liveness in `receive`; a beacon carries nothing else.
             }
             other => bail!("an unknown control frame {other} arrived"),
         }
 
-        // Both identities are bound once the peer is verified and this device
-        // has disclosed its own, in whichever order the two happened.
+        // Both identities bind once the peer is verified and this device has disclosed.
         if self.peer.is_some() && self.auth.disclosed {
             self.enter_syncing(db)?;
         }
@@ -755,10 +731,7 @@ impl Session {
     /// Resolve the peer's recognition tags and run the consent gate on the
     /// result, before anyone has disclosed a pubkey.
     fn on_tags(&mut self, db: &Db, payload: &[u8]) -> Result<()> {
-        // Recognition happens once, before anyone is named. A list arriving
-        // later is a peer trying to re-run the gate on an exchange that has
-        // moved past it, which would knock a syncing session back into a hold
-        // and raise a second prompt for a peer the user already admitted.
+        // Recognition happens once: a later list would knock a syncing session back to a hold.
         if self.state != State::Secured {
             bail!("recognition tags arrived after the exchange moved past the gate");
         }
@@ -800,8 +773,7 @@ impl Session {
         }
 
         match self.role {
-            // The receiver names no pubkey yet: it sends its own tags and
-            // challenge, and answers only after it has seen the dialer.
+            // The receiver names no pubkey yet, and answers only after it has seen the dialer.
             Role::Receiver => {
                 self.send_recognition_tags(db)?;
                 self.challenge_peer()?;
@@ -880,9 +852,7 @@ impl Session {
         }
     }
 
-    // ========================================================================
-    // Recognition
-    // ========================================================================
+    // ------------------------------------------------------------ Recognition
 
     /// Send this device's recognition tags: always the constant count, so the
     /// length discloses neither how many peers this device has paired with nor
@@ -905,9 +875,7 @@ impl Session {
         Ok(recognition::resolve(&offered, &secrets, &hash))
     }
 
-    // ========================================================================
-    // Sending helpers
-    // ========================================================================
+    // -------------------------------------------------------- Sending helpers
 
     /// Queue a control frame, encrypted, with its discriminant ahead of the
     /// payload.
@@ -1074,8 +1042,7 @@ mod tests {
 
     #[test]
     fn a_policy_change_leaves_an_unidentified_session_alone() {
-        // Mid-handshake, nothing proved: the user toggling a preference must
-        // not move the lifecycle or fabricate a peer.
+        // Mid-handshake, nothing proved: a preference toggle must not move the lifecycle.
         let mut session = session(policy());
 
         session.set_policy(Arc::new(policy()));
@@ -1132,10 +1099,7 @@ mod tests {
 
     #[test]
     fn a_drain_waits_on_a_fetch_the_outbox_cannot_see() {
-        // A blob fetch is a request/response ping-pong: once our request has
-        // been acknowledged and before the peer answers, the outbox is empty
-        // and nothing is in flight as far as the wire knows. Ending the drain
-        // there kills a working transfer, which is what the doc forbids.
+        // A blob fetch leaves the outbox empty between request and answer; the drain must wait.
         let db = Db::open_in_memory().unwrap();
 
         // Trusted, because a stranger has no blob budget to fetch against.
@@ -1179,9 +1143,7 @@ mod tests {
 
     #[test]
     fn a_link_that_never_names_anyone_is_given_up_on() {
-        // The gate is only reached once tags arrive, so a peer that completes
-        // the handshake and then only beats is never gated and never times
-        // out. Without a deadline it holds a link slot indefinitely.
+        // A peer that completes the handshake and only beats is never gated and never times out.
         let mut session = clock::at(1_000, || secured_session(policy()));
 
         // Beating keeps the heartbeat satisfied the whole time.
@@ -1198,9 +1160,7 @@ mod tests {
 
     #[test]
     fn tags_arriving_after_the_gate_are_refused() {
-        // Re-running recognition on a session that is already syncing would
-        // knock it back into a hold and prompt the user a second time for a
-        // peer they already admitted.
+        // Re-running recognition on a syncing session would prompt the user a second time.
         let db = Db::open_in_memory().unwrap();
         let mut session = secured_session(policy());
         session.identify([author(2)]);
@@ -1241,8 +1201,7 @@ mod tests {
         policy.graph.trusted.insert(author(9));
         let mut session = secured_session(policy);
 
-        // The trusted pubkey sorts after the stranger one, which is what the
-        // old "first policy" reading would have picked instead.
+        // The trusted pubkey sorts after the stranger one, which a "first policy" read would pick.
         session.identify([author(2), author(9)]);
 
         assert_eq!(session.quota(), Quota::TRUSTED);
@@ -1349,10 +1308,7 @@ mod tests {
             approval_requested: false,
         };
 
-        // A held stranger volunteering an identity must not be accepted: that
-        // would bypass the hold and open the relay half without approval. The
-        // response is well formed and genuinely signed, so what refuses it is
-        // the gate rather than the decoder.
+        // A held stranger volunteering an identity is refused by the gate, not the decoder.
         let hashed = crate::fixtures::event(author(2), 22_242, 100, "", NostrTags::new());
         let signed = hashed
             .clone()
@@ -1371,9 +1327,7 @@ mod tests {
 
     #[test]
     fn auth_travels_as_the_nip_42_message() {
-        // The exchange is NIP-42's own `["AUTH", …]` on the control channel,
-        // not a private encoding of it — `docs/nips/p2p-auth.md` is the
-        // contract, and an implementation reading that doc has to interoperate.
+        // NIP-42's own `["AUTH", …]` on the control channel. `docs/nips/p2p-auth.md`.
         let db = Db::open_in_memory().unwrap();
         let (mut dialer, mut receiver) = secured_pair(policy());
 
@@ -1388,8 +1342,7 @@ mod tests {
             Message::AuthChallenge(_)
         ));
 
-        // The response side, which carries the signed event. The dialer
-        // identifies first, so it is the one that answers a challenge outright.
+        // The response side: the dialer identifies first, so it answers a challenge outright.
         dialer.gate.passed = true;
         dialer
             .advance(
@@ -1432,8 +1385,7 @@ mod tests {
 
         session.handle_sync(&db, &publish).unwrap();
 
-        // No OK travels back and nothing is stored: the publish waits for the
-        // next encounter.
+        // No OK travels back and nothing is stored: the publish waits for the next encounter.
         assert!(session.next_write().unwrap().is_none());
         assert!(
             db_query::list_events(&db, &Query::new())
@@ -1449,8 +1401,7 @@ mod tests {
 
         session.identify([author(2)]);
 
-        // This device opens a negotiation, so the subscription is this side's;
-        // the session's own bookkeeping is what routes the reply.
+        // This device opens the negotiation, so its own bookkeeping routes the reply.
         session
             .begin_negotiation(&db, coracle_lib::filters::Filter::new())
             .unwrap();
@@ -1474,8 +1425,7 @@ mod tests {
             payload: Message::NegMsg(subscription, reply.encode()).encode(),
         };
 
-        // Routed to the client half rather than misread as a reply to a
-        // negotiation this device never hosted, so something travels back.
+        // Routed to the client half rather than misread as a reply this device never hosted.
         session.handle_sync(&db, &reply).unwrap();
         assert!(session.next_write().unwrap().is_some());
     }
@@ -1521,9 +1471,7 @@ mod tests {
             .advance(&Db::open_in_memory().unwrap(), &frame)
             .unwrap();
 
-        // The dialer queues its final handshake message, then its recognition
-        // tags and AUTH challenge after. Only the first is part of the exchange
-        // under test.
+        // Only the dialer's final handshake message is part of the exchange under test.
         let final_msg = dialer.next_write().unwrap().unwrap();
         dialer.acknowledge_write();
 
@@ -1604,13 +1552,11 @@ mod tests {
         pump(&mut dialer, &mut receiver, &db); // tags: receiver resolves, admits
         pump(&mut dialer, &mut receiver, &db); // challenge: receiver tags + challenges back
 
-        // Receiver queued: tags, own challenge. The dialer passes the gate on
-        // the tags and answers the challenge, identifying first.
+        // Receiver queued tags and its own challenge; the dialer passes the gate and answers.
         pump(&mut receiver, &mut dialer, &db); // tags: dialer resolves, admits
         pump(&mut receiver, &mut dialer, &db); // challenge: dialer answers (identifies)
 
-        // The dialer's response lets the receiver identify it and disclose in
-        // turn; its own response then completes the dialer.
+        // The dialer's response lets the receiver identify it and disclose in turn.
         pump(&mut dialer, &mut receiver, &db); // response: receiver identifies + discloses
         pump(&mut receiver, &mut dialer, &db); // response: dialer identifies
 
@@ -1639,8 +1585,7 @@ mod tests {
             vec![author(1)]
         );
 
-        // Each side has queued its reconciliation opening on the sync channel.
-        // The payload is encrypted, but the frame header is not.
+        // The payload is encrypted; the frame header is not.
         let opening = dialer.next_write().unwrap().unwrap();
         assert_eq!(opening[0], Channel::Sync as u8);
     }
@@ -1656,8 +1601,7 @@ mod tests {
 
         full_exchange(&mut dialer, &mut receiver, &db);
 
-        // Each side stored a secret for the other, and both derived the same
-        // bytes from the shared handshake hash.
+        // Each side stored a secret for the other, both derived from the shared handshake hash.
         let secrets = crate::db::query::pair_secrets(&db).unwrap();
         assert_eq!(secrets.len(), 2);
         assert_eq!(secrets[0].1, secrets[1].1);
@@ -1674,8 +1618,7 @@ mod tests {
         receiver.gate.presence = Some(Presence::Foreground);
         full_exchange(&mut dialer, &mut receiver, &db);
 
-        // Second encounter: no cool-off, but the tags resolve, so the gate
-        // passes silently and the pair reaches Syncing anyway.
+        // Second encounter: no cool-off, but the tags resolve, so the gate passes silently.
         let mut dialer = pair(4096, Role::Dialer, 1);
         let mut receiver = pair(4096, Role::Receiver, 2);
         full_exchange(&mut dialer, &mut receiver, &db);
@@ -1687,8 +1630,7 @@ mod tests {
         let mut dialer = pair(4096, Role::Dialer, 1);
         let mut receiver = pair(4096, Role::Receiver, 2);
 
-        // Only the dialer's cool-off runs, so it admits the receiver while the
-        // receiver holds the dialer for the user.
+        // Only the dialer's cool-off runs, so the receiver holds the dialer for the user.
         dialer.gate.presence = Some(Presence::Foreground);
 
         dialer.initiate().unwrap();
@@ -1714,17 +1656,13 @@ mod tests {
         assert_eq!(dialer.state, State::Syncing);
         assert_eq!(receiver.state, State::Syncing);
 
-        // The dialer's cool-off admitted a stranger, so its disclosure is the
-        // budget's. The receiver's was the user's own decision.
+        // The dialer's cool-off admitted a stranger, so its disclosure is the budget's.
         assert_eq!(crate::db::query::disclosures_since(&db, 0).unwrap(), 1);
     }
 
     #[test]
     fn a_peer_that_collects_the_auth_event_and_walks_away_spends_the_budget() {
-        // The harvester the budget exists to bound is passive: it advertises,
-        // takes the auth event the dialer offers first, and never names itself,
-        // so the session never reaches Syncing. Charging the disclosure rather
-        // than the completed pairing is what makes that cost a unit.
+        // The harvester is passive and never reaches Syncing, so the disclosure is what costs.
         let db = Db::open_in_memory().unwrap();
         let mut dialer = pair(4096, Role::Dialer, 1);
         let mut receiver = pair(4096, Role::Receiver, 2);

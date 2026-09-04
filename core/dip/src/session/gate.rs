@@ -75,8 +75,7 @@ impl Gate {
         resolved: &[PublicKey],
     ) -> Result<Verdict> {
         let verdict = if resolved.is_empty() {
-            // A stranger is admitted by discoverability and the budget, or it
-            // waits on the user.
+            // A stranger is admitted by discoverability and the budget, or waits on the user.
             if self.admits_stranger(db, policy)? {
                 self.spends_budget = true;
                 Verdict::Pass
@@ -87,11 +86,7 @@ impl Gate {
             .iter()
             .any(|pubkey| policy.graph.standing(pubkey) == Standing::Blocked)
         {
-            // Blocked wins over every identity the tags resolved to, exactly as
-            // it does once the peer authenticates: one device, and blocking any
-            // of its pubkeys blocks the device. A blocked peer keeps its tags so
-            // the connection can be dropped here, before either side names
-            // itself.
+            // Blocked wins over every identity the tags resolved to: one device, one decision.
             Verdict::Blocked
         } else {
             // Paired peers pass silently.
@@ -153,10 +148,7 @@ mod tests {
 
     #[test]
     fn one_blocked_identity_sinks_a_peer_that_proved_several() {
-        // Pairing stores one secret against every pubkey a peer proved, so all
-        // of them tag alike and the list resolves to the whole set. Judging
-        // only whichever sorted first let a blocked identity through whenever
-        // an unblocked one happened to sort ahead of it.
+        // Judging only the pubkey that sorted first let a blocked identity through.
         let db = Db::open_in_memory().unwrap();
         let mut policy = policy();
         policy.graph.blocked.insert(author(3));
@@ -199,10 +191,7 @@ mod tests {
 
     #[test]
     fn the_cool_off_runs_from_backgrounding_not_foregrounding() {
-        // The doc's worked example: a user checks the app on a bus, reads for
-        // longer than the cool-off, and pockets the phone. Timing the window
-        // from foregrounding would have spent it before they put the phone
-        // away, leaving the bus shut out rather than open for ten minutes.
+        // The doc's worked example: read on a bus past the cool-off, then pocket the phone.
         let db = Db::open_in_memory().unwrap();
         let policy = policy();
         let window = policy.cool_off_minutes * 60;

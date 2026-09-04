@@ -59,8 +59,7 @@ impl FileBlobStore {
             Err(_) => return Ok(Vec::new()),
         };
 
-        // Never read past what is there, and never allocate past it either:
-        // the request may be for the whole rest of the file.
+        // Never read past what is there, and never allocate past it either.
         let file_len = file
             .metadata()
             .context("reading a blob's file metadata")?
@@ -148,8 +147,7 @@ impl BlobStore for FileBlobStore {
                 .context("reading a blob store directory entry")?
                 .file_name();
 
-            // A name that is not a hash was not written by `append`, so it is
-            // not the store's to report and not a sweep's to delete.
+            // A name that is not a hash was not written by `append`, so it is not the store's.
             if let Some(hash) = name.to_str().and_then(|name| BlobHash::parse(name).ok()) {
                 hashes.push(hash);
             }
@@ -234,8 +232,7 @@ mod tests {
         let dir = TempDir::new("blobs");
         let store = FileBlobStore::open(&dir.0).unwrap();
 
-        // Traversal and non-hex names never become a hash, so the store cannot
-        // be handed one: the check is the type, not a guard inside `path`.
+        // Traversal and non-hex names never become a hash: the check is the type, not a guard.
         for name in ["../escape", "../../etc/passwd", "not-hex", &"ab".repeat(31)] {
             assert!(BlobHash::parse(name).is_err(), "{name} parsed as a hash");
         }

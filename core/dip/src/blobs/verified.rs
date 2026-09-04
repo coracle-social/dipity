@@ -177,8 +177,7 @@ impl Read for StoreCursor<'_> {
 
 impl Seek for StoreCursor<'_> {
     fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
-        // A seek past the end is legal and reads empty, which is how the
-        // store answers an offset past the end of the file anyway.
+        // A seek past the end is legal and reads empty, as the store itself does.
         self.position = match to {
             SeekFrom::Start(offset) => offset,
             SeekFrom::Current(offset) => self.position.saturating_add_signed(offset),

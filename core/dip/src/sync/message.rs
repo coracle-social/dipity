@@ -160,8 +160,7 @@ impl Message {
             let event: HashedEvent =
                 serde_json::from_value(value.clone()).context("parsing EVENT")?;
 
-            // Every authorization commits to the id rather than to the bytes,
-            // so an id that is not its own hash is refused here. `proofs.md`.
+            // Authorization commits to the id rather than to the bytes. `proofs.md`.
             if !event.verify_id() {
                 bail!("an event's id is not the hash of its content");
             }
@@ -181,8 +180,7 @@ impl Message {
             }
             "CLOSE" => Ok(Self::Close(id(&mut items)?)),
             "EVENT" => {
-                // Two-element is a client publishing; three is a relay
-                // serving it on a subscription.
+                // Two elements is a client publishing; three is a relay serving a subscription.
                 match items.next() {
                     Some(Value::String(subscription)) => {
                         let value = items

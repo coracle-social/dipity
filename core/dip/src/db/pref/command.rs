@@ -92,8 +92,7 @@ mod tests {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        // Absent rather than defaulted: a default is `Policy::new`'s to say,
-        // and this layer only reports what was written.
+        // Absent rather than defaulted: a default is `Policy::new`'s to say, not this layer's.
         assert_eq!(query::get(&tx, keys::GOSSIP).unwrap(), None);
         assert_eq!(
             query::get_as::<i64>(&tx, keys::COOL_OFF_MINUTES).unwrap(),
@@ -121,8 +120,7 @@ mod tests {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        // Bare text is the mistake to catch: it reads fine and decodes into
-        // nothing, so the policy it names would silently fall back to a default.
+        // Bare text reads fine and decodes into nothing, so the policy silently defaults.
         assert!(set(&tx, keys::ACCEPT, "lenient", 10).is_err());
         assert!(set(&tx, keys::ACCEPT, r#""lenient""#, 10).is_ok());
     }

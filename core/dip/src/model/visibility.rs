@@ -84,8 +84,7 @@ mod tests {
             default: Scope::Nothing,
         };
 
-        // The profile matches the first rule, so the catch-all below it is
-        // never reached.
+        // The profile matches the first rule, so the catch-all below is never reached.
         let profile = event(author(1), profile::KIND, 1, "", Tags::new());
         let note = event(author(1), 1, 1, "", Tags::new());
 

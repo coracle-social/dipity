@@ -227,9 +227,7 @@ impl Client {
         quota: Quota,
         spending: &mut SessionSpending,
     ) -> Result<Vec<Message>> {
-        // The quota is tested against the rolling window, which this
-        // session's own accepts land in too, so a reconnect cannot refill
-        // what a drive-by already spent.
+        // The quota is tested against the rolling window, so a reconnect refills nothing.
         let spent = spending.spent(peer);
 
         match message {
@@ -250,9 +248,7 @@ impl Client {
                         spending.record(peer, &event);
                     }
                 } else if holdable(peer, &event, quota, spent) {
-                    // Forwarded without its proof yet; hold it until one
-                    // arrives, having already checked everything a proof
-                    // cannot change.
+                    // Forwarded without its proof yet; hold it until one arrives.
                     self.pending_events.insert(id, *event);
                     bound(&mut self.pending_events);
                 }
@@ -294,8 +290,7 @@ impl Client {
 
                 let mut replies = negotiation.step(&frame)?;
 
-                // The terminating reply is a REQ on the same subscription: the
-                // exchange is over and the fetch for what it wants begins.
+                // The terminating reply is a REQ on the same subscription: the exchange is over.
                 let terminated =
                     matches!(replies.last(), Some(Message::Req(sub, _)) if *sub == subscription);
                 let need: BTreeSet<EventId> = if terminated {
@@ -308,8 +303,7 @@ impl Client {
                     self.negotiations.remove(&subscription);
 
                     if need.is_empty() {
-                        // The terminating REQ would carry an empty id set,
-                        // which matches nothing and is not worth a round trip.
+                        // An empty id set matches nothing and is not worth a round trip.
                         replies.pop();
                     } else {
                         self.fetches.insert(subscription.clone(), Fetch::new(need));
@@ -331,8 +325,7 @@ impl Client {
                     return Ok(Vec::new());
                 }
 
-                // A page that served nothing means the peer does not hold the
-                // rest; asking again would not change that.
+                // A page that served nothing means the peer does not hold the rest.
                 if fetch.pending == fetch.last_requested {
                     self.fetches.remove(&subscription);
                     return Ok(Vec::new());
@@ -389,8 +382,7 @@ fn store_signature(db: &Db, peer: &Peer, local: &Identity, event_id: EventId, si
         return;
     }
 
-    // Nothing on the wire says which of this device's identities the author
-    // named, so the one it verifies under is the answer.
+    // Nothing on the wire says which identity the author named, so verification answers.
     let named = local.iter().find_map(|identity| {
         let signature = RecipientSignature {
             event_id,
@@ -443,12 +435,7 @@ fn admissible(
     quota: Quota,
     spent: Spent,
 ) -> Result<(), Rejected> {
-    // Both registers authorize an id, not a body: the session says the peer
-    // authored the event with this id, and a proof commits to the id alone. An
-    // event whose id is not its own hash therefore carries no authorization at
-    // all, whatever else it presents. Checked at the wire boundary too;
-    // repeated here because this is the function that decides what may be
-    // stored.
+    // Both registers authorize an id, not a body, so an id that is not its own hash carries none.
     if !event.verify_id() {
         return Err(Rejected::Forged);
     }
@@ -467,9 +454,7 @@ fn admissible(
         return Err(Rejected::OverQuota);
     }
 
-    // A stranger is bounded twice: by its own budget above, and by what every
-    // stranger together has already taken. The second is what a fresh keypair
-    // cannot reset. `docs/sync.md#quotas`.
+    // A stranger is bounded twice; the pool is what a fresh keypair cannot reset.
     if peer.policy.standing != Standing::Trusted
         && (spent.pooled_events >= Quota::STRANGER_POOL.events
             || spent.pooled_bytes + size > Quota::STRANGER_POOL.bytes)
@@ -495,13 +480,9 @@ pub fn ingest(
     event: &HashedEvent,
     proof: Option<&AuthorshipProof>,
 ) -> Result<bool> {
-    // A proof, when present, must be designated to this device and hold over
-    // the event with one of the peer's own pubkeys as holder. When the peer
-    // authored the event, the session is itself the proof and none is needed.
+    // A proof must be designated to this device; an author's own session needs none.
     if let Some(proof) = proof {
-        // Which of the peer's identities holds the author's signature, and
-        // which of this device's it was designated to, are both unnamed on the
-        // wire — so the pair it verifies under is the pair it was built for.
+        // Neither holder nor verifier is named on the wire, so the pair it verifies under is it.
         let verified = peer.pubkeys.iter().any(|holder| {
             local.iter().any(|verifier| {
                 proof.verifies(&AuthorshipClaim {
@@ -689,8 +670,7 @@ mod tests {
 
     #[test]
     fn the_stranger_pool_refuses_a_peer_whose_own_budget_is_untouched() {
-        // A burner arrives with a clean per-peer meter and is still refused,
-        // because the ceiling it runs into is not keyed on its identity.
+        // A burner arrives with a clean per-peer meter and is still refused.
         let event = note_from(2, 100);
         let peer = peer([author(2)]);
 
@@ -709,8 +689,7 @@ mod tests {
 
     #[test]
     fn a_trusted_peer_passes_a_spent_stranger_pool() {
-        // "A hard ceiling that cannot crowd out known peers": a full pool is
-        // the strangers' problem, not the trusted peer's.
+        // "A hard ceiling that cannot crowd out known peers": a full pool is theirs, not ours.
         let mut policy = Policy::new(us());
         policy.graph.trusted.insert(author(2));
         let peer = Peer::bind(LinkId(1), [author(2)], &policy);

@@ -36,8 +36,7 @@ impl MemoryBlobStore {
             return Vec::new();
         };
 
-        // Saturating throughout: a caller asking for the rest of the file
-        // passes `u64::MAX`, and adding that to an offset is an overflow.
+        // Saturating: a rangeless read asks for `u64::MAX`, which overflows an offset.
         let start = usize::try_from(offset)
             .unwrap_or(usize::MAX)
             .min(bytes.len());

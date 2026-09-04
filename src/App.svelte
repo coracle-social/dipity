@@ -9,8 +9,7 @@
   import * as Card from "$lib/components/ui/card"
   import * as Tabs from "$lib/components/ui/tabs"
 
-  // Scaffolding. Renders the token scales from src/app.css so they can be seen
-  // in both themes at once. See docs/ui.md.
+  // Scaffolding: the token scales from src/app.css, in both themes. See docs/ui.md.
 
   const elevations = [
     {name: "shadow-xs", use: "Inputs and controls at rest", class: "shadow-xs"},

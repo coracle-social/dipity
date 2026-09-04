@@ -81,14 +81,12 @@ fn the_store_serves_its_use_cases() {
 
     let db = Db::open(&directory).unwrap();
 
-    // Idempotent, because the shell may open the same directory on a
-    // background relaunch as well as at startup.
+    // Idempotent, because the shell reopens the same directory on a background relaunch.
     drop(Db::open(&directory).unwrap());
 
     let mut changes = channel::subscribe(&db);
 
-    // An event, the author's signature naming this device, and the media it
-    // references, in one call and one transaction.
+    // An event, the author's signature naming this device, and its media, in one call.
     let with_media = note(
         author(),
         1_000,
@@ -105,8 +103,7 @@ fn the_store_serves_its_use_cases() {
     );
     assert!(command::receive_event(&db, &with_media, &[peer()], 100).unwrap());
 
-    // The author's real signature naming this device is what moves the event
-    // into the forwardable register; nothing else can put it there.
+    // The author's signature naming this device is the only thing that makes it forwardable.
     let naming_us = RecipientSignature::sign(&secret(1), id(&with_media), us());
     assert!(command::receive_signature(&db, &id(&with_media), &naming_us.sig, &us()).unwrap());
 
@@ -145,8 +142,7 @@ fn the_store_serves_its_use_cases() {
     assert_eq!(search("neighbor").len(), 1);
     assert!(search("elsewhere").is_empty());
 
-    // Provenance is a detail of the event, and stays a separate read: it is
-    // never part of what a peer is served.
+    // Provenance is a detail of the event and a separate read: a peer is never served it.
     let detail = query::with_details(
         &db,
         query::list_events(
@@ -161,8 +157,7 @@ fn the_store_serves_its_use_cases() {
     assert_eq!(detail[0].sightings[0].pubkey, peer());
     assert_eq!(detail[0].sightings[0].seen_at, 100);
 
-    // Holding the author's signature is what makes an event forwardable; an
-    // event received without one is held for the user and goes no further.
+    // An event received without the author's signature is held for the user and goes no further.
     let unsigned = note(author(), 2_000, "no signature came with this", Tags::new());
     assert!(command::receive_event(&db, &unsigned, &[peer()], 200).unwrap());
 
@@ -171,13 +166,7 @@ fn the_store_serves_its_use_cases() {
         vec![with_media.clone()]
     );
 
-    // Until the signature arrives on a later encounter. The id is an `EventId`
-    // rather than a string, so there is no spelling of it that reaches the
-    // store as a row that is not there.
-    //
-    // The row is the forwarding capability, so the write verifies it: bytes
-    // that are not the author's signature over this event and this device
-    // leave the event where it was.
+    // Until the signature arrives later, and bytes that are not it leave the event where it was.
     assert!(!command::receive_signature(&db, &id(&unsigned), &[9u8; 64], &us()).unwrap());
     assert_eq!(query::list_events(&db, &offerable()).unwrap().len(), 1);
 
@@ -185,9 +174,7 @@ fn the_store_serves_its_use_cases() {
     assert!(command::receive_signature(&db, &id(&unsigned), &signature.sig, &us()).unwrap());
     assert_eq!(query::list_events(&db, &offerable()).unwrap().len(), 2);
 
-    // A blob hash is its own type — a sha256 of a file is not an event id —
-    // and the check is in the parse: a key that could not name a row never
-    // becomes one to ask after.
+    // A blob hash is its own type, and the check is in the parse: a bad key never becomes a row.
     assert!(BlobHash::parse("not a hash").is_err());
     assert_eq!(
         query::get_blob(&db, &BlobHash::parse(&BLOB.to_uppercase()).unwrap())
@@ -197,14 +184,12 @@ fn the_store_serves_its_use_cases() {
         blob()
     );
 
-    // Our own events need no signature: the authenticated session establishes
-    // authorship at the first hop.
+    // Our own events need no signature: the authenticated session establishes the first hop.
     let mine = note(us(), 3_000, "mine", Tags::new());
     assert!(command::publish_event(&db, &mine, &us(), 300).unwrap());
     assert_eq!(query::list_events(&db, &offerable()).unwrap().len(), 3);
 
-    // What negentropy diffs is the same set under the same constraints, in the
-    // order it compares.
+    // What negentropy diffs is the same set under the same constraints, in comparison order.
     let set = SyncSet::from_items(query::list_events(&db, &offerable()).unwrap().iter().map(
         |event| Item {
             timestamp: event.created_at,
@@ -214,8 +199,7 @@ fn the_store_serves_its_use_cases() {
     assert_eq!(set.len(), 3);
     assert_eq!(set.iter().next().unwrap().id, with_media.id);
 
-    // Blob transfer: wanted, resumed, completed, and then evicted under the
-    // cache ceiling.
+    // Blob transfer: wanted, resumed, completed, then evicted under the cache ceiling.
     let wanted = query::wanted_blobs(&db, 10).unwrap();
     assert_eq!(wanted.len(), 1);
     assert_eq!(wanted[0].role, BlobRole::Original);
@@ -234,13 +218,10 @@ fn the_store_serves_its_use_cases() {
     assert!(command::evict_originals(&db, 4_096).unwrap().is_empty());
     assert_eq!(command::evict_originals(&db, 1_024).unwrap(), [blob()]);
     assert_eq!(query::cached_bytes(&db).unwrap(), 0);
-    // What a blob store sweeps against: an evicted blob is no longer a hash
-    // this device is entitled to be holding bytes for.
+    // An evicted blob is no longer a hash this device is entitled to hold bytes for.
     assert!(query::recorded_blob_hashes(&db).unwrap().is_empty());
 
-    // Preferences. A use case that fails leaves nothing behind: bare text is
-    // not JSON, and a preference that reads fine but decodes into nothing would
-    // silently fall back to a default.
+    // Preferences. Bare text is not JSON, and a use case that fails leaves nothing behind.
     assert!(command::set_preference(&db, keys::ACCEPT, "lenient", 500).is_err());
     assert!(query::preference(&db, keys::ACCEPT).unwrap().is_none());
 
@@ -251,8 +232,7 @@ fn the_store_serves_its_use_cases() {
     );
     assert_eq!(query::preferences(&db).unwrap().len(), 1);
 
-    // Policy is those preferences read back together, with the document's
-    // defaults standing in for the keys nobody has written.
+    // Policy is those preferences read back together, with the document's defaults filling in.
     let policy = query::policy(&db, &us()).unwrap();
     assert_eq!(policy.accept, Scope::Lenient);
     assert_eq!(policy.gossip, Scope::Network);
@@ -282,8 +262,7 @@ fn the_store_serves_its_use_cases() {
         .is_empty()
     );
 
-    // WAL, so the sidecars sit beside the database. On iOS all three carry the
-    // same data-protection class — see docs/storage.md.
+    // WAL, so the sidecars sit beside the database, all three in one class. docs/storage.md.
     assert!(directory.join("dip.sqlite").exists());
     assert!(directory.join("dip.sqlite-wal").exists());
 

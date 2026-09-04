@@ -183,8 +183,7 @@ impl Codec {
     pub fn absorb(&mut self, fragment: Fragment) -> Result<Option<Frame>> {
         let buffered = self.partial.entry(fragment.channel).or_default();
 
-        // Fragments beyond the frame cap are an attack on unbounded memory, not
-        // a frame: the partial buffer clears and the error ends the link.
+        // Fragments past the frame cap are an attack on memory, so the link ends.
         if buffered.len() + fragment.payload.len() > MAX_FRAME_BYTES {
             self.partial.remove(&fragment.channel);
             bail!(

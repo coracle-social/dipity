@@ -107,8 +107,7 @@ impl Noise {
             Some(out[..written].to_vec())
         };
 
-        // On the initiator's reply the post-write check is what fires; on the
-        // responder's final read the post-read check already did.
+        // The initiator finishes on this write; the responder already did on its read.
         if handshake.is_handshake_finished() {
             self.finish()?;
         }

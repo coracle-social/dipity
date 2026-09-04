@@ -60,8 +60,7 @@ mod tests {
 
     #[test]
     fn bare_does_not_escape() {
-        // The point of it: an abbreviation like `3f8a1c04…` comes out as
-        // itself rather than as `"3f8a1c04\u{2026}"`.
+        // The point of it: `3f8a1c04…` prints as itself rather than as an escaped string.
         assert_eq!(format!("{:?}", Bare("3f8a1c04…")), "3f8a1c04…");
     }
 

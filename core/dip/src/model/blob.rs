@@ -281,8 +281,7 @@ mod tests {
         assert_eq!(blob.alt.as_deref(), Some("a dog, asleep"));
         assert!(!blob.complete);
 
-        // Everything the tag carried is kept, in tag order and including the
-        // key this build has no field for.
+        // Everything the tag carried is kept in order, unknown keys included.
         assert_eq!(blob.imeta.len(), 8);
         assert_eq!(blob.imeta[0], "url https://example.com/x.jpg");
         assert_eq!(blob.imeta_value("unknown"), Some("whatever"));
@@ -303,8 +302,7 @@ mod tests {
         );
         assert_eq!(role(&[&format!("x {}", hash(2))]), BlobRole::Original);
 
-        // A preview outranks an original on the want list and is never evicted,
-        // so a marker naming no original it could stand in for buys neither.
+        // A marker naming no original it could stand in for buys neither rank nor immunity.
         for malformed in [
             "preview-of",
             "preview-of ",
@@ -336,8 +334,7 @@ mod tests {
 
     #[test]
     fn a_json_hash_is_parsed_like_any_other() {
-        // Nothing may hand a Blob a hash that skipped the check, deserializing
-        // included: the row it would write is the one no read can find.
+        // Nothing may hand a Blob an unchecked hash, deserializing included.
         assert!(serde_json::from_str::<BlobHash>(&format!("\"{}\"", hash(7))).is_ok());
         assert!(serde_json::from_str::<BlobHash>("\"ab\"").is_err());
     }
@@ -347,8 +344,7 @@ mod tests {
         for values in [
             // No `x` at all.
             vec!["url https://example.com/x.jpg", "m image/jpeg"],
-            // The reproducer: two characters where a hash should be. Stored as
-            // it arrived, it panicked every later fetch that took a prefix.
+            // The reproducer: two characters where a hash should be, panicking every later prefix.
             vec!["x ab"],
             // Hex, but not enough of it, and not hex at all.
             vec!["x abcdef"],
@@ -365,8 +361,7 @@ mod tests {
 
     #[test]
     fn a_hash_is_lowercase_however_it_arrived() {
-        // SQLite compares TEXT byte for byte, so an uppercase hash stored as it
-        // arrived is a row that its own hash cannot read back.
+        // SQLite compares TEXT byte for byte, so an uppercase hash is a row nothing reads back.
         let upper = hash(0xab).to_uppercase();
         let blob = Blob::from_imeta(&tag(&[&format!("x {upper}")])).unwrap();
 
@@ -380,8 +375,7 @@ mod tests {
         assert!(BlobHash::parse(&"ab".repeat(31)).is_err());
         assert!(BlobHash::parse(&"ab".repeat(33)).is_err());
         assert!(BlobHash::parse(&format!("{}zz", "ab".repeat(31))).is_err());
-        // 64 characters of something that is not ASCII, so byte length and
-        // character length disagree.
+        // 64 characters of non-ASCII, so byte length and character length disagree.
         assert!(BlobHash::parse(&"é".repeat(64)).is_err());
         assert!(BlobHash::parse("../../etc/passwd").is_err());
     }

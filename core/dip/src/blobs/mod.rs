@@ -53,8 +53,7 @@ mod tests {
         file.append(&hash, b"short").unwrap();
         memory.append(&hash, b"short").unwrap();
 
-        // `u64::MAX` is what a rangeless GET asks for, and it is where an
-        // `offset + len` in either implementation would overflow.
+        // `u64::MAX` is what a rangeless GET asks for, and where `offset + len` overflows.
         for (offset, len) in [
             (0, u64::MAX),
             (2, u64::MAX),

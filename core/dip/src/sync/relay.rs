@@ -89,9 +89,7 @@ impl Relay {
                 }
             }
             Message::Req(subscription, filters) => {
-                // Registration is what the live-push path reads: NIP-01
-                // replaces the filters when the same id is REQ'd again, and
-                // CLOSE drops it.
+                // NIP-01 replaces the filters when the same id is REQ'd again, and CLOSE drops it.
                 self.subscriptions
                     .insert(subscription.clone(), filters.clone());
 
@@ -212,8 +210,7 @@ pub fn serve(
         events.append(&mut serves);
     }
 
-    // Sort before deduplicating: `dedup_by` only removes adjacent equals, and
-    // two filters in one REQ put the same event at non-adjacent positions.
+    // Sort before deduplicating: `dedup_by` only removes adjacent equals.
     events.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(a.id.cmp(&b.id)));
     events.dedup_by(|a, b| a.id == b.id);
 
@@ -248,16 +245,9 @@ pub fn attach(
     event: &coracle_lib::events::HashedEvent,
     messages: &mut Vec<Message>,
 ) -> Result<()> {
-    // One artifact per identity the peer proved. Nothing on the wire says
-    // which of them the peer will verify with, and a signature or proof naming
-    // the wrong one is silently useless to it — the event would simply stop
-    // there. Minting for each is what makes the second hop reachable however
-    // many identities the far side carries.
+    // One artifact per identity the peer proved, since nothing on the wire says which it uses.
     if event.pubkey == identity.public_key() {
-        // The signature is transferable evidence, so who gets one is a policy
-        // question and not a consequence of being served the event. A peer
-        // outside the Forward scope still receives the event; it simply stops
-        // with them. `docs/policy.md#forwarding`.
+        // The signature is transferable evidence, so who gets one is a policy question.
         if !peer.policy.may_forward() {
             return Ok(());
         }
@@ -273,9 +263,7 @@ pub fn attach(
         }
     } else if let Some(signature) = db_query::get_signature(db, &event.id, &identity.public_key())?
     {
-        // A proof is designated to one peer and worthless to anyone else, so
-        // it is not gated: handing one over discloses nothing a third party
-        // could use, which is the whole point of the construction.
+        // A proof is designated to one peer and worthless to anyone else, so it is not gated.
         for verifier in peer.pubkeys.iter() {
             let proof = AuthorshipProof::prove(&signature, *verifier)?;
 
@@ -410,8 +398,7 @@ mod tests {
     #[test]
     fn a_req_is_answered_with_events_and_eose() {
         let db = Db::open_in_memory().unwrap();
-        // An event the device itself authored is in the Own register and so
-        // offerable; a stranger's is not.
+        // An event the device authored is offerable through the Own register; a stranger's is not.
         let stored = given(&db, author(1), 100, "one");
 
         let replies = Relay::default()
@@ -440,8 +427,7 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let stored = given(&db, author(1), 100, "mine");
 
-        // Trusted, because the signature is transferable evidence and the
-        // Forward scope defaults to the people the user actually trusts.
+        // Trusted, because the signature is transferable and Forward defaults to the trusted.
         let mut policy = Policy::new(us());
         policy.graph.trusted.insert(author(2));
         let trusted = Peer::bind(LinkId(1), [author(2)], &policy);
@@ -465,10 +451,7 @@ mod tests {
 
     #[test]
     fn a_peer_that_proved_several_identities_gets_one_artifact_each() {
-        // Nothing on the wire says which identity the peer will verify with,
-        // so naming only one would leave the event dead on arrival whenever
-        // the guess was wrong. One per proved key is what makes the second hop
-        // reachable at all.
+        // Naming one identity would leave the event dead on arrival whenever the guess was wrong.
         let db = Db::open_in_memory().unwrap();
         let stored = given(&db, author(1), 100, "mine");
 
@@ -495,8 +478,7 @@ mod tests {
 
         assert_eq!(named.len(), 2, "one signature per proved identity");
 
-        // Each verifies under the identity it was minted for, and neither is
-        // the other's.
+        // Each verifies under the identity it was minted for, and neither is the other's.
         for recipient in [author(2), author(3)] {
             assert!(
                 named.iter().any(|sig| RecipientSignature {
@@ -513,9 +495,7 @@ mod tests {
 
     #[test]
     fn a_stranger_is_served_the_event_without_the_signature() {
-        // `docs/proofs.md`: only peers who can be trusted not to leak a
-        // signature should receive one. A stranger still gets the event — it
-        // just stops with them instead of travelling a second hop.
+        // `docs/proofs.md`: only peers trusted not to leak a signature should receive one.
         let db = Db::open_in_memory().unwrap();
         let stored = given(&db, author(1), 100, "mine");
 
@@ -544,8 +524,7 @@ mod tests {
     #[test]
     fn a_forwardable_event_is_served_with_a_proof() {
         let db = Db::open_in_memory().unwrap();
-        // The event is someone else's, and this device holds the signature
-        // naming itself — which is what puts it in the forwardable register.
+        // The event is someone else's and this device holds the signature naming itself.
         let event = note(author(3), 100, "forward", Tags::new());
         command::publish_event(&db, &event, &author(3), 100).unwrap();
         let signature = RecipientSignature::sign(&secret(3), event.id, author(1));
@@ -660,9 +639,7 @@ mod tests {
 
     #[test]
     fn a_negotiation_does_not_open_a_live_subscription() {
-        // A NEG-OPEN asks to diff a set. A peer that sends one and never sends
-        // a REQ has asked to be served nothing, and must not end up with a
-        // standing subscription over everything.
+        // A peer that sends NEG-OPEN and never a REQ has asked to be served nothing.
         let db = Db::open_in_memory().unwrap();
         let mut relay = Relay::default();
         let (_, opening) = crate::sync::client::Negotiation::begin(&db, Filter::new()).unwrap();
@@ -696,8 +673,7 @@ mod tests {
 
     #[test]
     fn a_req_since_now_catches_what_is_written_next() {
-        // What the live push rides on: once reconciliation has settled the
-        // past, a standing REQ is what carries the next write across.
+        // What the live push rides on: a standing REQ carries the next write across.
         let db = Db::open_in_memory().unwrap();
         let mut relay = Relay::default();
 
@@ -724,16 +700,12 @@ mod tests {
 
     #[test]
     fn a_negotiation_responder_tells_the_client_what_it_lacks() {
-        // Bob (relay) has an event Alice (client) does not. Alice opens a
-        // negotiation against Bob's relay half; the IDs Bob has and Alice
-        // lacks surface in the terminating REQ.
+        // Bob has an event Alice does not; the ids she lacks surface in the terminating REQ.
         let server = Db::open_in_memory().unwrap();
         let bobs_note = given(&server, author(2), 200, "bob's");
         let alice = Db::open_in_memory().unwrap();
 
-        // Bob sees Alice as the peer: identity 2 facing author 1, holding his
-        // own note. Alice's own side of the diff is over everything she holds,
-        // which is nothing, so she needs no peer binding to open it.
+        // Bob sees Alice as the peer: identity 2 facing author 1, holding his own note.
         let server_peer = Peer::bind(LinkId(2), [author(1)], &Policy::new(author(2)));
 
         // Alice's side, as the client half builds it.

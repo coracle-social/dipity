@@ -101,10 +101,7 @@ pub fn record_seen(
         return Ok(false);
     }
 
-    // Lowers, never sets. The row is born with the sighting it arrived on, so
-    // this only fires for one recorded out of order — which would otherwise
-    // move the arrival time forward, and leave the column disagreeing with the
-    // rows it stands for.
+    // Lowers, never sets: a sighting recorded out of order must not move the arrival time.
     tx.prepare_cached("UPDATE event SET seen_at = ?2 WHERE id = ?1 AND seen_at > ?2")?
         .execute(params![event_id.to_hex(), seen_at])
         .with_context(|| format!("recording the arrival of {event_id}"))?;
@@ -126,9 +123,7 @@ pub fn record_seen(
 /// The tag, provenance, signature and blob rows go by cascade; the full-text row is
 /// deleted by hand, since a virtual table has no foreign keys.
 pub fn delete(tx: &Tx<'_>, id: &EventId) -> Result<bool> {
-    // Ahead of the row the foreign key hangs off, so each blob announces its
-    // own removal instead of going silently by cascade. The announcement is
-    // the only thing that reclaims the bytes on disk.
+    // Ahead of the row the foreign key hangs off, so each blob announces its own removal.
     blob::remove_for_event(tx, id)?;
 
     tx.prepare_cached("DELETE FROM event_fts WHERE event_id = ?1")?
@@ -225,9 +220,7 @@ fn insert(tx: &Tx<'_>, event: &HashedEvent, id: &str, seen_at: i64) -> Result<()
     )?;
 
     for (position, tag) in event.tags.iter().enumerate() {
-        // Single-letter alphanumeric names are the ones a NIP-01 filter can
-        // name, so they are the set worth indexing. Everything else is read
-        // back from the event's own tags.
+        // Single-letter alphanumeric names are the ones a NIP-01 filter can name.
         let name = tag.name();
         let indexed = name.len() == 1 && name.chars().all(|c| c.is_ascii_alphanumeric());
 
@@ -328,8 +321,7 @@ mod tests {
         let by_search = query::list(&tx, &matching(Filter::new().add_search("neighbor"))).unwrap();
         assert_eq!(by_search, vec![subject.clone()]);
 
-        // Only `t` and `A` are filterable under NIP-01. The rest stay out of
-        // the index and are read back from the event itself.
+        // Only `t` and `A` are filterable under NIP-01; the rest are read off the event.
         let indexed: Vec<String> = tx
             .prepare("SELECT name FROM event_tag ORDER BY name")
             .unwrap()
@@ -361,8 +353,7 @@ mod tests {
             query::seen_from(&tx, &id(&subject)).unwrap(),
             vec![peer(), other]
         );
-        // The earliest sighting is the seen time, and a later one from the
-        // same peer does not move it.
+        // The earliest sighting is the seen time, and a later one does not move it.
         assert_eq!(query::seen_at(&tx, &id(&subject)).unwrap(), Some(10));
     }
 
@@ -493,8 +484,7 @@ mod tests {
 
         save(&tx, &deletion, &[peer()], 10).unwrap();
 
-        // The deletion arrived first, which is ordinary here: two peers hand
-        // over what they have in whatever order they meet.
+        // The deletion arrived first, which is ordinary: peers meet in whatever order.
         assert!(!save(&tx, &subject, &[peer()], 20).unwrap());
         assert!(query::get(&tx, &id(&subject)).unwrap().is_none());
     }
@@ -504,9 +494,7 @@ mod tests {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        // The mirror of `a_deletion_removes_the_authors_own_events_only`, on
-        // the path that runs when the request is already stored: entitlement
-        // decides in both directions, and only one of them is a sweep.
+        // The mirror of `a_deletion_removes_the_authors_own_events_only`, on the stored path.
         let subject = note(author(1), 100, "not theirs to delete", Tags::new());
         let deletion = event(
             author(2),
@@ -527,9 +515,7 @@ mod tests {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        // An address names a slot rather than an event, so a request bounds
-        // what it reaches by its own timestamp. A version written afterwards is
-        // not what the author asked to delete.
+        // An address names a slot, so a request bounds what it reaches by its own timestamp.
         let address = event(
             author(1),
             30_023,
@@ -671,8 +657,7 @@ mod tests {
         save(&tx, &subject, &[author(3)], 900).unwrap();
         assert_eq!(cached(), Some(500));
 
-        // One that arrives out of order lowers it, so the cache and the rows it
-        // came from cannot part company.
+        // One that arrives out of order lowers it, so cache and rows cannot part company.
         save(&tx, &subject, &[author(4)], 200).unwrap();
         assert_eq!(cached(), Some(200));
 

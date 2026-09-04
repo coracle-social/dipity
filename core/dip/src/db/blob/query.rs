@@ -92,8 +92,7 @@ pub fn list_for_events(tx: &Tx<'_>, event_ids: &[EventId]) -> Result<HashMap<Eve
          ORDER BY b.sha256 ASC"
     ))?;
 
-    // Ordered by hash across the whole set, so each event's blobs come out in
-    // the order `list_for_event` gives them.
+    // Ordered by hash, so each event's blobs arrive in `list_for_event` order.
     let mut blobs: HashMap<EventId, Vec<Blob>> = HashMap::new();
 
     for (event_id, blob) in prepared

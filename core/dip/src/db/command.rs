@@ -106,11 +106,7 @@ pub fn receive_signature(
             sig: *sig,
         };
 
-        // A row here is the forwarding capability itself — it is what puts the
-        // event in the `Forwardable` register and what an authorship proof is
-        // later built from. Verifying at the write means the capability cannot
-        // be minted by a caller that forgot to check, whatever path it came in
-        // on.
+        // A row here is the forwarding capability itself, so it is verified at the write.
         if !signature.verifies() {
             return Ok(false);
         }
@@ -179,9 +175,7 @@ pub fn evict_originals(db: &Db, ceiling_bytes: i64) -> Result<Vec<BlobHash>> {
     })
 }
 
-// ============================================================================
-// Private helper functions
-// ============================================================================
+// --------------------------------------------------- Private helper functions
 
 /// Record the media an event references using imeta, each tag in the role it
 /// claims for itself.
@@ -225,8 +219,7 @@ mod tests {
 
         assert!(receive_event(&db, &event, &[peer()], 10).unwrap());
 
-        // The preview leads even though it sorts second by hash, which is the
-        // precedence `docs/sync.md` gives it.
+        // The preview leads even though it sorts second by hash. `docs/sync.md`.
         let wanted = db.read(|tx| blob_query::wanted(tx, 10)).unwrap();
         let list: Vec<_> = wanted
             .iter()

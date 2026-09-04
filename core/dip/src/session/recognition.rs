@@ -114,9 +114,7 @@ pub fn select(secrets: &[(PublicKey, [u8; 32])], handshake_hash: &[u8; 32]) -> R
         tags.push(padding);
     }
 
-    // Shuffled so a peer that finds its own tag learns nothing from where it
-    // sat: in secret order the padding trails the real tags, and the index
-    // would give the pairing count away.
+    // Shuffled so a peer finding its own tag learns nothing from where it sat.
     shuffle(&mut tags)?;
 
     Ok(Tags(tags))
@@ -201,9 +199,7 @@ mod tests {
 
     #[test]
     fn every_pubkey_a_shared_secret_is_stored_against_resolves() {
-        // What pairing writes for a peer that authenticated as two identities:
-        // one secret, stored twice. Both have to come back, or a block on
-        // either is a block the gate never sees.
+        // What pairing writes for a peer that authenticated as two identities: one secret, twice.
         let shared = secret(3);
         let secrets = [(author(2), shared), (author(3), shared)];
         let their_tags = Tags(vec![tag(&shared, &[9; 32])]);
@@ -244,8 +240,7 @@ mod tests {
 
         let sent = select(&held, &[9; 32]).unwrap();
 
-        // Every tag is one it actually holds — no padding, since there is no
-        // room for any — and the sample differs from one session to the next.
+        // Every tag is one it holds — no room for padding — and the sample differs each session.
         assert!(sent.0.iter().all(|tag| real.contains(tag)));
         assert_ne!(sent, select(&held, &[9; 32]).unwrap());
     }

@@ -25,9 +25,7 @@ use crate::db::pref::query as pref;
 use crate::db::recipient_signature::query as signature;
 use crate::model::{Blob, BlobHash, BlobRole, Policy, Pref, Provenance, Query, RecipientSignature};
 
-// ============================================================================
-// Policy and preferences
-// ============================================================================
+// ----------------------------------------------------- Policy and preferences
 
 /// Every preference, for the settings screen.
 pub fn preferences(db: &Db) -> Result<Vec<Pref>> {
@@ -44,9 +42,7 @@ pub fn policy(db: &Db, identity: &PublicKey) -> Result<Policy> {
     db.read(|tx| pref::policy(tx, identity))
 }
 
-// ============================================================================
-// Pairing
-// ============================================================================
+// -------------------------------------------------------------------- Pairing
 
 /// Every pair secret this device holds, for trial-MACing a peer's recognition
 /// tags.
@@ -59,9 +55,7 @@ pub fn disclosures_since(db: &Db, cutoff: i64) -> Result<u32> {
     db.read(|tx| pairing::disclosures_since(tx, cutoff))
 }
 
-// ============================================================================
-// Events
-// ============================================================================
+// --------------------------------------------------------------------- Events
 
 /// An event, and what the store knows about it that the event does not carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,9 +130,7 @@ pub fn with_details(db: &Db, events: Vec<HashedEvent>) -> Result<Vec<EventDetail
     })
 }
 
-// ============================================================================
-// Blobs
-// ============================================================================
+// ---------------------------------------------------------------------- Blobs
 
 /// Blobs a stored event references and this device does not hold, previews first.
 pub fn wanted_blobs(db: &Db, limit: usize) -> Result<Vec<Blob>> {

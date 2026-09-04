@@ -256,8 +256,7 @@ mod tests {
         let stored = query::get(&tx, &blob_hash(1)).unwrap().unwrap();
 
         assert_eq!(stored, blob);
-        // A key with no column of its own is still readable, which is the point
-        // of keeping the tag rather than only what was parsed out of it.
+        // A key with no column of its own is still readable off the kept tag.
         assert_eq!(stored.imeta_value("service"), Some("nostr.build"));
     }
 

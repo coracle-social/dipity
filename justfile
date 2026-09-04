@@ -146,6 +146,10 @@ lint:
 format:
     pnpm exec prettier --check .
 
+# The one-line comment rule in AGENTS.md, over both halves.
+comments:
+    node scripts/comments.js
+
 # Format both halves in place.
 fmt:
     pnpm exec prettier --write .
@@ -153,7 +157,7 @@ fmt:
     cd {{core}} && cargo fmt
 
 # Everything a change has to pass. CI runs one step per recipe listed here.
-qa: check lint format core-fmt core-lint core-test
+qa: check lint format comments core-fmt core-lint core-test
 
 # --------------------------------------------------------------------- cleanup
 

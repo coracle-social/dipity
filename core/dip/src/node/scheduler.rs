@@ -118,8 +118,7 @@ impl Scheduler {
             return None;
         }
 
-        // Strongest first: the first candidate past the floor and not under a
-        // backoff is dialed, and the rest stay queued for a later tick.
+        // Strongest first: the first candidate past the floor and off backoff is dialed.
         for index in 0..self.candidates.len() {
             let (peripheral, rssi) = self.candidates[index].clone();
 
@@ -135,9 +134,7 @@ impl Scheduler {
             if admissible {
                 self.candidates.remove(index);
                 self.last_attempt = Some(now);
-                // A dial that gets no answer shows up again as an
-                // advertisement before this lapses; a dial that connects
-                // supersedes it with the walked-away or declined tier.
+                // No answer re-advertises before this lapses; a connect supersedes it.
                 self.backoff.insert(
                     peripheral.clone(),
                     Backoff {
