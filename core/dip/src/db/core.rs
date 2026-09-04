@@ -273,28 +273,46 @@ mod tests {
     fn migrations_create_every_table() {
         let connection = in_memory().unwrap();
 
-        let mut names: Vec<String> = connection
-            .prepare("SELECT name FROM sqlite_master WHERE type IN ('table', 'view')")
+        let objects: Vec<(String, String)> = connection
+            .prepare("SELECT name, sql FROM sqlite_master WHERE type IN ('table', 'view')")
             .unwrap()
-            .query_map([], |row| row.get(0))
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .unwrap()
             .collect::<rusqlite::Result<_>>()
             .unwrap();
 
-        names.sort();
-        names.dedup();
+        let shadowed: Vec<&str> = objects
+            .iter()
+            .filter(|(_, sql)| sql.starts_with("CREATE VIRTUAL TABLE"))
+            .map(|(name, _)| name.as_str())
+            .collect();
 
-        for table in [
-            "event",
-            "event_tag",
-            "event_fts",
-            "event_seen",
-            "recipient_signature",
-            "pref",
-            "blob",
-        ] {
-            assert!(names.contains(&table.to_string()), "missing table {table}");
-        }
+        let mut names: Vec<&str> = objects
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .filter(|name| {
+                !shadowed
+                    .iter()
+                    .any(|owner| name.starts_with(&format!("{owner}_")))
+            })
+            .collect();
+
+        names.sort();
+
+        assert_eq!(
+            names,
+            [
+                "blob",
+                "disclosure",
+                "event",
+                "event_fts",
+                "event_seen",
+                "event_tag",
+                "pair_secret",
+                "pref",
+                "recipient_signature",
+            ]
+        );
     }
 
     #[test]
