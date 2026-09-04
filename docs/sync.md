@@ -61,17 +61,17 @@ The ceiling is the one that has to hold, because the per-peer budget below it do
 
 ## Blob sync
 
-Blobs follow, on their own channel. They are addressed by the SHA-256 in the event's `imeta` tag and verified against the BLAKE3 root also included in the `imeta` tag ([`nips/imeta-blake3.md`](./nips/imeta-blake3.md)). Content addressing makes transfers resumable, dedupable across peers, and verifiable chunk by chunk as they arrive.
+Blobs follow, on their own channel. They are addressed by the SHA-256 in the event's `imeta` tag, and content addressing makes them dedupable across peers. The same tag carries a BLAKE3 root ([`nips/imeta-blake3.md`](./nips/imeta-blake3.md)), which is what makes a transfer resumable and verifiable chunk by chunk — neither of which is built, and nothing writes or reads the root yet ([#21](https://gitea.coracle.social/coracle/dip/issues/21)).
 
-The want list is every hash a stored event references and the device does not hold. There is no per-blob decision: [Accept](./policy.md#accept-and-gossip) gates ingest against the author of each inbound event, so a stored event has already passed the scope check and its blobs are in scope for the same reason its text is. Previews take precedence over originals, and within a role a partly-fetched blob takes precedence over one not yet started, so the bytes already on disk are the first to be finished.
+The want list is every hash a stored event references and the device does not hold. There is no per-blob decision: [Accept](./policy.md#accept-and-gossip) gates ingest against the author of each inbound event, so a stored event has already passed the scope check and its blobs are in scope for the same reason its text is. Previews take precedence over originals, and within a role a partly-fetched blob takes precedence over one not yet started, so the most nearly complete transfer is the first to be finished. Until a transfer can resume, the bytes it left on disk are deleted and fetched again, so that ordering buys nothing yet.
 
-Each chunk verifies against the BLAKE3 root as it arrives, so a bad chunk costs one chunk and names the peer that sent it. A forwarder cannot alter the root: it rides in `imeta`, and the event id commits to it.
+Each chunk verifies against the BLAKE3 root as it arrives, so a bad chunk costs one chunk and names the peer that sent it. A forwarder cannot alter the root: it rides in `imeta`, and the event id commits to it. Until that lands verification is whole-file against the `x` SHA-256: a bad byte anywhere costs the whole transfer, and a transfer that drops restarts rather than resuming.
 
 Blob sync is only started above an RSSI and battery threshold. On a weak link a 32 KB blob can take 30 seconds and starve other traffic. It also yields to control traffic, so the heartbeat survives a large transfer, runs on its own channel so it cannot block event sync, and moves to the L2CAP channel wherever one opens.
 
-To detect the presence of a blob, we first run `HEAD /<sha256>`. This also gives us the content type, and length. If only part of the blob is held, content-range should describe the range available (groups are fetched in order).
+To detect the presence of a blob, we first run `HEAD /<sha256>`. This also gives us the content type, and length. If only part of the blob is held, content-range should describe the range available (groups are fetched in order). The serving half answers that way already; the fetching half declines a peer that holds only a prefix, since a prefix can be neither verified nor resumed.
 
-We then request each group individually using `GET /<sha256>` with `accept-ranges` and `content-length` headers describing a [Bao](https://github.com/oconnor663/bao) slice over that run of groups.
+We then request each group individually using `GET /<sha256>` with `accept-ranges` and `content-length` headers describing a [Bao](https://github.com/oconnor663/bao) slice over that run of groups. Today the request is a plain byte `range` and the answer is the bytes alone.
 
 Each exchange then travels as the two BLOSSOM verbs of [the additions](#the-additions).
 
