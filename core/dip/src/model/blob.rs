@@ -99,7 +99,8 @@ impl<'de> Deserialize<'de> for BlobHash {
     }
 }
 
-/// Whether a blob is the small version or the full one.
+/// Whether a blob is the small version or the full one. An event tells them
+/// apart with the `preview-of` of `docs/nips/imeta-preview.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BlobRole {
     /// A downscaled stand-in, cheap enough to move over BLE unconditionally.
@@ -196,10 +197,20 @@ impl Blob {
     /// `None` when the tag carries no `x` or one that is not a hash, since a
     /// blob that cannot be addressed cannot be fetched or verified either —
     /// and this is the boundary a peer's bytes are checked at.
+    ///
+    /// The role is the tag's own: a `preview-of` naming the original it stands
+    /// in for makes it a preview, and anything else is the file as published.
+    /// A `preview-of` that is not a hash names no original, so it is read as
+    /// the original it claims not to be — the direction that grants nothing.
     #[must_use]
-    pub fn from_imeta(tag: &Tag, event_id: EventId, role: BlobRole) -> Option<Self> {
+    pub fn from_imeta(tag: &Tag, event_id: EventId) -> Option<Self> {
         let imeta = tag.values().to_vec();
         let entries = || imeta.iter().filter_map(|entry| split_entry(entry));
+        let role = entries()
+            .find_map(|(key, value)| {
+                (key == "preview-of" && BlobHash::parse(value).is_ok()).then_some(BlobRole::Preview)
+            })
+            .unwrap_or(BlobRole::Original);
 
         // The first `x` wins, so a second one cannot redirect the blob.
         let sha256 = entries().find_map(|(key, value)| (key == "x").then_some(value))?;
@@ -268,7 +279,6 @@ mod tests {
                 "unknown whatever",
             ]),
             EventId::new([1u8; 32]),
-            BlobRole::Original,
         )
         .unwrap();
 
@@ -291,13 +301,42 @@ mod tests {
     }
 
     #[test]
+    fn a_tag_naming_the_original_it_stands_in_for_is_a_preview() {
+        let id = EventId::new([1u8; 32]);
+        let role = |values: &[&str]| Blob::from_imeta(&tag(values), id).unwrap().role;
+
+        assert_eq!(
+            role(&[
+                &format!("x {}", hash(2)),
+                &format!("preview-of {}", hash(1))
+            ]),
+            BlobRole::Preview
+        );
+        assert_eq!(role(&[&format!("x {}", hash(2))]), BlobRole::Original);
+
+        // A preview outranks an original on the want list and is never evicted,
+        // so a marker naming no original it could stand in for buys neither.
+        for malformed in [
+            "preview-of",
+            "preview-of ",
+            "preview-of yes",
+            "preview-of ab",
+        ] {
+            assert_eq!(
+                role(&[&format!("x {}", hash(2)), malformed]),
+                BlobRole::Original,
+                "{malformed:?} was read as a preview"
+            );
+        }
+    }
+
+    #[test]
     fn a_blob_survives_a_json_round_trip() {
         // The event id is a type now, and it serializes as the hex the column
         // holds, so a Blob is still a plain JSON object.
         let blob = Blob::from_imeta(
             &tag(&[&format!("x {}", hash(3)), "m image/jpeg", "size 2048"]),
             EventId::new([1u8; 32]),
-            BlobRole::Original,
         )
         .unwrap();
 
@@ -333,7 +372,7 @@ mod tests {
             vec!["x zz"],
         ] {
             assert!(
-                Blob::from_imeta(&tag(&values), id, BlobRole::Original).is_none(),
+                Blob::from_imeta(&tag(&values), id).is_none(),
                 "{values:?} became a blob"
             );
         }
@@ -344,12 +383,8 @@ mod tests {
         // SQLite compares TEXT byte for byte, so an uppercase hash stored as it
         // arrived is a row that its own hash cannot read back.
         let upper = hash(0xab).to_uppercase();
-        let blob = Blob::from_imeta(
-            &tag(&[&format!("x {upper}")]),
-            EventId::new([1u8; 32]),
-            BlobRole::Original,
-        )
-        .unwrap();
+        let blob =
+            Blob::from_imeta(&tag(&[&format!("x {upper}")]), EventId::new([1u8; 32])).unwrap();
 
         assert_eq!(blob.sha256.as_str(), hash(0xab));
     }

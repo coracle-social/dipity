@@ -75,7 +75,7 @@ We then request each group individually using `GET /<sha256>` with `accept-range
 
 Each exchange then travels as the two BLOSSOM verbs of [the additions](#the-additions).
 
-When an event references a blob, we save a record to the `blob` table which maps the sha256 to the blob's metadata - including everything in the `imeta` tag, as well as the id of the event the blob was first referred to (by `seen_at`, not `created_at`), and whether the blob is a `preview` or an `original`. Blobs inherit the permissions of this event.
+When an event references a blob, we save a record to the `blob` table which maps the sha256 to the blob's metadata - including everything in the `imeta` tag, as well as the id of the event the blob was first referred to (by `seen_at`, not `created_at`), and whether the blob is a `preview` or an `original`. A tag is a `preview` when it names the original it stands in for ([`nips/imeta-preview.md`](./nips/imeta-preview.md)); anything else is an `original`, so a marker that names no blob buys nothing the roles below hand out. Blobs inherit the permissions of this event.
 
 That anchor is also the blob's lifetime: the record goes when the event does, and the bytes go with the record ([`storage.md`](./storage.md#blob-store)). Only the anchoring event is recorded, so a hash a second event also references is dropped along with the first. The second is left with an `imeta` tag pointing at a blob this device no longer holds and will not ask for again, since the want list is built from the table and only a newly stored event writes to it.
 

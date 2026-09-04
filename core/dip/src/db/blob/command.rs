@@ -239,7 +239,7 @@ mod tests {
                 "service nostr.build".into(),
             ],
         );
-        let blob = Blob::from_imeta(&tag, event_id, BlobRole::Original).unwrap();
+        let blob = Blob::from_imeta(&tag, event_id).unwrap();
 
         record(&tx, &blob).unwrap();
 

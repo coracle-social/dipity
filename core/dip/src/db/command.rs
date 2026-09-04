@@ -191,13 +191,63 @@ pub fn evict_originals(db: &Db, ceiling_bytes: i64) -> Result<Vec<BlobHash>> {
 // Private helper functions
 // ============================================================================
 
-/// Record the media an event references using imeta.
+/// Record the media an event references using imeta, each tag in the role it
+/// claims for itself.
 fn record_media(tx: &Tx<'_>, event: &HashedEvent, id: EventId) -> Result<()> {
     for tag in event.tags.find_all("imeta") {
-        if let Some(media) = Blob::from_imeta(tag, id, BlobRole::Original) {
+        if let Some(media) = Blob::from_imeta(tag, id) {
             blob::record(tx, &media)?;
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use coracle_lib::tags::Tags;
+
+    use crate::fixtures::{author, blob_hash, note, peer};
+
+    #[test]
+    fn an_events_media_is_recorded_in_the_role_each_tag_claims() {
+        let db = Db::open_in_memory().unwrap();
+        let original = blob_hash(1);
+        let preview = blob_hash(2);
+        let event = note(
+            author(1),
+            100,
+            "hello neighbor",
+            Tags::new()
+                .add("imeta", [format!("x {original}"), "m image/jpeg".into()])
+                .add(
+                    "imeta",
+                    [
+                        format!("x {preview}"),
+                        format!("preview-of {original}"),
+                        "m image/jpeg".into(),
+                    ],
+                ),
+        );
+
+        assert!(receive_event(&db, &event, &[peer()], 10).unwrap());
+
+        // The preview leads even though it sorts second by hash, which is the
+        // precedence `docs/sync.md` gives it.
+        let wanted = db.read(|tx| blob_query::wanted(tx, 10)).unwrap();
+        let list: Vec<_> = wanted
+            .iter()
+            .map(|blob| (&blob.sha256, blob.role))
+            .collect();
+
+        assert_eq!(
+            list,
+            [
+                (&preview, BlobRole::Preview),
+                (&original, BlobRole::Original)
+            ]
+        );
+        assert_eq!(wanted[0].imeta_value("preview-of"), Some(original.as_str()));
+    }
 }
