@@ -192,6 +192,13 @@ fn negotiate(
     Ok(vec![Message::NegMsg(subscription.clone(), reply.encode())])
 }
 
+/// The filter as it is served: a page at most, whatever the peer asked for.
+fn paged(filter: &Filter) -> Filter {
+    let limit = filter.limit.map_or(PAGE_SIZE, |limit| limit.min(PAGE_SIZE));
+
+    filter.clone().add_limit(limit)
+}
+
 /// Serve one subscription, paginated in reverse chronological order with
 /// dynamic since/until windows.
 ///
@@ -209,9 +216,7 @@ pub fn serve(
     let mut events = Vec::new();
 
     for filter in filters {
-        // A filter with a limit serves that many; without it, one page.
-        let filter = filter.clone();
-        let mut serves = db_query::list_events(db, &query_for(peer, &local, filter.clone()))?;
+        let mut serves = db_query::list_events(db, &query_for(peer, &local, paged(filter)))?;
         events.append(&mut serves);
     }
 
@@ -775,5 +780,51 @@ mod tests {
             }
             _ => panic!("expected the terminating REQ"),
         }
+    }
+
+    #[test]
+    fn a_req_with_no_limit_asks_the_store_for_one_page() {
+        assert_eq!(paged(&Filter::new()).limit, Some(PAGE_SIZE));
+    }
+
+    #[test]
+    fn a_peers_limit_is_honoured_but_never_above_a_page() {
+        assert_eq!(paged(&Filter::new().add_limit(3)).limit, Some(3));
+        assert_eq!(
+            paged(&Filter::new().add_limit(PAGE_SIZE * 2)).limit,
+            Some(PAGE_SIZE)
+        );
+    }
+
+    #[test]
+    fn a_req_serves_no_more_than_the_limit_it_carries() {
+        let db = Db::open_in_memory().unwrap();
+        let newest = given(&db, author(1), 300, "three");
+        given(&db, author(1), 200, "two");
+        given(&db, author(1), 100, "one");
+
+        let replies = Relay::default()
+            .handle(
+                &db,
+                &peer(),
+                &secret(1),
+                Message::Req(
+                    SubscriptionId("sub".into()),
+                    vec![Filter::new().add_kinds([1]).add_limit(1)],
+                ),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
+
+        let served: Vec<_> = replies
+            .iter()
+            .filter_map(|message| match message {
+                Message::Event(_, event) => Some(event.id),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(served, vec![newest.id]);
     }
 }
