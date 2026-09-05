@@ -497,6 +497,7 @@ name = "dip-ffi"
 version = "0.0.0"
 dependencies = [
  "dip",
+ "log",
  "uniffi",
 ]
 

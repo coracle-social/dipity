@@ -6,6 +6,8 @@
 //!
 //! Scaffolding only — one call, enough to prove bindings generate and link.
 
+pub mod logging;
+
 uniffi::setup_scaffolding!();
 
 /// The core's version. Used by the plugin to check it loaded the library it

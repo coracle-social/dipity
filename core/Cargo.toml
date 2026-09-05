@@ -47,8 +47,9 @@ hmac = "0.12"
 getrandom = "0.2"
 # Wire encoding for bodies inside a NIP-01 JSON array, which can hold binary.
 base64 = "0.22"
-# The logging facade only. Inert until a shell installs a logger, which is what
-# routes it to os_log or logcat; nothing in the core picks one.
+# The logging facade only. Inert until a shell installs a logger; `dip-ffi`s
+# `logging` module is the hook it does that through, and the shell is what
+# routes a record to os_log or logcat. Nothing in the core picks one.
 log = "0.4"
 
 # The store. Bundled amalgamation so both platforms run one pinned SQLite
