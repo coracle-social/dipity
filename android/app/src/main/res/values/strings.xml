@@ -4,4 +4,7 @@
     <string name="title_activity_main">Dip</string>
     <string name="package_name">social.coracle.dip</string>
     <string name="custom_url_scheme">social.coracle.dip</string>
+    <string name="encounter_channel">Encounters</string>
+    <string name="encounter_title">Dip is listening</string>
+    <string name="encounter_text">Meeting people nearby over Bluetooth.</string>
 </resources>
