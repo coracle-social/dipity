@@ -37,11 +37,12 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use coracle_lib::events::HashedEvent;
 use coracle_lib::filters::Filter;
-use coracle_lib::keys::{PublicKey, SecretKey};
+use coracle_lib::keys::PublicKey;
 
 use crate::blobs::BlobStore;
 use crate::clock;
 use crate::db::Db;
+use crate::keys::KeyCustody;
 use crate::link::{LinkId, Role};
 use crate::model::{Identity, Policy, Standing};
 use crate::sync::blob::BlobExchange;
@@ -177,8 +178,12 @@ pub struct Session {
     auth: AuthExchange,
     /// The user's policy, shared with every other live session.
     policy: Arc<Policy>,
-    /// This device's identity key, for signing AUTH responses.
-    identity: SecretKey,
+    /// Where this device's identity key is read from, for signing AUTH
+    /// responses and for moving the identity to another device.
+    custody: Arc<dyn KeyCustody>,
+    /// The pubkey that key names, derived once so the session can say who
+    /// it is acting as without reading the key back out.
+    identity: PublicKey,
     /// The proved pubkeys bound under policy, once the peer has proved any.
     pub peer: Option<Peer>,
     /// The relay half: what this device serves, and the subscriptions it
@@ -205,7 +210,7 @@ impl Session {
         role: Role,
         mtu: usize,
         policy: Arc<Policy>,
-        identity: SecretKey,
+        custody: Arc<dyn KeyCustody>,
         blobs: Arc<dyn BlobStore>,
         spending: Arc<SpendingLedger>,
     ) -> Result<Self> {
@@ -220,7 +225,8 @@ impl Session {
             gate: Gate::default(),
             auth: AuthExchange::default(),
             policy,
-            identity,
+            identity: custody.identity()?.public_key(),
+            custody,
             peer: None,
             relay: Relay::default(),
             client: Client::default(),
@@ -398,7 +404,7 @@ impl Session {
     /// The identity this device is acting as on this link.
     #[must_use]
     fn local(&self) -> Identity {
-        Identity::from([self.identity.public_key()])
+        Identity::from([self.identity])
     }
 
     /// The peer's quota for this session.
@@ -437,7 +443,7 @@ impl Session {
             self.relay.handle(
                 db,
                 &peer,
-                &self.identity,
+                &self.custody.identity()?,
                 message,
                 quota,
                 &mut self.spending,
@@ -658,7 +664,7 @@ impl Session {
     /// The user answered the prompt, which on both devices is the same
     /// question: does the other one show this number.
     pub fn answer_transfer(&mut self, confirmed: bool) -> Result<()> {
-        let step = self.transfer.answer(confirmed, &self.identity)?;
+        let step = self.transfer.answer(confirmed, &self.custody.identity()?)?;
 
         self.send_transfer(step)
     }
@@ -676,7 +682,9 @@ impl Session {
     /// One step of an identity transfer, off the control channel.
     fn on_transfer(&mut self, payload: &[u8]) -> Result<()> {
         let attended = self.may_transfer();
-        let step = self.transfer.receive(payload, &self.identity, attended)?;
+        let step = self
+            .transfer
+            .receive(payload, &self.custody.identity()?, attended)?;
 
         self.send_transfer(step)
     }
@@ -729,7 +737,7 @@ impl Session {
             relay::attach(
                 db,
                 &peer,
-                &self.identity,
+                &self.custody.identity()?,
                 &subscription,
                 event,
                 &mut messages,
@@ -997,7 +1005,7 @@ impl Session {
             .remote_static
             .ok_or_else(|| anyhow::anyhow!("the handshake has not completed"))?;
 
-        match self.auth.answer(&self.identity, remote)? {
+        match self.auth.answer(&self.custody.identity()?, remote)? {
             Some(event) => {
                 let message = Message::AuthResponse(Box::new(event));
 
@@ -1079,7 +1087,9 @@ mod tests {
     use gate::Presence;
 
     use crate::db::query as db_query;
-    use crate::fixtures::{author, note, secret};
+    use coracle_lib::keys::SecretKey;
+
+    use crate::fixtures::{author, custody, note, secret};
     use crate::model::Query;
     use coracle_lib::tags::Tags as NostrTags;
 
@@ -1105,7 +1115,7 @@ mod tests {
             Role::Dialer,
             64,
             Arc::new(policy),
-            identity(),
+            custody(identity()),
             blobs(),
             spending(),
         )
@@ -1129,7 +1139,7 @@ mod tests {
             Role::Receiver,
             64,
             Arc::new(Policy::new(author(2))),
-            secret(2),
+            custody(secret(2)),
             blobs(),
             spending(),
         )
@@ -1610,7 +1620,7 @@ mod tests {
             Role::Dialer,
             4096,
             Arc::new(policy()),
-            secret(1),
+            custody(secret(1)),
             blobs(),
             spending(),
         )
@@ -1620,7 +1630,7 @@ mod tests {
             Role::Receiver,
             4096,
             Arc::new(policy()),
-            secret(2),
+            custody(secret(2)),
             blobs(),
             spending(),
         )
@@ -1698,7 +1708,7 @@ mod tests {
             role,
             mtu,
             Arc::new(policy()),
-            secret(key),
+            custody(secret(key)),
             blobs(),
             spending(),
         )

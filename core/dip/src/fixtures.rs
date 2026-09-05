@@ -7,16 +7,23 @@
 //! reproducible and two seeds never collide.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use coracle_lib::events::{EventContent, EventId, HashedEvent};
 use coracle_lib::keys::{PublicKey, SecretKey};
 use coracle_lib::tags::Tags;
 
+use crate::keys::KeyCustody;
 use crate::node::{Action, Node};
 
 /// The key for a seed. Every seed below 255 is a valid scalar.
 pub(crate) fn secret(seed: u8) -> SecretKey {
     SecretKey::from_hex(&hex::encode([seed; 32])).expect("seed is a valid secret key")
+}
+
+/// A key in hand, as the custody a node or a session takes.
+pub(crate) fn custody(key: SecretKey) -> Arc<dyn KeyCustody> {
+    Arc::new(key)
 }
 
 /// The pubkey for a seed.

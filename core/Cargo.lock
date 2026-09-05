@@ -496,9 +496,13 @@ dependencies = [
 name = "dip-ffi"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
+ "coracle-lib",
  "dip",
+ "hex",
  "log",
  "uniffi",
+ "zeroize",
 ]
 
 [[package]]

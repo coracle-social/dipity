@@ -36,7 +36,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use coracle_lib::events::HashedEvent;
-use coracle_lib::keys::SecretKey;
+use coracle_lib::keys::{PublicKey, SecretKey};
 use tokio::sync::broadcast::{self, error::TryRecvError};
 
 use crate::backup;
@@ -47,6 +47,7 @@ use crate::db::blob::channel::BlobChange;
 use crate::db::command as db_command;
 use crate::db::event::channel::{self, EventChange};
 use crate::db::{Db, query};
+use crate::keys::KeyCustody;
 use crate::link::{LinkId, PeripheralId, Role};
 use crate::model::{Blob, BlobHash, Policy};
 use crate::session::gate::Presence;
@@ -124,8 +125,10 @@ pub enum Action {
 pub struct Node {
     /// The store
     db: Arc<Db>,
-    /// The nostr identity
-    identity: SecretKey,
+    /// Where the nostr identity is read from, one use at a time
+    custody: Arc<dyn KeyCustody>,
+    /// The pubkey that identity names, derived once at open
+    identity: PublicKey,
     /// The user's policy
     policy: Arc<Policy>,
     /// Where blob bytes go, provided by the shell.
@@ -159,15 +162,22 @@ pub struct Node {
 }
 
 impl Node {
-    /// Build a node over a store the shell has opened and a key it has read out
-    /// of the Keychain or Keystore, with the blob store of the shell's choosing.
-    pub fn new(db: Arc<Db>, identity: SecretKey, blobs: Arc<dyn BlobStore>) -> Result<Self> {
-        let policy = Arc::new(query::policy(&db, &identity.public_key())?);
+    /// Build a node over a store the shell has opened and the Keychain or
+    /// Keystore the identity key is read out of, with the blob store of the
+    /// shell's choosing.
+    pub fn new(
+        db: Arc<Db>,
+        custody: Arc<dyn KeyCustody>,
+        blobs: Arc<dyn BlobStore>,
+    ) -> Result<Self> {
+        let identity = custody.identity()?.public_key();
+        let policy = Arc::new(query::policy(&db, &identity)?);
 
         let mut node = Self {
             events: channel::subscribe(&db),
             blob_changes: blob_channel::subscribe(&db),
             db,
+            custody,
             identity,
             policy,
             blobs,
@@ -195,17 +205,20 @@ impl Node {
     /// Build a node with the file-backed blob store, under the same directory
     /// the shell already tells the core to open the database in. Blobs live in
     /// `directory/blobs`, one file per hash.
-    pub fn open(db: Arc<Db>, identity: SecretKey, directory: impl AsRef<Path>) -> Result<Self> {
+    pub fn open(
+        db: Arc<Db>,
+        custody: Arc<dyn KeyCustody>,
+        directory: impl AsRef<Path>,
+    ) -> Result<Self> {
         let blobs = Arc::new(FileBlobStore::open(directory.as_ref().join("blobs"))?);
 
-        Self::new(db, identity, blobs)
+        Self::new(db, custody, blobs)
     }
 
-    /// This device's pubkey. A method, not a field, because the field is the
-    /// secret key and it never leaves the node.
+    /// This device's pubkey, which is all of the identity the node keeps.
     #[must_use]
-    pub fn identity(&self) -> coracle_lib::keys::PublicKey {
-        self.identity.public_key()
+    pub fn identity(&self) -> PublicKey {
+        self.identity
     }
 
     // --------------------------------------- Radio events, all from the shell
@@ -243,7 +256,7 @@ impl Node {
             role,
             mtu,
             Arc::clone(&self.policy),
-            self.identity.clone(),
+            Arc::clone(&self.custody),
             Arc::clone(&self.blobs),
             Arc::clone(&self.spending),
         )?;
@@ -527,7 +540,7 @@ impl Node {
     /// session that cached a policy would keep serving a peer the user has just
     /// blocked. A session whose peer the new policy blocks closes here.
     pub fn policy_changed(&mut self) -> Result<Vec<Action>> {
-        self.policy = Arc::new(query::policy(&self.db, &self.identity.public_key())?);
+        self.policy = Arc::new(query::policy(&self.db, &self.identity)?);
 
         for session in self.sessions.values_mut() {
             session.set_policy(Arc::clone(&self.policy));
@@ -538,7 +551,7 @@ impl Node {
 
     /// Store an event the user wrote and the media it attaches, then offer both.
     pub fn publish(&mut self, event: &HashedEvent, media: &[&[u8]]) -> Result<Vec<Action>> {
-        db_command::publish_event(&self.db, event, &self.identity.public_key(), clock::now())?;
+        db_command::publish_event(&self.db, event, &self.identity, clock::now())?;
         self.store_own_media(event, media)?;
 
         Ok(self.collect())
@@ -557,7 +570,7 @@ impl Node {
         password: Option<&str>,
     ) -> Result<Vec<Action>> {
         // A retry writes over the last attempt's file, so only the newest is ever on disk.
-        let path = backup::write(&self.identity, cache.as_ref(), password)?;
+        let path = backup::write(&self.custody.identity()?, cache.as_ref(), password)?;
 
         self.key_backup = Some(path.clone());
 
@@ -725,7 +738,7 @@ impl Node {
     /// authored by this device travel this way; everything else waits for the
     /// next reconciliation, where the registers are checked.
     fn offer_saved_events(&mut self) {
-        let identity = self.identity.public_key();
+        let identity = self.identity;
 
         loop {
             match self.events.try_recv() {
@@ -849,7 +862,7 @@ mod tests {
     use super::*;
     use coracle_lib::tags::Tags;
 
-    use crate::fixtures::{TempDir, author, note, secret, settle};
+    use crate::fixtures::{TempDir, author, custody, note, secret, settle};
     use crate::model::{BlobHash, Policy, Query};
     use crate::session::Session;
     use crate::sync::{Message, SubscriptionId};
@@ -859,7 +872,7 @@ mod tests {
     fn node() -> Node {
         Node::new(
             db(),
-            SecretKey::generate(),
+            custody(SecretKey::generate()),
             Arc::new(crate::blobs::MemoryBlobStore::default()),
         )
         .unwrap()
@@ -883,10 +896,53 @@ mod tests {
         Sha256::digest(bytes).into()
     }
 
+    /// Custody that counts how often the key was asked for.
+    #[derive(Default)]
+    struct Counted {
+        key: Option<SecretKey>,
+        reads: std::sync::atomic::AtomicUsize,
+    }
+
+    impl crate::keys::KeyCustody for Counted {
+        fn identity(&self) -> Result<SecretKey> {
+            self.reads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+            Ok(self.key.clone().unwrap_or_else(SecretKey::generate))
+        }
+    }
+
+    #[test]
+    fn the_key_is_read_out_per_use_rather_than_held_for_the_nodes_life() {
+        let counted = Arc::new(Counted {
+            key: Some(secret(1)),
+            ..Counted::default()
+        });
+        let reads = || counted.reads.load(std::sync::atomic::Ordering::Relaxed);
+
+        let mut node = Node::new(
+            db(),
+            Arc::clone(&counted) as Arc<dyn crate::keys::KeyCustody>,
+            Arc::new(crate::blobs::MemoryBlobStore::default()),
+        )
+        .unwrap();
+
+        // Opening derives the pubkey; work that does not sign reads nothing.
+        assert_eq!(reads(), 1);
+        node.tick();
+        node.policy_changed().unwrap();
+        assert_eq!(reads(), 1);
+
+        // Writing a backup does, because that is the key leaving the device.
+        let cache = TempDir::new("counted");
+        node.export_key(&cache.0, None).unwrap();
+        assert_eq!(reads(), 2);
+    }
+
     #[test]
     fn a_file_backed_node_puts_blobs_in_the_blob_directory() {
         let dir = TempDir::new("node");
-        let node = Node::open(db(), SecretKey::generate(), &dir.0).unwrap();
+        let node = Node::open(db(), custody(SecretKey::generate()), &dir.0).unwrap();
 
         // The store the node hands its sessions is file-backed, under `<directory>/blobs`.
         let bytes = b"the quick brown fox";
@@ -951,7 +1007,7 @@ mod tests {
         let blobs: Arc<dyn BlobStore> = Arc::new(crate::blobs::MemoryBlobStore::default());
         let bytes = b"the quick brown fox";
         let imeta = Node::media_tags(bytes);
-        let mut node = Node::new(Arc::clone(&db), secret(1), Arc::clone(&blobs)).unwrap();
+        let mut node = Node::new(Arc::clone(&db), custody(secret(1)), Arc::clone(&blobs)).unwrap();
 
         node.publish(
             &note(
@@ -964,7 +1020,7 @@ mod tests {
         )
         .unwrap();
 
-        Node::new(db, secret(1), Arc::clone(&blobs)).unwrap();
+        Node::new(db, custody(secret(1)), Arc::clone(&blobs)).unwrap();
 
         assert!(blobs.has(&BlobHash::digest(bytes)).unwrap());
     }
@@ -1001,7 +1057,7 @@ mod tests {
         let mut node = clock::at(1_000, || {
             Node::new(
                 Arc::clone(&db),
-                SecretKey::generate(),
+                custody(SecretKey::generate()),
                 Arc::new(crate::blobs::MemoryBlobStore::default()),
             )
             .unwrap()
@@ -1025,14 +1081,19 @@ mod tests {
         let db = db();
         let blobs = Arc::new(crate::blobs::MemoryBlobStore::default());
 
-        let mut node = Node::new(Arc::clone(&db), SecretKey::generate(), blobs.clone()).unwrap();
+        let mut node = Node::new(
+            Arc::clone(&db),
+            custody(SecretKey::generate()),
+            blobs.clone(),
+        )
+        .unwrap();
         let partial = given_held(&mut node, b"half a transfer");
         let orphan = BlobHash::digest(b"nothing references this");
 
         blobs.append(&orphan, b"nothing references this").unwrap();
 
         drop(node);
-        Node::new(db, SecretKey::generate(), blobs.clone()).unwrap();
+        Node::new(db, custody(SecretKey::generate()), blobs.clone()).unwrap();
 
         assert!(!blobs.has(&orphan).unwrap());
         // A transfer in flight has a record from the moment its event was stored.
@@ -1161,7 +1222,7 @@ mod tests {
         let db = db();
         let mut node = Node::new(
             Arc::clone(&db),
-            secret(1),
+            custody(secret(1)),
             Arc::new(crate::blobs::MemoryBlobStore::default()),
         )
         .unwrap();
@@ -1179,7 +1240,7 @@ mod tests {
         // Node 1 authors, and a peer's session is attached to the same node.
         let mut node = Node::new(
             Arc::clone(&db),
-            secret(1),
+            custody(secret(1)),
             Arc::new(crate::blobs::MemoryBlobStore::default()),
         )
         .unwrap();
@@ -1192,7 +1253,7 @@ mod tests {
             Role::Receiver,
             4096,
             policy,
-            secret(2),
+            custody(secret(2)),
             Arc::new(crate::blobs::MemoryBlobStore::default()),
             spending(),
         )
@@ -1202,7 +1263,7 @@ mod tests {
             Role::Dialer,
             4096,
             Arc::new(Policy::new(author(2))),
-            secret(3),
+            custody(secret(3)),
             Arc::new(crate::blobs::MemoryBlobStore::default()),
             spending(),
         )
@@ -1290,7 +1351,7 @@ mod tests {
                 Role::Receiver,
                 100,
                 policy,
-                SecretKey::generate(),
+                custody(SecretKey::generate()),
                 Arc::new(crate::blobs::MemoryBlobStore::default()),
                 spending(),
             )
@@ -1437,7 +1498,7 @@ mod tests {
         assert!(
             std::fs::read_to_string(path)
                 .unwrap()
-                .contains(&node.identity.to_nsec())
+                .contains(&node.custody.identity().unwrap().to_nsec())
         );
 
         let path = path.clone();
@@ -1481,7 +1542,7 @@ mod tests {
     #[test]
     fn an_identity_transfer_asks_both_users_and_lands_on_the_target() {
         let (mut source, mut target) = attended_pair();
-        let key = source.identity.to_hex();
+        let key = source.custody.identity().unwrap().to_hex();
 
         let offered = source.offer_identity(LinkId(1)).unwrap();
         let shown: Vec<Action> = settle(&mut source, &mut target, offered)

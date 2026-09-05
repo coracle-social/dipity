@@ -69,6 +69,7 @@ pub mod backup;
 pub mod blobs;
 pub mod clock;
 pub mod db;
+pub mod keys;
 pub mod link;
 pub mod model;
 pub mod node;

@@ -35,6 +35,7 @@ Everything below is under `core/dip/src/`. Modules mirror the design documents o
 | `blobs/` | The `BlobStore` trait and its file-backed and in-memory implementations, and `verified`, the Bao proofs a range of a blob travels under | `sync.md` |
 | `backup.rs` | The key backup file: `nsec`/`ncryptsec` encoding and the prose around it, written to the shell's cache directory | `keys.md` |
 | `clock.rs` | `now()`, and `at()` for pinning it in a test | |
+| `keys.rs` | `KeyCustody`, the trait the shell implements over Keychain and Keystore. The identity key is read through it for one use and never held | `keys.md` |
 | `link.rs` | `LinkId`, `PeripheralId`, `Role`, the names the core and the shell share for a link | |
 
 Nostr's own types are `coracle-lib`'s and are never redefined here: events, keys, tags, kinds, addresses, filters, NIP-77 items. `coracle-kinds` supplies a reader and writer per event kind, and `model/kinds.rs` holds only the three lists this app defines. Load the `coracle-rust` skill before reaching for any of them.

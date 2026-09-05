@@ -17,11 +17,20 @@ name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 
 [dependencies]
+anyhow.workspace = true
+# Nostr keys, so the bytes the shell hands over become the type the core signs
+# with rather than staying a byte array.
+coracle-lib.workspace = true
 dip.workspace = true
+# Hex is the one door into a coracle-lib SecretKey, so the bytes the shell reads
+# out of secure storage go through it. See src/keys.rs.
+hex.workspace = true
 # The facade this crate installs a shell-backed logger behind; see src/logging.rs.
 # `std` is what carries `set_boxed_logger`, and is off by default.
 log = { workspace = true, features = ["std"] }
 uniffi = { workspace = true, features = ["cli"] }
+# Wiping the copies this crate makes of what the shell handed over.
+zeroize.workspace = true
 
 [lints]
 workspace = true

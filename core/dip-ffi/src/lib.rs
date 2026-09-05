@@ -6,6 +6,7 @@
 //!
 //! Scaffolding only — one call, enough to prove bindings generate and link.
 
+pub mod keys;
 pub mod logging;
 
 uniffi::setup_scaffolding!();

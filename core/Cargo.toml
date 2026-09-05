@@ -23,6 +23,9 @@ coracle-lib = "0.1"
 # `readers` and `writers`.
 coracle-kinds = "0.1"
 hex = "0.4"
+# Wiping a buffer that held key material, where the type holding it does not
+# already do that on drop.
+zeroize = "1"
 
 # Signing and signature verification, on the audited binding — pinned to the
 # version `coracle-lib` wraps so one libsecp256k1 is linked, not two.
