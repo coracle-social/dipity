@@ -14,6 +14,12 @@ ffi := "dip_ffi"
 # `just clean` both take it and nothing generated is ever committed.
 out := "core/target/ffi"
 
+# Where each shell picks its half up. Both are gitignored: what a native build
+# links against is whatever the last `just sync` compiled, never a committed
+# copy that has drifted from the source it was generated from.
+ios_pkg := "ios/App/DipFFI"
+android_app := "android/app/src/main"
+
 # Simulator slices are arm64 only. Add x86_64-apple-ios here and to the lipo in
 # `ios-lib` if an Intel Mac ever needs to run the simulator.
 ios_device := "aarch64-apple-ios"
@@ -90,7 +96,7 @@ bindings:
 
 # ------------------------------------------------------------- mobile binaries
 
-# Build the iOS XCFramework: device and simulator slices plus the module map.
+# Build the iOS XCFramework and put it in the DipFFI package with its bindings.
 ios-lib: bindings
     cd {{core}} && cargo build -p dip-ffi --release --target {{ios_device}}
     cd {{core}} && cargo build -p dip-ffi --release --target {{ios_sim}}
@@ -104,7 +110,10 @@ ios-lib: bindings
         -library {{core}}/target/{{ios_sim}}/release/lib{{ffi}}.a \
         -headers {{out}}/headers \
         -output {{out}}/DipFFI.xcframework
-    @echo "xcframework → {{out}}/DipFFI.xcframework"
+    rm -rf {{ios_pkg}}/DipFFI.xcframework
+    cp -R {{out}}/DipFFI.xcframework {{ios_pkg}}/
+    cp {{out}}/swift/{{ffi}}.swift {{ios_pkg}}/Sources/DipFFI/
+    @echo "xcframework → {{ios_pkg}}/DipFFI.xcframework"
 
 # Build Android jniLibs for every ABI. Needs the NDK and cargo-ndk — see `setup`.
 android-lib: bindings
@@ -112,15 +121,19 @@ android-lib: bindings
     rm -rf {{out}}/jniLibs
     cd {{core}} && cargo ndk {{ prepend('-t ', android_targets) }} \
         -o target/ffi/jniLibs build -p dip-ffi --release
-    @echo "jniLibs → {{out}}/jniLibs"
+    rm -rf {{android_app}}/jniLibs {{android_app}}/uniffi
+    mkdir -p {{android_app}}
+    cp -R {{out}}/jniLibs {{android_app}}/jniLibs
+    cp -R {{out}}/kotlin/uniffi {{android_app}}/uniffi
+    @echo "jniLibs → {{android_app}}/jniLibs"
 
 # ------------------------------------------------------------------ native app
 
 # Run this rather than `cap sync`: ordering is the whole point, and skipping the
 # first two steps leaves the shells linked against whatever was there before.
 
-# Core, then bindings, then xcframework, then web assets, then Capacitor.
-sync: ios-lib build
+# Core, then bindings, then both shells' libraries, then web assets, then Capacitor.
+sync: ios-lib android-lib build
     pnpm exec cap sync
 
 # Sync, then open Xcode.

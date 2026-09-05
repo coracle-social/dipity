@@ -8,6 +8,7 @@
   import * as Avatar from "$lib/components/ui/avatar"
   import * as Card from "$lib/components/ui/card"
   import * as Tabs from "$lib/components/ui/tabs"
+  import {Dip} from "$lib/core"
 
   // Scaffolding: the token scales from src/app.css, in both themes. See docs/ui.md.
 
@@ -31,6 +32,15 @@
   ]
 
   let nearbyOnly = $state(true)
+
+  // The one call that proves the shell loaded the core this workspace built.
+  let core = $state("no plugin")
+
+  $effect(() => {
+    Dip.coreVersion()
+      .then(({version}) => (core = `core ${version}`))
+      .catch(() => (core = "no plugin"))
+  })
 </script>
 
 <ModeWatcher />
@@ -45,7 +55,7 @@
       </div>
       <div class="min-w-0 flex-1">
         <h1 class="truncate text-base leading-tight font-semibold">Dip</h1>
-        <p class="truncate text-xs text-muted-foreground">Design system reference</p>
+        <p class="truncate text-xs text-muted-foreground">Design system reference · {core}</p>
       </div>
       <Button variant="ghost" size="icon" onclick={toggleMode} aria-label="Toggle color scheme">
         {#if mode.current === "dark"}

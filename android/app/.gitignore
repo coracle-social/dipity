@@ -1,2 +1,6 @@
 /build/*
+
+# Written by `just android-lib` from the compiled core, never committed.
+/src/main/jniLibs/
+/src/main/uniffi/
 !/build/.npmkeep
