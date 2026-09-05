@@ -483,6 +483,23 @@ impl Node {
     }
 }
 
+/// The primary service, which is the whole BLE advertisement.
+///
+/// Read rather than hard-coded in Swift and Kotlin: an iPhone and an Android
+/// phone have to name the same one, and two copies is one place to disagree.
+#[uniffi::export]
+#[must_use]
+pub fn service_uuid() -> String {
+    dip::transport::SERVICE_UUID.to_owned()
+}
+
+/// The one characteristic on that service.
+#[uniffi::export]
+#[must_use]
+pub fn characteristic_uuid() -> String {
+    dip::transport::CHARACTERISTIC_UUID.to_owned()
+}
+
 /// The `imeta` entries an event has to carry for a peer to fetch `bytes` and
 /// check what it gets.
 ///

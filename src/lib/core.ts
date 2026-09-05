@@ -4,8 +4,21 @@
 // no implementation behind it, so `just dev` renders the view and every call
 // here rejects. That is the intended shape — the shells are where a peer, a
 // radio and a key exist.
+//
+// Nothing here names a peer, and nothing here decides anything the core
+// decides. A link is a number the shell assigned; there is no way to reach one
+// except by answering something the core asked.
 
-import {registerPlugin} from "@capacitor/core"
+import {registerPlugin, type PluginListenerHandle} from "@capacitor/core"
+
+/** A question the core put to the user, waiting on an answer. */
+export type Approval = {link: number}
+
+/** The six digits both devices show during a login-with-device. */
+export type TransferPrompt = {link: number; code: number}
+
+/** How an identity transfer ended. */
+export type TransferOutcome = {link: number; received: boolean}
 
 /** The core, as the webview calls it. */
 export type DipCore = {
@@ -33,6 +46,38 @@ export type DipCore = {
 
   /** Forget the identity. Answers whether there was one. */
   deleteIdentity(): Promise<{existed: boolean}>
+
+  /**
+   * Open the store and the node, and start the radio.
+   *
+   * Called once there is an identity, which is what makes first run a screen
+   * rather than a failed open. Everything after this happens on its own.
+   */
+  start(): Promise<{identity: string}>
+
+  /** Store and offer an event, with the media it attaches, base64 each. */
+  publish(options: {event: string; media?: string[]}): Promise<void>
+
+  /** Answer a `requestApproval`. */
+  approve(options: {link: number; approved: boolean}): Promise<void>
+
+  addListener(
+    event: "requestApproval",
+    handler: (approval: Approval) => void,
+  ): Promise<PluginListenerHandle>
+  addListener(
+    event: "confirmIdentityTransfer",
+    handler: (prompt: TransferPrompt) => void,
+  ): Promise<PluginListenerHandle>
+  addListener(
+    event: "identityTransfer",
+    handler: (outcome: TransferOutcome) => void,
+  ): Promise<PluginListenerHandle>
+  addListener(
+    event: "shareKeyBackup",
+    handler: (backup: {path: string}) => void,
+  ): Promise<PluginListenerHandle>
+  addListener(event: "wakeAt", handler: (wake: {at: number}) => void): Promise<PluginListenerHandle>
 }
 
 export const Dip = registerPlugin<DipCore>("Dip")

@@ -7,14 +7,17 @@
 //!
 //! | Module | Holds |
 //! | --- | --- |
+//! | [`gatt`] | The service and characteristic UUIDs, which both platforms share |
 //! | [`frame`] | The codec: channels, fragmentation, reassembly, priority |
 //! | [`noise`] | Noise XX, and the transport state a completed handshake leaves |
 //! | [`wire`] | The two composed: the encrypted pipe a session talks through |
 
 pub mod frame;
+pub mod gatt;
 pub mod noise;
 pub mod wire;
 
 pub use frame::{Channel, Codec, Fragment, Frame, Outbox, Pipe, Secrecy};
+pub use gatt::{CHARACTERISTIC_UUID, SERVICE_UUID};
 pub use noise::Noise;
 pub use wire::Wire;

@@ -8,6 +8,8 @@ One transport: BLE. Discovery, session establishment, sync and blobs all happen 
 
 Dual role: every device runs a GATT peripheral and a GATT central simultaneously. One primary service, one characteristic supporting `notify`, `write`, and `writeWithoutResponse`. Discovery is `scanForPeripherals(withServices:)` against our service UUID — see [`discovery.md`](./discovery.md).
 
+Both UUIDs are random, chosen once, and live in `core/dip/src/transport/gatt.rs` rather than in Swift and Kotlin: an iPhone and an Android phone have to name the same service, and two hard-coded copies is one place to disagree. Changing either is a protocol break — a device on the old one is invisible to a device on the new.
+
 iOS requires both `bluetooth-central` and `bluetooth-peripheral` background modes, plus CoreBluetooth **state restoration** in both roles. Restoration is not optional for an app the system will kill and relaunch; `willRestoreState` is implemented on both managers, following bitchat.
 
 ### Channel security
