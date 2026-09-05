@@ -1,14 +1,18 @@
-//! Events and keys for tests, shared by every model and every table that hangs
-//! off `event`.
+//! Events, keys and a two-node harness for tests, shared by every model and
+//! every table that hangs off `event`.
 //!
 //! Keys are real points on the curve, because `PublicKey` will not hold
 //! anything else, and ids are real hashes, because building an event through
 //! the pipeline computes one. Both are derived from a seed, so a fixture is
 //! reproducible and two seeds never collide.
 
+use std::collections::VecDeque;
+
 use coracle_lib::events::{EventContent, EventId, HashedEvent};
 use coracle_lib::keys::{PublicKey, SecretKey};
 use coracle_lib::tags::Tags;
+
+use crate::node::{Action, Node};
 
 /// The key for a seed. Every seed below 255 is a valid scalar.
 pub(crate) fn secret(seed: u8) -> SecretKey {
@@ -57,6 +61,37 @@ pub(crate) fn event(
 /// the same as it did when the store keyed on hex.
 pub(crate) fn id(event: &HashedEvent) -> EventId {
     event.id
+}
+
+/// Deliver the writes in `actions` and everything the two nodes then say to
+/// each other, answering with what is left over.
+///
+/// This is the shell the `node` module's header describes: two nodes handing
+/// each other bytes, with nothing between them.
+pub(crate) fn settle(from: &mut Node, into: &mut Node, actions: Vec<Action>) -> Vec<Action> {
+    let mut rest = Vec::new();
+    let mut queued: VecDeque<(bool, Action)> =
+        actions.into_iter().map(|action| (true, action)).collect();
+
+    // One queue keeps each node's own fragments in order, which the cipher requires.
+    while let Some((from_side, action)) = queued.pop_front() {
+        let Action::Send(link, write) = action else {
+            rest.push(action);
+            continue;
+        };
+
+        // Acknowledging is what releases the sender's next fragment, so the shell does both.
+        let (answered, released) = if from_side {
+            (into.bytes_received(link, &write), from.write_complete(link))
+        } else {
+            (from.bytes_received(link, &write), into.write_complete(link))
+        };
+
+        queued.extend(answered.into_iter().map(|action| (!from_side, action)));
+        queued.extend(released.into_iter().map(|action| (from_side, action)));
+    }
+
+    rest
 }
 
 /// A directory under the system temp dir, removed when it goes out of scope.

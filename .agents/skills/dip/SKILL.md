@@ -27,7 +27,7 @@ Everything below is under `core/dip/src/`. Modules mirror the design documents o
 | Module | Holds | Doc |
 | --- | --- | --- |
 | `node/` | The core as the shell sees it: `Node`, `Action`, the connection `Scheduler` | `discovery.md` |
-| `session/` | One link's lifecycle: `State`, the consent `Gate`, `AuthExchange`, `recognition`, `Heartbeat` | `discovery.md` |
+| `session/` | One link's lifecycle: `State`, the consent `Gate`, `AuthExchange`, `recognition`, `Heartbeat`, `IdentityTransfer` (login with device) | `discovery.md`, `keys.md` |
 | `transport/` | `Wire` (the encrypted pipe), `noise` (Noise XX over `snow`), `frame` (channels, `Pipe`, fragmentation, priority) | `transport.md` |
 | `sync/` | `relay` (what this device serves), `client` (what it takes in), `blob`, `spending`, `message` | `sync.md` |
 | `model/` | The types the store is expressed in: `Policy`, `Query`, `Registers`, `AuthorshipProof`, `Blob`, `Graph` | `policy.md`, `proofs.md` |
@@ -70,13 +70,15 @@ Linked → Secured → DialerIdentified → Identified → Syncing → Draining 
                                    ↘ GatePending ↗
 ```
 
-Everything else is a behavior the session composes, each owning its own state: `Wire`, `Heartbeat`, `Gate`, `AuthExchange`, `Relay`, `Client`, `BlobExchange`, `SessionSpending`, `Upgrade`. What stays on the session is the lifecycle, the `Peer` the exchange proved, and the policy it is bound under. None of them holds the wire: a behavior that owes the peer an answer returns the payload, and the session sends it.
+Everything else is a behavior the session composes, each owning its own state: `Wire`, `Heartbeat`, `Gate`, `AuthExchange`, `Relay`, `Client`, `BlobExchange`, `SessionSpending`, `Upgrade`, `IdentityTransfer`. What stays on the session is the lifecycle, the `Peer` the exchange proved, and the policy it is bound under. None of them holds the wire: a behavior that owes the peer an answer returns the payload, and the session sends it.
 
 There are three caps and they answer to different rules. `IDENTIFY_CAP_SECONDS` bounds a link that never names anybody, `GATE_HOLD_SECONDS` is how long the user has to look at their phone, and `DRAIN_CAP_SECONDS` is how long an in-flight transfer gets to finish. The last two are both 300 by coincidence, so do not collapse them.
 
-Recognition, mutual NIP-42, the heartbeat and the L2CAP upgrade share the control channel, so a control frame carries a one-byte discriminant ahead of its payload. Handshake frames carry none: they are raw Noise messages, and only `State::Linked` ever sees one.
+Recognition, mutual NIP-42, the heartbeat, the L2CAP upgrade and the identity transfer share the control channel, so a control frame carries a one-byte discriminant ahead of its payload. Handshake frames carry none: they are raw Noise messages, and only `State::Linked` ever sees one.
 
 A link has two pipes, not one. GATT carries everything until an L2CAP channel opens; from then on `Channel::Blob` rides the bulk pipe, each pipe has its own write in flight, and a bulk write carries a two-byte length because L2CAP is a stream. `session/l2cap.rs` holds the whole negotiation in `Upgrade`, which answers a control payload for the session to send and a `Step` for the shell to act on: the GATT peripheral publishes and the central connects, so a dialer that wants bulk asks rather than making one. Every failure path leaves the link on GATT — the upgrade is bandwidth, and nothing about it may close anything.
+
+`IdentityTransfer` is the exception to the "each phase rides on its state variant" rule, deliberately: an identity transfer does not stop the session syncing, so it is a field like the other behaviours rather than a `State`. It owns the whole flow and answers each step with the control payload to send; what the session decides is whether the flow may run at all, which is `state == Syncing` and `gate.presence == Foreground` at both ends — not the consent gate.
 
 ## Authorization
 

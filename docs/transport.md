@@ -53,7 +53,7 @@ Channel 0 carries several kinds of application frame, distinguished by a payload
 | `0x01` | Recognition tags | The [tag list](./discovery.md#recognition) |
 | `0x02` | Mutual `AUTH` | `["AUTH", <challenge>]` or `["AUTH", <event>]`, exactly as NIP-42 writes them |
 | `0x03` | Heartbeat | Nothing |
-| `0x04` | Reserved | |
+| `0x04` | [Identity transfer](./keys.md#login-with-device) | A step byte — `0x01` offer, `0x02` accept, `0x03` key, `0x04` decline — and, for the key, the 32 secret bytes |
 | `0x05` | [L2CAP upgrade](#the-l2cap-bandwidth-upgrade) | A step byte — `0x01` request, `0x02` published, `0x03` unavailable — and, for a publication, the PSM as two big-endian bytes |
 
 Both directions of `AUTH` share one byte, because the message names itself. The handshake travels on the same channel with no byte: its frames are the only ones to arrive before the channel is encrypted, and they are raw Noise messages read by the peer's handshake state rather than by anything that dispatches on a byte. Channels 1 and 2 need no byte either, since both carry NIP-01 arrays, which name themselves in their first element.

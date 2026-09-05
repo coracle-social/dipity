@@ -68,6 +68,8 @@ bitchat's `BLEConnectionScheduler.swift` is the reference for this.
 
 One state sits off this line. **GATE_PENDING** is where an unadmitted stranger waits while the user is asked, entered from SECURED when the tags resolve to nobody and the discoverability preferences do not admit them; approving returns the link to SECURED and the exchange resumes, refusing or the five-minute hold lapsing closes it.
 
+[Login with device](./keys.md#login-with-device) sits off it in the other direction: it is an exchange on the control channel rather than a state, available only from SYNCING and only while the app is in the foreground, and the session goes on syncing throughout. A refusal at either end ends the exchange and leaves the link alone.
+
 Every state above IDENTIFIED has a deadline of its own as well, independent of the heartbeat: a link that has not named anybody within a minute of connecting is closed, or a peer that completes the handshake and then sends nothing but heartbeats would hold one of the six slots for as long as it keeps beating.
 
 ### Recognition

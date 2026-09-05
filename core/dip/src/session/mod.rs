@@ -27,6 +27,7 @@ pub mod heartbeat;
 pub mod l2cap;
 pub mod peer;
 pub mod recognition;
+pub mod transfer;
 
 pub use peer::Peer;
 pub use recognition::{Tag, Tags};
@@ -51,9 +52,10 @@ use crate::sync::{Message, Quota};
 use crate::transport::{Channel, Frame, Pipe, Wire};
 
 use auth::AuthExchange;
-use gate::{Gate, Verdict};
+use gate::{Gate, Presence, Verdict};
 use heartbeat::Heartbeat;
 use l2cap::{Step, Upgrade};
+use transfer::IdentityTransfer;
 
 /// How long a session sits in [`Draining`](State::Draining) before it is
 /// closed, however much is still in flight.
@@ -90,8 +92,11 @@ mod control {
     pub const AUTH: u8 = 0x02;
     /// A liveness beacon, carrying nothing.
     pub const HEARTBEAT: u8 = 0x03;
-    /// One step of the L2CAP upgrade; `0x04` is reserved for the identity
-    /// transfer. `docs/transport.md#the-l2cap-bandwidth-upgrade`.
+    /// One step of an identity transfer, its own discriminant ahead of the
+    /// payload. `docs/keys.md#login-with-device`.
+    pub const TRANSFER: u8 = 0x04;
+    /// One step of the L2CAP upgrade.
+    /// `docs/transport.md#the-l2cap-bandwidth-upgrade`.
     pub const L2CAP: u8 = 0x05;
 }
 
@@ -189,6 +194,8 @@ pub struct Session {
     spending: SessionSpending,
     /// Where the L2CAP bandwidth upgrade has got to on this link.
     upgrade: Upgrade,
+    /// Moving this device's identity to the peer, if a user asked for it.
+    pub transfer: IdentityTransfer,
 }
 
 impl Session {
@@ -220,6 +227,7 @@ impl Session {
             blobs: BlobExchange::new(blobs),
             spending: SessionSpending::new(spending),
             upgrade: Upgrade::new(role),
+            transfer: IdentityTransfer::default(),
         })
     }
 
@@ -630,6 +638,63 @@ impl Session {
         }
     }
 
+    // ------------------------------------ Login with device: docs/keys.md
+
+    /// Offer this device's identity to the peer, which is what the user asked
+    /// for by tapping.
+    ///
+    /// Refused unless the app is in the foreground: this is the one flow that
+    /// does not run during a background wake, whatever the session state says.
+    pub fn offer_identity(&mut self) -> Result<()> {
+        if !self.may_transfer() {
+            bail!("an identity transfer needs an authenticated session and the app in front");
+        }
+
+        let payload = self.transfer.offer()?;
+
+        self.send_control(control::TRANSFER, &payload)
+    }
+
+    /// The user answered the prompt, which on both devices is the same
+    /// question: does the other one show this number.
+    pub fn answer_transfer(&mut self, confirmed: bool) -> Result<()> {
+        let step = self.transfer.answer(confirmed, &self.identity)?;
+
+        self.send_transfer(step)
+    }
+
+    /// The comparison value to put in front of the user, once per prompt.
+    ///
+    /// It is the Noise transcript both ends hold and nothing else, so a session
+    /// that has not completed one has nothing to show.
+    pub fn take_transfer_prompt(&mut self) -> Option<u32> {
+        let handshake_hash = self.wire.noise.handshake_hash().ok()?;
+
+        self.transfer.take_prompt(&handshake_hash)
+    }
+
+    /// One step of an identity transfer, off the control channel.
+    fn on_transfer(&mut self, payload: &[u8]) -> Result<()> {
+        let attended = self.may_transfer();
+        let step = self.transfer.receive(payload, &self.identity, attended)?;
+
+        self.send_transfer(step)
+    }
+
+    /// Send whatever step the exchange answered with, if it answered with one.
+    fn send_transfer(&mut self, payload: Option<Vec<u8>>) -> Result<()> {
+        match payload {
+            Some(payload) => self.send_control(control::TRANSFER, &payload),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether this device is in a position to move an identity at all: a
+    /// session both ends authenticated, and a user in front of the screen.
+    fn may_transfer(&self) -> bool {
+        self.state == State::Syncing && self.gate.presence == Some(Presence::Foreground)
+    }
+
     /// The battery level in percent, which gates blob transfers.
     pub fn set_battery(&mut self, level: Option<u8>) {
         self.blobs.set_battery(level);
@@ -811,6 +876,7 @@ impl Session {
             control::HEARTBEAT => {
                 // The write itself proved liveness in `receive`; a beacon carries nothing else.
             }
+            control::TRANSFER => self.on_transfer(payload)?,
             control::L2CAP => self.on_l2cap(payload)?,
             other => bail!("an unknown control frame {other} arrived"),
         }
@@ -1866,5 +1932,68 @@ mod tests {
         assert_eq!(dialer.poll_l2cap().unwrap(), None);
         assert!(!dialer.wire.bulk_is_open());
         assert!(!receiver.wire.bulk_is_open());
+    }
+
+    /// Two sessions synchronizing, both with a user in front of the screen.
+    fn attended_pair(db: &Db) -> (Session, Session) {
+        let mut dialer = pair(4096, Role::Dialer, 1);
+        let mut receiver = pair(4096, Role::Receiver, 2);
+
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
+        full_exchange(&mut dialer, &mut receiver, db);
+
+        (dialer, receiver)
+    }
+
+    #[test]
+    fn an_identity_moves_over_the_control_channel() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut source, mut target) = attended_pair(&db);
+
+        source.offer_identity().unwrap();
+        pump(&mut source, &mut target, &db);
+
+        // The number is the transcript's, so both ends derive the same one.
+        let shown = source.take_transfer_prompt().unwrap();
+        assert_eq!(target.take_transfer_prompt(), Some(shown));
+
+        target.answer_transfer(true).unwrap();
+        pump(&mut target, &mut source, &db);
+
+        source.answer_transfer(true).unwrap();
+        pump(&mut source, &mut target, &db);
+
+        assert_eq!(
+            target.transfer.take_identity().map(|key| key.to_hex()),
+            Some(secret(1).to_hex())
+        );
+        assert_eq!(
+            target.transfer.take_outcome(),
+            Some(transfer::Outcome::Received)
+        );
+    }
+
+    #[test]
+    fn a_backgrounded_device_neither_offers_an_identity_nor_takes_one() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut source, mut target) = attended_pair(&db);
+
+        source.offer_identity().unwrap();
+        target.gate.presence = Some(Presence::Background { since: 0 });
+        pump(&mut source, &mut target, &db);
+
+        // Nobody is looking at the target's screen, so it declines rather than holding.
+        assert!(!target.transfer.running());
+        assert_eq!(target.take_transfer_prompt(), None);
+
+        pump(&mut target, &mut source, &db);
+        assert_eq!(
+            source.transfer.take_outcome(),
+            Some(transfer::Outcome::Refused)
+        );
+
+        source.gate.presence = Some(Presence::Background { since: 0 });
+        assert!(source.offer_identity().is_err());
     }
 }

@@ -51,6 +51,7 @@ use crate::link::{LinkId, PeripheralId, Role};
 use crate::model::{Blob, BlobHash, Policy};
 use crate::session::gate::Presence;
 use crate::session::l2cap::Step;
+use crate::session::transfer::Outcome;
 use crate::session::{Ending, Session, State};
 use crate::transport::{Channel, Pipe};
 use scheduler::Scheduler;
@@ -100,6 +101,17 @@ pub enum Action {
     /// Open the L2CAP channel the peer published at this PSM, and report the
     /// result with [`Node::l2cap_opened`] or [`Node::l2cap_unavailable`].
     OpenL2cap(LinkId, u16),
+    /// Show the user this six-digit comparison value and ask whether the other
+    /// device shows the same one.
+    ///
+    /// Both ends are asked it and either may answer first. Answer with
+    /// [`Node::answer_identity_transfer`]; nothing moves until both have said
+    /// yes. `docs/keys.md#login-with-device`.
+    ConfirmIdentityTransfer(LinkId, u32),
+    /// How an identity transfer ended. On [`Outcome::Received`] take the key
+    /// with [`Node::take_transferred_identity`], write it to secure storage,
+    /// and reopen the node under it.
+    IdentityTransfer(LinkId, Outcome),
     /// Call [`Node::tick`] at or after this unix second.
     ///
     /// Advisory: iOS runs no timer for a suspended app, so the heartbeat and
@@ -467,6 +479,47 @@ impl Node {
         Ok(self.collect())
     }
 
+    /// Offer this device's identity to the peer on `link`, which is the user
+    /// tapping "log in another device".
+    ///
+    /// Both users are then asked to compare a six-digit number, and the key
+    /// moves once both have said yes. `docs/keys.md#login-with-device`.
+    pub fn offer_identity(&mut self, link: LinkId) -> Result<Vec<Action>> {
+        let Some(session) = self.sessions.get_mut(&link) else {
+            bail!("link {link:?} has no session to transfer over");
+        };
+
+        session.offer_identity()?;
+
+        Ok(self.collect())
+    }
+
+    /// The user answered [`Action::ConfirmIdentityTransfer`].
+    pub fn answer_identity_transfer(
+        &mut self,
+        link: LinkId,
+        confirmed: bool,
+    ) -> Result<Vec<Action>> {
+        let Some(session) = self.sessions.get_mut(&link) else {
+            bail!("link {link:?} has no identity transfer to answer");
+        };
+
+        session.answer_transfer(confirmed)?;
+
+        Ok(self.collect())
+    }
+
+    /// Take the identity [`Outcome::Received`] announced, once.
+    ///
+    /// The core does not adopt it. The shell writes it to the Keychain or
+    /// Keystore and reopens the node under it, which is the same custody path
+    /// as a key generated on device. `docs/keys.md#key-custody`.
+    pub fn take_transferred_identity(&mut self, link: LinkId) -> Option<SecretKey> {
+        self.sessions
+            .get_mut(&link)
+            .and_then(|session| session.transfer.take_identity())
+    }
+
     /// The user changed a preference, so re-read the policy and rebind it on
     /// every live session.
     ///
@@ -603,15 +656,23 @@ impl Node {
 
         let mut actions = Vec::new();
 
-        // A held gate asks the shell once.
+        // Whatever each session wants of the shell, asked once apiece.
         for session in self.sessions.values_mut() {
+            // A held gate.
             if session.request_approval() {
                 actions.push(Action::RequestApproval(session.link));
             }
-        }
 
-        // A blob transfer is the opening that justifies a bulk channel.
-        for session in self.sessions.values_mut() {
+            // An identity transfer asks each user once, and says how it ended.
+            if let Some(sas) = session.take_transfer_prompt() {
+                actions.push(Action::ConfirmIdentityTransfer(session.link, sas));
+            }
+
+            if let Some(outcome) = session.transfer.take_outcome() {
+                actions.push(Action::IdentityTransfer(session.link, outcome));
+            }
+
+            // A blob transfer is the opening that justifies a bulk channel.
             let link = session.link;
 
             match session.poll_l2cap() {
@@ -788,7 +849,7 @@ mod tests {
     use super::*;
     use coracle_lib::tags::Tags;
 
-    use crate::fixtures::{TempDir, author, note, secret};
+    use crate::fixtures::{TempDir, author, note, secret, settle};
     use crate::model::{BlobHash, Policy, Query};
     use crate::session::Session;
     use crate::sync::{Message, SubscriptionId};
@@ -1392,5 +1453,70 @@ mod tests {
 
         assert!(node.export_key(&cache.0, Some("short")).is_err());
         assert!(node.key_backup.is_none());
+    }
+
+    /// Two nodes over one link, synchronizing, with a user in front of both.
+    fn attended_pair() -> (Node, Node) {
+        let mut dialer = node();
+        let mut receiver = node();
+
+        dialer.notify_foregrounded();
+        receiver.notify_foregrounded();
+        receiver
+            .link_up(LinkId(1), None, Role::Receiver, 4096)
+            .unwrap();
+
+        // Only the dialer has anything to say at link-up: it opens the handshake.
+        let opening = dialer
+            .link_up(LinkId(1), Some(peripheral(1)), Role::Dialer, 4096)
+            .unwrap();
+        settle(&mut dialer, &mut receiver, opening);
+
+        assert_eq!(dialer.sessions[&LinkId(1)].state, State::Syncing);
+        assert_eq!(receiver.sessions[&LinkId(1)].state, State::Syncing);
+
+        (dialer, receiver)
+    }
+
+    #[test]
+    fn an_identity_transfer_asks_both_users_and_lands_on_the_target() {
+        let (mut source, mut target) = attended_pair();
+        let key = source.identity.to_hex();
+
+        let offered = source.offer_identity(LinkId(1)).unwrap();
+        let shown: Vec<Action> = settle(&mut source, &mut target, offered)
+            .into_iter()
+            .filter(|action| matches!(action, Action::ConfirmIdentityTransfer(..)))
+            .collect();
+
+        // The same number on both screens, each asked once.
+        assert_eq!(shown.len(), 2);
+        assert_eq!(shown[0], shown[1]);
+
+        let accepted = target.answer_identity_transfer(LinkId(1), true).unwrap();
+        settle(&mut target, &mut source, accepted);
+
+        let confirmed = source.answer_identity_transfer(LinkId(1), true).unwrap();
+
+        assert!(
+            settle(&mut source, &mut target, confirmed)
+                .contains(&Action::IdentityTransfer(LinkId(1), Outcome::Received))
+        );
+        assert_eq!(
+            target
+                .take_transferred_identity(LinkId(1))
+                .map(|key| key.to_hex()),
+            Some(key)
+        );
+        assert!(target.take_transferred_identity(LinkId(1)).is_none());
+    }
+
+    #[test]
+    fn an_identity_transfer_needs_a_link() {
+        let mut node = node();
+
+        assert!(node.offer_identity(LinkId(1)).is_err());
+        assert!(node.answer_identity_transfer(LinkId(1), true).is_err());
+        assert!(node.take_transferred_identity(LinkId(1)).is_none());
     }
 }
