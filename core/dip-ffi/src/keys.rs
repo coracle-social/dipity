@@ -56,6 +56,43 @@ pub trait KeyCustody: Send + Sync {
     fn secret_key(&self) -> Result<Vec<u8>, KeyError>;
 }
 
+/// A brand-new identity, for the shell to write to secure storage.
+///
+/// Generated here rather than in Swift or Kotlin: the curve is secp256k1 and
+/// there is one implementation of it in this app, in the core. A shell that
+/// generated its own would be a second one to keep in agreement with the peer
+/// running the other platform.
+#[uniffi::export]
+#[must_use]
+pub fn generate_identity() -> Vec<u8> {
+    let key = SecretKey::generate();
+
+    hex::decode(key.to_hex()).expect("a generated key is hex")
+}
+
+/// An identity the user pasted in, as an `nsec1…`.
+///
+/// Answers the 32 secret bytes for the shell to store, and never the key: what
+/// crosses back is what goes into the Keychain, not something to hold.
+#[uniffi::export]
+pub fn identity_from_nsec(nsec: String) -> Result<Vec<u8>, KeyError> {
+    let key = SecretKey::from_nsec(&nsec).map_err(|error| KeyError::Unreadable {
+        reason: format!("{error}"),
+    })?;
+
+    Ok(hex::decode(key.to_hex()).expect("a parsed key is hex"))
+}
+
+/// The npub an identity answers to, for the shell to show the user.
+#[uniffi::export]
+pub fn identity_npub(secret: Vec<u8>) -> Result<String, KeyError> {
+    let key = SecretKey::from_hex(&hex::encode(secret)).map_err(|error| KeyError::Unreadable {
+        reason: format!("{error}"),
+    })?;
+
+    Ok(key.public_key().to_npub())
+}
+
 /// The exported callback, as [`dip::keys::KeyCustody`].
 pub struct Custody(Arc<dyn KeyCustody>);
 
@@ -122,5 +159,28 @@ mod tests {
         let custody = Custody::new(Arc::new(Stored(vec![0; 16])));
 
         assert!(custody.identity().is_err());
+    }
+
+    #[test]
+    fn a_generated_identity_is_a_key_the_core_can_sign_with() {
+        let secret = super::generate_identity();
+
+        assert_eq!(secret.len(), 32);
+        assert!(super::identity_npub(secret).unwrap().starts_with("npub1"));
+    }
+
+    #[test]
+    fn an_nsec_the_user_pasted_becomes_the_bytes_the_shell_stores() {
+        let key = SecretKey::generate();
+
+        assert_eq!(
+            super::identity_from_nsec(key.to_nsec()).unwrap(),
+            hex::decode(key.to_hex()).unwrap()
+        );
+    }
+
+    #[test]
+    fn something_that_is_not_an_nsec_is_refused() {
+        assert!(super::identity_from_nsec("hunter2".to_owned()).is_err());
     }
 }

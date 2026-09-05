@@ -17,6 +17,22 @@ export type DipCore = {
    * build.
    */
   coreVersion(): Promise<{version: string}>
+
+  /**
+   * Whether this device has an identity yet.
+   *
+   * The first-run question, and it is answered without reading the key.
+   */
+  hasIdentity(): Promise<{exists: boolean}>
+
+  /** Generate an identity and put it in secure storage. */
+  createIdentity(): Promise<{npub: string}>
+
+  /** Store an identity the user pasted in. */
+  importIdentity(options: {nsec: string}): Promise<{npub: string}>
+
+  /** Forget the identity. Answers whether there was one. */
+  deleteIdentity(): Promise<{existed: boolean}>
 }
 
 export const Dip = registerPlugin<DipCore>("Dip")
