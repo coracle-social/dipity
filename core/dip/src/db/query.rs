@@ -58,7 +58,7 @@ pub fn disclosures_since(db: &Db, cutoff: i64) -> Result<u32> {
 // --------------------------------------------------------------------- Events
 
 /// An event, and what the store knows about it that the event does not carry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct EventDetail {
     /// The event itself.
     pub event: HashedEvent,

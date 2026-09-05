@@ -29,7 +29,11 @@ hex.workspace = true
 # `std` is what carries `set_boxed_logger`, and is off by default.
 log = { workspace = true, features = ["std"] }
 # The view builds an event and hands it over as NIP-01 JSON; see src/node.rs.
+serde.workspace = true
 serde_json.workspace = true
+# The store announces its writes on broadcast channels, which src/store.rs
+# drains for the view. Sync only: no runtime, no reactor.
+tokio.workspace = true
 uniffi = { workspace = true, features = ["cli"] }
 # Wiping the copies this crate makes of what the shell handed over.
 zeroize.workspace = true

@@ -501,7 +501,9 @@ dependencies = [
  "dip",
  "hex",
  "log",
+ "serde",
  "serde_json",
+ "tokio",
  "uniffi",
  "zeroize",
 ]

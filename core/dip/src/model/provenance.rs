@@ -4,9 +4,10 @@ use std::collections::BTreeSet;
 
 use coracle_lib::events::EventId;
 use coracle_lib::keys::PublicKey;
+use serde::Serialize;
 
 /// One sighting: an event, a pubkey it was seen from, and when.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Provenance {
     /// The event seen.
     pub event_id: EventId,
