@@ -61,6 +61,15 @@ export type DipCore = {
   /** Answer a `requestApproval`. */
   approve(options: {link: number; approved: boolean}): Promise<void>
 
+  /**
+   * Write a key backup and put it in front of the user.
+   *
+   * The key never crosses the bridge in either direction: the core encodes the
+   * file and the shell shares it. Answers once the sheet or chooser closes,
+   * and `keyBackupShared` says whether anything took it.
+   */
+  exportKey(options?: {password?: string}): Promise<void>
+
   addListener(
     event: "requestApproval",
     handler: (approval: Approval) => void,
@@ -73,11 +82,16 @@ export type DipCore = {
     event: "identityTransfer",
     handler: (outcome: TransferOutcome) => void,
   ): Promise<PluginListenerHandle>
+  /**
+   * Whether an app took the backup, or the user backed out.
+   *
+   * Backing out is not downloaded rather than an error, so the screen it gates
+   * stays where it is and the user can try again.
+   */
   addListener(
-    event: "shareKeyBackup",
-    handler: (backup: {path: string}) => void,
+    event: "keyBackupShared",
+    handler: (backup: {shared: boolean}) => void,
   ): Promise<PluginListenerHandle>
-  addListener(event: "wakeAt", handler: (wake: {at: number}) => void): Promise<PluginListenerHandle>
 }
 
 export const Dip = registerPlugin<DipCore>("Dip")

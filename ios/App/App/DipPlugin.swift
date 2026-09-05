@@ -1,6 +1,7 @@
 import Capacitor
 import DipFFI
 import Foundation
+import UIKit
 
 /// The webview's end of the core.
 ///
@@ -27,9 +28,14 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "publish", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "approve", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "exportKey", returnType: CAPPluginReturnPromise),
     ]
 
     private let radio = Radio()
+    private var lifecycle: Lifecycle?
+
+    /// The `exportKey` call waiting on the sheet it opened.
+    private var exporting: CAPPluginCall?
 
     /// The store and the node, once there is an identity to open them under.
     private var store: Store?
@@ -87,6 +93,15 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
             self.node = node
 
             radio.delegate = self
+            lifecycle = Lifecycle(
+                foregrounded: { [weak self] in self?.drive { try $0.notifyForegrounded() } },
+                backgrounded: { [weak self] in self?.drive { try $0.notifyBackgrounded() } },
+                battery: { [weak self] level in self?.drive { try $0.battery(level: level) } },
+                tick: { [weak self] in self?.drive { try $0.tick() } })
+
+            // Where the app is and what the battery is at, before anything
+            // decides on either.
+            lifecycle?.report()
 
             // Nothing is scanning or advertising until the core says so, and it
             // says so on the first tick.
@@ -129,6 +144,26 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    /// Write a key backup into the cache directory and ask for the share sheet.
+    ///
+    /// The path never comes back over the bridge: the view learns only that the
+    /// file was shared or dismissed. Answers once the sheet closes, which is
+    /// also when the file goes. `docs/keys.md#backup`.
+    @objc func exportKey(_ call: CAPPluginCall) {
+        guard let node else { return call.reject("exportKey needs a started core") }
+
+        do {
+            exporting = call
+            apply(
+                try node.exportKey(
+                    cache: FileManager.default.temporaryDirectory.path,
+                    password: call.getString("password")))
+        } catch {
+            exporting = nil
+            call.reject("the backup could not be written", nil, error)
+        }
+    }
+
     // ---------------------------------------------------------------- Actions
 
     /// Carry out what the core asked for, in the order it asked.
@@ -156,12 +191,12 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
                     "identityTransfer",
                     data: ["link": Int(link.value), "received": outcome == .received])
             case .shareKeyBackup(let path):
-                notifyListeners("shareKeyBackup", data: ["path": path])
+                share(URL(fileURLWithPath: path))
             case .wakeAt(let at):
-                // Advisory, and iOS runs no timer for a suspended app: the next
-                // radio callback is the tick. #52 is what makes this more than
-                // that while the app is in front.
-                notifyListeners("wakeAt", data: ["at": at])
+                // Advisory: iOS runs no timer for a suspended app, so this
+                // covers the foreground and the next radio callback covers the
+                // rest.
+                lifecycle?.wake(at: at)
             case .sendBulk, .publishL2cap, .openL2cap:
                 // The bandwidth upgrade is bandwidth, and a link that never
                 // gets one still syncs. L2CAP lands with its own change.
@@ -182,6 +217,34 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         return directory
+    }
+
+    /// Put the backup in front of the user, and tell the core when it closes.
+    ///
+    /// The sheet is presented here rather than by the view, which is what keeps
+    /// the path on this side of the bridge. `completed` is the sheet's own
+    /// answer to whether an activity took the file.
+    private func share(_ file: URL) {
+        let call = exporting
+
+        exporting = nil
+
+        DispatchQueue.main.async { [weak self] in
+            guard let controller = self?.bridge?.viewController else {
+                call?.reject("there is nowhere to present the backup")
+                return
+            }
+
+            let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil)
+
+            sheet.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+                self?.notifyListeners("keyBackupShared", data: ["shared": completed])
+                self?.drive { try $0.keyExportFinished() }
+                call?.resolve()
+            }
+
+            controller.present(sheet, animated: true)
+        }
     }
 
     /// Write an identity and answer the npub, which is all the view is owed.

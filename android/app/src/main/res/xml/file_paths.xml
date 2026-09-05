@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The cache directory, which is where the core writes a key backup and the
+     only thing this app hands to another one. See docs/keys.md#backup. -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <external-path name="my_images" path="." />
-    <cache-path name="my_cache_images" path="." />
+    <cache-path name="cache" path="." />
 </paths>

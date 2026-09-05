@@ -1,13 +1,16 @@
 package social.coracle.dip
 
 import android.Manifest
+import androidx.activity.result.ActivityResult
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
+import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
+import java.io.File
 import uniffi.dip_ffi.Action
 import uniffi.dip_ffi.LinkId
 import uniffi.dip_ffi.Node
@@ -65,6 +68,11 @@ class DipPlugin : Plugin(), Radio.Delegate {
 
     private var store: Store? = null
     private var node: Node? = null
+    private var lifecycle: Lifecycle? = null
+    private var backup: Backup? = null
+
+    /** The `exportKey` call waiting on the chooser it opened. */
+    private var exporting: PluginCall? = null
 
     // ------------------------------------------------------------- Identity
 
@@ -159,7 +167,48 @@ class DipPlugin : Plugin(), Radio.Delegate {
         }
     }
 
+    /**
+     * Write a key backup into the cache directory and offer it to the chooser.
+     *
+     * The path never comes back over the bridge: the view learns only that the
+     * file was shared or dismissed. `docs/keys.md#backup`.
+     */
+    @PluginMethod
+    fun exportKey(call: PluginCall) {
+        val node = this.node ?: return call.reject("exportKey needs a started core")
+
+        try {
+            exporting = call
+            apply(node.exportKey(context.cacheDir.absolutePath, call.getString("password")))
+        } catch (error: Exception) {
+            exporting = null
+            call.reject("the backup could not be written", error)
+        }
+    }
+
+    /**
+     * The chooser closed, taken or dismissed, so the file goes.
+     *
+     * `result` says only that the chooser is gone: Android answers
+     * `RESULT_CANCELED` whether or not an app took the file. What the view is
+     * told comes from [Backup], which is the chooser's own report of what was
+     * picked.
+     */
+    @ActivityCallback
+    fun keyBackupClosed(call: PluginCall, result: ActivityResult) {
+        notifyListeners("keyBackupShared", JSObject().put("shared", backup?.taken == true))
+
+        drive { it.keyExportFinished() }
+        call.resolve()
+    }
+
+    override fun handleOnResume() = drive { it.notifyForegrounded() }
+
+    override fun handleOnPause() = drive { it.notifyBackgrounded() }
+
     override fun handleOnDestroy() {
+        lifecycle?.stop()
+        backup?.stop()
         radio.stop()
         EncounterService.stop(context)
     }
@@ -191,10 +240,8 @@ class DipPlugin : Plugin(), Radio.Delegate {
                             .put("link", action.link.value.toLong())
                             .put("received", action.outcome == TransferOutcome.RECEIVED),
                     )
-                is Action.ShareKeyBackup ->
-                    notifyListeners("shareKeyBackup", JSObject().put("path", action.path))
-                // Advisory. #52 is what makes this an alarm rather than a note.
-                is Action.WakeAt -> notifyListeners("wakeAt", JSObject().put("at", action.at))
+                is Action.ShareKeyBackup -> share(File(action.path))
+                is Action.WakeAt -> lifecycle?.wake(action.at)
                 // The bandwidth upgrade is bandwidth, and a link that never gets
                 // one still syncs. L2CAP lands with its own change.
                 is Action.SendBulk,
@@ -250,13 +297,31 @@ class DipPlugin : Plugin(), Radio.Delegate {
     private fun open(call: PluginCall) {
         try {
             val directory = context.filesDir
-            val opened = Store.open(java.io.File(directory, "dip.sqlite").absolutePath)
+            val opened = Store.open(File(directory, "dip.sqlite").absolutePath)
             val node = Node.open(opened, KeystoreCustody(keystore), directory.absolutePath)
 
             store = opened
             this.node = node
 
             EncounterService.start(context)
+
+            val lifecycle =
+                Lifecycle(
+                    context,
+                    battery = { level -> drive { it.battery(level) } },
+                    tick = { drive { it.tick() } },
+                )
+
+            // Assigned before it is started: the first battery report is an
+            // entry point like any other, and what it answers may be a `WakeAt`.
+            this.lifecycle = lifecycle
+            lifecycle.start()
+
+            backup = Backup(context)
+
+            // The view is what calls `start`, and the view runs in front, so
+            // this is where presence is first reported rather than guessed.
+            apply(node.notifyForegrounded())
 
             // Nothing is scanning or advertising until the core says so, and it
             // says so on the first tick.
@@ -265,6 +330,20 @@ class DipPlugin : Plugin(), Radio.Delegate {
         } catch (error: Exception) {
             call.reject("the core could not be opened", error)
         }
+    }
+
+    /**
+     * Put the backup in front of the user, and tell the core when it comes back.
+     *
+     * The chooser is started here rather than by the view, which is what keeps
+     * the path on this side of the bridge.
+     */
+    private fun share(file: File) {
+        val call = exporting ?: return
+        val chooser = backup?.chooser(file) ?: return
+
+        exporting = null
+        startActivityForResult(call, chooser, "keyBackupClosed")
     }
 
     /** Write an identity and answer the npub, which is all the view is owed. */
