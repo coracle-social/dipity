@@ -20,7 +20,9 @@ The design is written down in full. The implementation is not, and the gap is un
 
 The core is the codebase. The shell is glue, and the view is a version string and a build target.
 
-`core/dip-ffi` exports more than the plugins call, so read the plugin before adding to either. The radio loop and identity storage are wired the whole way through. Two groups of entry points have no caller in either shell: L2CAP, which is deliberate and which the three no-op `Action` arms mark; and login-with-device, where both shells send the prompt and the outcome up and the view has no way to answer either (#68).
+`core/dip-ffi` exports more than the plugins call, so read the plugin before adding to either. The radio loop and identity storage are wired the whole way through. One group of entry points has no caller in either shell: L2CAP, which is deliberate and which the three no-op `Action` arms mark.
+
+Each plugin opens the core in a private `open` and drops it in a private `close`, and `start` is the guard in front of them. That pair exists because `takeTransferredIdentity` reopens the node under the key it just wrote — a shell that only ever opens once would have to restart the app to finish a login with device.
 
 `docs/ui.md`'s `src/lib/kinds/` and `src/lib/data/` layout is a specification to build against rather than a description of the tree.
 

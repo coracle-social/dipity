@@ -29,6 +29,9 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "publish", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "approve", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "exportKey", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "offerIdentity", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "answerIdentityTransfer", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "takeTransferredIdentity", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "listEvents", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "listDetails", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getEvent", returnType: CAPPluginReturnPromise),
@@ -93,6 +96,10 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func start(_ call: CAPPluginCall) {
         guard node == nil else { return call.resolve() }
 
+        open(into: call)
+    }
+
+    private func open(into call: CAPPluginCall) {
         do {
             let directory = try support()
             let opened = try Store.open(
@@ -178,6 +185,67 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         } catch {
             exporting = nil
             call.reject("the backup could not be written", nil, error)
+        }
+    }
+
+    // ------------------------------------------------- Login with device
+
+    /// Offer this device's identity to the peer on `link`.
+    ///
+    /// Both ends are asked to compare the six digits a `confirmIdentityTransfer`
+    /// carries before anything moves. `docs/keys.md#login-with-device`.
+    @objc func offerIdentity(_ call: CAPPluginCall) {
+        guard let node, let link = call.getInt("link") else {
+            return call.reject("offerIdentity needs a started core and a link")
+        }
+
+        do {
+            apply(try node.offerIdentity(link: LinkId(value: UInt64(link))))
+            call.resolve()
+        } catch {
+            call.reject("that identity could not be offered", nil, error)
+        }
+    }
+
+    /// The user answered a `confirmIdentityTransfer` the plugin sent up.
+    @objc func answerIdentityTransfer(_ call: CAPPluginCall) {
+        guard let node, let link = call.getInt("link") else {
+            return call.reject("answerIdentityTransfer needs a started core and a link")
+        }
+
+        do {
+            apply(
+                try node.answerIdentityTransfer(
+                    link: LinkId(value: UInt64(link)),
+                    confirmed: call.getBool("confirmed", false)))
+            call.resolve()
+        } catch {
+            call.reject("that answer could not be recorded", nil, error)
+        }
+    }
+
+    /// Adopt the identity an `identityTransfer` of `received` announced.
+    ///
+    /// The key is handed out once and does not cross the bridge: it is written
+    /// to the Keychain here, the same custody path a generated one takes, and
+    /// the node is reopened under it. Answers what `start` answers, so the view
+    /// reads the new identity off the same field.
+    @objc func takeTransferredIdentity(_ call: CAPPluginCall) {
+        guard let node, let link = call.getInt("link") else {
+            return call.reject("takeTransferredIdentity needs a started core and a link")
+        }
+
+        do {
+            guard let secret = try node.takeTransferredIdentity(link: LinkId(value: UInt64(link)))
+            else {
+                return call.reject("no identity arrived on that link")
+            }
+
+            try Keychain.write(secret)
+            close()
+            open(into: call)
+        } catch {
+            call.reject("the transferred identity could not be adopted", nil, error)
         }
     }
 
@@ -369,6 +437,19 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
 
             controller.present(sheet, animated: true)
         }
+    }
+
+    /// Drop the node and everything driving it, so `open` can run again.
+    ///
+    /// The store observer and the lifecycle go with their references; the radio
+    /// keeps its GATT service, which is registered once at power-on and would
+    /// not come back on its own.
+    private func close() {
+        watching = nil
+        lifecycle = nil
+        radio.stop()
+        node = nil
+        store = nil
     }
 
     /// Write an identity and answer the npub, which is all the view is owed.

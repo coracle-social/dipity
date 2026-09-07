@@ -106,6 +106,16 @@ final class Radio: NSObject {
         central.cancelPeripheralConnection(target)
     }
 
+    /// Stop both roles and drop every link.
+    ///
+    /// The GATT service stays registered, unlike Android's, because it is added
+    /// from `peripheralManagerDidUpdateState` and that fires once at power-on.
+    func stop() {
+        scan(false)
+        advertise(false)
+        Array(links.keys).forEach(disconnect)
+    }
+
     /// Write one fragment, already sized to this link's MTU by the core.
     func send(_ link: UInt64, _ fragment: Data) {
         switch links[link] {

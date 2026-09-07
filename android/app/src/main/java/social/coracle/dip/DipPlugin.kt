@@ -177,6 +177,77 @@ class DipPlugin : Plugin(), Radio.Delegate {
         }
     }
 
+    // ------------------------------------------------- Login with device
+
+    /**
+     * Offer this device's identity to the peer on `link`.
+     *
+     * Both ends are asked to compare the six digits a `confirmIdentityTransfer`
+     * carries before anything moves. `docs/keys.md#login-with-device`.
+     */
+    @PluginMethod
+    fun offerIdentity(call: PluginCall) {
+        val node = this.node ?: return call.reject("offerIdentity needs a started core")
+        val link = call.getInt("link") ?: return call.reject("offerIdentity needs a link")
+
+        try {
+            apply(node.offerIdentity(LinkId(link.toULong())))
+            call.resolve()
+        } catch (error: Exception) {
+            call.reject("that identity could not be offered", error)
+        }
+    }
+
+    /** The user answered a `confirmIdentityTransfer` the plugin sent up. */
+    @PluginMethod
+    fun answerIdentityTransfer(call: PluginCall) {
+        val node = this.node ?: return call.reject("answerIdentityTransfer needs a started core")
+        val link = call.getInt("link") ?: return call.reject("answerIdentityTransfer needs a link")
+
+        try {
+            apply(
+                node.answerIdentityTransfer(
+                    LinkId(link.toULong()),
+                    call.getBoolean("confirmed", false) == true,
+                )
+            )
+            call.resolve()
+        } catch (error: Exception) {
+            call.reject("that answer could not be recorded", error)
+        }
+    }
+
+    /**
+     * Adopt the identity an `identityTransfer` of `received` announced.
+     *
+     * The key is handed out once and does not cross the bridge: it is written to
+     * the Keystore here, the same custody path a generated one takes, and the
+     * node is reopened under it. Answers what `start` answers, so the view reads
+     * the new identity off the same field.
+     */
+    @PluginMethod
+    fun takeTransferredIdentity(call: PluginCall) {
+        val node = this.node ?: return call.reject("takeTransferredIdentity needs a started core")
+        val link = call.getInt("link") ?: return call.reject("takeTransferredIdentity needs a link")
+
+        val secret =
+            try {
+                node.takeTransferredIdentity(LinkId(link.toULong()))
+                    ?: return call.reject("no identity arrived on that link")
+            } catch (error: Exception) {
+                return call.reject("the transferred identity could not be adopted", error)
+            }
+
+        try {
+            keystore.write(secret)
+        } catch (error: Exception) {
+            return call.reject("the transferred identity could not be stored", error)
+        }
+
+        close()
+        open(call)
+    }
+
     /**
      * Write a key backup into the cache directory and offer it to the chooser.
      *
@@ -216,13 +287,7 @@ class DipPlugin : Plugin(), Radio.Delegate {
 
     override fun handleOnPause() = drive { it.notifyBackgrounded() }
 
-    override fun handleOnDestroy() {
-        watching?.stop()
-        lifecycle?.stop()
-        backup?.stop()
-        radio.stop()
-        EncounterService.stop(context)
-    }
+    override fun handleOnDestroy() = close()
 
     // ---------------------------------------------------------------- Store
 
@@ -485,6 +550,18 @@ class DipPlugin : Plugin(), Radio.Delegate {
 
         exporting = null
         startActivityForResult(call, chooser, "keyBackupClosed")
+    }
+
+    /** Drop the node and everything driving it, so [open] can run again. */
+    private fun close() {
+        watching?.stop()
+        lifecycle?.stop()
+        backup?.stop()
+        radio.stop()
+        EncounterService.stop(context)
+
+        node = null
+        store = null
     }
 
     /** Write an identity and answer the npub, which is all the view is owed. */

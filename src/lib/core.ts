@@ -135,6 +135,25 @@ export type DipCore = {
    */
   exportKey(options?: {password?: string}): Promise<void>
 
+  /**
+   * Offer this device's identity to the peer on a link.
+   *
+   * Both ends are then asked to compare the six digits a
+   * `confirmIdentityTransfer` carries, and either may answer first.
+   */
+  offerIdentity(options: {link: number}): Promise<void>
+
+  /** Answer a `confirmIdentityTransfer`. */
+  answerIdentityTransfer(options: {link: number; confirmed: boolean}): Promise<void>
+
+  /**
+   * Adopt the identity an `identityTransfer` of `received` announced.
+   *
+   * The key never crosses the bridge: the shell writes it to secure storage and
+   * reopens the core under it, so this answers what `start` answers.
+   */
+  takeTransferredIdentity(options: {link: number}): Promise<{identity: string}>
+
   addListener(
     event: "requestApproval",
     handler: (approval: Approval) => void,
