@@ -4,10 +4,15 @@
 //! point of keeping it in its own crate: the FFI surface stays small and
 //! deliberate, and [`dip`] stays free of binding machinery.
 //!
-//! Scaffolding only — one call, enough to prove bindings generate and link.
+//! One module per thing that crosses: [`node`] drives the radio loop,
+//! [`keys`] is the Keychain the core reads the identity out of, [`store`] is
+//! the store both halves of the app hold, and [`logging`] is where the core
+//! writes its log.
 
 pub mod keys;
 pub mod logging;
+pub mod node;
+pub mod store;
 
 uniffi::setup_scaffolding!();
 

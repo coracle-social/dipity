@@ -28,6 +28,8 @@ hex.workspace = true
 # The facade this crate installs a shell-backed logger behind; see src/logging.rs.
 # `std` is what carries `set_boxed_logger`, and is off by default.
 log = { workspace = true, features = ["std"] }
+# The view builds an event and hands it over as NIP-01 JSON; see src/node.rs.
+serde_json.workspace = true
 uniffi = { workspace = true, features = ["cli"] }
 # Wiping the copies this crate makes of what the shell handed over.
 zeroize.workspace = true

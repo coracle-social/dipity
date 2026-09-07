@@ -14,7 +14,7 @@ The design is written down in full. The implementation is not, and the gap is un
 | Layer | State |
 | --- | --- |
 | `core/dip` | Built out. Roughly 18,000 lines, a test module at the foot of nearly every file, and a module for every subsystem in `docs/` |
-| `core/dip-ffi` | Scaffolding. One exported function, `core_version()`, enough to prove bindings generate and link |
+| `core/dip-ffi` | The uniffi surface. `node` (the radio loop and `Action`), `keys` (the Keychain callback), `store` (the open store the view will read). Declared by hand, one method per core entry point |
 | `ios/`, `android/` | Stock Capacitor projects. Nothing of ours: no plugin, no radio, no secure storage, no `DipFFI.xcframework` binary target |
 | `src/` | Scaffolding. `App.svelte`, `main.ts`, `utils.ts`, `app.css`, and vendored shadcn components under `src/lib/components/ui/` |
 
