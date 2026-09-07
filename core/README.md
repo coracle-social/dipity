@@ -48,7 +48,7 @@ Compiling needs the bindings but not the `jniLibs`, so `just android-check` skip
 
 ### The Xcode project
 
-Xcode compiles a list, not a directory, and `ios/App/App.xcodeproj/project.pbxproj` is the list. A Swift file on disk that it does not name is not part of the build, with no error anywhere — you get a working stock Capacitor app that answers nothing, which is what `coreVersion` rejecting is there to catch. `cap sync` does not write that file, so the four files under `ios/App/App/`, the generated bindings and the phase that produces them are named in it and committed like any other source. Clone the repo, `just setup`, open the project, build.
+Xcode compiles a list, not a directory, and `ios/App/App.xcodeproj/project.pbxproj` is the list. A Swift file on disk that it does not name is not part of the build, with no error anywhere — you get a working stock Capacitor app that answers nothing, which is what `coreVersion` rejecting is there to catch. `cap sync` does not write that file, so the shell's own Swift under `ios/App/App/`, the generated bindings and the phase that produces them are named in it and committed like any other source. Clone the repo, `just setup`, open the project, build.
 
 Xcode resolves the package graph when a project opens, before any build phase has run. A Swift package naming a built artifact therefore cannot have one on a fresh clone, because the build that would produce it never starts. The core is a build phase for that reason.
 

@@ -84,6 +84,17 @@ export type DipCore = {
    */
   start(): Promise<{identity: string}>
 
+  /**
+   * The `imeta` entries an event has to carry for a peer to fetch `media` and
+   * check what it gets, base64 in.
+   *
+   * Describing bytes stores nothing, so this is the one node call that needs no
+   * started core. It is also the only way media reaches an event: `publish`
+   * reads `imeta` off what the view already signed, and the BLAKE3 root has to
+   * be in the tag before the id is computed.
+   */
+  mediaTags(options: {media: string}): Promise<{entries: string[]}>
+
   /** Store and offer an event, with the media it attaches, base64 each. */
   publish(options: {event: string; media?: string[]}): Promise<void>
 

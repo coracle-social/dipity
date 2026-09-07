@@ -31,6 +31,7 @@ import uniffi.dip_ffi.coreVersion as loadedCoreVersion
 import uniffi.dip_ffi.generateIdentity
 import uniffi.dip_ffi.identityFromNsec
 import uniffi.dip_ffi.identityNpub
+import uniffi.dip_ffi.mediaTags as coreMediaTags
 
 /** The three permissions the radio needs on 31+, asked for together. */
 private const val RADIO_PERMISSIONS = "radio"
@@ -103,6 +104,9 @@ class DipPlugin : Plugin(), Radio.Delegate {
     /** The `exportKey` call waiting on the chooser it opened. */
     private var exporting: PluginCall? = null
 
+    /** Where the core's log goes, installed before anything can log. */
+    override fun load() = Logcat.install(context)
+
     // ------------------------------------------------------------- Identity
 
     @PluginMethod
@@ -162,6 +166,28 @@ class DipPlugin : Plugin(), Radio.Delegate {
         }
 
         open(call)
+    }
+
+    /**
+     * The `imeta` entries an event has to carry for a peer to fetch `media` and
+     * check what it gets, base64 in.
+     *
+     * Describing bytes stores nothing, so this is the one node call needing no
+     * started core: the view composes the tag, signs the event, and hands both
+     * to [publish]. `docs/storage.md#blob-store`.
+     */
+    @PluginMethod
+    fun mediaTags(call: PluginCall) {
+        val media = call.getString("media") ?: return call.reject("mediaTags needs base64 media")
+
+        val bytes =
+            try {
+                android.util.Base64.decode(media, android.util.Base64.DEFAULT)
+            } catch (error: IllegalArgumentException) {
+                return call.reject("mediaTags needs base64 media", error)
+            }
+
+        call.resolve(JSObject().put("entries", JSArray(coreMediaTags(bytes))))
     }
 
     /** Store and offer an event the view built, with the media it attaches. */

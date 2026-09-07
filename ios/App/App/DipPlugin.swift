@@ -33,6 +33,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "importIdentity", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deleteIdentity", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "mediaTags", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "publish", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "approve", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "exportKey", returnType: CAPPluginReturnPromise),
@@ -72,6 +73,11 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
 
     /// The store registration, live until the plugin drops it.
     private var watching: Subscription?
+
+    /// Where the core's log goes, installed before anything can log.
+    public override func load() {
+        OsLog.install()
+    }
 
     // ---------------------------------------------------------------- Identity
 
@@ -149,6 +155,20 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         } catch {
             call.reject("the core could not be opened", nil, error)
         }
+    }
+
+    /// The `imeta` entries an event has to carry for a peer to fetch `media`
+    /// and check what it gets, base64 in.
+    ///
+    /// Describing bytes stores nothing, so this is the one node call needing no
+    /// started core: the view composes the tag, signs the event, and hands both
+    /// to `publish`. `docs/storage.md#blob-store`.
+    @objc func mediaTags(_ call: CAPPluginCall) {
+        guard let media = call.getString("media").flatMap({ Data(base64Encoded: $0) }) else {
+            return call.reject("mediaTags needs base64 media")
+        }
+
+        call.resolve(["entries": App.mediaTags(bytes: media)])
     }
 
     /// Store and offer an event the view built, with the media it attaches.

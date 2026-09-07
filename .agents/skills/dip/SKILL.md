@@ -15,16 +15,18 @@ The design is written down in full. The implementation is not, and the gap is un
 | --- | --- |
 | `core/dip` | Built out. Roughly 18,000 lines, a test module at the foot of nearly every file, and a module for every subsystem in `docs/` |
 | `core/dip-ffi` | The uniffi surface. `node` (the radio loop and `Action`), `keys` (the Keychain callback), `store` (queries, preferences and a change callback). Declared by hand: records in, JSON out |
-| `ios/`, `android/` | The shell. One `DipPlugin` each over the generated bindings, plus `Radio`, secure storage (`Keychain`, `Keystore`) and `Lifecycle`. Nothing here decides anything the core decides |
+| `ios/`, `android/` | The shell. One `DipPlugin` each over the generated bindings, plus `Radio`, secure storage (`Keychain`, `Keystore`), `Lifecycle` and `Logging`. Nothing here decides anything the core decides |
 | `src/` | Scaffolding, plus `src/lib/core.ts` — the plugin boundary, and the only way the view reaches the core. Otherwise `App.svelte`, `main.ts`, `utils.ts`, `app.css`, and vendored shadcn components under `src/lib/components/ui/` |
 
 The core is the codebase. The shell is glue, and the view is a version string and a build target.
 
-`core/dip-ffi` exports more than the plugins call, so read the plugin before adding to either. The radio loop and identity storage are wired the whole way through. One group of entry points has no caller in either shell: L2CAP, which is deliberate and which the three no-op `Action` arms mark.
+`core/dip-ffi` exports more than the plugins call, so read the plugin before adding to either. The radio loop, identity storage, the store reads, logging and media authoring are wired the whole way through. One group of entry points has no caller in either shell: L2CAP, which is deliberate and which the three no-op `Action` arms mark.
 
 Each plugin opens the core in a private `open` and drops it in a private `close`, and `start` is the guard in front of them. That pair exists because `takeTransferredIdentity` reopens the node under the key it just wrote — a shell that only ever opens once would have to restart the app to finish a login with device. The store and the node are one field, opened and dropped together, because there is no call that wants half a core.
 
-A plugin method is one of three shapes, and adding one means picking which: `answer` for a store read, which resolves with what it read; `perform` for a node call the view is waiting on, which resolves with nothing once the actions are carried out; `drive` for a radio or lifecycle event, which nobody is waiting on. Each takes the opened core and applies the actions, so a method that spells the guard and the `try`/`catch` out again is a method doing something those three are not. `clearPreference` and `takeTransferredIdentity` are the two that genuinely are.
+A plugin method is one of three shapes, and adding one means picking which: `answer` for a store read, which resolves with what it read; `perform` for a node call the view is waiting on, which resolves with nothing once the actions are carried out; `drive` for a radio or lifecycle event, which nobody is waiting on. Each takes the opened core and applies the actions, so a method that spells the guard and the `try`/`catch` out again is a method doing something those three are not. `clearPreference` and `takeTransferredIdentity` are the two that genuinely are, and `mediaTags` is the one that reaches a free function and so needs no core at all.
+
+The core's `log` goes nowhere until a shell installs a `Logger`, so `Logging.swift` and `Logging.kt` implement one over `os.Logger` and logcat, and each plugin's `load` installs it before the core is opened. The Rust module path is the record's target and becomes the category or the tag, which is the only thing making a subsystem filterable on a device.
 
 `docs/ui.md`'s `src/lib/kinds/` and `src/lib/data/` layout is a specification to build against rather than a description of the tree.
 
