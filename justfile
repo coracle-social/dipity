@@ -190,7 +190,9 @@ fmt:
     pnpm exec eslint . --fix
     cd {{core}} && cargo fmt
 
-# Everything a change has to pass. CI runs one step per recipe listed here.
+# Everything a change has to pass. CI runs one step per recipe listed here except
+# android-check: provisioning the SDK costs the shared runner more than the
+# compile does, so the Kotlin is compiled before the push rather than after it.
 qa: check lint format comments core-fmt core-lint core-test android-check
 
 # --------------------------------------------------------------------- cleanup
