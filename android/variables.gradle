@@ -1,5 +1,6 @@
 ext {
-    minSdkVersion = 29
+    // 33 is where the GATT write and notify calls take their payload as an argument.
+    minSdkVersion = 33
     compileSdkVersion = 36
     targetSdkVersion = 36
     androidxActivityVersion = '1.11.0'

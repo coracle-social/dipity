@@ -19,7 +19,6 @@ import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
-import android.os.Build
 import android.os.ParcelUuid
 import java.util.UUID
 import uniffi.dip_ffi.characteristicUuid
@@ -202,32 +201,19 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         server = manager.openGattServer(context, gattServer).also { it.addService(served) }
     }
 
-    @Suppress("DEPRECATION")
     private fun write(held: Link.Dialed, fragment: ByteArray) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            held.gatt.writeCharacteristic(
-                held.characteristic,
-                fragment,
-                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
-            )
-        } else {
-            held.characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            held.characteristic.value = fragment
-            held.gatt.writeCharacteristic(held.characteristic)
-        }
+        held.gatt.writeCharacteristic(
+            held.characteristic,
+            fragment,
+            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
+        )
     }
 
-    @Suppress("DEPRECATION")
     private fun notify(device: BluetoothDevice, fragment: ByteArray) {
         val exposed = characteristic ?: return
         val gatt = server ?: return
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.notifyCharacteristicChanged(device, exposed, false, fragment)
-        } else {
-            exposed.value = fragment
-            gatt.notifyCharacteristicChanged(device, exposed, false)
-        }
+        gatt.notifyCharacteristicChanged(device, exposed, false, fragment)
     }
 
     // ------------------------------------------------------------- Scanning
@@ -276,22 +262,14 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                 if (found == null) return gatt.disconnect()
 
                 gatt.setCharacteristicNotification(found, true)
-                found.getDescriptor(CLIENT_CONFIGURATION)?.let { subscribe(gatt, it) }
+                found.getDescriptor(CLIENT_CONFIGURATION)?.let {
+                    gatt.writeDescriptor(it, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                }
 
                 val link = take()
                 links[link] = Link.Dialed(gatt, found)
 
                 delegate.linkUp(link, gatt.device.address, true, (MTU - ATT_OVERHEAD).toUInt())
-            }
-
-            @Suppress("DEPRECATION")
-            override fun onCharacteristicChanged(
-                gatt: BluetoothGatt,
-                characteristic: BluetoothGattCharacteristic,
-            ) {
-                val link = linkFor(gatt) ?: return
-
-                delegate.received(link, characteristic.value ?: return)
             }
 
             override fun onCharacteristicChanged(
@@ -312,16 +290,6 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                 linkFor(gatt)?.let(delegate::wrote)
             }
         }
-
-    @Suppress("DEPRECATION")
-    private fun subscribe(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-        } else {
-            descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            gatt.writeDescriptor(descriptor)
-        }
-    }
 
     // --------------------------------------------------------- GATT server
 

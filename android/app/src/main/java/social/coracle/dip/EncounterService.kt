@@ -7,7 +7,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.Build
 import android.os.IBinder
 
 /**
@@ -35,15 +34,11 @@ class EncounterService : Service() {
                 .setOngoing(true)
                 .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIFICATION,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-            )
-        } else {
-            startForeground(NOTIFICATION, notification)
-        }
+        startForeground(
+            NOTIFICATION,
+            notification,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+        )
 
         // Restarted without its intent if the system kills it: there is nothing
         // in the intent, and stopping means never meeting anyone again.
