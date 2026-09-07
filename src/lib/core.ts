@@ -41,7 +41,13 @@ export type Query = {
 /** One stored preference. */
 export type Pref = {key: string; value: string; updatedAt: number}
 
-/** Which group of tables moved. */
+/**
+ * Which group of tables moved.
+ *
+ * The names are the core's, answered by `change_name` and put on the event by
+ * whichever shell is running, so this union restates them rather than deciding
+ * them.
+ */
 export type Change = {group: "events" | "blobs" | "preferences"}
 
 /** The core, as the webview calls it. */

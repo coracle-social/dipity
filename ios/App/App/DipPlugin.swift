@@ -14,6 +14,14 @@ import UIKit
 /// place they are carried out. The core calls nothing back, so this is never
 /// re-entered from inside a call — an action that produces more actions
 /// produces them on the next entry point, not underneath this one.
+///
+/// # The three call shapes
+///
+/// A store read answers what it read, through `answer`. A node call answers
+/// only the actions it asked for, through `perform`. A radio event has nobody
+/// waiting on it, through `drive`. Each takes the opened core, runs one entry
+/// point and carries out the result; a method that spells any of that out again
+/// is a method doing something the other two are not.
 @objc(DipPlugin)
 public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "DipPlugin"
@@ -43,15 +51,24 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "clearPreference", returnType: CAPPluginReturnPromise),
     ]
 
+    /// The store and the node, which are opened together and dropped together.
+    ///
+    /// One field rather than two: every call the view makes needs one or both,
+    /// and a plugin holding half a core is a state no call site should have to
+    /// consider.
+    struct Core {
+        let store: Store
+        let node: Node
+    }
+
     private let radio = Radio()
     private var lifecycle: Lifecycle?
 
     /// The `exportKey` call waiting on the sheet it opened.
     private var exporting: CAPPluginCall?
 
-    /// The store and the node, once there is an identity to open them under.
-    private var store: Store?
-    private var node: Node?
+    /// The core, once there is an identity to open it under.
+    private var core: Core?
 
     /// The store registration, live until the plugin drops it.
     private var watching: Subscription?
@@ -93,7 +110,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// The view calls this once it knows there is an identity, which is what
     /// makes first run a screen rather than a failed open.
     @objc func start(_ call: CAPPluginCall) {
-        guard node == nil else { return call.resolve() }
+        guard core == nil else { return call.resolve() }
 
         open(into: call)
     }
@@ -101,19 +118,18 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     private func open(into call: CAPPluginCall) {
         do {
             let directory = try support()
-            let opened = try Store.open(
+            let store = try Store.open(
                 path: directory.appendingPathComponent("dip.sqlite").path)
             let node = try Node.open(
-                store: opened,
+                store: store,
                 custody: KeychainCustody(),
                 directory: directory.path)
 
-            self.store = opened
-            self.node = node
+            core = Core(store: store, node: node)
 
             // Registered before the first tick, so nothing the core does on the
             // way up is a change the view never hears about.
-            watching = opened.observe(observer: StoreChanges(self))
+            watching = store.observe(observer: StoreChanges(self))
 
             radio.delegate = self
             lifecycle = Lifecycle(
@@ -137,33 +153,25 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
 
     /// Store and offer an event the view built, with the media it attaches.
     @objc func publish(_ call: CAPPluginCall) {
-        guard let node, let event = call.getString("event") else {
-            return call.reject("publish needs a started core and an event")
+        guard let event = call.getString("event") else {
+            return call.reject("publish needs an event")
         }
 
         let media = (call.getArray("media", String.self) ?? []).compactMap {
             Data(base64Encoded: $0)
         }
 
-        do {
-            apply(try node.publish(event: event, media: media))
-            call.resolve()
-        } catch {
-            call.reject("that event could not be published", nil, error)
+        perform(call, "that event could not be published") {
+            try $0.node.publish(event: event, media: media)
         }
     }
 
     /// The user answered a `requestApproval` the plugin sent up.
     @objc func approve(_ call: CAPPluginCall) {
-        guard let node, let link = call.getInt("link") else {
-            return call.reject("approve needs a started core and a link")
-        }
+        guard let link = link(call) else { return call.reject("approve needs a link") }
 
-        do {
-            apply(try node.approve(link: LinkId(value: UInt64(link)), approved: call.getBool("approved", false)))
-            call.resolve()
-        } catch {
-            call.reject("that approval could not be recorded", nil, error)
+        perform(call, "that approval could not be recorded") {
+            try $0.node.approve(link: link, approved: call.getBool("approved", false))
         }
     }
 
@@ -173,12 +181,16 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// file was shared or dismissed. Answers once the sheet closes, which is
     /// also when the file goes. `docs/keys.md#backup`.
     @objc func exportKey(_ call: CAPPluginCall) {
-        guard let node else { return call.reject("exportKey needs a started core") }
+        guard let core else { return call.reject("exportKey needs a started core") }
+
+        // One sheet means one call waiting on it, so whoever this displaces is
+        // answered rather than left on a promise that never settles.
+        exporting?.reject("another key export replaced this one")
+        exporting = call
 
         do {
-            exporting = call
             apply(
-                try node.exportKey(
+                try core.node.exportKey(
                     cache: FileManager.default.temporaryDirectory.path,
                     password: call.getString("password")))
         } catch {
@@ -194,32 +206,22 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// Both ends are asked to compare the six digits a `confirmIdentityTransfer`
     /// carries before anything moves. `docs/keys.md#login-with-device`.
     @objc func offerIdentity(_ call: CAPPluginCall) {
-        guard let node, let link = call.getInt("link") else {
-            return call.reject("offerIdentity needs a started core and a link")
-        }
+        guard let link = link(call) else { return call.reject("offerIdentity needs a link") }
 
-        do {
-            apply(try node.offerIdentity(link: LinkId(value: UInt64(link))))
-            call.resolve()
-        } catch {
-            call.reject("that identity could not be offered", nil, error)
+        perform(call, "that identity could not be offered") {
+            try $0.node.offerIdentity(link: link)
         }
     }
 
     /// The user answered a `confirmIdentityTransfer` the plugin sent up.
     @objc func answerIdentityTransfer(_ call: CAPPluginCall) {
-        guard let node, let link = call.getInt("link") else {
-            return call.reject("answerIdentityTransfer needs a started core and a link")
+        guard let link = link(call) else {
+            return call.reject("answerIdentityTransfer needs a link")
         }
 
-        do {
-            apply(
-                try node.answerIdentityTransfer(
-                    link: LinkId(value: UInt64(link)),
-                    confirmed: call.getBool("confirmed", false)))
-            call.resolve()
-        } catch {
-            call.reject("that answer could not be recorded", nil, error)
+        perform(call, "that answer could not be recorded") {
+            try $0.node.answerIdentityTransfer(
+                link: link, confirmed: call.getBool("confirmed", false))
         }
     }
 
@@ -230,13 +232,13 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// the node is reopened under it. Answers what `start` answers, so the view
     /// reads the new identity off the same field.
     @objc func takeTransferredIdentity(_ call: CAPPluginCall) {
-        guard let node, let link = call.getInt("link") else {
-            return call.reject("takeTransferredIdentity needs a started core and a link")
+        guard let core else { return call.reject("takeTransferredIdentity needs a started core") }
+        guard let link = link(call) else {
+            return call.reject("takeTransferredIdentity needs a link")
         }
 
         do {
-            guard let secret = try node.takeTransferredIdentity(link: LinkId(value: UInt64(link)))
-            else {
+            guard let secret = try core.node.takeTransferredIdentity(link: link) else {
                 return call.reject("no identity arrived on that link")
             }
 
@@ -303,30 +305,27 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// Write a preference and rebind live sessions under the policy it compiles
     /// to, which is why this is one call rather than two the view can misorder.
     @objc func setPreference(_ call: CAPPluginCall) {
-        guard let store, let node, let key = call.getString("key"),
-            let value = call.getString("value")
-        else {
-            return call.reject("setPreference needs a started core, a key and a value")
+        guard let key = call.getString("key"), let value = call.getString("value") else {
+            return call.reject("setPreference needs a key and a value")
         }
 
-        do {
-            try store.setPreference(key: key, value: value)
-            apply(try node.policyChanged())
-            call.resolve()
-        } catch {
-            call.reject("that preference could not be written", nil, error)
+        perform(call, "that preference could not be written") {
+            try $0.store.setPreference(key: key, value: value)
+
+            return try $0.node.policyChanged()
         }
     }
 
     @objc func clearPreference(_ call: CAPPluginCall) {
-        guard let store, let node, let key = call.getString("key") else {
-            return call.reject("clearPreference needs a started core and a key")
+        guard let core else { return call.reject("clearPreference needs a started core") }
+        guard let key = call.getString("key") else {
+            return call.reject("clearPreference needs a key")
         }
 
         do {
-            let existed = try store.clearPreference(key: key)
+            let existed = try core.store.clearPreference(key: key)
 
-            apply(try node.policyChanged())
+            apply(try core.node.policyChanged())
             call.resolve(["existed": existed])
         } catch {
             call.reject("that preference could not be cleared", nil, error)
@@ -335,13 +334,43 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
 
     /// Run one store read and answer what it gave back under `key`.
     private func answer(_ call: CAPPluginCall, _ key: String, _ read: (Store) throws -> Any) {
-        guard let store else { return call.reject("that call needs a started core") }
+        guard let core else { return call.reject("that call needs a started core") }
 
         do {
-            call.resolve([key: try read(store)])
+            call.resolve([key: try read(core.store)])
         } catch {
             call.reject("the store could not answer", nil, error)
         }
+    }
+
+    /// Run one core entry point the view is waiting on, and answer when the
+    /// actions it asked for have been carried out.
+    ///
+    /// The other half of `answer`: a store read answers with what it read, and
+    /// a node call answers with nothing.
+    private func perform(
+        _ call: CAPPluginCall, _ failure: String, _ body: (Core) throws -> [Action]
+    ) {
+        guard let core else { return call.reject("that call needs a started core") }
+
+        do {
+            apply(try body(core))
+            call.resolve()
+        } catch {
+            call.reject(failure, nil, error)
+        }
+    }
+
+    /// The link the view named, which it only ever learned by being asked
+    /// something about it.
+    ///
+    /// A link is a `UInt64` the shell assigned, so a negative one is not a link
+    /// this device ever handed out — refused here rather than trapping on the
+    /// conversion.
+    private func link(_ call: CAPPluginCall) -> LinkId? {
+        guard let value = call.getInt("link"), value >= 0 else { return nil }
+
+        return LinkId(value: UInt64(value))
     }
 
     /// The query the view named, which is a filter plus provenance it may not
@@ -444,11 +473,12 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// keeps its GATT service, which is registered once at power-on and would
     /// not come back on its own.
     private func close() {
+        exporting?.reject("the core closed before the backup was shared")
+        exporting = nil
         watching = nil
         lifecycle = nil
         radio.stop()
-        node = nil
-        store = nil
+        core = nil
     }
 
     /// Write an identity and answer the npub, which is all the view is owed.
@@ -478,18 +508,7 @@ private class StoreChanges: StoreObserver {
     }
 
     func changed(group: Change) {
-        plugin?.notifyListeners("storeChanged", data: ["group": group.name])
-    }
-}
-
-extension Change {
-    /// The name the view knows this group by.
-    fileprivate var name: String {
-        switch self {
-        case .events: return "events"
-        case .blobs: return "blobs"
-        case .preferences: return "preferences"
-        }
+        plugin?.notifyListeners("storeChanged", data: ["group": App.changeName(group: group)])
     }
 }
 
@@ -522,12 +541,13 @@ extension DipPlugin: RadioDelegate {
         drive { try $0.writeComplete(link: LinkId(value: link)) }
     }
 
-    /// Run one core entry point and carry out what it answered.
+    /// Run one core entry point nobody is waiting on, and carry out what it
+    /// answered.
     ///
     /// A `NodeError.Link` is the core refusing to carry on with that link, so
     /// it goes; anything else is logged and the loop continues.
     private func drive(_ call: (Node) throws -> [Action]) {
-        guard let node else { return }
+        guard let node = core?.node else { return }
 
         do {
             apply(try call(node))

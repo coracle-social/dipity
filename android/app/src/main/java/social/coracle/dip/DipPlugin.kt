@@ -26,6 +26,7 @@ import uniffi.dip_ffi.Store
 import uniffi.dip_ffi.StoreObserver
 import uniffi.dip_ffi.Subscription
 import uniffi.dip_ffi.TransferOutcome
+import uniffi.dip_ffi.changeName
 import uniffi.dip_ffi.coreVersion as loadedCoreVersion
 import uniffi.dip_ffi.generateIdentity
 import uniffi.dip_ffi.identityFromNsec
@@ -47,6 +48,14 @@ private const val RADIO_PERMISSIONS = "radio"
  * place they are carried out. The core calls nothing back, so this is never
  * re-entered from inside a call — an action that produces more actions produces
  * them on the next entry point, not underneath this one.
+ *
+ * ## The three call shapes
+ *
+ * A store read answers what it read, through [answer]. A node call answers only
+ * the actions it asked for, through [perform]. A radio event has nobody waiting
+ * on it, through [drive]. Each takes the opened core, runs one entry point and
+ * carries out the result; a method that spells any of that out again is a method
+ * doing something the other two are not.
  *
  * ## The permissions
  *
@@ -70,11 +79,21 @@ private const val RADIO_PERMISSIONS = "radio"
         ],
 )
 class DipPlugin : Plugin(), Radio.Delegate {
+    /**
+     * The store and the node, which are opened together and dropped together.
+     *
+     * One field rather than two: every call the view makes needs one or both,
+     * and a plugin holding half a core is a state no call site should have to
+     * consider.
+     */
+    private data class Core(val store: Store, val node: Node)
+
     private val keystore by lazy { Keystore(context) }
     private val radio by lazy { Radio(context, this) }
 
-    private var store: Store? = null
-    private var node: Node? = null
+    /** The core, once there is an identity to open it under. */
+    private var core: Core? = null
+
     private var lifecycle: Lifecycle? = null
     private var backup: Backup? = null
 
@@ -127,7 +146,7 @@ class DipPlugin : Plugin(), Radio.Delegate {
      */
     @PluginMethod
     fun start(call: PluginCall) {
-        if (node != null) return call.resolve()
+        if (core != null) return call.resolve()
 
         if (getPermissionState(RADIO_PERMISSIONS) != com.getcapacitor.PermissionState.GRANTED) {
             return requestPermissionForAlias(RADIO_PERMISSIONS, call, "radioGranted")
@@ -148,32 +167,22 @@ class DipPlugin : Plugin(), Radio.Delegate {
     /** Store and offer an event the view built, with the media it attaches. */
     @PluginMethod
     fun publish(call: PluginCall) {
-        val node = this.node ?: return call.reject("publish needs a started core")
         val event = call.getString("event") ?: return call.reject("publish needs an event")
         val media =
-            (0 until (call.getArray("media")?.length() ?: 0)).map {
-                android.util.Base64.decode(call.getArray("media").getString(it), android.util.Base64.DEFAULT)
+            call.getArray("media")?.toList<String>().orEmpty().map {
+                android.util.Base64.decode(it, android.util.Base64.DEFAULT)
             }
 
-        try {
-            apply(node.publish(event, media))
-            call.resolve()
-        } catch (error: Exception) {
-            call.reject("that event could not be published", error)
-        }
+        perform(call, "that event could not be published") { it.node.publish(event, media) }
     }
 
     /** The user answered a `requestApproval` the plugin sent up. */
     @PluginMethod
     fun approve(call: PluginCall) {
-        val node = this.node ?: return call.reject("approve needs a started core")
-        val link = call.getInt("link") ?: return call.reject("approve needs a link")
+        val link = link(call) ?: return call.reject("approve needs a link")
 
-        try {
-            apply(node.approve(LinkId(link.toULong()), call.getBoolean("approved", false) == true))
-            call.resolve()
-        } catch (error: Exception) {
-            call.reject("that approval could not be recorded", error)
+        perform(call, "that approval could not be recorded") {
+            it.node.approve(link, call.getBoolean("approved", false) == true)
         }
     }
 
@@ -187,33 +196,18 @@ class DipPlugin : Plugin(), Radio.Delegate {
      */
     @PluginMethod
     fun offerIdentity(call: PluginCall) {
-        val node = this.node ?: return call.reject("offerIdentity needs a started core")
-        val link = call.getInt("link") ?: return call.reject("offerIdentity needs a link")
+        val link = link(call) ?: return call.reject("offerIdentity needs a link")
 
-        try {
-            apply(node.offerIdentity(LinkId(link.toULong())))
-            call.resolve()
-        } catch (error: Exception) {
-            call.reject("that identity could not be offered", error)
-        }
+        perform(call, "that identity could not be offered") { it.node.offerIdentity(link) }
     }
 
     /** The user answered a `confirmIdentityTransfer` the plugin sent up. */
     @PluginMethod
     fun answerIdentityTransfer(call: PluginCall) {
-        val node = this.node ?: return call.reject("answerIdentityTransfer needs a started core")
-        val link = call.getInt("link") ?: return call.reject("answerIdentityTransfer needs a link")
+        val link = link(call) ?: return call.reject("answerIdentityTransfer needs a link")
 
-        try {
-            apply(
-                node.answerIdentityTransfer(
-                    LinkId(link.toULong()),
-                    call.getBoolean("confirmed", false) == true,
-                )
-            )
-            call.resolve()
-        } catch (error: Exception) {
-            call.reject("that answer could not be recorded", error)
+        perform(call, "that answer could not be recorded") {
+            it.node.answerIdentityTransfer(link, call.getBoolean("confirmed", false) == true)
         }
     }
 
@@ -227,12 +221,12 @@ class DipPlugin : Plugin(), Radio.Delegate {
      */
     @PluginMethod
     fun takeTransferredIdentity(call: PluginCall) {
-        val node = this.node ?: return call.reject("takeTransferredIdentity needs a started core")
-        val link = call.getInt("link") ?: return call.reject("takeTransferredIdentity needs a link")
+        val core = this.core ?: return call.reject("takeTransferredIdentity needs a started core")
+        val link = link(call) ?: return call.reject("takeTransferredIdentity needs a link")
 
         val secret =
             try {
-                node.takeTransferredIdentity(LinkId(link.toULong()))
+                core.node.takeTransferredIdentity(link)
                     ?: return call.reject("no identity arrived on that link")
             } catch (error: Exception) {
                 return call.reject("the transferred identity could not be adopted", error)
@@ -256,11 +250,15 @@ class DipPlugin : Plugin(), Radio.Delegate {
      */
     @PluginMethod
     fun exportKey(call: PluginCall) {
-        val node = this.node ?: return call.reject("exportKey needs a started core")
+        val core = this.core ?: return call.reject("exportKey needs a started core")
+
+        // One chooser means one call waiting on it, so whoever this displaces
+        // is answered rather than left on a promise that never settles.
+        exporting?.reject("another key export replaced this one")
+        exporting = call
 
         try {
-            exporting = call
-            apply(node.exportKey(context.cacheDir.absolutePath, call.getString("password")))
+            apply(core.node.exportKey(context.cacheDir.absolutePath, call.getString("password")))
         } catch (error: Exception) {
             exporting = null
             call.reject("the backup could not be written", error)
@@ -346,30 +344,24 @@ class DipPlugin : Plugin(), Radio.Delegate {
      */
     @PluginMethod
     fun setPreference(call: PluginCall) {
-        val store = this.store ?: return call.reject("setPreference needs a started core")
-        val node = this.node ?: return call.reject("setPreference needs a started core")
         val key = call.getString("key") ?: return call.reject("setPreference needs a key")
         val value = call.getString("value") ?: return call.reject("setPreference needs a value")
 
-        try {
-            store.setPreference(key, value)
-            apply(node.policyChanged())
-            call.resolve()
-        } catch (error: Exception) {
-            call.reject("that preference could not be written", error)
+        perform(call, "that preference could not be written") {
+            it.store.setPreference(key, value)
+            it.node.policyChanged()
         }
     }
 
     @PluginMethod
     fun clearPreference(call: PluginCall) {
-        val store = this.store ?: return call.reject("clearPreference needs a started core")
-        val node = this.node ?: return call.reject("clearPreference needs a started core")
+        val core = this.core ?: return call.reject("clearPreference needs a started core")
         val key = call.getString("key") ?: return call.reject("clearPreference needs a key")
 
         try {
-            val existed = store.clearPreference(key)
+            val existed = core.store.clearPreference(key)
 
-            apply(node.policyChanged())
+            apply(core.node.policyChanged())
             call.resolve(JSObject().put("existed", existed))
         } catch (error: Exception) {
             call.reject("that preference could not be cleared", error)
@@ -378,14 +370,43 @@ class DipPlugin : Plugin(), Radio.Delegate {
 
     /** Run one store read and answer what it gave back under [key]. */
     private fun answer(call: PluginCall, key: String, read: (Store) -> Any) {
-        val store = this.store ?: return call.reject("that call needs a started core")
+        val core = this.core ?: return call.reject("that call needs a started core")
 
         try {
-            call.resolve(JSObject().put(key, read(store)))
+            call.resolve(JSObject().put(key, read(core.store)))
         } catch (error: Exception) {
             call.reject("the store could not answer", error)
         }
     }
+
+    /**
+     * Run one core entry point the view is waiting on, and answer when the
+     * actions it asked for have been carried out.
+     *
+     * The other half of [answer]: a store read answers with what it read, and a
+     * node call answers with nothing.
+     */
+    private fun perform(call: PluginCall, failure: String, body: (Core) -> List<Action>) {
+        val core = this.core ?: return call.reject("that call needs a started core")
+
+        try {
+            apply(body(core))
+            call.resolve()
+        } catch (error: Exception) {
+            call.reject(failure, error)
+        }
+    }
+
+    /**
+     * The link the view named, which it only ever learned by being asked
+     * something about it.
+     *
+     * A link is a `ULong` the shell assigned, so a negative one is not a link
+     * this device ever handed out — refused here rather than wrapping into one
+     * it never issued.
+     */
+    private fun link(call: PluginCall) =
+        call.getInt("link")?.takeIf { it >= 0 }?.let { LinkId(it.toULong()) }
 
     /**
      * The query the view named, which is a filter plus provenance it may not
@@ -403,17 +424,9 @@ class DipPlugin : Plugin(), Radio.Delegate {
     /** Tells the view which group of tables moved, so it re-reads what it shows. */
     private inner class StoreChanges : StoreObserver {
         override fun changed(group: Change) {
-            notifyListeners("storeChanged", JSObject().put("group", group.viewName()))
+            notifyListeners("storeChanged", JSObject().put("group", changeName(group)))
         }
     }
-
-    /** The name the view knows this group by. */
-    private fun Change.viewName() =
-        when (this) {
-            Change.EVENTS -> "events"
-            Change.BLOBS -> "blobs"
-            Change.PREFERENCES -> "preferences"
-        }
 
     // -------------------------------------------------------------- Actions
 
@@ -477,13 +490,14 @@ class DipPlugin : Plugin(), Radio.Delegate {
     override fun wrote(link: ULong) = drive { it.writeComplete(LinkId(link)) }
 
     /**
-     * Run one core entry point and carry out what it answered.
+     * Run one core entry point nobody is waiting on, and carry out what it
+     * answered.
      *
      * A [NodeException.Link] is the core refusing to carry on with that link, so
      * it goes; anything else is logged and the loop continues.
      */
     private fun drive(call: (Node) -> List<Action>) {
-        val node = this.node ?: return
+        val node = core?.node ?: return
 
         try {
             apply(call(node))
@@ -499,15 +513,14 @@ class DipPlugin : Plugin(), Radio.Delegate {
     private fun open(call: PluginCall) {
         try {
             val directory = context.filesDir
-            val opened = Store.open(File(directory, "dip.sqlite").absolutePath)
-            val node = Node.open(opened, KeystoreCustody(keystore), directory.absolutePath)
+            val store = Store.open(File(directory, "dip.sqlite").absolutePath)
+            val node = Node.open(store, KeystoreCustody(keystore), directory.absolutePath)
 
-            store = opened
-            this.node = node
+            core = Core(store, node)
 
             // Registered before the first tick, so nothing the core does on the
             // way up is a change the view never hears about.
-            watching = opened.observe(StoreChanges())
+            watching = store.observe(StoreChanges())
 
             EncounterService.start(context)
 
@@ -546,22 +559,34 @@ class DipPlugin : Plugin(), Radio.Delegate {
      */
     private fun share(file: File) {
         val call = exporting ?: return
-        val chooser = backup?.chooser(file) ?: return
+        val backup = this.backup
 
         exporting = null
-        startActivityForResult(call, chooser, "keyBackupClosed")
+
+        if (backup == null) return call.reject("there is nowhere to offer the backup")
+
+        startActivityForResult(call, backup.chooser(file), "keyBackupClosed")
     }
 
-    /** Drop the node and everything driving it, so [open] can run again. */
+    /**
+     * Drop the node and everything driving it, so [open] can run again.
+     *
+     * Every field [open] set is cleared, so closing twice is closing once and
+     * the receivers are unregistered exactly as often as they were registered.
+     */
     private fun close() {
+        exporting?.reject("the core closed before the backup was shared")
         watching?.stop()
         lifecycle?.stop()
         backup?.stop()
         radio.stop()
         EncounterService.stop(context)
 
-        node = null
-        store = null
+        exporting = null
+        watching = null
+        lifecycle = null
+        backup = null
+        core = null
     }
 
     /** Write an identity and answer the npub, which is all the view is owed. */

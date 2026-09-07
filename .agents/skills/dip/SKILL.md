@@ -22,7 +22,9 @@ The core is the codebase. The shell is glue, and the view is a version string an
 
 `core/dip-ffi` exports more than the plugins call, so read the plugin before adding to either. The radio loop and identity storage are wired the whole way through. One group of entry points has no caller in either shell: L2CAP, which is deliberate and which the three no-op `Action` arms mark.
 
-Each plugin opens the core in a private `open` and drops it in a private `close`, and `start` is the guard in front of them. That pair exists because `takeTransferredIdentity` reopens the node under the key it just wrote — a shell that only ever opens once would have to restart the app to finish a login with device.
+Each plugin opens the core in a private `open` and drops it in a private `close`, and `start` is the guard in front of them. That pair exists because `takeTransferredIdentity` reopens the node under the key it just wrote — a shell that only ever opens once would have to restart the app to finish a login with device. The store and the node are one field, opened and dropped together, because there is no call that wants half a core.
+
+A plugin method is one of three shapes, and adding one means picking which: `answer` for a store read, which resolves with what it read; `perform` for a node call the view is waiting on, which resolves with nothing once the actions are carried out; `drive` for a radio or lifecycle event, which nobody is waiting on. Each takes the opened core and applies the actions, so a method that spells the guard and the `try`/`catch` out again is a method doing something those three are not. `clearPreference` and `takeTransferredIdentity` are the two that genuinely are.
 
 `docs/ui.md`'s `src/lib/kinds/` and `src/lib/data/` layout is a specification to build against rather than a description of the tree.
 

@@ -137,6 +137,23 @@ pub enum Change {
     Preferences,
 }
 
+/// The name the view knows a group by.
+///
+/// Read rather than spelled in Swift and Kotlin, for the same reason
+/// [`service_uuid`](crate::node::service_uuid) is: both shells put this string
+/// on the same event and the view switches on it, so two copies is one place to
+/// disagree.
+#[uniffi::export]
+#[must_use]
+pub fn change_name(group: Change) -> String {
+    match group {
+        Change::Events => "events",
+        Change::Blobs => "blobs",
+        Change::Preferences => "preferences",
+    }
+    .to_owned()
+}
+
 /// Where the view is told the store moved.
 #[uniffi::export(with_foreign)]
 pub trait StoreObserver: Send + Sync {
@@ -569,5 +586,13 @@ mod tests {
             .unwrap();
 
         assert!(received.recv_timeout(COALESCE * 3).is_err());
+    }
+
+    #[test]
+    fn every_group_has_its_own_name() {
+        let named = [Change::Events, Change::Blobs, Change::Preferences].map(change_name);
+
+        assert_eq!(named, ["events", "blobs", "preferences"]);
+        assert_eq!(named.iter().collect::<BTreeSet<_>>().len(), named.len());
     }
 }
