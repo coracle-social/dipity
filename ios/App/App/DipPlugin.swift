@@ -289,7 +289,7 @@ extension DipPlugin: RadioDelegate {
 
     /// Run one core entry point and carry out what it answered.
     ///
-    /// A `NodeError.link` is the core refusing to carry on with that link, so
+    /// A `NodeError.Link` is the core refusing to carry on with that link, so
     /// it goes; anything else is logged and the loop continues.
     private func drive(_ call: (Node) throws -> [Action]) {
         guard let node else { return }
@@ -297,7 +297,7 @@ extension DipPlugin: RadioDelegate {
         do {
             apply(try call(node))
         } catch let error as NodeError {
-            if case .link(let link, _) = error { radio.disconnect(link.value) }
+            if case .Link(let link, _) = error { radio.disconnect(link.value) }
 
             CAPLog.print("dip: \(error)")
         } catch {

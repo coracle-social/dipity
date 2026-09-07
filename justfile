@@ -181,6 +181,11 @@ comments:
 xcode:
     node scripts/xcode.js
 
+# The names the Swift shell takes from the generated bindings. No compiler reads
+# that Swift anywhere, so a stale one is found by running the app on a Mac.
+swift: bindings
+    node scripts/swift.js
+
 # Kotlin resolves against the generated bindings, not the jniLibs, so this wants
 # the Android SDK and not the NDK. The APK is thrown away; compiling it is the
 # only thing that reads the shell's Kotlin at all.
@@ -197,7 +202,7 @@ fmt:
 # Everything a change has to pass. CI runs one step per recipe listed here except
 # android-check: provisioning the SDK costs the shared runner more than the
 # compile does, so the Kotlin is compiled before the push rather than after it.
-qa: check lint format comments xcode core-fmt core-lint core-test android-check
+qa: check lint format comments xcode core-fmt core-lint core-test swift android-check
 
 # --------------------------------------------------------------------- cleanup
 

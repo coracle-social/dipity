@@ -72,3 +72,6 @@ jobs:
 
       - name: Test
         run: pnpm exec just core-test
+
+      - name: Check the iOS shell
+        run: pnpm exec just swift
