@@ -10,14 +10,21 @@ import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
+import com.getcapacitor.JSArray
 import java.io.File
+import org.json.JSONObject
 import uniffi.dip_ffi.Action
+import uniffi.dip_ffi.Change
 import uniffi.dip_ffi.LinkId
 import uniffi.dip_ffi.Node
 import uniffi.dip_ffi.NodeException
+import uniffi.dip_ffi.Order
 import uniffi.dip_ffi.PeripheralId
+import uniffi.dip_ffi.Query
 import uniffi.dip_ffi.Role
 import uniffi.dip_ffi.Store
+import uniffi.dip_ffi.StoreObserver
+import uniffi.dip_ffi.Subscription
 import uniffi.dip_ffi.TransferOutcome
 import uniffi.dip_ffi.coreVersion as loadedCoreVersion
 import uniffi.dip_ffi.generateIdentity
@@ -70,6 +77,9 @@ class DipPlugin : Plugin(), Radio.Delegate {
     private var node: Node? = null
     private var lifecycle: Lifecycle? = null
     private var backup: Backup? = null
+
+    /** The store registration, live until the plugin drops it. */
+    private var watching: Subscription? = null
 
     /** The `exportKey` call waiting on the chooser it opened. */
     private var exporting: PluginCall? = null
@@ -207,11 +217,138 @@ class DipPlugin : Plugin(), Radio.Delegate {
     override fun handleOnPause() = drive { it.notifyBackgrounded() }
 
     override fun handleOnDestroy() {
+        watching?.stop()
         lifecycle?.stop()
         backup?.stop()
         radio.stop()
         EncounterService.stop(context)
     }
+
+    // ---------------------------------------------------------------- Store
+
+    @PluginMethod fun listEvents(call: PluginCall) = answer(call, "events") {
+        JSArray(it.listEvents(query(call)))
+    }
+
+    @PluginMethod fun listDetails(call: PluginCall) = answer(call, "details") {
+        JSArray(it.listDetails(query(call)))
+    }
+
+    @PluginMethod
+    fun getEvent(call: PluginCall) {
+        val id = call.getString("id") ?: return call.reject("getEvent needs an id")
+
+        answer(call, "event") { it.getEvent(id) ?: JSONObject.NULL }
+    }
+
+    @PluginMethod fun wantedBlobs(call: PluginCall) = answer(call, "blobs") {
+        JSArray(it.wantedBlobs((call.getInt("limit") ?: 32).toUInt()))
+    }
+
+    @PluginMethod
+    fun getBlob(call: PluginCall) {
+        val sha256 = call.getString("sha256") ?: return call.reject("getBlob needs a sha256")
+
+        answer(call, "blob") { it.getBlob(sha256) ?: JSONObject.NULL }
+    }
+
+    @PluginMethod
+    fun eventsReferencingBlob(call: PluginCall) {
+        val sha256 =
+            call.getString("sha256") ?: return call.reject("eventsReferencingBlob needs a sha256")
+
+        answer(call, "ids") { JSArray(it.eventsReferencingBlob(sha256)) }
+    }
+
+    @PluginMethod fun preferences(call: PluginCall) = answer(call, "preferences") { store ->
+        JSArray(
+            store.preferences().map {
+                JSObject().put("key", it.key).put("value", it.value).put("updatedAt", it.updatedAt)
+            }
+        )
+    }
+
+    @PluginMethod
+    fun preference(call: PluginCall) {
+        val key = call.getString("key") ?: return call.reject("preference needs a key")
+
+        answer(call, "value") { it.preference(key) ?: JSONObject.NULL }
+    }
+
+    /**
+     * Write a preference and rebind live sessions under the policy it compiles
+     * to, which is why this is one call rather than two the view can misorder.
+     */
+    @PluginMethod
+    fun setPreference(call: PluginCall) {
+        val store = this.store ?: return call.reject("setPreference needs a started core")
+        val node = this.node ?: return call.reject("setPreference needs a started core")
+        val key = call.getString("key") ?: return call.reject("setPreference needs a key")
+        val value = call.getString("value") ?: return call.reject("setPreference needs a value")
+
+        try {
+            store.setPreference(key, value)
+            apply(node.policyChanged())
+            call.resolve()
+        } catch (error: Exception) {
+            call.reject("that preference could not be written", error)
+        }
+    }
+
+    @PluginMethod
+    fun clearPreference(call: PluginCall) {
+        val store = this.store ?: return call.reject("clearPreference needs a started core")
+        val node = this.node ?: return call.reject("clearPreference needs a started core")
+        val key = call.getString("key") ?: return call.reject("clearPreference needs a key")
+
+        try {
+            val existed = store.clearPreference(key)
+
+            apply(node.policyChanged())
+            call.resolve(JSObject().put("existed", existed))
+        } catch (error: Exception) {
+            call.reject("that preference could not be cleared", error)
+        }
+    }
+
+    /** Run one store read and answer what it gave back under [key]. */
+    private fun answer(call: PluginCall, key: String, read: (Store) -> Any) {
+        val store = this.store ?: return call.reject("that call needs a started core")
+
+        try {
+            call.resolve(JSObject().put(key, read(store)))
+        } catch (error: Exception) {
+            call.reject("the store could not answer", error)
+        }
+    }
+
+    /**
+     * The query the view named, which is a filter plus provenance it may not
+     * smuggle onto one.
+     */
+    private fun query(call: PluginCall) =
+        Query(
+            filter = call.getString("filter"),
+            seenSince = call.getLong("seenSince"),
+            seenUntil = call.getLong("seenUntil"),
+            seenFrom = call.getArray("seenFrom")?.toList<String>(),
+            order = if (call.getString("order") == "seenAt") Order.SEEN_AT else Order.CREATED_AT,
+        )
+
+    /** Tells the view which group of tables moved, so it re-reads what it shows. */
+    private inner class StoreChanges : StoreObserver {
+        override fun changed(group: Change) {
+            notifyListeners("storeChanged", JSObject().put("group", group.viewName()))
+        }
+    }
+
+    /** The name the view knows this group by. */
+    private fun Change.viewName() =
+        when (this) {
+            Change.EVENTS -> "events"
+            Change.BLOBS -> "blobs"
+            Change.PREFERENCES -> "preferences"
+        }
 
     // -------------------------------------------------------------- Actions
 
@@ -302,6 +439,10 @@ class DipPlugin : Plugin(), Radio.Delegate {
 
             store = opened
             this.node = node
+
+            // Registered before the first tick, so nothing the core does on the
+            // way up is a change the view never hears about.
+            watching = opened.observe(StoreChanges())
 
             EncounterService.start(context)
 

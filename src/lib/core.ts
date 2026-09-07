@@ -20,6 +20,30 @@ export type TransferPrompt = {link: number; code: number}
 /** How an identity transfer ended. */
 export type TransferOutcome = {link: number; received: boolean}
 
+/** What a page of stored events is ordered by. */
+export type Order = "createdAt" | "seenAt"
+
+/**
+ * How a read of stored events is narrowed.
+ *
+ * `filter` is NIP-01 and is the one part of a query that would be safe to hand
+ * a peer. Everything else is provenance and never leaves the device, which is
+ * why the core takes them as their own fields rather than off the filter.
+ */
+export type Query = {
+  filter?: string
+  seenSince?: number
+  seenUntil?: number
+  seenFrom?: string[]
+  order?: Order
+}
+
+/** One stored preference. */
+export type Pref = {key: string; value: string; updatedAt: number}
+
+/** Which group of tables moved. */
+export type Change = {group: "events" | "blobs" | "preferences"}
+
 /** The core, as the webview calls it. */
 export type DipCore = {
   /**
@@ -61,6 +85,47 @@ export type DipCore = {
   /** Answer a `requestApproval`. */
   approve(options: {link: number; approved: boolean}): Promise<void>
 
+  /** Stored events matching the query, each NIP-01 JSON. */
+  listEvents(options?: Query): Promise<{events: string[]}>
+
+  /**
+   * The same events, each with the media it references and the peers it
+   * arrived from.
+   *
+   * Two reads for the page rather than two per event, so a feed asks for this
+   * rather than looping over `listEvents`.
+   */
+  listDetails(options?: Query): Promise<{details: string[]}>
+
+  /** One stored event by id, NIP-01 JSON, or null. */
+  getEvent(options: {id: string}): Promise<{event: string | null}>
+
+  /** Blobs a stored event references and this device does not hold. */
+  wantedBlobs(options?: {limit?: number}): Promise<{blobs: string[]}>
+
+  /** One blob's metadata and transfer progress, or null. */
+  getBlob(options: {sha256: string}): Promise<{blob: string | null}>
+
+  /** Every stored event that references a hash, by id. */
+  eventsReferencingBlob(options: {sha256: string}): Promise<{ids: string[]}>
+
+  /** Every stored preference. */
+  preferences(): Promise<{preferences: Pref[]}>
+
+  /** One preference's value, as the JSON document it was written as. */
+  preference(options: {key: string}): Promise<{value: string | null}>
+
+  /**
+   * Write a preference, a JSON document, and rebind live sessions under it.
+   *
+   * Policy is stored as preferences and compiled by the core, so the write and
+   * the rebind are one call rather than two the view can get out of order.
+   */
+  setPreference(options: {key: string; value: string}): Promise<void>
+
+  /** Remove a preference, so its default applies again. */
+  clearPreference(options: {key: string}): Promise<{existed: boolean}>
+
   /**
    * Write a key backup and put it in front of the user.
    *
@@ -81,6 +146,16 @@ export type DipCore = {
   addListener(
     event: "identityTransfer",
     handler: (outcome: TransferOutcome) => void,
+  ): Promise<PluginListenerHandle>
+  /**
+   * Writes landed in this group, coalesced.
+   *
+   * The group, not the rows: the view re-reads the query it is showing, and
+   * carrying the change would be a second path to the same data.
+   */
+  addListener(
+    event: "storeChanged",
+    handler: (change: Change) => void,
   ): Promise<PluginListenerHandle>
   /**
    * Whether an app took the backup, or the user backed out.

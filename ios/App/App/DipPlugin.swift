@@ -29,6 +29,16 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "publish", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "approve", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "exportKey", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "listEvents", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "listDetails", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getEvent", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "wantedBlobs", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getBlob", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "eventsReferencingBlob", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "preferences", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "preference", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setPreference", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "clearPreference", returnType: CAPPluginReturnPromise),
     ]
 
     private let radio = Radio()
@@ -40,6 +50,9 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// The store and the node, once there is an identity to open them under.
     private var store: Store?
     private var node: Node?
+
+    /// The store registration, live until the plugin drops it.
+    private var watching: Subscription?
 
     // ---------------------------------------------------------------- Identity
 
@@ -91,6 +104,10 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
 
             self.store = opened
             self.node = node
+
+            // Registered before the first tick, so nothing the core does on the
+            // way up is a change the view never hears about.
+            watching = opened.observe(observer: StoreChanges(self))
 
             radio.delegate = self
             lifecycle = Lifecycle(
@@ -162,6 +179,113 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
             exporting = nil
             call.reject("the backup could not be written", nil, error)
         }
+    }
+
+    // ----------------------------------------------------------------- Store
+
+    @objc func listEvents(_ call: CAPPluginCall) {
+        answer(call, "events") { try $0.listEvents(query: self.query(call)) }
+    }
+
+    @objc func listDetails(_ call: CAPPluginCall) {
+        answer(call, "details") { try $0.listDetails(query: self.query(call)) }
+    }
+
+    @objc func getEvent(_ call: CAPPluginCall) {
+        guard let id = call.getString("id") else { return call.reject("getEvent needs an id") }
+
+        answer(call, "event") { try $0.getEvent(id: id) ?? NSNull() }
+    }
+
+    @objc func wantedBlobs(_ call: CAPPluginCall) {
+        let limit = UInt32(call.getInt("limit") ?? 32)
+
+        answer(call, "blobs") { try $0.wantedBlobs(limit: limit) }
+    }
+
+    @objc func getBlob(_ call: CAPPluginCall) {
+        guard let sha256 = call.getString("sha256") else {
+            return call.reject("getBlob needs a sha256")
+        }
+
+        answer(call, "blob") { try $0.getBlob(sha256: sha256) ?? NSNull() }
+    }
+
+    @objc func eventsReferencingBlob(_ call: CAPPluginCall) {
+        guard let sha256 = call.getString("sha256") else {
+            return call.reject("eventsReferencingBlob needs a sha256")
+        }
+
+        answer(call, "ids") { try $0.eventsReferencingBlob(sha256: sha256) }
+    }
+
+    @objc func preferences(_ call: CAPPluginCall) {
+        answer(call, "preferences") {
+            try $0.preferences().map {
+                ["key": $0.key, "value": $0.value, "updatedAt": Int($0.updatedAt)]
+            }
+        }
+    }
+
+    @objc func preference(_ call: CAPPluginCall) {
+        guard let key = call.getString("key") else { return call.reject("preference needs a key") }
+
+        answer(call, "value") { try $0.preference(key: key) ?? NSNull() }
+    }
+
+    /// Write a preference and rebind live sessions under the policy it compiles
+    /// to, which is why this is one call rather than two the view can misorder.
+    @objc func setPreference(_ call: CAPPluginCall) {
+        guard let store, let node, let key = call.getString("key"),
+            let value = call.getString("value")
+        else {
+            return call.reject("setPreference needs a started core, a key and a value")
+        }
+
+        do {
+            try store.setPreference(key: key, value: value)
+            apply(try node.policyChanged())
+            call.resolve()
+        } catch {
+            call.reject("that preference could not be written", nil, error)
+        }
+    }
+
+    @objc func clearPreference(_ call: CAPPluginCall) {
+        guard let store, let node, let key = call.getString("key") else {
+            return call.reject("clearPreference needs a started core and a key")
+        }
+
+        do {
+            let existed = try store.clearPreference(key: key)
+
+            apply(try node.policyChanged())
+            call.resolve(["existed": existed])
+        } catch {
+            call.reject("that preference could not be cleared", nil, error)
+        }
+    }
+
+    /// Run one store read and answer what it gave back under `key`.
+    private func answer(_ call: CAPPluginCall, _ key: String, _ read: (Store) throws -> Any) {
+        guard let store else { return call.reject("that call needs a started core") }
+
+        do {
+            call.resolve([key: try read(store)])
+        } catch {
+            call.reject("the store could not answer", nil, error)
+        }
+    }
+
+    /// The query the view named, which is a filter plus provenance it may not
+    /// smuggle onto one.
+    private func query(_ call: CAPPluginCall) -> Query {
+        Query(
+            filter: call.getString("filter"),
+            seenSince: call.getInt("seenSince").map(Int64.init),
+            seenUntil: call.getInt("seenUntil").map(Int64.init),
+            seenFrom: call.getArray("seenFrom", String.self),
+            order: call.getString("order") == "seenAt" ? .seenAt : .createdAt)
     }
 
     // ---------------------------------------------------------------- Actions
@@ -254,6 +378,37 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
             call.resolve(["npub": try DipFFI.identityNpub(secret: secret)])
         } catch {
             call.reject("the identity could not be stored", nil, error)
+        }
+    }
+}
+
+// --------------------------------------------------------------------- Store
+
+/// Tells the view which group of tables moved, so it re-reads what it is
+/// showing.
+///
+/// Held by the core for as long as the subscription lives, so the plugin is a
+/// weak reference: the registration outliving the plugin is a leak, not a
+/// crash.
+private class StoreChanges: StoreObserver {
+    private weak var plugin: DipPlugin?
+
+    init(_ plugin: DipPlugin) {
+        self.plugin = plugin
+    }
+
+    func changed(group: Change) {
+        plugin?.notifyListeners("storeChanged", data: ["group": group.name])
+    }
+}
+
+extension Change {
+    /// The name the view knows this group by.
+    fileprivate var name: String {
+        switch self {
+        case .events: return "events"
+        case .blobs: return "blobs"
+        case .preferences: return "preferences"
         }
     }
 }
