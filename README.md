@@ -31,7 +31,7 @@ just core-test    # run Rust tests
 just sync         # core → bindings → xcframework → web → cap sync
 just ios          # sync, then open Xcode
 just android      # sync, then open Android Studio
-just qa           # types, lint, format, clippy, tests — what CI runs
+just qa           # types, lint, format, clippy, tests, the Android build — what CI runs
 ```
 
 `just` on its own lists everything. Never run `pnpm exec cap sync` directly — it skips the core and bindings build.

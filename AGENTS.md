@@ -74,7 +74,7 @@ just dev          # Vite dev server, browser only
 just ui <name>    # vendor a shadcn-svelte component into src/lib/components/ui
 just lint         # eslint over the view
 just fmt          # prettier, eslint --fix, cargo fmt
-just qa           # types, lint, format, cargo fmt/clippy/test — what CI runs
+just qa           # types, lint, format, the Rust half, the Android shell
 just core-test    # core tests alone, the fast loop
 just bindings     # regenerate Swift + Kotlin from the built cdylib
 just sync         # core → bindings → xcframework → web → cap sync
@@ -82,7 +82,7 @@ just ios          # sync, then open Xcode
 just android      # sync, then open Android Studio
 ```
 
-[`.gitea/workflows/ci.yml`](./.gitea/workflows/ci.yml) runs one step per `qa` recipe on every push to `master`, in two jobs split by toolchain. Pull requests are not built, so `just qa` locally is the gate before opening one.
+[`.gitea/workflows/ci.yml`](./.gitea/workflows/ci.yml) runs one step per `qa` recipe on every push to `master`, in three jobs split by toolchain. Pull requests are not built, so `just qa` locally is the gate before opening one. The Swift is compiled by nothing anywhere — that needs a macOS runner and the Xcode step in [`core/README.md`](./core/README.md).
 
 App ID `social.coracle.dip`. Web assets build to `dist/`; the shells load the *built* output, so `just sync` after web changes or the app runs stale code.
 

@@ -92,6 +92,10 @@ lint/tmp/
 # Cordova plugins for Capacitor
 capacitor-cordova-android-plugins
 
+# Written by `cap update`, which resolves the Capacitor module through whatever
+# node_modules layout the package manager left behind, so it is machine-local.
+capacitor.settings.gradle
+
 # Copied web assets
 app/src/main/assets/public
 

@@ -115,12 +115,14 @@ Every task is in the `justfile`. `package.json` has no `scripts` block, because 
 
 ```sh
 just core-test    # cargo test --workspace, the fast loop
-just qa           # svelte-check, tsc, eslint, prettier, comments, cargo fmt, clippy, cargo test
+just qa           # svelte-check, tsc, eslint, prettier, comments, cargo fmt, clippy, cargo test, gradle
 just fmt          # prettier --write, eslint --fix, cargo fmt
 just dev          # Vite, browser only: no plugin, so no BLE, no store, no peers
 ```
 
 `clippy -D warnings` is part of `qa`, so a lint is a build failure here. `qa` is a dependency list and nothing else, and `.gitea/workflows/ci.yml` runs one step per entry, so CI and `just qa` cannot drift.
+
+`android-check` is in there too, so `qa` wants a JDK and the Android SDK. It compiles the Kotlin against the generated bindings and throws the APK away — the Swift half has no equivalent, and nothing checks it.
 
 ## Conventions the code holds itself to
 

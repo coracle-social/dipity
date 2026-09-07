@@ -230,5 +230,5 @@ just dev             # Vite dev server, browser only
 just ui <component>  # vendor a shadcn component; no args to pick from a list
 just lint            # eslint
 just fmt             # prettier + eslint --fix + cargo fmt
-just qa              # types, lint, format check, and the Rust half
+just qa              # types, lint, format check, the Rust half, the Android shell
 ```
