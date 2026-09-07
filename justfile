@@ -136,12 +136,17 @@ android-lib: bindings
 sync: ios-lib android-lib build
     pnpm exec cap sync
 
-# Sync, then open Xcode.
-ios: sync
+# One platform at a time, in the same order `sync` uses, so working on iOS does
+# not need the Android NDK and working on Android does not need Xcode.
+
+# Build the iOS half and open Xcode.
+ios: ios-lib build
+    pnpm exec cap sync ios
     pnpm exec cap open ios
 
-# Sync, then open Android Studio.
-android: sync
+# Build the Android half and open Android Studio.
+android: android-lib build
+    pnpm exec cap sync android
     pnpm exec cap open android
 
 # -------------------------------------------------------------------------- qa

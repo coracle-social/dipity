@@ -8,13 +8,15 @@
 //!
 //! The bytes are not a hex string, because a `String` handed over from Swift or
 //! Kotlin is a copy nothing on this side can find to wipe. What crosses is a
-//! byte array the shell can zero as soon as the call returns.
+//! byte array the shell can zero as soon as the call returns. `secret_bytes`
+//! and `secret_key` are the only two conversions in this crate, so the same
+//! rule holds on this side of the boundary.
 
 use std::fmt;
 use std::sync::Arc;
 
 use coracle_lib::keys::SecretKey;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 /// Why the identity could not be read.
 ///
@@ -56,6 +58,27 @@ pub trait KeyCustody: Send + Sync {
     fn secret_key(&self) -> Result<Vec<u8>, KeyError>;
 }
 
+/// The 32 secret bytes of a key, in the form this boundary carries.
+///
+/// `coracle_lib` exports a key as hex and parses it back the same way, so the
+/// string in the middle is unavoidable. Every conversion in this crate goes
+/// through this and its inverse below, which is what keeps that string to one
+/// place and wiped.
+pub(crate) fn secret_bytes(key: &SecretKey) -> Vec<u8> {
+    let hex = Zeroizing::new(key.to_hex());
+
+    hex::decode(&*hex).expect("a key is hex")
+}
+
+/// The key those bytes are, or why they are not one.
+fn secret_key(bytes: &[u8]) -> Result<SecretKey, KeyError> {
+    let hex = Zeroizing::new(hex::encode(bytes));
+
+    SecretKey::from_hex(&hex).map_err(|error| KeyError::Unreadable {
+        reason: format!("{error}"),
+    })
+}
+
 /// A brand-new identity, for the shell to write to secure storage.
 ///
 /// Generated here rather than in Swift or Kotlin: the curve is secp256k1 and
@@ -65,9 +88,7 @@ pub trait KeyCustody: Send + Sync {
 #[uniffi::export]
 #[must_use]
 pub fn generate_identity() -> Vec<u8> {
-    let key = SecretKey::generate();
-
-    hex::decode(key.to_hex()).expect("a generated key is hex")
+    secret_bytes(&SecretKey::generate())
 }
 
 /// An identity the user pasted in, as an `nsec1…`.
@@ -80,17 +101,13 @@ pub fn identity_from_nsec(nsec: String) -> Result<Vec<u8>, KeyError> {
         reason: format!("{error}"),
     })?;
 
-    Ok(hex::decode(key.to_hex()).expect("a parsed key is hex"))
+    Ok(secret_bytes(&key))
 }
 
 /// The npub an identity answers to, for the shell to show the user.
 #[uniffi::export]
 pub fn identity_npub(secret: Vec<u8>) -> Result<String, KeyError> {
-    let key = SecretKey::from_hex(&hex::encode(secret)).map_err(|error| KeyError::Unreadable {
-        reason: format!("{error}"),
-    })?;
-
-    Ok(key.public_key().to_npub())
+    Ok(secret_key(&secret)?.public_key().to_npub())
 }
 
 /// The exported callback, as [`dip::keys::KeyCustody`].
@@ -106,11 +123,9 @@ impl Custody {
 impl dip::keys::KeyCustody for Custody {
     fn identity(&self) -> anyhow::Result<SecretKey> {
         let mut bytes = self.0.secret_key()?;
-        let mut hex = hex::encode(&bytes);
-        let key = SecretKey::from_hex(&hex);
+        let key = secret_key(&bytes);
 
         bytes.zeroize();
-        hex.zeroize();
 
         Ok(key?)
     }
@@ -123,7 +138,7 @@ mod tests {
     use coracle_lib::keys::SecretKey;
     use dip::keys::KeyCustody as _;
 
-    use super::{Custody, KeyCustody, KeyError};
+    use super::{Custody, KeyCustody, KeyError, secret_bytes};
 
     struct Stored(Vec<u8>);
 
@@ -144,7 +159,7 @@ mod tests {
     #[test]
     fn the_shells_bytes_become_the_identity_the_core_signs_with() {
         let key = SecretKey::generate();
-        let custody = Custody::new(Arc::new(Stored(hex::decode(key.to_hex()).unwrap())));
+        let custody = Custody::new(Arc::new(Stored(secret_bytes(&key))));
 
         assert_eq!(custody.identity().unwrap().to_hex(), key.to_hex());
     }
@@ -175,7 +190,7 @@ mod tests {
 
         assert_eq!(
             super::identity_from_nsec(key.to_nsec()).unwrap(),
-            hex::decode(key.to_hex()).unwrap()
+            secret_bytes(&key)
         );
     }
 

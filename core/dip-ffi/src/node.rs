@@ -457,7 +457,7 @@ impl Node {
         let mut guard = self.inner.lock().map_err(|_| NodeError::poisoned())?;
         let key = guard.take_transferred_identity(link.into());
 
-        Ok(key.map(|key| hex::decode(key.to_hex()).expect("a secret key is hex")))
+        Ok(key.as_ref().map(crate::keys::secret_bytes))
     }
 
     /// Write a key backup into `cache` and ask for the share sheet over it.
@@ -627,7 +627,7 @@ mod tests {
 
     impl KeyCustody for Held {
         fn secret_key(&self) -> Result<Vec<u8>, KeyError> {
-            Ok(hex::decode(self.0.to_hex()).unwrap())
+            Ok(crate::keys::secret_bytes(&self.0))
         }
     }
 
