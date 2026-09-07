@@ -28,15 +28,15 @@ Calls run one way: view → shell → core. SQLite is in-process C. The Capacito
 just setup        # install dependencies, add Rust targets
 just dev          # Vite dev server (browser only, no BLE)
 just core-test    # run Rust tests
-just sync         # core → bindings → xcframework → web → cap sync
-just ios          # sync, then open Xcode
+just sync         # core → bindings → Android's library → web → cap sync
+just ios          # open Xcode, which builds the core and the web assets itself
 just android      # sync, then open Android Studio
 just qa           # types, lint, format, clippy, tests, the Android build — what CI runs
 ```
 
 `just` on its own lists everything. Never run `pnpm exec cap sync` directly — it skips the core and bindings build.
 
-Native projects live in `ios/` and `android/` and are committed. After changing web code, `just sync` before building natively; the shells load built assets from `dist/`, not the dev server.
+Native projects live in `ios/` and `android/` and are committed. After changing web code, `just sync` before building for Android; it loads built assets from `dist/`, not the dev server. Xcode rebuilds them itself.
 
 ## Stack
 

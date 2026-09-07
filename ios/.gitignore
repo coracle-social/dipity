@@ -11,3 +11,6 @@ capacitor-cordova-ios-plugins
 # Generated Config files
 App/App/capacitor.config.json
 App/App/config.xml
+
+# Written by the App target's first build phase — see core/README.md#the-xcode-project.
+App/App/Generated

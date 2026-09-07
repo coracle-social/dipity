@@ -77,16 +77,16 @@ just fmt          # prettier, eslint --fix, cargo fmt
 just qa           # types, lint, format, the Rust half, the Android shell
 just core-test    # core tests alone, the fast loop
 just bindings     # regenerate Swift + Kotlin from the built cdylib
-just sync         # core → bindings → xcframework → web → cap sync
-just ios          # sync, then open Xcode
+just sync         # core → bindings → Android's library → web → cap sync
+just ios          # open Xcode, which builds the core and the web assets itself
 just android      # sync, then open Android Studio
 ```
 
 [`.gitea/workflows/ci.yml`](./.gitea/workflows/ci.yml) runs one step per `qa` recipe on every push to `master`, in two jobs split by toolchain. `android-check` is the exception: provisioning the SDK costs the shared runner more than the compile does, so the Kotlin is compiled by `just qa` and by nothing after the push. Pull requests are not built, so `just qa` locally is the gate before opening one. The Swift is compiled by nothing anywhere — that needs a macOS runner. What CI can read is the project file and the names: `just xcode` fails if a file under `ios/App/App/` is not in the App target, which is the failure that produces a stock app rather than a build error, and `just swift` fails if the shell names an enum case the generated bindings do not have. See [`core/README.md`](./core/README.md#the-xcode-project).
 
-App ID `social.coracle.dip`. Web assets build to `dist/`; the shells load the *built* output, so `just sync` after web changes or the app runs stale code.
+App ID `social.coracle.dip`. Web assets build to `dist/`; the Android shell loads the *built* output, so `just sync` after web changes or it runs stale code. iOS rebuilds them on every build.
 
-**The core builds before the shells**, and `just sync` enforces the order — `cargo` cross-compiles for each target, `uniffi-bindgen` generates bindings from the *compiled* library, then `cap sync`. Never run `pnpm exec cap sync` directly; it skips the first two steps and the shells link against whatever was there before. Generated output stages in `core/target/ffi/` and is never committed. [`core/README.md`](./core/README.md).
+**The core builds before the shells**, and `just sync` enforces the order — `cargo` cross-compiles for each target, `uniffi-bindgen` generates bindings from the *compiled* library, then `cap sync`. Never run `pnpm exec cap sync` directly; it skips the first two steps and the Android shell links against whatever was there before. The iOS project runs that same order itself, as the App target's first build phase, which is why opening it is all a fresh clone needs. Generated output stages in `core/target/ffi/` and is never committed. [`core/README.md`](./core/README.md#the-xcode-project).
 
 
 Native projects in `ios/` and `android/` are committed and regenerable. Capacitor does not propagate `appId` changes into them — change `capacitor.config.ts`, then delete and re-add the platforms rather than hand-editing.

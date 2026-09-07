@@ -18,14 +18,15 @@ cdylib := if os() == "macos" { "dylib" } else { "so" }
 # `just clean` both take it and nothing generated is ever committed.
 out := "core/target/ffi"
 
-# Where each shell picks its half up. Both are gitignored: what a native build
+# Where the Android shell picks its half up. Gitignored: what a native build
 # links against is whatever the last `just sync` compiled, never a committed
-# copy that has drifted from the source it was generated from.
-ios_pkg := "ios/App/DipFFI"
+# copy that has drifted from the source it was generated from. The iOS shell
+# builds its own half — see scripts/xcode-prebuild.sh.
 android_app := "android/app/src/main"
 
-# Simulator slices are arm64 only. Add x86_64-apple-ios here and to the lipo in
-# `ios-lib` if an Intel Mac ever needs to run the simulator.
+# The targets `just setup` installs. scripts/xcode-prebuild.sh chooses between
+# them from Xcode's PLATFORM_NAME, and knows x86_64-apple-ios for an Intel
+# simulator as well.
 ios_device := "aarch64-apple-ios"
 ios_sim := "aarch64-apple-ios-sim"
 android_targets := "arm64-v8a armeabi-v7a x86_64"
@@ -101,25 +102,6 @@ bindings:
 
 # ------------------------------------------------------------- mobile binaries
 
-# Build the iOS XCFramework and put it in the DipFFI package with its bindings.
-ios-lib: bindings
-    cd {{core}} && cargo build -p dip-ffi --release --target {{ios_device}}
-    cd {{core}} && cargo build -p dip-ffi --release --target {{ios_sim}}
-    rm -rf {{out}}/headers {{out}}/DipFFI.xcframework
-    mkdir -p {{out}}/headers
-    cp {{out}}/swift/{{ffi}}FFI.h {{out}}/headers/
-    cp {{out}}/swift/{{ffi}}FFI.modulemap {{out}}/headers/module.modulemap
-    xcodebuild -create-xcframework \
-        -library {{core}}/target/{{ios_device}}/release/lib{{ffi}}.a \
-        -headers {{out}}/headers \
-        -library {{core}}/target/{{ios_sim}}/release/lib{{ffi}}.a \
-        -headers {{out}}/headers \
-        -output {{out}}/DipFFI.xcframework
-    rm -rf {{ios_pkg}}/DipFFI.xcframework
-    cp -R {{out}}/DipFFI.xcframework {{ios_pkg}}/
-    cp {{out}}/swift/{{ffi}}.swift {{ios_pkg}}/Sources/DipFFI/
-    @echo "xcframework → {{ios_pkg}}/DipFFI.xcframework"
-
 # Put the generated Kotlin where the app module's source set looks for it.
 android-bindings: bindings
     rm -rf {{android_app}}/uniffi
@@ -139,18 +121,16 @@ android-lib: android-bindings
 # ------------------------------------------------------------------ native app
 
 # Run this rather than `cap sync`: ordering is the whole point, and skipping the
-# first two steps leaves the shells linked against whatever was there before.
+# first two steps leaves the Android shell linked against whatever was there
+# before. The iOS half is Xcode's own first build phase, so nothing here stages
+# it and working on iOS needs neither the NDK nor this recipe.
 
-# Core, then bindings, then both shells' libraries, then web assets, then Capacitor.
-sync: ios-lib android-lib build
+# Core, then bindings, then Android's library, then web assets, then Capacitor.
+sync: android-lib build
     pnpm exec cap sync
 
-# One platform at a time, in the same order `sync` uses, so working on iOS does
-# not need the Android NDK and working on Android does not need Xcode.
-
-# Build the iOS half and open Xcode.
-ios: ios-lib build
-    pnpm exec cap sync ios
+# Open the iOS project. Opening ios/App/App.xcodeproj by hand is the same thing.
+ios:
     pnpm exec cap open ios
 
 # Build the Android half and open Android Studio.

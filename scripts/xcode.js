@@ -1,9 +1,9 @@
 // Xcode compiles a list, not a directory, and that list is `project.pbxproj`. A
 // Swift file on disk that nothing references builds nowhere, with no error — see
-// core/README.md#the-xcode-step. Nothing on Linux can open the project, so these
+// core/README.md#the-xcode-project. Nothing on Linux can open the project, so these
 // are the parts of it a machine can still check.
 
-import {readdirSync, readFileSync} from "node:fs"
+import {existsSync, readdirSync, readFileSync} from "node:fs"
 
 const PROJECT = "ios/App/App.xcodeproj/project.pbxproj"
 const SHELL = "ios/App/App"
@@ -46,9 +46,8 @@ for (const match of source.matchAll(/([0-9A-F]{24})/g)) {
 }
 
 const target = of("PBXNativeTarget")[0]
-const phase = list(target, "buildPhases").find(
-  uuid => field(uuid, "isa") === "PBXSourcesBuildPhase",
-)
+const phases = list(target, "buildPhases")
+const phase = phases.find(uuid => field(uuid, "isa") === "PBXSourcesBuildPhase")
 const compiled = new Set(list(phase, "files").map(uuid => field(field(uuid, "fileRef"), "path")))
 
 for (const file of readdirSync(SHELL).filter(name => name.endsWith(".swift"))) {
@@ -74,6 +73,17 @@ for (const entry of readdirSync(PACKAGES, {withFileTypes: true})) {
   }
 }
 
+// Opening the project is the whole setup only while it builds the core before it compiles.
+const prebuild = field(phases[0], "shellScript")?.match(/scripts\/[\w.-]+/)?.[0]
+
+if (field(phases[0], "isa") !== "PBXShellScriptBuildPhase") {
+  failures.push(`${PROJECT}: the App target compiles before it builds the core`)
+} else if (!prebuild || !existsSync(prebuild)) {
+  failures.push(
+    `${PROJECT}: its first build phase runs ${prebuild ?? "no script"}, which is not in the tree`,
+  )
+}
+
 for (const failure of failures) {
   console.error(failure)
 }
@@ -81,7 +91,7 @@ for (const failure of failures) {
 if (failures.length) {
   console.error(
     `\n${failures.length} in the Xcode project. Add files and packages in Xcode rather than by ` +
-      `hand where you can — see core/README.md#the-xcode-step.`,
+      `hand where you can — see core/README.md#the-xcode-project.`,
   )
   process.exit(1)
 }

@@ -49,9 +49,8 @@ export type DipCore = {
   /**
    * The version of the Rust core the shell loaded.
    *
-   * The one call that proves the whole chain — cargo, uniffi, the xcframework
-   * or the jniLibs, the plugin — rather than a stale library from a previous
-   * build.
+   * The one call that proves the whole chain — cargo, uniffi, the linked
+   * library, the plugin — rather than a stale library from a previous build.
    */
   coreVersion(): Promise<{version: string}>
 

@@ -124,7 +124,7 @@ just dev          # Vite, browser only: no plugin, so no BLE, no store, no peers
 
 `clippy -D warnings` is part of `qa`, so a lint is a build failure here. `qa` is a dependency list and nothing else, and `.gitea/workflows/ci.yml` runs one step per entry, so CI and `just qa` cannot drift. `android-check` is the one carve-out: CI does not run it, so a push that skipped `just qa` leaves the Kotlin compiled by nothing.
 
-`android-check` is in there too, so `qa` wants a JDK and the Android SDK. It compiles the Kotlin against the generated bindings and throws the APK away. The Swift half has no equivalent and needs a Mac, so two checks read it without a compiler: `just xcode` fails on a Swift file that is in no target, and `just swift` on a case the shell names that the generated bindings do not have — uniffi capitalizes an error enum's cases (`NodeError.Link`) and lowercases every other enum's (`Action.scan`).
+`android-check` is in there too, so `qa` wants a JDK and the Android SDK. It compiles the Kotlin against the generated bindings and throws the APK away. The Swift half has no equivalent and needs a Mac, so two checks read it without a compiler: `just xcode` fails on a Swift file that is in no target, or on a project that does not build the core before it compiles. `just swift` fails on a case the shell names that the generated bindings do not have — uniffi capitalizes an error enum's cases (`NodeError.Link`) and lowercases every other enum's (`Action.scan`) — and on a uniffi global called unqualified, since the bindings compile into the App module where a plugin method shadows one.
 
 ## Conventions the code holds itself to
 

@@ -1,4 +1,4 @@
-// Nothing outside a Mac compiles the iOS shell — see core/README.md#the-xcode-step
+// Nothing outside a Mac compiles the iOS shell — see core/README.md#the-xcode-project
 // and coracle/dip#66 — so a name it gets wrong against the generated bindings is
 // found by running the app or not at all. uniffi capitalizes an error enum's
 // cases and lowercases every other enum's, which is the mismatch this catches.
@@ -23,6 +23,13 @@ for (const line of source.split("\n")) {
   if (line === "}") open = null
   if (open && member) enums.get(open).add(member[1])
 }
+
+// The bindings compile into the App module, where a plugin method of the same name shadows one — `coreVersion` is both.
+const globals = new Set(
+  Array.from(source.matchAll(/^public func (\w+)\(/gm), match => match[1]).filter(
+    name => !name.startsWith("FfiConverter") && !name.startsWith("uniffi"),
+  ),
+)
 
 const spellings = new Map()
 
@@ -54,6 +61,15 @@ for (const file of readdirSync(SHELL).filter(name => name.endsWith(".swift"))) {
           failures.push(
             `${where}: ${type} has no case ${member}` +
               (suggestion ? `, did you mean ${type}.${suggestion}?` : ""),
+          )
+        }
+      }
+
+      // A call with nothing in front of it is unqualified, and a declaration is not a call.
+      for (const [, qualifier, name] of line.matchAll(/(\.|\bfunc )?(\w+)\(/g)) {
+        if (globals.has(name) && !qualifier) {
+          failures.push(
+            `${where}: ${name}() is shadowed by anything of that name — spell it App.${name}()`,
           )
         }
       }

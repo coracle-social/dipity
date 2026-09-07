@@ -20,7 +20,7 @@
 		D1B0BB0200000000000000A2 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0200000000000000A2 /* Keychain.swift */; };
 		D1B0BB0300000000000000A3 /* Lifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0300000000000000A3 /* Lifecycle.swift */; };
 		D1B0BB0400000000000000A4 /* Radio.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0400000000000000A4 /* Radio.swift */; };
-		D1B0CC0300000000000000C3 /* DipFFI in Frameworks */ = {isa = PBXBuildFile; productRef = D1B0CC0200000000000000C2 /* DipFFI */; };
+		D1B0BB0500000000000000A5 /* dip_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0500000000000000A5 /* dip_ffi.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -39,6 +39,7 @@
 		D1B0AA0200000000000000A2 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
 		D1B0AA0300000000000000A3 /* Lifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lifecycle.swift; sourceTree = "<group>"; };
 		D1B0AA0400000000000000A4 /* Radio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Radio.swift; sourceTree = "<group>"; };
+		D1B0AA0500000000000000A5 /* dip_ffi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = dip_ffi.swift; path = Generated/dip_ffi.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -47,7 +48,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */,
-				D1B0CC0300000000000000C3 /* DipFFI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -79,6 +79,7 @@
 				D1B0AA0200000000000000A2 /* Keychain.swift */,
 				D1B0AA0300000000000000A3 /* Lifecycle.swift */,
 				D1B0AA0400000000000000A4 /* Radio.swift */,
+				D1B0AA0500000000000000A5 /* dip_ffi.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
@@ -98,6 +99,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 504EC3161FED79650016851F /* Build configuration list for PBXNativeTarget "App" */;
 			buildPhases = (
+				D1B0DD0100000000000000D1 /* Build the core and the web assets */,
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
@@ -109,7 +111,6 @@
 			name = App;
 			packageProductDependencies = (
 				4D22ABE82AF431CB00220026 /* CapApp-SPM */,
-				D1B0CC0200000000000000C2 /* DipFFI */,
 			);
 			productName = App;
 			productReference = 504EC3041FED79650016851F /* App.app */;
@@ -142,7 +143,6 @@
 			mainGroup = 504EC2FB1FED79650016851F;
 			packageReferences = (
 				D4C12C0A2AAA248700AAC8A2 /* XCLocalSwiftPackageReference "CapApp-SPM" */,
-				D1B0CC0100000000000000C1 /* XCLocalSwiftPackageReference "DipFFI" */,
 			);
 			productRefGroup = 504EC3051FED79650016851F /* Products */;
 			projectDirPath = "";
@@ -169,6 +169,30 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		D1B0DD0100000000000000D1 /* Build the core and the web assets */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build the core and the web assets";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/App/Generated/dip_ffi.swift",
+				"$(SRCROOT)/App/Generated/libdip_ffi.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/../../scripts/xcode-prebuild.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		504EC3001FED79650016851F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -180,6 +204,7 @@
 				D1B0BB0200000000000000A2 /* Keychain.swift in Sources */,
 				D1B0BB0300000000000000A3 /* Lifecycle.swift in Sources */,
 				D1B0BB0400000000000000A4 /* Radio.swift in Sources */,
+				D1B0BB0500000000000000A5 /* dip_ffi.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -321,17 +346,31 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/App/Generated",
+				);
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ldip_ffi",
+					"-lresolv",
+				);
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				PRODUCT_BUNDLE_IDENTIFIER = social.coracle.dip;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/App/Generated",
+				);
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -343,16 +382,30 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/App/Generated",
+				);
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ldip_ffi",
+					"-lresolv",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = social.coracle.dip;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/App/Generated",
+				);
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -386,10 +439,6 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "CapApp-SPM";
 		};
-		D1B0CC0100000000000000C1 /* XCLocalSwiftPackageReference "DipFFI" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = DipFFI;
-		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -397,11 +446,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D4C12C0A2AAA248700AAC8A2 /* XCLocalSwiftPackageReference "CapApp-SPM" */;
 			productName = "CapApp-SPM";
-		};
-		D1B0CC0200000000000000C2 /* DipFFI */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = D1B0CC0100000000000000C1 /* XCLocalSwiftPackageReference "DipFFI" */;
-			productName = DipFFI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

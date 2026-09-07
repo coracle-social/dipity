@@ -1,5 +1,4 @@
 import CoreBluetooth
-import DipFFI
 import Foundation
 
 /// The radio, and nothing else.
@@ -23,8 +22,8 @@ final class Radio: NSObject {
     /// What the radio reports to, which is the plugin.
     weak var delegate: RadioDelegate?
 
-    private let service = CBUUID(string: DipFFI.serviceUuid())
-    private let characteristicId = CBUUID(string: DipFFI.characteristicUuid())
+    private let service = CBUUID(string: App.serviceUuid())
+    private let characteristicId = CBUUID(string: App.characteristicUuid())
 
     private var central: CBCentralManager!
     private var peripheral: CBPeripheralManager!

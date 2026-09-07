@@ -1,5 +1,4 @@
 import Capacitor
-import DipFFI
 import Foundation
 import UIKit
 
@@ -60,7 +59,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     // ---------------------------------------------------------------- Identity
 
     @objc func coreVersion(_ call: CAPPluginCall) {
-        call.resolve(["version": DipFFI.coreVersion()])
+        call.resolve(["version": App.coreVersion()])
     }
 
     @objc func hasIdentity(_ call: CAPPluginCall) {
@@ -68,7 +67,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func createIdentity(_ call: CAPPluginCall) {
-        adopt(DipFFI.generateIdentity(), into: call)
+        adopt(App.generateIdentity(), into: call)
     }
 
     @objc func importIdentity(_ call: CAPPluginCall) {
@@ -77,7 +76,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         do {
-            adopt(try DipFFI.identityFromNsec(nsec: nsec), into: call)
+            adopt(try App.identityFromNsec(nsec: nsec), into: call)
         } catch {
             call.reject("that is not an nsec", nil, error)
         }
@@ -456,7 +455,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     private func adopt(_ secret: Data, into call: CAPPluginCall) {
         do {
             try Keychain.write(secret)
-            call.resolve(["npub": try DipFFI.identityNpub(secret: secret)])
+            call.resolve(["npub": try App.identityNpub(secret: secret)])
         } catch {
             call.reject("the identity could not be stored", nil, error)
         }
