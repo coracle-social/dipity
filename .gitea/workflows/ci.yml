@@ -36,6 +36,9 @@ jobs:
       - name: Check comments
         run: pnpm exec just comments
 
+      - name: Check the Xcode project
+        run: pnpm exec just xcode
+
   core:
     runs-on: ubuntu-latest
 

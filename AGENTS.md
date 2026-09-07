@@ -82,7 +82,7 @@ just ios          # sync, then open Xcode
 just android      # sync, then open Android Studio
 ```
 
-[`.gitea/workflows/ci.yml`](./.gitea/workflows/ci.yml) runs one step per `qa` recipe on every push to `master`, in two jobs split by toolchain. `android-check` is the exception: provisioning the SDK costs the shared runner more than the compile does, so the Kotlin is compiled by `just qa` and by nothing after the push. Pull requests are not built, so `just qa` locally is the gate before opening one. The Swift is compiled by nothing anywhere — that needs a macOS runner and the Xcode step in [`core/README.md`](./core/README.md).
+[`.gitea/workflows/ci.yml`](./.gitea/workflows/ci.yml) runs one step per `qa` recipe on every push to `master`, in two jobs split by toolchain. `android-check` is the exception: provisioning the SDK costs the shared runner more than the compile does, so the Kotlin is compiled by `just qa` and by nothing after the push. Pull requests are not built, so `just qa` locally is the gate before opening one. The Swift is compiled by nothing anywhere — that needs a macOS runner. What CI can read is the Xcode project itself: `just xcode` fails if a file under `ios/App/App/` is not in the App target, which is the failure that produces a stock app rather than a build error. See [`core/README.md`](./core/README.md#the-xcode-project).
 
 App ID `social.coracle.dip`. Web assets build to `dist/`; the shells load the *built* output, so `just sync` after web changes or the app runs stale code.
 

@@ -177,6 +177,10 @@ format:
 comments:
     node scripts/comments.js
 
+# What the Xcode project references, which nothing but Xcode can otherwise read.
+xcode:
+    node scripts/xcode.js
+
 # Kotlin resolves against the generated bindings, not the jniLibs, so this wants
 # the Android SDK and not the NDK. The APK is thrown away; compiling it is the
 # only thing that reads the shell's Kotlin at all.
@@ -193,7 +197,7 @@ fmt:
 # Everything a change has to pass. CI runs one step per recipe listed here except
 # android-check: provisioning the SDK costs the shared runner more than the
 # compile does, so the Kotlin is compiled before the push rather than after it.
-qa: check lint format comments core-fmt core-lint core-test android-check
+qa: check lint format comments xcode core-fmt core-lint core-test android-check
 
 # --------------------------------------------------------------------- cleanup
 

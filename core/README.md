@@ -43,16 +43,15 @@ Each shell references the artifacts once, from the Capacitor plugin. `just sync`
 
 Compiling needs the bindings but not the `jniLibs`, so `just android-check` skips the NDK: it stages the Kotlin, runs `cap sync android`, and builds a debug APK it throws away. That `cap sync` is also what writes `android/capacitor.settings.gradle`, which resolves the Capacitor module through the local `node_modules` layout and is gitignored for it — a gradle build always follows one.
 
-### The Xcode step
+### The Xcode project
 
-`project.pbxproj` is not written by hand and `cap sync` does not touch it, so the references are added once, in Xcode, in a fresh clone:
+Xcode compiles a list, not a directory, and `ios/App/App.xcodeproj/project.pbxproj` is the list. A Swift file on disk that it does not name is not part of the build, with no error anywhere — you get a working stock Capacitor app that answers nothing, which is what `coreVersion` rejecting is there to catch. `cap sync` does not write that file, so the four files under `ios/App/App/` and the `DipFFI` package are named in it and committed like any other source. A fresh clone needs nothing done in Xcode.
 
-1. **File > Add Package Dependencies > Add Local**, pointing at `ios/App/DipFFI`, added to the App target.
-2. `DipPlugin.swift`, `Radio.swift`, `Keychain.swift` and `Lifecycle.swift` into the App target's Compile Sources. Dragging a file in adds it; confirm each one in the file inspector's target membership.
+Adding a file there later is still best done in Xcode, which writes the three entries one file needs — a `PBXFileReference`, a `PBXBuildFile` and a line in the target's Sources phase — and picks the uuids. `just xcode` is what says whether the edit landed: it reads the project file and fails if a `.swift` under `ios/App/App/` is not compiled, if a local package beside it is not linked into the App target, or if any reference dangles. It is in `qa` and in CI, and it is the only thing anywhere that reads the iOS project.
 
-Until both are done, an iOS build compiles the stock Capacitor app and links nothing of ours, with no error anywhere. `coreVersion` is the check, because it rejects on a shell with no plugin behind it.
+Xcode 16's synchronized folder groups would make the file list automatic, and are not worth the conversion here: `ios/App/App/` also holds `public/`, the built web assets, which the bundle needs as one folder reference rather than as several hundred loose resources.
 
-Everything after that is `just ios`.
+Everything else is `just ios`.
 
 ## Adding a dependency
 
