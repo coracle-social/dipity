@@ -37,6 +37,20 @@ final class Radio: NSObject {
     /// Peripherals seen but not yet dialed, so a `Connect` can name one.
     private var seen: [String: CBPeripheral] = [:]
 
+    /// The open L2CAP channel on each link, for as long as one is.
+    private var bulk: [UInt64: BulkChannel] = [:]
+
+    /// Links that have asked the peripheral manager for a channel, oldest
+    /// first.
+    ///
+    /// `publishL2CAPChannel` names no link and its callback answers with a PSM
+    /// and nothing else, so the order they were asked in is the only thing
+    /// tying a PSM back to whoever wanted it.
+    private var publishing: [UInt64] = []
+
+    /// The PSM each publishing link is waiting for its peer at.
+    private var published: [UInt64: CBL2CAPPSM] = [:]
+
     /// The next link id. The core keys sessions on these and never reuses one.
     private var nextLink: UInt64 = 1
 
@@ -98,11 +112,41 @@ final class Radio: NSObject {
 
     func disconnect(_ link: UInt64) {
         guard case .dialed(let target, _)? = links[link] else {
-            links[link] = nil
-            return
+            return forget(link)
         }
 
         central.cancelPeripheralConnection(target)
+    }
+
+    /// Publish a channel for the peer on `link` to connect to.
+    ///
+    /// Only a link the peer dialed can: publishing is the peripheral manager's,
+    /// which is the GATT role this device holds on one it received.
+    func publishL2cap(_ link: UInt64) {
+        guard case .received(_)? = links[link], peripheral.state == .poweredOn else {
+            return bulkUnavailable(link)
+        }
+
+        publishing.append(link)
+        peripheral.publishL2CAPChannel(withEncryption: false)
+    }
+
+    /// Open the channel the peer published at `psm`.
+    func openL2cap(_ link: UInt64, _ psm: UInt16) {
+        guard case .dialed(let target, _)? = links[link] else {
+            return bulkUnavailable(link)
+        }
+
+        target.openL2CAPChannel(CBL2CAPPSM(psm))
+    }
+
+    /// Write one bulk fragment, already sized and length-prefixed by the core.
+    func sendBulk(_ link: UInt64, _ fragment: Data) {
+        guard let channel = bulk[link] else {
+            return bulkUnavailable(link)
+        }
+
+        channel.write(fragment)
     }
 
     /// Stop both roles and drop every link.
@@ -113,6 +157,7 @@ final class Radio: NSObject {
         scan(false)
         advertise(false)
         Array(links.keys).forEach(disconnect)
+        Array(bulk.keys).forEach(forget)
     }
 
     /// Write one fragment, already sized to this link's MTU by the core.
@@ -155,6 +200,45 @@ final class Radio: NSObject {
             return false
         }?.key
     }
+
+    /// Drop a link and everything hanging off it.
+    ///
+    /// The link goes first, so the channel closing on its way out is not
+    /// reported as an upgrade this device lost.
+    /// A pending publication is left in the queue rather than dropped: the
+    /// order is what pairs a PSM with whoever asked for it, and the callback
+    /// unpublishes one whose link has gone.
+    private func forget(_ link: UInt64) {
+        links[link] = nil
+        bulk.removeValue(forKey: link)?.close()
+
+        if let psm = published.removeValue(forKey: link) {
+            peripheral.unpublishL2CAPChannel(psm)
+        }
+    }
+
+    /// Tell the core this link finishes on GATT.
+    private func bulkUnavailable(_ link: UInt64) {
+        delegate?.radio(self, bulkDownOn: link)
+    }
+
+    /// Take an open channel over, and tell the core bulk can move onto it.
+    private func adopt(_ channel: CBL2CAPChannel, on link: UInt64) {
+        let pump = BulkChannel(channel, on: link)
+
+        pump.delegate = self
+        bulk[link] = pump
+        pump.open()
+
+        delegate?.radio(self, bulkUpOn: link, mtu: Self.bulkMtu)
+    }
+
+    /// What one bulk write carries, length prefix included.
+    ///
+    /// CoreBluetooth negotiates the channel's MTU and exposes it nowhere, and
+    /// the streams take a write of any size, so this is the size the core cuts
+    /// fragments to rather than a ceiling the radio was given.
+    private static let bulkMtu: UInt32 = 8192
 }
 
 /// What the radio reports. Every one of these is a core entry point.
@@ -164,6 +248,11 @@ protocol RadioDelegate: AnyObject {
     func radio(_ radio: Radio, downOn link: UInt64)
     func radio(_ radio: Radio, received bytes: Data, on link: UInt64)
     func radio(_ radio: Radio, wroteOn link: UInt64)
+    func radio(_ radio: Radio, publishedOn link: UInt64, psm: UInt16)
+    func radio(_ radio: Radio, bulkUpOn link: UInt64, mtu: UInt32)
+    func radio(_ radio: Radio, bulkDownOn link: UInt64)
+    func radio(_ radio: Radio, receivedBulk bytes: Data, on link: UInt64)
+    func radio(_ radio: Radio, wroteBulkOn link: UInt64)
 }
 
 // ------------------------------------------------------------------- Central
@@ -218,7 +307,7 @@ extension Radio: CBCentralManagerDelegate {
     ) {
         guard let link = link(for: target) else { return }
 
-        links[link] = nil
+        forget(link)
         delegate?.radio(self, downOn: link)
     }
 }
@@ -279,6 +368,15 @@ extension Radio: CBPeripheralDelegate {
         // one is still an answer: the core will not stall waiting for it.
         delegate?.radio(self, wroteOn: link)
     }
+
+    func peripheral(_ target: CBPeripheral, didOpen channel: CBL2CAPChannel?, error: Error?) {
+        guard let link = link(for: target) else { return }
+        guard let channel, error == nil else {
+            return bulkUnavailable(link)
+        }
+
+        adopt(channel, on: link)
+    }
 }
 
 extension Radio: CBPeripheralManagerDelegate {
@@ -334,7 +432,7 @@ extension Radio: CBPeripheralManagerDelegate {
     ) {
         guard let link = link(for: subscriber) else { return }
 
-        links[link] = nil
+        forget(link)
         delegate?.radio(self, downOn: link)
     }
 
@@ -369,10 +467,75 @@ extension Radio: CBPeripheralManagerDelegate {
         }
     }
 
+    func peripheralManager(
+        _ manager: CBPeripheralManager,
+        didPublishL2CAPChannel psm: CBL2CAPPSM,
+        error: Error?
+    ) {
+        guard !publishing.isEmpty else { return }
+
+        let link = publishing.removeFirst()
+
+        guard error == nil else {
+            return bulkUnavailable(link)
+        }
+
+        // The link may have gone while the manager was assigning a PSM, and a
+        // channel nobody is waiting at stays published until it is taken back.
+        guard links[link] != nil else {
+            return manager.unpublishL2CAPChannel(psm)
+        }
+
+        published[link] = psm
+        delegate?.radio(self, publishedOn: link, psm: UInt16(psm))
+    }
+
+    func peripheralManager(
+        _ manager: CBPeripheralManager,
+        didOpen channel: CBL2CAPChannel?,
+        error: Error?
+    ) {
+        guard let channel, let link = link(publishedAt: channel.psm) else { return }
+
+        adopt(channel, on: link)
+    }
+
     private func link(for subscriber: CBCentral) -> UInt64? {
         links.first { key, value in
             if case .received(let held) = value { return held.identifier == subscriber.identifier }
             return false
         }?.key
+    }
+
+    /// Whoever the PSM was published for, which is what ties an inbound channel
+    /// to a link: the peer arrives as a `CBCentral` the GATT one never was.
+    private func link(publishedAt psm: CBL2CAPPSM) -> UInt64? {
+        published.first { _, at in at == psm }?.key
+    }
+}
+
+// ---------------------------------------------------------------------- Bulk
+
+extension Radio: BulkDelegate {
+    func bulkRead(_ channel: BulkChannel, bytes: Data) {
+        delegate?.radio(self, receivedBulk: bytes, on: channel.link)
+    }
+
+    func bulkWrote(_ channel: BulkChannel) {
+        delegate?.radio(self, wroteBulkOn: channel.link)
+    }
+
+    /// The channel went away and this link finishes on GATT, which the core is
+    /// told by the same path a failure to open one takes.
+    func bulkClosed(_ channel: BulkChannel) {
+        guard bulk[channel.link] === channel else { return }
+
+        bulk[channel.link] = nil
+
+        if let psm = published.removeValue(forKey: channel.link) {
+            peripheral.unpublishL2CAPChannel(psm)
+        }
+
+        bulkUnavailable(channel.link)
     }
 }

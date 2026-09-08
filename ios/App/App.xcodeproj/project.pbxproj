@@ -16,6 +16,7 @@
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
+		D1B0BB0700000000000000A7 /* Bulk.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0700000000000000A7 /* Bulk.swift */; };
 		D1B0BB0100000000000000A1 /* DipPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0100000000000000A1 /* DipPlugin.swift */; };
 		D1B0BB0200000000000000A2 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0200000000000000A2 /* Keychain.swift */; };
 		D1B0BB0300000000000000A3 /* Lifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0300000000000000A3 /* Lifecycle.swift */; };
@@ -36,6 +37,7 @@
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
 		9582B6822FE993A50072D4E8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
+		D1B0AA0700000000000000A7 /* Bulk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bulk.swift; sourceTree = "<group>"; };
 		D1B0AA0100000000000000A1 /* DipPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DipPlugin.swift; sourceTree = "<group>"; };
 		D1B0AA0200000000000000A2 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
 		D1B0AA0300000000000000A3 /* Lifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lifecycle.swift; sourceTree = "<group>"; };
@@ -77,6 +79,7 @@
 			isa = PBXGroup;
 			children = (
 				9582B6822FE993A50072D4E8 /* SceneDelegate.swift */,
+				D1B0AA0700000000000000A7 /* Bulk.swift */,
 				D1B0AA0100000000000000A1 /* DipPlugin.swift */,
 				D1B0AA0200000000000000A2 /* Keychain.swift */,
 				D1B0AA0300000000000000A3 /* Lifecycle.swift */,
@@ -203,6 +206,7 @@
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
+				D1B0BB0700000000000000A7 /* Bulk.swift in Sources */,
 				D1B0BB0100000000000000A1 /* DipPlugin.swift in Sources */,
 				D1B0BB0200000000000000A2 /* Keychain.swift in Sources */,
 				D1B0BB0300000000000000A3 /* Lifecycle.swift in Sources */,

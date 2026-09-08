@@ -11,6 +11,8 @@ import android.bluetooth.BluetoothGattServerCallback
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothServerSocket
+import android.bluetooth.BluetoothSocket
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
@@ -20,7 +22,11 @@ import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.ParcelUuid
+import java.io.Closeable
+import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.concurrent.thread
 import uniffi.dip_ffi.characteristicUuid
 import uniffi.dip_ffi.serviceUuid
 
@@ -57,6 +63,16 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         fun received(link: ULong, bytes: ByteArray)
 
         fun wrote(link: ULong)
+
+        fun published(link: ULong, psm: UShort)
+
+        fun bulkUp(link: ULong, mtu: UInt)
+
+        fun bulkDown(link: ULong)
+
+        fun bulkReceived(link: ULong, bytes: ByteArray)
+
+        fun bulkWrote(link: ULong)
     }
 
     private val service = UUID.fromString(serviceUuid())
@@ -73,6 +89,12 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
     /** Devices seen but not yet dialed, so a `Connect` can name one. */
     private val seen = mutableMapOf<String, BluetoothDevice>()
+
+    /** The open L2CAP channel on each link, for as long as one is. */
+    private val bulk = ConcurrentHashMap<ULong, BulkChannel>()
+
+    /** The server socket each publishing link is waiting for its peer on. */
+    private val listening = ConcurrentHashMap<ULong, BluetoothServerSocket>()
 
     private var nextLink = 1UL
 
@@ -136,11 +158,59 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     }
 
     fun disconnect(link: ULong) {
-        when (val held = links.remove(link)) {
+        val held = links[link]
+
+        forget(link)
+
+        when (held) {
             is Link.Dialed -> held.gatt.disconnect()
             is Link.Received -> server?.cancelConnection(held.device)
             null -> Unit
         }
+    }
+
+    /**
+     * Publish a channel for the peer on [link] to connect to.
+     *
+     * Only a link the peer dialed can: listening is the GATT server's side of
+     * the connection, which is the role this device holds on one it received.
+     */
+    fun publishL2cap(link: ULong) {
+        val device = (links[link] as? Link.Received)?.device ?: return delegate.bulkDown(link)
+        val server =
+            try {
+                adapter?.listenUsingInsecureL2capChannel() ?: return delegate.bulkDown(link)
+            } catch (error: IOException) {
+                return delegate.bulkDown(link)
+            }
+
+        listening[link] = server
+        delegate.published(link, server.psm.toUShort())
+
+        thread(name = "dip-l2cap-accept-$link") { accept(link, server, device) }
+    }
+
+    /** Open the channel the peer published at [psm]. */
+    fun openL2cap(link: ULong, psm: UShort) {
+        val device = (links[link] as? Link.Dialed)?.gatt?.device ?: return delegate.bulkDown(link)
+
+        thread(name = "dip-l2cap-open-$link") {
+            val socket =
+                try {
+                    device.createInsecureL2capChannel(psm.toInt()).also { it.connect() }
+                } catch (error: IOException) {
+                    null
+                }
+
+            if (socket == null) delegate.bulkDown(link) else adopt(link, socket)
+        }
+    }
+
+    /** Write one bulk fragment, already sized and length-prefixed by the core. */
+    fun sendBulk(link: ULong, fragment: ByteArray) {
+        val channel = bulk[link] ?: return delegate.bulkDown(link)
+
+        channel.write(fragment)
     }
 
     /** Write one fragment, already sized to this link's MTU by the core. */
@@ -159,6 +229,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         scan(false)
         advertise(false)
         links.keys.toList().forEach(::disconnect)
+        bulk.keys.toList().forEach(::forget)
         server?.close()
         server = null
     }
@@ -174,6 +245,72 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         links.entries
             .firstOrNull { (_, held) -> held is Link.Received && held.device.address == device.address }
             ?.key
+
+    /**
+     * Drop a link and everything hanging off it.
+     *
+     * The link goes first, so a channel closing on its way out is not reported
+     * as an upgrade this device lost.
+     */
+    private fun forget(link: ULong) {
+        links.remove(link)
+        bulk.remove(link)?.close()
+        listening.remove(link)?.let(::shut)
+    }
+
+    /** Wait for the peer this PSM was published for, and nobody else. */
+    private fun accept(link: ULong, server: BluetoothServerSocket, device: BluetoothDevice) {
+        val socket =
+            try {
+                server.accept(ACCEPT_TIMEOUT)
+            } catch (error: IOException) {
+                null
+            }
+
+        listening.remove(link)
+        shut(server)
+
+        if (socket == null || socket.remoteDevice.address != device.address) {
+            socket?.let(::shut)
+
+            return delegate.bulkDown(link)
+        }
+
+        adopt(link, socket)
+    }
+
+    /** Take an open channel over, and tell the core bulk can move onto it. */
+    private fun adopt(link: ULong, socket: BluetoothSocket) {
+        val channel = BulkChannel(link, socket, pump)
+
+        bulk[link] = channel
+        channel.open()
+
+        delegate.bulkUp(link, socket.maxTransmitPacketSize.toUInt())
+    }
+
+    private fun shut(closeable: Closeable) {
+        try {
+            closeable.close()
+        } catch (error: IOException) {
+            // Closing a socket that is already gone is the outcome asked for.
+        }
+    }
+
+    private val pump =
+        object : BulkChannel.Delegate {
+            override fun bulkRead(channel: BulkChannel, bytes: ByteArray) {
+                delegate.bulkReceived(channel.link, bytes)
+            }
+
+            override fun bulkWrote(channel: BulkChannel) {
+                delegate.bulkWrote(channel.link)
+            }
+
+            override fun bulkClosed(channel: BulkChannel) {
+                if (bulk.remove(channel.link, channel)) delegate.bulkDown(channel.link)
+            }
+        }
 
     private fun openServer() {
         if (server != null) return
@@ -245,7 +382,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                     gatt.requestMtu(MTU)
                 } else {
                     linkFor(gatt)?.let {
-                        links.remove(it)
+                        forget(it)
                         delegate.linkDown(it)
                     }
                     gatt.close()
@@ -298,7 +435,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
             override fun onConnectionStateChange(device: BluetoothDevice, status: Int, state: Int) {
                 if (state != BluetoothProfile.STATE_CONNECTED) {
                     linkFor(device)?.let {
-                        links.remove(it)
+                        forget(it)
                         delegate.linkDown(it)
                     }
                 }
@@ -357,5 +494,13 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
         /** The ATT header a write carries, off the negotiated MTU. */
         const val ATT_OVERHEAD = 3
+
+        /**
+         * How long a published channel waits for its peer, in milliseconds.
+         *
+         * The peer has been told the PSM and has an open GATT link to reach it
+         * over, so a wait this long means it is not coming.
+         */
+        const val ACCEPT_TIMEOUT = 30_000
     }
 }

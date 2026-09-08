@@ -177,8 +177,13 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
             return call.reject("publish needs an event")
         }
 
-        let media = (call.getArray("media", String.self) ?? []).compactMap {
-            Data(base64Encoded: $0)
+        let entries = call.getArray("media", String.self) ?? []
+        let media = entries.compactMap { Data(base64Encoded: $0) }
+
+        // Dropping one would publish an event whose `imeta` names media this
+        // device never stored, and the author would land on its own want list.
+        guard media.count == entries.count else {
+            return call.reject("publish needs base64 media")
         }
 
         perform(call, "that event could not be published") {
@@ -437,10 +442,12 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
                 // covers the foreground and the next radio callback covers the
                 // rest.
                 lifecycle?.wake(at: at)
-            case .sendBulk, .publishL2cap, .openL2cap:
-                // The bandwidth upgrade is bandwidth, and a link that never
-                // gets one still syncs. L2CAP lands with its own change.
-                break
+            case .sendBulk(let link, let fragment):
+                radio.sendBulk(link.value, fragment)
+            case .publishL2cap(let link):
+                radio.publishL2cap(link.value)
+            case .openL2cap(let link, let psm):
+                radio.openL2cap(link.value, psm)
             }
         }
     }
@@ -559,6 +566,26 @@ extension DipPlugin: RadioDelegate {
 
     func radio(_ radio: Radio, wroteOn link: UInt64) {
         drive { try $0.writeComplete(link: LinkId(value: link)) }
+    }
+
+    func radio(_ radio: Radio, publishedOn link: UInt64, psm: UInt16) {
+        drive { try $0.l2capPublished(link: LinkId(value: link), psm: psm) }
+    }
+
+    func radio(_ radio: Radio, bulkUpOn link: UInt64, mtu: UInt32) {
+        drive { try $0.l2capOpened(link: LinkId(value: link), mtu: mtu) }
+    }
+
+    func radio(_ radio: Radio, bulkDownOn link: UInt64) {
+        drive { try $0.l2capUnavailable(link: LinkId(value: link)) }
+    }
+
+    func radio(_ radio: Radio, receivedBulk bytes: Data, on link: UInt64) {
+        drive { try $0.bulkReceived(link: LinkId(value: link), read: bytes) }
+    }
+
+    func radio(_ radio: Radio, wroteBulkOn link: UInt64) {
+        drive { try $0.bulkWriteComplete(link: LinkId(value: link)) }
     }
 
     /// Run one core entry point nobody is waiting on, and carry out what it

@@ -84,6 +84,7 @@ What opening one takes:
 - **Control frames stay on GATT**, so the heartbeat keeps defining session lifetime. Blob fragments — channel 2 — move across, and nothing else does: a fragment naming another channel on the bulk pipe is a peer misbehaving and ends the link.
 - **Framing is unchanged**, with one addition. The codec already fragments and multiplexes and only the chunk size moves, but L2CAP is a byte stream on both platforms, so a bulk write carries its length ahead of it as two big-endian bytes. GATT needs no prefix: one ATT write is one fragment.
 - **The two pipes are independent.** Each has one write in flight at a time, acknowledged separately, so a slow ATT write does not stall the transfer and vice versa.
+- **The bulk MTU is the shell's to report,** and only one platform is told it. Android reads `getMaxTransmitPacketSize()` off the socket; CoreBluetooth negotiates the channel's MTU and exposes it nowhere, so iOS reports the size it cuts writes to instead. Either way it is the size of one write, length prefix included.
 
 #### Who publishes, and how the PSM crosses
 

@@ -195,8 +195,12 @@ class DipPlugin : Plugin(), Radio.Delegate {
     fun publish(call: PluginCall) {
         val event = call.getString("event") ?: return call.reject("publish needs an event")
         val media =
-            call.getArray("media")?.toList<String>().orEmpty().map {
-                android.util.Base64.decode(it, android.util.Base64.DEFAULT)
+            try {
+                call.getArray("media")?.toList<String>().orEmpty().map {
+                    android.util.Base64.decode(it, android.util.Base64.DEFAULT)
+                }
+            } catch (error: IllegalArgumentException) {
+                return call.reject("publish needs base64 media", error)
             }
 
         perform(call, "that event could not be published") { it.node.publish(event, media) }
@@ -483,11 +487,9 @@ class DipPlugin : Plugin(), Radio.Delegate {
                     )
                 is Action.ShareKeyBackup -> share(File(action.path))
                 is Action.WakeAt -> lifecycle?.wake(action.at)
-                // The bandwidth upgrade is bandwidth, and a link that never gets
-                // one still syncs. L2CAP lands with its own change.
-                is Action.SendBulk,
-                is Action.PublishL2cap,
-                is Action.OpenL2cap -> Unit
+                is Action.SendBulk -> radio.sendBulk(action.link.value, action.fragment)
+                is Action.PublishL2cap -> radio.publishL2cap(action.link.value)
+                is Action.OpenL2cap -> radio.openL2cap(action.link.value, action.psm)
             }
         }
     }
@@ -514,6 +516,18 @@ class DipPlugin : Plugin(), Radio.Delegate {
     }
 
     override fun wrote(link: ULong) = drive { it.writeComplete(LinkId(link)) }
+
+    override fun published(link: ULong, psm: UShort) = drive { it.l2capPublished(LinkId(link), psm) }
+
+    override fun bulkUp(link: ULong, mtu: UInt) = drive { it.l2capOpened(LinkId(link), mtu) }
+
+    override fun bulkDown(link: ULong) = drive { it.l2capUnavailable(LinkId(link)) }
+
+    override fun bulkReceived(link: ULong, bytes: ByteArray) = drive {
+        it.bulkReceived(LinkId(link), bytes)
+    }
+
+    override fun bulkWrote(link: ULong) = drive { it.bulkWriteComplete(LinkId(link)) }
 
     /**
      * Run one core entry point nobody is waiting on, and carry out what it
