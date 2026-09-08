@@ -18,6 +18,14 @@ import Foundation
 ///
 /// Both managers restore state: the system kills and relaunches this app, and
 /// the whole design assumes encounters happen with the phone in a pocket.
+///
+/// The main queue owns the state: `links`, `seen`, `bulk`, `publishing`,
+/// `published`, `pending` and `nextLink` are read and written there and none of
+/// them is locked. Nothing enforces that — it is what `queue: nil` means on both
+/// managers, plus `BulkChannel` scheduling its streams on `.main`, so a delegate
+/// built with a queue of its own would break every one of them with no compiler
+/// complaint. `Radio.kt` has the same rule and has to say so with a
+/// single-thread executor.
 final class Radio: NSObject {
     /// What the radio reports to, which is the plugin.
     weak var delegate: RadioDelegate?
@@ -66,6 +74,8 @@ final class Radio: NSObject {
     override init() {
         super.init()
 
+        // `queue: nil` is the main queue, and that is the whole of the
+        // confinement above: a queue here is every field of this class locked.
         central = CBCentralManager(
             delegate: self,
             queue: nil,

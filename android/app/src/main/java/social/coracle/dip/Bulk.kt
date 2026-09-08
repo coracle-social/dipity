@@ -17,7 +17,7 @@ import kotlin.concurrent.thread
  * `docs/transport.md#the-l2cap-bandwidth-upgrade`.
  *
  * A socket's reads and writes both block, so each gets a thread of its own and
- * the core is entered from them the way it is already entered from a binder
+ * every report leaves on one — the radio is what puts it back on the radio's own
  * thread. Reporting a write from the writer rather than from the caller is also
  * what keeps a whole blob transfer off one stack.
  */

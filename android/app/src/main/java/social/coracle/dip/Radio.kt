@@ -25,7 +25,8 @@ import android.os.ParcelUuid
 import java.io.Closeable
 import java.io.IOException
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 import uniffi.dip_ffi.characteristicUuid
 import uniffi.dip_ffi.serviceUuid
@@ -45,6 +46,14 @@ import uniffi.dip_ffi.serviceUuid
  *   limiting and the backoff tiers are `node::scheduler`'s. Reimplementing any
  *   of them in Kotlin is how the two platforms start disagreeing about who is
  *   worth dialing.
+ *
+ * One thread owns the state: `links`, `seen`, `bulk`, `listening`, `nextLink`
+ * and the GATT server are read and written on [queue], and nothing reaches them
+ * except through [confined] — every entry point below, and every callback the
+ * hardware makes. That is the rule the iOS shell gets for free from
+ * CoreBluetooth's nil queue, stated here because Kotlin gives nothing for free.
+ * A call that blocks — an `accept`, a dial — runs on a thread of its own and
+ * posts back only what it found.
  *
  * Callers hold the runtime permissions; every entry point here is annotated
  * rather than checking, because a scan that silently returns nothing because a
@@ -84,6 +93,19 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     private var server: BluetoothGattServer? = null
     private var characteristic: BluetoothGattCharacteristic? = null
 
+    /**
+     * The thread this radio's own state lives on.
+     *
+     * Capacitor's binder threads, the GATT callback threads, each publication's
+     * accept thread and each channel's reader and writer all reach the fields
+     * below, so every one of those entries is posted here instead of being
+     * synchronized.
+     */
+    private val queue = Executors.newSingleThreadExecutor { work -> Thread(work, "dip-radio") }
+
+    /** Which thread that is, so a nested call runs now rather than later. */
+    private val owner = queue.submit(Callable { Thread.currentThread() }).get()
+
     /** Every live link, both roles, keyed the way the core names them. */
     private val links = mutableMapOf<ULong, Link>()
 
@@ -91,10 +113,10 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     private val seen = mutableMapOf<String, BluetoothDevice>()
 
     /** The open L2CAP channel on each link, for as long as one is. */
-    private val bulk = ConcurrentHashMap<ULong, BulkChannel>()
+    private val bulk = mutableMapOf<ULong, BulkChannel>()
 
     /** The server socket each publishing link is waiting for its peer on. */
-    private val listening = ConcurrentHashMap<ULong, BluetoothServerSocket>()
+    private val listening = mutableMapOf<ULong, BluetoothServerSocket>()
 
     private var nextLink = 1UL
 
@@ -108,10 +130,21 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         data class Received(val device: BluetoothDevice) : Link
     }
 
+    /**
+     * Run [work] on [queue], or run it now if this already is [queue]'s thread.
+     *
+     * Running a nested call inline is what keeps one entry point calling another
+     * — `stop` calling `disconnect`, a delegate answering with an action — in the
+     * order it reads in.
+     */
+    private fun confined(work: () -> Unit) {
+        if (Thread.currentThread() === owner) work() else queue.execute(work)
+    }
+
     // --------------------------------------------------------------- Actions
 
-    fun scan(on: Boolean) {
-        val scanner = adapter?.bluetoothLeScanner ?: return
+    fun scan(on: Boolean) = confined {
+        val scanner = adapter?.bluetoothLeScanner ?: return@confined
 
         if (on) {
             scanner.startScan(
@@ -129,8 +162,8 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         }
     }
 
-    fun advertise(on: Boolean) {
-        val advertiser = adapter?.bluetoothLeAdvertiser ?: return
+    fun advertise(on: Boolean) = confined {
+        val advertiser = adapter?.bluetoothLeAdvertiser ?: return@confined
 
         if (on) {
             openServer()
@@ -151,13 +184,13 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         }
     }
 
-    fun connect(peripheral: String) {
-        val device = seen[peripheral] ?: return
+    fun connect(peripheral: String) = confined {
+        val device = seen[peripheral] ?: return@confined
 
         device.connectGatt(context, false, client, BluetoothDevice.TRANSPORT_LE)
     }
 
-    fun disconnect(link: ULong) {
+    fun disconnect(link: ULong) = confined {
         val held = links[link]
 
         forget(link)
@@ -175,13 +208,15 @@ class Radio(private val context: Context, private val delegate: Delegate) {
      * Only a link the peer dialed can: listening is the GATT server's side of
      * the connection, which is the role this device holds on one it received.
      */
-    fun publishL2cap(link: ULong) {
-        val device = (links[link] as? Link.Received)?.device ?: return delegate.bulkDown(link)
+    fun publishL2cap(link: ULong) = confined {
+        val device =
+            (links[link] as? Link.Received)?.device ?: return@confined delegate.bulkDown(link)
         val server =
             try {
-                adapter?.listenUsingInsecureL2capChannel() ?: return delegate.bulkDown(link)
+                adapter?.listenUsingInsecureL2capChannel()
+                    ?: return@confined delegate.bulkDown(link)
             } catch (error: IOException) {
-                return delegate.bulkDown(link)
+                return@confined delegate.bulkDown(link)
             }
 
         listening[link] = server
@@ -191,8 +226,9 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     }
 
     /** Open the channel the peer published at [psm]. */
-    fun openL2cap(link: ULong, psm: UShort) {
-        val device = (links[link] as? Link.Dialed)?.gatt?.device ?: return delegate.bulkDown(link)
+    fun openL2cap(link: ULong, psm: UShort) = confined {
+        val device =
+            (links[link] as? Link.Dialed)?.gatt?.device ?: return@confined delegate.bulkDown(link)
 
         thread(name = "dip-l2cap-open-$link") {
             val socket =
@@ -202,19 +238,19 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                     null
                 }
 
-            if (socket == null) delegate.bulkDown(link) else adopt(link, socket)
+            confined { if (socket == null) delegate.bulkDown(link) else adopt(link, socket) }
         }
     }
 
     /** Write one bulk fragment, already sized and length-prefixed by the core. */
-    fun sendBulk(link: ULong, fragment: ByteArray) {
-        val channel = bulk[link] ?: return delegate.bulkDown(link)
+    fun sendBulk(link: ULong, fragment: ByteArray) = confined {
+        val channel = bulk[link] ?: return@confined delegate.bulkDown(link)
 
         channel.write(fragment)
     }
 
     /** Write one fragment, already sized to this link's MTU by the core. */
-    fun send(link: ULong, fragment: ByteArray) {
+    fun send(link: ULong, fragment: ByteArray) = confined {
         when (val held = links[link]) {
             // Acknowledged, because ordered reliable delivery is what the
             // control and sync channels are framed against.
@@ -225,7 +261,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     }
 
     /** Stop both roles and drop every link. */
-    fun stop() {
+    fun stop() = confined {
         scan(false)
         advertise(false)
         links.keys.toList().forEach(::disconnect)
@@ -267,16 +303,19 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                 null
             }
 
-        listening.remove(link)
         shut(server)
 
-        if (socket == null || socket.remoteDevice.address != device.address) {
-            socket?.let(::shut)
+        confined {
+            listening.remove(link)
 
-            return delegate.bulkDown(link)
+            if (socket == null || socket.remoteDevice.address != device.address) {
+                socket?.let(::shut)
+
+                return@confined delegate.bulkDown(link)
+            }
+
+            adopt(link, socket)
         }
-
-        adopt(link, socket)
     }
 
     /** Take an open channel over, and tell the core bulk can move onto it. */
@@ -299,16 +338,19 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
     private val pump =
         object : BulkChannel.Delegate {
-            override fun bulkRead(channel: BulkChannel, bytes: ByteArray) {
+            override fun bulkRead(channel: BulkChannel, bytes: ByteArray) = confined {
                 delegate.bulkReceived(channel.link, bytes)
             }
 
-            override fun bulkWrote(channel: BulkChannel) {
+            override fun bulkWrote(channel: BulkChannel) = confined {
                 delegate.bulkWrote(channel.link)
             }
 
-            override fun bulkClosed(channel: BulkChannel) {
-                if (bulk.remove(channel.link, channel)) delegate.bulkDown(channel.link)
+            override fun bulkClosed(channel: BulkChannel) = confined {
+                if (bulk[channel.link] === channel) {
+                    bulk.remove(channel.link)
+                    delegate.bulkDown(channel.link)
+                }
             }
         }
 
@@ -357,7 +399,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
     private val scanning =
         object : ScanCallback() {
-            override fun onScanResult(callbackType: Int, result: ScanResult) {
+            override fun onScanResult(callbackType: Int, result: ScanResult) = confined {
                 seen[result.device.address] = result.device
                 delegate.saw(result.device.address, result.rssi.toShort())
             }
@@ -375,28 +417,29 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
     private val client =
         object : BluetoothGattCallback() {
-            override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, state: Int) {
-                if (state == BluetoothProfile.STATE_CONNECTED) {
-                    // The MTU is negotiated before the service is used, so the
-                    // fragment size the core is told is the one it gets.
-                    gatt.requestMtu(MTU)
-                } else {
-                    linkFor(gatt)?.let {
-                        forget(it)
-                        delegate.linkDown(it)
+            override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, state: Int) =
+                confined {
+                    if (state == BluetoothProfile.STATE_CONNECTED) {
+                        // The MTU is negotiated before the service is used, so
+                        // the fragment size the core is told is the one it gets.
+                        gatt.requestMtu(MTU)
+                    } else {
+                        linkFor(gatt)?.let {
+                            forget(it)
+                            delegate.linkDown(it)
+                        }
+                        gatt.close()
                     }
-                    gatt.close()
                 }
-            }
 
-            override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) = confined {
                 gatt.discoverServices()
             }
 
-            override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) = confined {
                 val found = gatt.getService(service)?.getCharacteristic(characteristicId)
 
-                if (found == null) return gatt.disconnect()
+                if (found == null) return@confined gatt.disconnect()
 
                 gatt.setCharacteristicNotification(found, true)
                 found.getDescriptor(CLIENT_CONFIGURATION)?.let {
@@ -413,15 +456,13 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                 gatt: BluetoothGatt,
                 characteristic: BluetoothGattCharacteristic,
                 value: ByteArray,
-            ) {
-                linkFor(gatt)?.let { delegate.received(it, value) }
-            }
+            ) = confined { linkFor(gatt)?.let { delegate.received(it, value) } }
 
             override fun onCharacteristicWrite(
                 gatt: BluetoothGatt,
                 characteristic: BluetoothGattCharacteristic,
                 status: Int,
-            ) {
+            ) = confined {
                 // A failed write is still an answer: the core will not stall
                 // waiting for one that is never coming.
                 linkFor(gatt)?.let(delegate::wrote)
@@ -432,14 +473,15 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
     private val gattServer =
         object : BluetoothGattServerCallback() {
-            override fun onConnectionStateChange(device: BluetoothDevice, status: Int, state: Int) {
-                if (state != BluetoothProfile.STATE_CONNECTED) {
-                    linkFor(device)?.let {
-                        forget(it)
-                        delegate.linkDown(it)
+            override fun onConnectionStateChange(device: BluetoothDevice, status: Int, state: Int) =
+                confined {
+                    if (state != BluetoothProfile.STATE_CONNECTED) {
+                        linkFor(device)?.let {
+                            forget(it)
+                            delegate.linkDown(it)
+                        }
                     }
                 }
-            }
 
             override fun onDescriptorWriteRequest(
                 device: BluetoothDevice,
@@ -449,7 +491,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                 responseNeeded: Boolean,
                 offset: Int,
                 value: ByteArray,
-            ) {
+            ) = confined {
                 // Subscribing is what makes a link: before it there is a
                 // connection with no way to write back over it.
                 if (linkFor(device) == null) {
@@ -472,7 +514,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                 responseNeeded: Boolean,
                 offset: Int,
                 value: ByteArray,
-            ) {
+            ) = confined {
                 linkFor(device)?.let { delegate.received(it, value) }
 
                 if (responseNeeded) {
@@ -480,7 +522,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                 }
             }
 
-            override fun onNotificationSent(device: BluetoothDevice, status: Int) {
+            override fun onNotificationSent(device: BluetoothDevice, status: Int) = confined {
                 linkFor(device)?.let(delegate::wrote)
             }
         }
