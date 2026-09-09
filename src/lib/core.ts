@@ -11,6 +11,7 @@
 // except by answering something the core asked.
 
 import {registerPlugin, type PluginListenerHandle} from "@capacitor/core"
+import type {HashedEvent} from "@welshman/util"
 
 /** A question the core put to the user, waiting on an answer. */
 export type Approval = {link: number}
@@ -38,6 +39,41 @@ export type Query = {
   seenFrom?: string[]
   order?: Order
 }
+
+/**
+ * One row of `event_seen`: which peer handed an event over, and when.
+ *
+ * Everything the core answers below is serde JSON of the Rust types, which is
+ * why these fields are snake_case where the rest of this file is not.
+ */
+export type Sighting = {event_id: string; pubkey: string; seen_at: number}
+
+/** A blob an event references, whether or not this device holds the bytes. */
+export type Blob = {
+  sha256: string
+  role: "Preview" | "Original"
+  url: string | null
+  mime_type: string | null
+  size: number | null
+  dim: string | null
+  blurhash: string | null
+  alt: string | null
+  blake3: string | null
+  imeta: string[]
+  stored_bytes: number
+  complete: boolean
+  accessed_at: number | null
+}
+
+/**
+ * What `listDetails` answers per event: the thing, its media, and how it got
+ * here.
+ *
+ * A stored event is a `HashedEvent`, the same name coracle-lib gives it,
+ * because content events are never signed — authorship is shown to one peer at
+ * a time instead. `docs/proofs.md#events-are-not-signed`.
+ */
+export type EventDetail = {event: HashedEvent; blobs: Blob[]; sightings: Sighting[]}
 
 /** One stored preference. */
 export type Pref = {key: string; value: string; updatedAt: number}

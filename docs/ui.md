@@ -44,6 +44,8 @@ A device reaches the real one through [the plugin boundary](./overview.md#archit
 
 It is not a second implementation of anything the core decides. Sync, policy, proofs and the radio are below the bridge and are not modelled; what is modelled is their observable shape, which is what a screen is built against.
 
+The shapes themselves are declared once, in `core.ts`, and the simulator answers with them rather than with types of its own — a stored event is `@welshman/util`'s `HashedEvent`, the same unsigned event `coracle-lib` stores, and a query narrows through `matchFilter`. A fixture that restates the contract in its own words is a fixture that can drift from it.
+
 `src/lib/core.ts` loads it by dynamic import under `import.meta.env.DEV`, so the branch is dead code in a shipped bundle and neither the simulator nor faker is in one. It is also `window.dip`, because most of that surface has no screen yet: a consent gate, a key backup and an identity transfer are answered from the console until something is built to answer them.
 
 **Nothing but `core.ts` may import it**, which `just lint` enforces. A view that reaches past the boundary for a fixture has a code path that only ever runs in a browser, and the screen it draws there is not the screen a device draws.

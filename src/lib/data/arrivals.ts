@@ -6,7 +6,7 @@
 
 import {readable, type Readable} from "svelte/store"
 import type {PluginListenerHandle} from "@capacitor/core"
-import {Dip, type Query} from "$lib/core"
+import {Dip, type EventDetail, type Query} from "$lib/core"
 import type {Session} from "$lib/data/session"
 
 const HOUR = 3600
@@ -39,14 +39,7 @@ export type Hour = {at: number; count: number}
 /** The day, in the words the screen says it in. */
 export type Day = {headline: string; detail: string; quiet: boolean}
 
-type Sighting = {seen_at: number; pubkey: string}
-
-type Detail = {
-  event: {id: string; kind: number; pubkey: string; content: string; created_at: number}
-  sightings: Sighting[]
-}
-
-const toArrival = ({event, sightings}: Detail): Arrival => ({
+const toArrival = ({event, sightings}: EventDetail): Arrival => ({
   id: event.id,
   kind: event.kind,
   pubkey: event.pubkey,
@@ -77,7 +70,7 @@ const arrivalStore = (asked: () => Query): Readable<Arrival[]> =>
 
     const read = async () => {
       const found = await Dip.listDetails(asked())
-        .then(({details}) => details.map(detail => toArrival(JSON.parse(detail) as Detail)))
+        .then(({details}) => details.map(detail => toArrival(JSON.parse(detail) as EventDetail)))
         .catch(unread)
 
       if (live) set(found)

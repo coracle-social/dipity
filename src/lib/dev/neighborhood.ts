@@ -7,7 +7,7 @@
 
 import {faker} from "@faker-js/faker"
 import {CLASSIFIED, LONG_FORM, NOTE} from "@welshman/util"
-import type {Blob} from "$lib/dev/store"
+import type {Blob} from "$lib/core"
 
 /** What makes the same reload the same street. */
 const SEED = 20_214

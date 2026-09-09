@@ -22,11 +22,11 @@ import {faker} from "@faker-js/faker"
 import {blake3} from "@noble/hashes/blake3.js"
 import {sha256} from "@noble/hashes/sha2.js"
 import {bytesToHex} from "@noble/hashes/utils.js"
-import {getPubkey, hash, makeSecret} from "@welshman/util"
+import {getPubkey, hash, makeSecret, type HashedEvent} from "@welshman/util"
 import {nip19} from "nostr-tools"
-import type {DipCore, Pref, Query} from "$lib/core"
+import type {Blob, DipCore, Pref, Query} from "$lib/core"
 import {identity, people, post, sas, type Person} from "$lib/dev/neighborhood"
-import {Store, type Blob, type StoredEvent} from "$lib/dev/store"
+import {Store} from "$lib/dev/store"
 
 const HOUR = 3600
 
@@ -145,7 +145,7 @@ export class Simulator extends WebPlugin implements DipCore {
     const written = at - faker.number.int({min: 0, max: 6 * HOUR})
     const event = hash({kind, content, tags, created_at: written, pubkey: person.pubkey})
 
-    this.store.record(event as StoredEvent, person.pubkey, at, blobs)
+    this.store.record(event, person.pubkey, at, blobs)
 
     return event
   }
@@ -277,7 +277,7 @@ export class Simulator extends WebPlugin implements DipCore {
   }
 
   async publish({event, media = []}: {event: string; media?: string[]}) {
-    const published = JSON.parse(event) as StoredEvent
+    const published = JSON.parse(event) as HashedEvent
     const blobs = published.tags
       .filter(tag => tag[0] === "imeta")
       .map(fromImeta)
