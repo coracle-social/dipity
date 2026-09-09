@@ -16,7 +16,7 @@ The design is written down in full. The implementation is not, and the gap is un
 | `core/dip` | Built out. Roughly 18,000 lines, a test module at the foot of nearly every file, and a module for every subsystem in `docs/` |
 | `core/dip-ffi` | The uniffi surface. `node` (the radio loop and `Action`), `keys` (the Keychain callback), `store` (queries, preferences and a change callback). Declared by hand: records in, JSON out |
 | `ios/`, `android/` | The shell. One `DipPlugin` each over the generated bindings, plus `Radio`, secure storage (`Keychain`, `Keystore`), `Lifecycle` and `Logging`. Nothing here decides anything the core decides |
-| `src/` | One screen. `src/lib/core.ts` is the plugin boundary and the only way the view reaches the core; `src/lib/data/` holds the stores over it, `src/lib/components/` the home screen and its parts, and `src/lib/components/ui/` the vendored shadcn set |
+| `src/` | One screen. `src/lib/core.ts` is the plugin boundary and the only way the view reaches the core; `src/lib/data/` holds the stores over it, `src/lib/components/` the home screen and its parts, `src/lib/components/ui/` the vendored shadcn set, and `src/lib/dev/` the simulated core a browser gets instead of a shell |
 
 The core is the codebase. The shell is glue, and the view is one screen over it — no kinds layer, no routing, no composer.
 
@@ -30,7 +30,9 @@ A plugin method is one of three shapes, and adding one means picking which: `ans
 
 The core's `log` goes nowhere until a shell installs a `Logger`, so `Logging.swift` and `Logging.kt` implement one over `os.Logger` and logcat, and each plugin's `load` installs it before the core is opened. The Rust module path is the record's target and becomes the category or the tag, which is the only thing making a subsystem filterable on a device.
 
-`docs/ui.md`'s `src/lib/kinds/` and `src/lib/data/` layout is a specification to build against rather than a description of the tree.
+`docs/ui.md`'s `src/lib/kinds/` layout is a specification to build against rather than a description of the tree.
+
+A browser has no shell, so `just dev` runs against `src/lib/dev/` — the plugin surface over an in-memory store and a neighborhood on a timer, reachable as `window.dip` for the calls no screen makes yet. It is loaded by a dynamic import under `import.meta.env.DEV` and is in no shipped bundle. Nothing outside it imports it, and no view code branches on `DEV`: a browser-only fallback in the view is a path that never runs on a device.
 
 ## The core, module by module
 
@@ -125,7 +127,7 @@ Every task is in the `justfile`. `package.json` has no `scripts` block, because 
 just core-test    # cargo test --workspace, the fast loop
 just qa           # svelte-check, tsc, eslint, prettier, comments, the Xcode project, cargo fmt, clippy, cargo test, the Swift names, gradle
 just fmt          # prettier --write, eslint --fix, cargo fmt
-just dev          # Vite, browser only: no plugin, so no BLE, no store, no peers
+just dev          # Vite, over the simulated core in src/lib/dev: no BLE, but peers and a store
 ```
 
 `clippy -D warnings` is part of `qa`, so a lint is a build failure here. `qa` is a dependency list and nothing else, and `.gitea/workflows/ci.yml` runs one step per entry, so CI and `just qa` cannot drift. `android-check` is the one carve-out: CI does not run it, so a push that skipped `just qa` leaves the Kotlin compiled by nothing.

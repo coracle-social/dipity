@@ -32,8 +32,21 @@ The cost: nothing updates itself. A fix upstream reaches us only if someone re-r
 | `src/lib/components/` | Our components. Everything app-specific. |
 | `src/lib/kinds/` | Domain kinds — a `KindFactory` (reader + writer) per event kind. |
 | `src/lib/data/` | The controller layer — queries against the core, and the caches over them. |
+| `src/lib/dev/` | The simulated core `just dev` runs against. Never in a shipped bundle. |
 | `src/lib/utils.ts` | `cn()` and the prop-type helpers shadcn components import. |
 | `components.json` | CLI config: aliases, base color, style. Read by `just ui`, not at build time. |
+
+## The browser has a core
+
+A device reaches the real one through [the plugin boundary](./overview.md#architecture), and a browser reaches nothing: `registerPlugin` answers a proxy with no implementation behind it, so every call rejects and a screen can only render its empty state.
+
+`src/lib/dev/` is the other half of that boundary — the same surface over an in-memory store, a faker-generated neighborhood, and a clock that walks it past the device. People turn up, strangers ask to pair, bursts of events arrive, and something already stored is seen again from somebody new. What the view publishes is stored and comes back out of a query.
+
+It is not a second implementation of anything the core decides. Sync, policy, proofs and the radio are below the bridge and are not modelled; what is modelled is their observable shape, which is what a screen is built against.
+
+`src/lib/core.ts` loads it by dynamic import under `import.meta.env.DEV`, so the branch is dead code in a shipped bundle and neither the simulator nor faker is in one. It is also `window.dip`, because most of that surface has no screen yet: a consent gate, a key backup and an identity transfer are answered from the console until something is built to answer them.
+
+**Nothing but `core.ts` may import it**, which `just lint` enforces. A view that reaches past the boundary for a fixture has a code path that only ever runs in a browser, and the screen it draws there is not the screen a device draws.
 
 ## The vendored seam
 
@@ -226,7 +239,7 @@ Markdown is excluded. Prettier pads every table to its widest cell and rewrites 
 ## Commands
 
 ```sh
-just dev             # Vite dev server, browser only
+just dev             # Vite dev server, over the simulated core
 just ui <component>  # vendor a shadcn component; no args to pick from a list
 just lint            # eslint
 just fmt             # prettier + eslint --fix + cargo fmt

@@ -33,17 +33,6 @@ const retentionDays = async () => {
   return value === null ? RETENTION_DAYS : Number(JSON.parse(value))
 }
 
-/** What a failed open means, which in a browser is the fixture rather than an error. */
-const unopened = async (): Promise<Session> => {
-  if (import.meta.env.DEV) {
-    const {SAMPLE_IDENTITY} = await import("./sample")
-
-    return {state: "ready", identity: SAMPLE_IDENTITY, retentionDays: RETENTION_DAYS}
-  }
-
-  return {state: "unavailable", retentionDays: RETENTION_DAYS}
-}
-
 /**
  * Start the core, and say what happened.
  *
@@ -62,6 +51,6 @@ export const open = async () => {
       store.set({state: "absent", retentionDays: RETENTION_DAYS})
     }
   } catch {
-    store.set(await unopened())
+    store.set({state: "unavailable", retentionDays: RETENTION_DAYS})
   }
 }

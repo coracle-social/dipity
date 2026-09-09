@@ -121,6 +121,26 @@ export default ts.config(
     },
   },
 
+  // A browser's stand-in for the shell. Reaching for it from the view is a path that never runs.
+  {
+    files: ["src/**"],
+    ignores: ["src/lib/dev/**", "src/lib/core.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/dev/*", "$lib/dev/*"],
+              message:
+                "src/lib/dev is the simulated core `just dev` runs against, and src/lib/core.ts is the only thing that loads it. A view that reaches for it has a code path that only ever runs in a browser. See docs/ui.md#the-browser-has-a-core.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
   // Runes are compiler syntax; in a plain module they are an undefined global.
   {
     files: ["src/**/*.ts", "src/**/*.js"],

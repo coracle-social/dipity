@@ -1,9 +1,10 @@
 // The Capacitor plugin boundary, and the only way the view reaches the core.
 //
-// `registerPlugin` answers a proxy on every platform: in the browser there is
-// no implementation behind it, so `just dev` renders the view and every call
-// here rejects. That is the intended shape — the shells are where a peer, a
-// radio and a key exist.
+// `registerPlugin` answers a proxy on every platform, and on a device the
+// implementation behind it is the shell. In the browser there is none, so
+// `just dev` gets the simulator in `$lib/dev` instead: the same surface over an
+// in-memory store and a neighborhood that walks past on a timer. A device never
+// loads it — the branch below is dead code under `import.meta.env.DEV`.
 //
 // Nothing here names a peer, and nothing here decides anything the core
 // decides. A link is a number the shell assigned; there is no way to reach one
@@ -204,4 +205,8 @@ export type DipCore = {
   ): Promise<PluginListenerHandle>
 }
 
-export const Dip = registerPlugin<DipCore>("Dip")
+const web = import.meta.env.DEV
+  ? {web: () => import("$lib/dev/simulator").then(({simulated}) => simulated())}
+  : {}
+
+export const Dip = registerPlugin<DipCore>("Dip", web)

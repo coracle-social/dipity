@@ -26,7 +26,7 @@ Calls run one way: view → shell → core. SQLite is in-process C. The Capacito
 
 ```sh
 just setup        # install dependencies, add Rust targets
-just dev          # Vite dev server (browser only, no BLE)
+just dev          # Vite dev server (no BLE — a simulated core stands in)
 just core-test    # run Rust tests
 just sync         # core → bindings → Android's library → web → cap sync
 just ios          # open Xcode, which builds the core and the web assets itself

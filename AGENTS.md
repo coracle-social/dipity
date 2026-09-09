@@ -70,7 +70,7 @@ Capacitor 8 · Svelte 5 · Vite 8 · TypeScript · welshman `0.9.x` · Tailwind 
 
 ```sh
 just setup        # rust targets, pnpm deps — once after cloning
-just dev          # Vite dev server, browser only
+just dev          # Vite dev server, over the simulated core in src/lib/dev
 just ui <name>    # vendor a shadcn-svelte component into src/lib/components/ui
 just lint         # eslint over the view
 just fmt          # prettier, eslint --fix, cargo fmt

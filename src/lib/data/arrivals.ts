@@ -56,14 +56,8 @@ const toArrival = ({event, sightings}: Detail): Arrival => ({
   from: sightings.map(sighting => sighting.pubkey),
 })
 
-/** What a failed read shows: the fixture in a browser, and nothing on a device. */
-const unread = async (query: Query, error: unknown): Promise<Arrival[]> => {
-  if (import.meta.env.DEV) {
-    const {sampleArrivals} = await import("./sample")
-
-    return sampleArrivals(Date.now() / 1000, query)
-  }
-
+/** A read that failed is an empty screen, since the query is the only thing that knows better. */
+const unread = (error: unknown): Arrival[] => {
   console.error("the store could not be read", error)
 
   return []
@@ -82,10 +76,9 @@ const arrivalStore = (asked: () => Query): Readable<Arrival[]> =>
     let handle: PluginListenerHandle | undefined
 
     const read = async () => {
-      const query = asked()
-      const found = await Dip.listDetails(query)
+      const found = await Dip.listDetails(asked())
         .then(({details}) => details.map(detail => toArrival(JSON.parse(detail) as Detail)))
-        .catch(error => unread(query, error))
+        .catch(unread)
 
       if (live) set(found)
     }

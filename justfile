@@ -47,7 +47,7 @@ setup:
 
 # ---------------------------------------------------------------- development
 
-# Vite dev server. Browser only — no plugin, so the home screen renders a fixture.
+# Vite dev server. Browser only, so `src/lib/dev` stands in for the core and its peers.
 dev:
     pnpm exec vite
 
