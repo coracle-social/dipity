@@ -16,9 +16,9 @@ The design is written down in full. The implementation is not, and the gap is un
 | `core/dip` | Built out. Roughly 18,000 lines, a test module at the foot of nearly every file, and a module for every subsystem in `docs/` |
 | `core/dip-ffi` | The uniffi surface. `node` (the radio loop and `Action`), `keys` (the Keychain callback), `store` (queries, preferences and a change callback). Declared by hand: records in, JSON out |
 | `ios/`, `android/` | The shell. One `DipPlugin` each over the generated bindings, plus `Radio`, secure storage (`Keychain`, `Keystore`), `Lifecycle` and `Logging`. Nothing here decides anything the core decides |
-| `src/` | Scaffolding, plus `src/lib/core.ts` — the plugin boundary, and the only way the view reaches the core. Otherwise `App.svelte`, `main.ts`, `utils.ts`, `app.css`, and vendored shadcn components under `src/lib/components/ui/` |
+| `src/` | One screen. `src/lib/core.ts` is the plugin boundary and the only way the view reaches the core; `src/lib/data/` holds the stores over it, `src/lib/components/` the home screen and its parts, and `src/lib/components/ui/` the vendored shadcn set |
 
-The core is the codebase. The shell is glue, and the view is a version string and a build target.
+The core is the codebase. The shell is glue, and the view is one screen over it — no kinds layer, no routing, no composer.
 
 Every `core/dip-ffi` entry point has a caller in both shells; read the plugin before adding another. The radio loop, identity storage, the store reads, logging, media authoring and the L2CAP upgrade are wired the whole way through.
 

@@ -47,7 +47,7 @@ setup:
 
 # ---------------------------------------------------------------- development
 
-# Vite dev server. Browser only — no plugin, so no BLE, no store, no peers.
+# Vite dev server. Browser only — no plugin, so the home screen renders a fixture.
 dev:
     pnpm exec vite
 
