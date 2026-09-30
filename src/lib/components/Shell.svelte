@@ -5,6 +5,7 @@
   import BottomNav from "$lib/components/BottomNav.svelte"
   import Composer from "$lib/components/Composer.svelte"
   import ContactDetail from "$lib/components/ContactDetail.svelte"
+  import DeviceLogin from "$lib/components/DeviceLogin.svelte"
   import ItemDetail from "$lib/components/ItemDetail.svelte"
   import Kept from "$lib/components/Kept.svelte"
   import Pairing from "$lib/components/Pairing.svelte"
@@ -12,8 +13,9 @@
   import People from "$lib/components/People.svelte"
   import Settings from "$lib/components/Settings.svelte"
   import type {Item} from "$lib/data/feed"
-  import {place} from "$lib/data/nav"
+  import {go, place} from "$lib/data/nav"
   import {requests, watchPairings} from "$lib/data/pairing"
+  import {step, watchTransfers} from "$lib/data/transfer"
 
   let composing = $state(false)
   let about = $state<Item | undefined>(undefined)
@@ -24,6 +26,19 @@
     return () => {
       watching.then(stop => stop()).catch(() => undefined)
     }
+  })
+
+  $effect(() => {
+    const watching = watchTransfers()
+
+    return () => {
+      watching.then(stop => stop()).catch(() => undefined)
+    }
+  })
+
+  // A key handover interrupts, since the core only asks with a user right there.
+  $effect(() => {
+    if ($step.at === "comparing" && !$step.source) go({at: "device"})
   })
 
   const compose = (item?: Item) => {
@@ -52,6 +67,8 @@
       <ContactDetail pubkey={$place.pubkey} />
     {:else if $place.at === "item"}
       <ItemDetail id={$place.id} onBoost={compose} />
+    {:else if $place.at === "device"}
+      <DeviceLogin />
     {:else}
       <Pairing request={asked} />
     {/if}

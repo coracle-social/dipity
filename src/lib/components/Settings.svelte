@@ -1,11 +1,13 @@
 <script lang="ts">
   import Check from "@lucide/svelte/icons/check"
   import Download from "@lucide/svelte/icons/download"
+  import Smartphone from "@lucide/svelte/icons/smartphone"
   import {Button} from "$lib/components/ui/button"
   import {Input} from "$lib/components/ui/input"
   import {Label} from "$lib/components/ui/label"
   import {Separator} from "$lib/components/ui/separator"
   import {Dip} from "$lib/core"
+  import {go} from "$lib/data/nav"
   import {
     policy,
     setAccept,
@@ -207,4 +209,14 @@
 <p class="mt-2 text-xs text-pretty text-muted-foreground">
   This is the only proof that your things are yours. Lose the phone without a copy of it and you
   start again as somebody new.
+</p>
+
+<Button class="mt-6" variant="secondary" onclick={() => go({at: "device"})}>
+  <Smartphone />
+  Use this key on another phone
+</Button>
+
+<p class="mt-2 text-xs text-pretty text-muted-foreground">
+  Two phones holding one key are both you, so losing one costs nothing. The key goes across the same
+  way everything else does, with the two phones in the room together.
 </p>

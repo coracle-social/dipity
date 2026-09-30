@@ -5,7 +5,7 @@
 import {get, writable} from "svelte/store"
 import {tick} from "svelte"
 
-/** The four places the bottom bar goes, plus the three that open over them. */
+/** The four places the bottom bar goes, plus the four that open over them. */
 export type Place =
   | {at: "board"}
   | {at: "kept"}
@@ -14,6 +14,7 @@ export type Place =
   | {at: "contact"; pubkey: string}
   | {at: "item"; id: string}
   | {at: "pairing"; link: number}
+  | {at: "device"}
 
 export const place = writable<Place>({at: "board"})
 
@@ -34,9 +35,10 @@ export const go = (to: Place) => {
   void tick().then(() => window.scrollTo(0, to.at === "board" ? read : 0))
 }
 
-/** Which bar item is lit: a contact sits under People, everything else under Board. */
+/** Which bar item is lit: every screen that opens over one sits under it. */
 export const tabOf = (place: Place) => {
   if (place.at === "contact") return "people"
+  if (place.at === "device") return "settings"
 
   return place.at === "pairing" || place.at === "item" ? "board" : place.at
 }

@@ -71,6 +71,8 @@ Four facts about the transport decide most of the interface, and every story bel
 39. The user decides how long a thing carried for somebody else stays on the device. — `Settings`
 40. The user decides how long the device keeps answering strangers after the app goes into the pocket, and how many strangers it will name itself to. — `Settings`
 41. The user writes the key down somewhere safe. — `Settings`
+42. The user puts their key on a second phone, so both phones are them. — `DeviceLogin`
+43. The user takes the key off their other phone, and this one stops being the identity it made at first run. — `DeviceLogin`
 
 ## No screen yet
 
@@ -79,6 +81,4 @@ Each of these is a story the transport or the docs already support and the view 
 - **A notification while the app is closed.** Story 16 in the pocket. The core emits `WakeAt` and the shells own local notifications; nothing posts one.
 - **Discoverable times.** `policy.discoverable_times` is a list of windows and wants a time picker rather than a switch. Settings edits the other three discoverability preferences and leaves it alone.
 - **Per-contact gossip.** [`policy.md`](./policy.md#accept-and-gossip) expresses gossip as a tier over the whole trust graph, so "do not pass this person's things on" is only sayable as a block. `ContactDetail` offers trust, mute and block.
-- **Voting in a poll.** A poll is written and rendered; a vote is kind 1018 and nothing casts one.
-- **Login with device, and taking a key off one.** The bridge answers all three calls and `window.dip` is where they are answered from.
 - **Media.** The first version carries text. `imeta`, previews and blob transfer are built below the bridge and nothing above it attaches a file.

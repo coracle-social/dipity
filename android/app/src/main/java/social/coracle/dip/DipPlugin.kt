@@ -25,13 +25,13 @@ import uniffi.dip_ffi.Role
 import uniffi.dip_ffi.Store
 import uniffi.dip_ffi.StoreObserver
 import uniffi.dip_ffi.Subscription
-import uniffi.dip_ffi.TransferOutcome
 import uniffi.dip_ffi.changeName
 import uniffi.dip_ffi.coreVersion as loadedCoreVersion
 import uniffi.dip_ffi.generateIdentity
 import uniffi.dip_ffi.identityFromNsec
 import uniffi.dip_ffi.identityNpub
 import uniffi.dip_ffi.mediaTags as coreMediaTags
+import uniffi.dip_ffi.outcomeName
 
 /** The three permissions the radio needs on 31+, asked for together. */
 private const val RADIO_PERMISSIONS = "radio"
@@ -503,7 +503,7 @@ class DipPlugin : Plugin(), Radio.Delegate {
                         "identityTransfer",
                         JSObject()
                             .put("link", action.link.value.toLong())
-                            .put("received", action.outcome == TransferOutcome.RECEIVED),
+                            .put("outcome", outcomeName(action.outcome)),
                     )
                 is Action.ShareKeyBackup -> share(File(action.path))
                 is Action.WakeAt -> lifecycle?.wake(action.at)
@@ -529,7 +529,12 @@ class DipPlugin : Plugin(), Radio.Delegate {
         )
     }
 
-    override fun linkDown(link: ULong) = drive { it.linkDown(LinkId(link)) }
+    // The view is told too: a screen naming a link cannot offer over a dead one.
+    override fun linkDown(link: ULong) {
+        notifyListeners("linkClosed", JSObject().put("link", link.toLong()))
+
+        drive { it.linkDown(LinkId(link)) }
+    }
 
     override fun received(link: ULong, bytes: ByteArray) = drive {
         it.bytesReceived(LinkId(link), bytes)

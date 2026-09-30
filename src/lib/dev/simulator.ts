@@ -10,8 +10,9 @@
 // and proofs happen below the bridge and are not modelled here; what is
 // modelled is their observable shape, which is what a screen is built against.
 //
-// It is also `window.dip`, because part of the surface has no screen yet: a key
-// backup and an identity transfer are answered from the console.
+// It is also `window.dip`, because part of the surface has no screen to start
+// it from: a peer offering this device its identity is `dip.receiveOffer(link)`,
+// since nothing in a neighborhood should volunteer a key on a timer.
 //
 // Loaded by a dynamic import under `import.meta.env.DEV`, so neither this
 // module nor faker reaches the bundle the shells load.
@@ -148,6 +149,17 @@ const commentTags = (about: HashedEvent) => {
   ]
 }
 
+/** An identity transfer running on one link, from whichever side started it. */
+type Transfer = {
+  link: number
+  /** Whether this device is the one giving its key away. */
+  source: boolean
+  /** Whether this device's user has compared the digits yet. */
+  confirmed: boolean
+  /** Whether the other device's user has. */
+  accepted: boolean
+}
+
 /** The core as the browser gets to have one. */
 export class Simulator extends WebPlugin implements DipCore {
   private store = new Store()
@@ -155,7 +167,9 @@ export class Simulator extends WebPlugin implements DipCore {
   private paired = new Set<string>()
   private refused = new Map<string, number>()
   private gates = new Map<number, Person>()
-  private links = 1
+  private live = new Map<number, Person>()
+  private transfer: Transfer | undefined
+  private nextLink = 1
   private clock: ReturnType<typeof setTimeout> | undefined
 
   constructor() {
@@ -295,9 +309,10 @@ export class Simulator extends WebPlugin implements DipCore {
   /** Everything one encounter produces: a gate if they are a stranger, then a burst. */
   private encounter() {
     const person = faker.helpers.arrayElement(people)
-    const link = this.links++
+    const link = this.nextLink++
 
     if (this.paired.has(person.pubkey)) {
+      this.open(link, person)
       this.gossip(person, faker.number.int({min: 1, max: person.talkative}))
     } else {
       this.gate(person, link)
@@ -305,6 +320,34 @@ export class Simulator extends WebPlugin implements DipCore {
     }
 
     this.tick()
+  }
+
+  /**
+   * A session both ends authenticated, which is the only thing a transfer runs
+   * over.
+   *
+   * Announced the way the core announces it, and closed ninety seconds later
+   * when they have walked far enough — the view is told both, so a screen
+   * naming a link knows when there is nothing behind it.
+   */
+  private open(link: number, person: Person) {
+    this.live.set(link, person)
+    this.notifyListeners("peerIdentified", {link, pubkey: person.pubkey})
+    log(
+      `link ${link} is up with ${short(person.pubkey)} — dip.receiveOffer(${link}) to be offered their key`,
+    )
+
+    setTimeout(() => this.close(link), 90_000)
+  }
+
+  /** They walked out of range, which ends anything running over the link. */
+  private close(link: number) {
+    if (this.live.delete(link)) {
+      if (this.transfer?.link === link) this.finish(link, "refused")
+
+      this.notifyListeners("linkClosed", {link})
+      log(`link ${link} went down`)
+    }
   }
 
   /** A stranger asking, which is a question for the user and not an event. */
@@ -430,7 +473,7 @@ export class Simulator extends WebPlugin implements DipCore {
 
     if (person && approved) {
       this.paired.add(person.pubkey)
-      this.notifyListeners("peerIdentified", {link, pubkey: person.pubkey})
+      this.open(link, person)
       log(`paired with ${short(person.pubkey)}`)
       this.gossip(person, person.talkative)
     } else if (person) {
@@ -509,21 +552,76 @@ export class Simulator extends WebPlugin implements DipCore {
   }
 
   async offerIdentity({link}: {link: number}) {
-    const code = shortCode()
+    if (!this.live.has(link)) throw new Error(`link ${link} has no session to transfer over`)
+    if (this.transfer) throw new Error("an identity transfer is already running")
 
-    log(`offering this identity on link ${link}, code ${code}`)
-    this.notifyListeners("confirmIdentityTransfer", {link, code})
+    this.invite(link, true)
+
+    // The other device's user compares the digits while this one is still looking.
+    setTimeout(() => this.peerCompares(link), 2_500)
+  }
+
+  /**
+   * The peer on a live link offers this device its identity, which is the half
+   * of the flow no screen can start.
+   *
+   * Console-only on purpose: a paired phone volunteering its key unprompted is
+   * not something the neighborhood should do on a timer.
+   */
+  receiveOffer(link: number) {
+    if (!this.live.has(link)) throw new Error(`link ${link} has no session to transfer over`)
+    if (this.transfer) throw new Error("an identity transfer is already running")
+
+    this.invite(link, false)
   }
 
   async answerIdentityTransfer({link, confirmed}: {link: number; confirmed: boolean}) {
-    this.notifyListeners("identityTransfer", {link, received: false})
-    log(`identity transfer on link ${link} was ${confirmed ? "confirmed" : "refused"}`)
+    const running = this.transfer
+
+    if (running?.link !== link) throw new Error(`no identity transfer is waiting on link ${link}`)
+
+    if (!confirmed) {
+      this.finish(link, "refused")
+    } else if (running.source) {
+      running.confirmed = true
+
+      if (running.accepted) this.finish(link, "sent")
+    } else {
+      this.finish(link, "received")
+    }
   }
 
   async takeTransferredIdentity({link}: {link: number}) {
     log(`adopted the identity offered on link ${link}`)
 
     return {identity: this.identity}
+  }
+
+  /** Put the same six digits in front of both users. */
+  private invite(link: number, source: boolean) {
+    const code = shortCode()
+
+    this.transfer = {link, source, confirmed: false, accepted: false}
+    this.notifyListeners("confirmIdentityTransfer", {link, code})
+    log(`identity transfer on link ${link}, code ${code}`)
+  }
+
+  /** The target's user said yes, which releases the key if this one already had. */
+  private peerCompares(link: number) {
+    const running = this.transfer
+
+    if (running?.link === link && running.source) {
+      running.accepted = true
+
+      if (running.confirmed) this.finish(link, "sent")
+    }
+  }
+
+  /** How it ended, told once, the way the core tells whoever was waiting. */
+  private finish(link: number, outcome: "received" | "sent" | "refused") {
+    this.transfer = undefined
+    this.notifyListeners("identityTransfer", {link, outcome})
+    log(`identity transfer on link ${link} was ${outcome}`)
   }
 }
 

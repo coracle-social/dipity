@@ -64,6 +64,8 @@ pub enum Role {
 pub enum TransferOutcome {
     /// The key arrived. Take it with [`Node::take_transferred_identity`].
     Received,
+    /// The key left this device, so the peer holds this identity too.
+    Sent,
     /// One of the two users said no, or the peer could not run the flow.
     Refused,
 }
@@ -512,6 +514,22 @@ pub fn characteristic_uuid() -> String {
     dip::transport::CHARACTERISTIC_UUID.to_owned()
 }
 
+/// The name the view knows a transfer's ending by.
+///
+/// Read rather than spelled in Swift and Kotlin, the same way
+/// [`change_name`](crate::store::change_name) is: the three endings mean three
+/// different screens and the view switches on this string.
+#[uniffi::export]
+#[must_use]
+pub fn outcome_name(outcome: TransferOutcome) -> String {
+    match outcome {
+        TransferOutcome::Received => "received",
+        TransferOutcome::Sent => "sent",
+        TransferOutcome::Refused => "refused",
+    }
+    .to_owned()
+}
+
 /// The `imeta` entries an event has to carry for a peer to fetch `bytes` and
 /// check what it gets.
 ///
@@ -562,6 +580,7 @@ impl From<Outcome> for TransferOutcome {
     fn from(outcome: Outcome) -> Self {
         match outcome {
             Outcome::Received => Self::Received,
+            Outcome::Sent => Self::Sent,
             Outcome::Refused => Self::Refused,
         }
     }
@@ -705,6 +724,25 @@ mod tests {
             node.publish("not an event".to_owned(), Vec::new()),
             Err(NodeError::Core { .. })
         ));
+    }
+
+    #[test]
+    fn every_ending_a_transfer_has_is_named_apart_from_the_others() {
+        let named = [
+            TransferOutcome::Received,
+            TransferOutcome::Sent,
+            TransferOutcome::Refused,
+        ]
+        .map(outcome_name);
+
+        assert_eq!(named, ["received", "sent", "refused"]);
+        assert_eq!(
+            named
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            named.len()
+        );
     }
 
     #[test]

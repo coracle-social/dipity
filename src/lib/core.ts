@@ -28,11 +28,20 @@ export type Approval = {link: number; code: number}
 /** Who the peer on a link turned out to be, once both sides have authenticated. */
 export type PeerIdentity = {link: number; pubkey: string}
 
+/** A link that is no longer there, so nothing can be offered over it. */
+export type LinkClosed = {link: number}
+
 /** The six digits both devices show during a login-with-device. */
 export type TransferPrompt = {link: number; code: number}
 
-/** How an identity transfer ended. */
-export type TransferOutcome = {link: number; received: boolean}
+/**
+ * How an identity transfer ended, on whichever device is being told.
+ *
+ * `received` is the target holding a key it has not stored yet, `sent` the
+ * source having handed its own over, and `refused` either user saying no. The
+ * two devices see different endings for the same transfer.
+ */
+export type TransferOutcome = {link: number; outcome: "received" | "sent" | "refused"}
 
 /** What a page of stored events is ordered by. */
 export type Order = "createdAt" | "seenAt"
@@ -241,6 +250,16 @@ export type DipCore = {
   addListener(
     event: "peerIdentified",
     handler: (peer: PeerIdentity) => void,
+  ): Promise<PluginListenerHandle>
+  /**
+   * A link went down, whoever was on it.
+   *
+   * The core is told the same thing and closes the session; this is so a screen
+   * offering something over a named link stops offering it.
+   */
+  addListener(
+    event: "linkClosed",
+    handler: (closed: LinkClosed) => void,
   ): Promise<PluginListenerHandle>
   addListener(
     event: "confirmIdentityTransfer",

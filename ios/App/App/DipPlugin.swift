@@ -448,7 +448,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
             case .identityTransfer(let link, let outcome):
                 notifyListeners(
                     "identityTransfer",
-                    data: ["link": Int(link.value), "received": outcome == .received])
+                    data: ["link": Int(link.value), "outcome": App.outcomeName(outcome: outcome)])
             case .shareKeyBackup(let path):
                 share(URL(fileURLWithPath: path))
             case .wakeAt(let at):
@@ -570,7 +570,10 @@ extension DipPlugin: RadioDelegate {
         }
     }
 
+    // The view is told too: a screen naming a link cannot offer over a dead one.
     func radio(_ radio: Radio, downOn link: UInt64) {
+        notifyListeners("linkClosed", data: ["link": Int(link)])
+
         drive { try $0.linkDown(link: LinkId(value: link)) }
     }
 

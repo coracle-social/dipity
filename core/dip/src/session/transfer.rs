@@ -79,6 +79,8 @@ enum Step {
 pub enum Outcome {
     /// The key arrived and is waiting for the shell to take it.
     Received,
+    /// The key left this device, so the peer now holds this identity too.
+    Sent,
     /// One of the two users said no, or the peer could not run the flow.
     Refused,
 }
@@ -222,7 +224,7 @@ impl IdentityTransfer {
 
     /// Hand the identity key over, which both users have now agreed to.
     fn send_key(&mut self, identity: &SecretKey) -> Vec<u8> {
-        self.step = None;
+        self.finish(Outcome::Sent);
 
         key_frame(identity)
     }
@@ -315,6 +317,7 @@ mod tests {
         );
         assert_eq!(target.take_outcome(), Some(Outcome::Received));
         assert!(!source.running());
+        assert_eq!(source.take_outcome(), Some(Outcome::Sent));
     }
 
     #[test]
@@ -333,6 +336,7 @@ mod tests {
             target.take_identity().map(|key| key.to_hex()),
             Some(source_key().to_hex())
         );
+        assert_eq!(source.take_outcome(), Some(Outcome::Sent));
     }
 
     #[test]

@@ -60,5 +60,17 @@ export const importIdentity = async (nsec: string) => {
   await ready()
 }
 
+/**
+ * Take the identity another phone handed over.
+ *
+ * The shell has already written the key and reopened the core under it, so this
+ * answers what `start` answers and there is nothing left to open.
+ */
+export const takeIdentity = async (link: number) => {
+  const {identity} = await Dip.takeTransferredIdentity({link})
+
+  store.set({state: "ready", identity})
+}
+
 /** The identity as a person would copy it down. */
 export const npubOf = (identity: string) => nip19.npubEncode(identity)
