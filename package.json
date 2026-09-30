@@ -48,6 +48,8 @@
     "@welshman/util": "^0.9.9",
     "bits-ui": "^2.18.1",
     "clsx": "^2.1.1",
+    "emoji-picker-element": "^1.29.1",
+    "emoji-picker-element-data": "^1.8.0",
     "mode-watcher": "^1.1.0",
     "nostr-tools": "^2.24.1",
     "svelte-sonner": "^1.1.1",

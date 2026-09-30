@@ -334,6 +334,14 @@ class DipPlugin : Plugin(), Radio.Delegate {
         answer(call, "event") { it.getEvent(id) ?: JSONObject.NULL }
     }
 
+    /** Drop one event from this device. Local and silent: no peer is told. */
+    @PluginMethod
+    fun forgetEvent(call: PluginCall) {
+        val id = call.getString("id") ?: return call.reject("forgetEvent needs an id")
+
+        answer(call, "existed") { it.forgetEvent(id) }
+    }
+
     @PluginMethod fun wantedBlobs(call: PluginCall) = answer(call, "blobs") {
         JSArray(it.wantedBlobs((call.getInt("limit") ?: 32).toUInt()))
     }
@@ -470,7 +478,19 @@ class DipPlugin : Plugin(), Radio.Delegate {
                 is Action.Disconnect -> radio.disconnect(action.link.value)
                 is Action.Send -> radio.send(action.link.value, action.fragment)
                 is Action.RequestApproval ->
-                    notifyListeners("requestApproval", JSObject().put("link", action.link.value.toLong()))
+                    notifyListeners(
+                        "requestApproval",
+                        JSObject()
+                            .put("link", action.link.value.toLong())
+                            .put("code", action.code.toLong()),
+                    )
+                is Action.PeerIdentified ->
+                    notifyListeners(
+                        "peerIdentified",
+                        JSObject()
+                            .put("link", action.link.value.toLong())
+                            .put("pubkey", action.pubkey),
+                    )
                 is Action.ConfirmIdentityTransfer ->
                     notifyListeners(
                         "confirmIdentityTransfer",

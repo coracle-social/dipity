@@ -39,6 +39,7 @@ export class Store {
   private details = new Map<string, EventDetail>()
   private blobs = new Map<string, Blob>()
   private preferences = new Map<string, {value: string; updatedAt: number}>()
+  /** Events the author's signature arrived with, which is what makes them forwardable. */
 
   /** Store an event and a sighting of it, answering whether the event itself was new. */
   record(event: HashedEvent, from: string, at: number, blobs: Blob[] = []) {
@@ -76,6 +77,21 @@ export class Store {
 
   get(id: string) {
     return this.details.get(id)
+  }
+
+  /** Drop an event and everything hanging off it, the way the core cascades. */
+  forget(id: string) {
+    const detail = this.details.get(id)
+
+    if (!detail) return false
+
+    this.details.delete(id)
+
+    for (const blob of detail.blobs) {
+      if (this.referencing(blob.sha256).length === 0) this.blobs.delete(blob.sha256)
+    }
+
+    return true
   }
 
   /** Every blob referenced by a stored event and not held in full. */

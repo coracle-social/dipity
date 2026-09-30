@@ -40,7 +40,7 @@ pub use blob::{Blob, BlobDigest, BlobHash, BlobRole};
 pub use graph::{Graph, Standing};
 pub use identity::Identity;
 pub use kinds::{
-    BLOCK, BlockListReader, BlockListWriter, MUTE, MuteListReader, MuteListWriter,
+    BLOCK, BOOKMARKS, BlockListReader, BlockListWriter, MUTE, MuteListReader, MuteListWriter,
     PeopleListReader, PeopleListWriter, TRUST, TrustListReader, TrustListWriter,
 };
 pub use order::Order;

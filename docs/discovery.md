@@ -105,6 +105,12 @@ Before either party identifies itself, a recognition tag may resolve allowing th
 
 If a peer isn't recognized, the app may refuse to connect depending on the user's [discoverability policy settings](./policy.md#discoverability). If this happens, the user should be notified so they can manually approve the connection. If the user doesn't respond, hang on to the connection for up to 5 minutes. The next time the peer connects (and it should retry for this reason), the user's decision gates the connection.
 
+The prompt carries a comparison value, derived from the session's handshake hash under its own domain label the way [login with device](./keys.md#login-with-device) derives its six digits. Noise XX authenticates nobody, and the gate runs before either side has named a pubkey, so this is the only thing the two users have to check: a device in the middle completes two handshakes and the two screens then disagree. A gate that cannot derive one asks nothing and stays held.
+
+The value the gate shows is five shapes drawn from an alphabet of eight in three tints, which is 24^5 and a little over 23 bits. The screen draws the whole space rather than a prefix of it.
+
+The pubkey each side proves afterwards is announced to the shell as it is proved. The gate runs first, so a pet name the user typed there is for the person in front of them, and this is what says which key that person holds.
+
 If neither party drops the connection, the dialer identifies itself first via [NIP 42 AUTH](./nips/p2p-auth.md#mutual-authentication). This gives the receiver the chance to drop the connection without identifying itself.
 
 If the receiver wishes to continue, it then identifies itself to the dialer, which can choose to drop the connection as well based on the disclosed nostr identity. If neither peer drops, they enter SYNCING state.

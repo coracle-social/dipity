@@ -78,7 +78,16 @@ pub enum Action {
     Send(LinkId, Vec<u8>),
     /// Ask the user whether an unadmitted stranger may connect. Answer with
     /// [`Node::approve`]; the link is held up to the drain cap meanwhile.
-    RequestApproval(LinkId),
+    ///
+    /// The value is what the two users compare, and the gate authenticates
+    /// nobody without it. `docs/discovery.md#the-consent-gate`.
+    RequestApproval(LinkId, u32),
+    /// Who the peer on a link proved to be, once per pubkey it proves.
+    ///
+    /// The gate runs before either side names a pubkey, so a pet name the user
+    /// typed there is for a person rather than for a key. This is what says
+    /// which key that person turned out to hold.
+    PeerIdentified(LinkId, PublicKey),
     /// Present the share sheet over a key backup the core has written.
     ///
     /// The path is the shell's, not the view's: the view starts the export and
@@ -671,9 +680,14 @@ impl Node {
 
         // Whatever each session wants of the shell, asked once apiece.
         for session in self.sessions.values_mut() {
-            // A held gate.
-            if session.request_approval() {
-                actions.push(Action::RequestApproval(session.link));
+            // A held gate, and the value the two users compare over it.
+            if let Some(code) = session.request_approval() {
+                actions.push(Action::RequestApproval(session.link, code));
+            }
+
+            // Who the link turned out to be, so a name typed at the gate lands.
+            for pubkey in session.take_identified() {
+                actions.push(Action::PeerIdentified(session.link, pubkey));
             }
 
             // An identity transfer asks each user once, and says how it ended.

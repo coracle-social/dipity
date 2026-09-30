@@ -13,8 +13,20 @@
 import {registerPlugin, type PluginListenerHandle} from "@capacitor/core"
 import type {HashedEvent} from "@welshman/util"
 
-/** A question the core put to the user, waiting on an answer. */
-export type Approval = {link: number}
+/**
+ * A question the core put to the user, waiting on an answer.
+ *
+ * `code` is the pairing comparison value, derived from the same handshake hash
+ * `TransferPrompt` derives its six digits from under a label of its own. The
+ * gate runs before either side has named a pubkey, so there is nothing else
+ * here to identify the peer by — the code is what the two users compare, and
+ * the pet name is for the person in front of them.
+ * `docs/discovery.md#the-consent-gate`.
+ */
+export type Approval = {link: number; code: number}
+
+/** Who the peer on a link turned out to be, once both sides have authenticated. */
+export type PeerIdentity = {link: number; pubkey: string}
 
 /** The six digits both devices show during a login-with-device. */
 export type TransferPrompt = {link: number; code: number}
@@ -153,6 +165,15 @@ export type DipCore = {
   /** One stored event by id, NIP-01 JSON, or null. */
   getEvent(options: {id: string}): Promise<{event: string | null}>
 
+  /**
+   * Drop one event from this device. Answers whether it was there.
+   *
+   * Local and silent: the sightings, the author's signature and the media go
+   * with it and no peer is told. Asking the network to forget something is a
+   * kind 5 through `publish`, which only its author can make.
+   */
+  forgetEvent(options: {id: string}): Promise<{existed: boolean}>
+
   /** Blobs a stored event references and this device does not hold. */
   wantedBlobs(options?: {limit?: number}): Promise<{blobs: string[]}>
 
@@ -210,6 +231,16 @@ export type DipCore = {
   addListener(
     event: "requestApproval",
     handler: (approval: Approval) => void,
+  ): Promise<PluginListenerHandle>
+  /**
+   * The peer on a link named a pubkey.
+   *
+   * A pet name is entered at the gate, which is before anyone has identified
+   * themselves, so this is what binds the two together.
+   */
+  addListener(
+    event: "peerIdentified",
+    handler: (peer: PeerIdentity) => void,
   ): Promise<PluginListenerHandle>
   addListener(
     event: "confirmIdentityTransfer",

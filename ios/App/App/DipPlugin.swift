@@ -43,6 +43,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "listEvents", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "listDetails", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getEvent", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "forgetEvent", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "wantedBlobs", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getBlob", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "eventsReferencingBlob", returnType: CAPPluginReturnPromise),
@@ -291,6 +292,13 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         answer(call, "event") { try $0.getEvent(id: id) ?? NSNull() }
     }
 
+    /// Drop one event from this device. Local and silent: no peer is told.
+    @objc func forgetEvent(_ call: CAPPluginCall) {
+        guard let id = call.getString("id") else { return call.reject("forgetEvent needs an id") }
+
+        answer(call, "existed") { try $0.forgetEvent(id: id) }
+    }
+
     @objc func wantedBlobs(_ call: CAPPluginCall) {
         let limit = UInt32(call.getInt("limit") ?? 32)
 
@@ -425,8 +433,14 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
                 radio.disconnect(link.value)
             case .send(let link, let fragment):
                 radio.send(link.value, fragment)
-            case .requestApproval(let link):
-                notifyListeners("requestApproval", data: ["link": Int(link.value)])
+            case .requestApproval(let link, let code):
+                notifyListeners(
+                    "requestApproval",
+                    data: ["link": Int(link.value), "code": Int(code)])
+            case .peerIdentified(let link, let pubkey):
+                notifyListeners(
+                    "peerIdentified",
+                    data: ["link": Int(link.value), "pubkey": pubkey])
             case .confirmIdentityTransfer(let link, let code):
                 notifyListeners(
                     "confirmIdentityTransfer",

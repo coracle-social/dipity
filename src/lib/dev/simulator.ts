@@ -10,9 +10,8 @@
 // and proofs happen below the bridge and are not modelled here; what is
 // modelled is their observable shape, which is what a screen is built against.
 //
-// It is also `window.dip`, because most of the surface has no screen yet: a
-// consent gate, a key backup and an identity transfer are all answered from the
-// console until something is built to answer them.
+// It is also `window.dip`, because part of the surface has no screen yet: a key
+// backup and an identity transfer are answered from the console.
 //
 // Loaded by a dynamic import under `import.meta.env.DEV`, so neither this
 // module nor faker reaches the bundle the shells load.
@@ -22,10 +21,30 @@ import {faker} from "@faker-js/faker"
 import {blake3} from "@noble/hashes/blake3.js"
 import {sha256} from "@noble/hashes/sha2.js"
 import {bytesToHex} from "@noble/hashes/utils.js"
-import {getPubkey, hash, makeSecret, type HashedEvent} from "@welshman/util"
+import {
+  COMMENT,
+  FOLLOWS,
+  GENERIC_REPOST,
+  NOTE,
+  REACTION,
+  REPOST,
+  getPubkey,
+  hash,
+  makeSecret,
+  type HashedEvent,
+} from "@welshman/util"
 import {nip19} from "nostr-tools"
 import type {Blob, DipCore, Pref, Query} from "$lib/core"
-import {identity, people, post, sas, type Person} from "$lib/dev/neighborhood"
+import {
+  emoji,
+  identity,
+  pairingCode,
+  people,
+  post,
+  said,
+  shortCode,
+  type Person,
+} from "$lib/dev/neighborhood"
 import {Store} from "$lib/dev/store"
 
 const HOUR = 3600
@@ -90,6 +109,45 @@ const fromImeta = (tag: string[]): Blob | undefined => {
     : undefined
 }
 
+/** The `e` and `p` tags naming an event, which is how everything but a comment refers to one. */
+const names = (about: HashedEvent) => [
+  ["e", about.id],
+  ["p", about.pubkey],
+]
+
+/** A boost, which states the kind it carries unless that kind is a note. */
+const boostOf = (about: HashedEvent) =>
+  about.kind === NOTE
+    ? {kind: REPOST, content: "", tags: names(about)}
+    : {kind: GENERIC_REPOST, content: "", tags: [...names(about), ["k", String(about.kind)]]}
+
+/**
+ * NIP-22's two references: uppercase for the thread root, lowercase for the parent.
+ *
+ * A comment on a comment keeps the root its parent named, so a conversation
+ * still says what it started from however deep it goes.
+ */
+const commentTags = (about: HashedEvent) => {
+  const tagged = (name: string) => about.tags.find(tag => tag[0] === name)?.[1]
+  const root =
+    about.kind === COMMENT
+      ? {
+          id: tagged("E") ?? about.id,
+          kind: tagged("K") ?? String(about.kind),
+          pubkey: tagged("P") ?? about.pubkey,
+        }
+      : {id: about.id, kind: String(about.kind), pubkey: about.pubkey}
+
+  return [
+    ["K", root.kind],
+    ["E", root.id, "", root.pubkey],
+    ["P", root.pubkey],
+    ["k", String(about.kind)],
+    ["e", about.id, "", about.pubkey],
+    ["p", about.pubkey],
+  ]
+}
+
 /** The core as the browser gets to have one. */
 export class Simulator extends WebPlugin implements DipCore {
   private store = new Store()
@@ -122,6 +180,8 @@ export class Simulator extends WebPlugin implements DipCore {
     const busiest = faker.number.int({min: 2, max: BAND_HOURS - 2})
     const known = people.filter(person => this.paired.has(person.pubkey))
 
+    this.rosters(at - DAY)
+
     for (let hour = 0; hour < BAND_HOURS; hour++) {
       const many = hour === busiest
       const count = faker.number.int(many ? {min: 4, max: 6} : {min: 0, max: 2})
@@ -137,15 +197,83 @@ export class Simulator extends WebPlugin implements DipCore {
         at - faker.number.int({min: 2 * DAY, max: 26 * DAY}),
       )
     }
+
+    for (const person of known) this.respond(person, at - faker.number.int(6 * HOUR))
+  }
+
+  /**
+   * Who calls whom what.
+   *
+   * The device's own roster is what it learned at pairing; a neighbour's roster
+   * is how somebody it never met arrives with a name on them.
+   */
+  private rosters(at: number) {
+    this.store.record(
+      this.naming(
+        this.identity,
+        people.filter(person => person.known),
+      ),
+      identity,
+      at,
+    )
+
+    for (const person of people.filter(known => known.known)) {
+      const theirs = faker.helpers.arrayElements(
+        people.filter(other => other.pubkey !== person.pubkey),
+        3,
+      )
+
+      this.store.record(this.naming(person.pubkey, theirs), person.pubkey, at)
+    }
+  }
+
+  private naming(author: string, named: Person[]) {
+    return hash({
+      kind: FOLLOWS,
+      content: "",
+      created_at: now() - DAY,
+      pubkey: author,
+      tags: named.map(person => ["p", person.pubkey, "", person.petname]),
+    })
+  }
+
+  /**
+   * A reaction, a comment or a boost on something the device already holds.
+   *
+   * A comment can be commented on in its turn, which is how a conversation more
+   * than one deep exists to be read.
+   */
+  private respond(person: Person, at: number) {
+    const held = this.store
+      .list({order: "seenAt", filter: JSON.stringify({kinds: [NOTE, COMMENT], limit: 20})})
+      .filter(detail => detail.event.pubkey !== person.pubkey)
+    const about = held.length ? faker.helpers.arrayElement(held).event : undefined
+
+    if (!about) return
+
+    const shape = faker.helpers.weightedArrayElement([
+      {weight: 5, value: REACTION},
+      {weight: 3, value: COMMENT},
+      {weight: 2, value: REPOST},
+    ])
+
+    const written =
+      shape === REACTION
+        ? {kind: REACTION, content: emoji(), tags: names(about)}
+        : shape === COMMENT
+          ? {kind: COMMENT, content: said(), tags: commentTags(about)}
+          : boostOf(about)
+
+    this.store.record(hash({...written, created_at: at, pubkey: person.pubkey}), person.pubkey, at)
   }
 
   /** One event handed over by a person, authored some time before they carried it here. */
   private arrive(person: Person, at: number) {
-    const {kind, content, tags, blobs} = post()
+    const {kind, content, tags} = post()
     const written = at - faker.number.int({min: 0, max: 6 * HOUR})
     const event = hash({kind, content, tags, created_at: written, pubkey: person.pubkey})
 
-    this.store.record(event, person.pubkey, at, blobs)
+    this.store.record(event, person.pubkey, at)
 
     return event
   }
@@ -185,7 +313,7 @@ export class Simulator extends WebPlugin implements DipCore {
 
     if (Date.now() - asked > GATE_BACKOFF) {
       this.gates.set(link, person)
-      this.notifyListeners("requestApproval", {link})
+      this.notifyListeners("requestApproval", {link, code: pairingCode()})
       log(
         `${short(person.pubkey)} is asking to pair — dip.approve({link: ${link}, approved: true})`,
       )
@@ -217,6 +345,8 @@ export class Simulator extends WebPlugin implements DipCore {
         fresh++
       }
     }
+
+    if (faker.datatype.boolean({probability: 0.5})) this.respond(person, at)
 
     this.notifyListeners("storeChanged", {group: "events"})
     log(`${short(person.pubkey)} handed over ${count} (${fresh} new)`)
@@ -300,6 +430,7 @@ export class Simulator extends WebPlugin implements DipCore {
 
     if (person && approved) {
       this.paired.add(person.pubkey)
+      this.notifyListeners("peerIdentified", {link, pubkey: person.pubkey})
       log(`paired with ${short(person.pubkey)}`)
       this.gossip(person, person.talkative)
     } else if (person) {
@@ -320,6 +451,17 @@ export class Simulator extends WebPlugin implements DipCore {
     const detail = this.store.get(id)
 
     return {event: detail ? JSON.stringify(detail.event) : null}
+  }
+
+  async forgetEvent({id}: {id: string}) {
+    const existed = this.store.forget(id)
+
+    if (existed) {
+      this.notifyListeners("storeChanged", {group: "events"})
+      log(`dropped ${id.slice(0, 8)} from this device`)
+    }
+
+    return {existed}
   }
 
   async wantedBlobs(options?: {limit?: number}) {
@@ -367,7 +509,7 @@ export class Simulator extends WebPlugin implements DipCore {
   }
 
   async offerIdentity({link}: {link: number}) {
-    const code = sas()
+    const code = shortCode()
 
     log(`offering this identity on link ${link}, code ${code}`)
     this.notifyListeners("confirmIdentityTransfer", {link, code})

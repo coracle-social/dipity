@@ -281,12 +281,23 @@ impl Store {
 
     // -------------------------------------------------------------- Writes
 
+    /// Drop one event and everything hanging off it. Answers whether it was there.
+    ///
+    /// Local and silent: the sightings, the author's signature and the media go
+    /// with the row, and no peer is told. Asking the network to forget
+    /// something is a kind 5 through [`Node::publish`](crate::node::Node::publish),
+    /// which only its author can make. `docs/storage.md#dropping-one-thing`.
+    pub fn forget_event(&self, id: String) -> Result<bool, StoreError> {
+        let id = EventId::from_hex(&id).map_err(|error| malformed("event id", &error))?;
+
+        Ok(command::forget_event(&self.db, &id)?)
+    }
+
     /// Write a preference. `value` is a JSON document.
     ///
-    /// This and [`clear_preference`](Self::clear_preference) are the view's
-    /// whole write surface: policy is stored as preferences and interpreted by
-    /// the core, which is what leaves nothing to compute during a background
-    /// wake. `docs/policy.md`.
+    /// Policy is stored as preferences and interpreted by the core, which is
+    /// what leaves nothing to compute during a background wake.
+    /// `docs/policy.md`.
     pub fn set_preference(&self, key: String, value: String) -> Result<(), StoreError> {
         serde_json::from_str::<serde_json::Value>(&value)
             .map_err(|error| malformed("preference value", &error))?;
@@ -416,13 +427,15 @@ impl TryFrom<Query> for CoreQuery {
             None => Filter::new(),
         };
 
-        Ok(Self::new()
+        let core = Self::new()
             .with_filter(filter)
             .with_provenance(provenance)
             .with_order(match query.order {
                 Order::CreatedAt => CoreOrder::CreatedAt,
                 Order::SeenAt => CoreOrder::SeenAt,
-            }))
+            });
+
+        Ok(core)
     }
 }
 
@@ -539,7 +552,7 @@ mod tests {
         assert_eq!(core.provenance.pubkeys.as_ref().map(BTreeSet::len), Some(1));
         assert_eq!(core.order, CoreOrder::SeenAt);
 
-        // Nothing the view can say reaches the halves a peer's answer rides on.
+        // The peer's policy is the one half nothing the view can say reaches.
         assert!(core.registers.is_none());
         assert!(core.policy.is_none());
     }

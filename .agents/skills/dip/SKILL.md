@@ -16,9 +16,9 @@ The design is written down in full. The implementation is not, and the gap is un
 | `core/dip` | Built out. Roughly 18,000 lines, a test module at the foot of nearly every file, and a module for every subsystem in `docs/` |
 | `core/dip-ffi` | The uniffi surface. `node` (the radio loop and `Action`), `keys` (the Keychain callback), `store` (queries, preferences and a change callback). Declared by hand: records in, JSON out |
 | `ios/`, `android/` | The shell. One `DipPlugin` each over the generated bindings, plus `Radio`, secure storage (`Keychain`, `Keystore`), `Lifecycle` and `Logging`. Nothing here decides anything the core decides |
-| `src/` | One screen. `src/lib/core.ts` is the plugin boundary and the only way the view reaches the core; `src/lib/data/` holds the stores over it, `src/lib/components/` the home screen and its parts, `src/lib/components/ui/` the vendored shadcn set, and `src/lib/dev/` the simulated core a browser gets instead of a shell |
+| `src/` | The view. `src/lib/core.ts` is the plugin boundary and the only way the view reaches the core; `src/lib/kinds/` holds a reader and writer per event kind, `src/lib/data/` the stores over the bridge, `src/lib/components/` the screens, `src/lib/components/ui/` the vendored shadcn set, and `src/lib/dev/` the simulated core a browser gets instead of a shell |
 
-The core is the codebase. The shell is glue, and the view is one screen over it — no kinds layer, no routing, no composer.
+The core is the codebase and the shell is glue. The view is five screens over them: a board, a person, the people list, settings and the pairing ritual, with a composer over the board and a tray above the bar.
 
 Every `core/dip-ffi` entry point has a caller in both shells; read the plugin before adding another. The radio loop, identity storage, the store reads, logging, media authoring and the L2CAP upgrade are wired the whole way through.
 
@@ -30,9 +30,25 @@ A plugin method is one of three shapes, and adding one means picking which: `ans
 
 The core's `log` goes nowhere until a shell installs a `Logger`, so `Logging.swift` and `Logging.kt` implement one over `os.Logger` and logcat, and each plugin's `load` installs it before the core is opened. The Rust module path is the record's target and becomes the category or the tag, which is the only thing making a subsystem filterable on a device.
 
-`docs/ui.md`'s `src/lib/kinds/` layout is a specification to build against rather than a description of the tree.
+A browser has no shell, so `just dev` runs against `src/lib/dev/` — the plugin surface over an in-memory store and a neighborhood on a timer, reachable as `window.dip` for the key backup and the identity transfer, which have no screen. It is loaded by a dynamic import under `import.meta.env.DEV` and is in no shipped bundle. Nothing outside it imports it, and no view code branches on `DEV`: a browser-only fallback in the view is a path that never runs on a device.
 
-A browser has no shell, so `just dev` runs against `src/lib/dev/` — the plugin surface over an in-memory store and a neighborhood on a timer, reachable as `window.dip` for the calls no screen makes yet. It is loaded by a dynamic import under `import.meta.env.DEV` and is in no shipped bundle. Nothing outside it imports it, and no view code branches on `DEV`: a browser-only fallback in the view is a path that never runs on a device.
+## The view
+
+Seven screens under `src/lib/components/`, switched by a `place` store rather than a router: `Board` (the feed, its two orderings and its category filter), `ItemDetail`, `Kept`, `People`, `ContactDetail`, `Settings` and `Pairing`, with `Composer` over the board and `PairingTray` above the bar. `docs/stories.md` says what each one answers.
+
+**A boost or a comment opens what it is about**, rather than its own page. `opensId` in `src/lib/data/feed.ts` is the one rule and `Quoted` draws the embedded line, off `summaryOf` in `src/lib/kinds/` — an article and an occasion title themselves in a tag rather than in their content. Reacting and boosting are offered on everything, since the user's own event travels whatever this device may do with what it names.
+
+**Saying something about a thing writes a NIP-22 comment on it**, which is what `Composer`'s "Pass it on" does when the user types. A comment on a comment keeps the root its parent named, so `ItemDetail` opens on the parent and heads the page with a "Commenting on" section climbing one further up. `commentOn` and `commentedOn` in `src/lib/kinds/index.ts` are both halves; nothing else reads a `q` tag.
+
+**The board holds its scroll offset and nothing else does.** `go` in `src/lib/data/nav.ts` records it on the way out and restores it after a `tick`. Every other screen opens at the top, being about the thing that was tapped to reach it.
+
+**Nobody publishes a profile.** A name is a pet name one person gave another, carried in a kind 3 roster (`src/lib/kinds/roster.ts`, NIP-02's pet name slot, replaceable and therefore spared by the retention sweep). So `nameOf` answers a name and whose name it is, and a person two hops out is shown under a neighbour's name for them with the claim attached.
+
+**Trust, block and mute are published events; everything else is a preference.** `src/lib/data/contacts.ts` writes kinds 16017, 16018 and 10000 as plain `p` tag lists, which is what `db/pref/query.rs::graph` reads; `src/lib/data/policy.ts` writes the `policy.*` keys. Editing visibility rewrites the whole document, so its default carries the rule keeping the user's own lists to trusted peers — an empty `rules` would publish the trust graph to anyone.
+
+**The gate runs before anybody is named**, so the pet name typed while pairing is held against the link and written when the peer identifies itself. The core answers both halves: `Approval.code` is `session::sas` over the handshake transcript at `PAIRING_SPACE`, which is 24^5 and is why `Shapes` draws five, and `peerIdentified` names the peer once it has proved a pubkey.
+
+The first version carries text. Nothing above the bridge attaches a file, and the simulator emits none.
 
 ## The core, module by module
 

@@ -147,6 +147,16 @@ pub fn forget_events_unseen_since(db: &Db, identity: &PublicKey, cutoff: i64) ->
     db.write(|tx| event::forget_unseen_since(tx, identity, cutoff))
 }
 
+/// Forget one event outright. Returns whether it was there.
+///
+/// The local half of removing something: the row goes with its sightings, its
+/// signatures and its media, and nothing is published. Asking the network to
+/// forget an event is a kind 5 the author publishes instead.
+/// `docs/storage.md#dropping-one-thing`.
+pub fn forget_event(db: &Db, id: &EventId) -> Result<bool> {
+    db.write(|tx| event::delete(tx, id))
+}
+
 /// Evict held originals, until the cache is under `ceiling_bytes`.
 /// Returns the hashes evicted.
 pub fn evict_originals(db: &Db, ceiling_bytes: i64) -> Result<Vec<BlobHash>> {

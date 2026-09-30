@@ -269,6 +269,48 @@ fn the_store_serves_its_use_cases() {
     fs::remove_dir_all(&directory).unwrap();
 }
 
+/// Dropping one thing, which is the local half of removing it: the row and
+/// everything hanging off it go, and no peer is told.
+#[test]
+fn one_event_can_be_dropped_outright() {
+    let directory = database_directory("forget-one");
+    let _ = fs::remove_dir_all(&directory);
+
+    let db = Db::open(&directory).unwrap();
+
+    let theirs = note(author(), 1_000, "somebody else wrote this", Tags::new());
+    let keeping = note(author(), 1_000, "and this one stays", Tags::new());
+
+    assert!(command::receive_event(&db, &theirs, &[peer()], 100).unwrap());
+    assert!(command::receive_event(&db, &keeping, &[peer()], 100).unwrap());
+
+    let naming_us = RecipientSignature::sign(&secret(1), id(&theirs), us());
+    assert!(command::receive_signature(&db, &id(&theirs), &naming_us.sig, &us()).unwrap());
+
+    let mut changes = channel::subscribe(&db);
+
+    assert!(command::forget_event(&db, &id(&theirs)).unwrap());
+    assert!(query::get_event(&db, &id(&theirs)).unwrap().is_none());
+    assert!(query::get_event(&db, &id(&keeping)).unwrap().is_some());
+
+    // The proof went with it, so nothing is left claiming this device may pass it on.
+    assert!(
+        query::get_signature(&db, &id(&theirs), &us())
+            .unwrap()
+            .is_none()
+    );
+
+    match changes.try_recv() {
+        Ok(EventChange::Deleted(gone)) => assert_eq!(gone, id(&theirs).to_string()),
+        other => panic!("expected the deletion, got {other:?}"),
+    }
+
+    // Idempotent: the screen it was on may be a tap behind the store.
+    assert!(!command::forget_event(&db, &id(&theirs)).unwrap());
+
+    fs::remove_dir_all(&directory).unwrap();
+}
+
 /// Two stores in one process: two sets of channels, and neither able to see the
 /// other's rows.
 #[test]

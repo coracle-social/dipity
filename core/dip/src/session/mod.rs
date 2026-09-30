@@ -27,6 +27,7 @@ pub mod heartbeat;
 pub mod l2cap;
 pub mod peer;
 pub mod recognition;
+pub mod sas;
 pub mod transfer;
 
 pub use peer::Peer;
@@ -186,6 +187,8 @@ pub struct Session {
     identity: PublicKey,
     /// The proved pubkeys bound under policy, once the peer has proved any.
     pub peer: Option<Peer>,
+    /// The proved pubkeys the shell has already been told about.
+    announced: Identity,
     /// The relay half: what this device serves, and the subscriptions it
     /// serves to.
     relay: Relay,
@@ -228,6 +231,7 @@ impl Session {
             identity: custody.identity()?.public_key(),
             custody,
             peer: None,
+            announced: Identity::default(),
             relay: Relay::default(),
             client: Client::default(),
             blobs: BlobExchange::new(blobs),
@@ -327,18 +331,57 @@ impl Session {
         Ok(())
     }
 
-    /// Whether the shell should be told to prompt for this session, once.
-    pub fn request_approval(&mut self) -> bool {
+    /// The comparison value to put in front of the user, once per held gate.
+    ///
+    /// The gate runs before either side has named a pubkey, so this is the only
+    /// thing the two users have to check. A transcript that is not available
+    /// yet defers the prompt rather than asking without one: a gate with
+    /// nothing to compare authenticates nobody.
+    pub fn request_approval(&mut self) -> Option<u32> {
+        if !matches!(
+            self.state,
+            State::GatePending {
+                approval_requested: false,
+                ..
+            }
+        ) {
+            return None;
+        }
+
+        let handshake_hash = self.wire.noise.handshake_hash().ok()?;
+
         if let State::GatePending {
             approval_requested, ..
         } = &mut self.state
-            && !*approval_requested
         {
             *approval_requested = true;
-            return true;
         }
 
-        false
+        Some(sas::sas(
+            sas::PAIRING_LABEL,
+            &handshake_hash,
+            sas::PAIRING_SPACE,
+        ))
+    }
+
+    /// Whichever pubkeys the peer has proved that the shell has not been told
+    /// about yet.
+    ///
+    /// A pet name typed at the gate is for the person standing there, and this
+    /// is what says whose key that turned out to be. A peer may prove more
+    /// identities later in the session, so this answers the difference rather
+    /// than firing once.
+    pub fn take_identified(&mut self) -> Identity {
+        let fresh: Identity = self
+            .auth
+            .proved
+            .difference(&self.announced)
+            .copied()
+            .collect();
+
+        self.announced.extend(fresh.iter().copied());
+
+        fresh
     }
 
     /// Queue a frame for the peer, encrypted and fragmented by the wire.
@@ -1468,17 +1511,70 @@ mod tests {
     #[test]
     fn approval_is_requested_once_and_refusal_closes() {
         let db = Db::open_in_memory().unwrap();
+        let mut session = secured_session(policy());
+        session.state = State::GatePending {
+            since: clock::now(),
+            approval_requested: false,
+        };
+
+        assert!(session.request_approval().is_some());
+        assert_eq!(session.request_approval(), None, "the prompt is one-shot");
+
+        session.approve(&db, false).unwrap();
+        assert_eq!(session.state, State::Closed);
+    }
+
+    #[test]
+    fn a_gate_with_no_transcript_behind_it_asks_nothing() {
         let mut session = session(policy());
         session.state = State::GatePending {
             since: clock::now(),
             approval_requested: false,
         };
 
-        assert!(session.request_approval());
-        assert!(!session.request_approval(), "the prompt is one-shot");
+        assert_eq!(session.request_approval(), None);
+        assert!(
+            session.request_approval().is_none(),
+            "and it is still owed once the handshake completes"
+        );
+    }
 
-        session.approve(&db, false).unwrap();
-        assert_eq!(session.state, State::Closed);
+    #[test]
+    fn both_ends_of_a_gate_compare_the_same_value() {
+        let (mut session, mut peer) = secured_pair(policy());
+
+        for end in [&mut session, &mut peer] {
+            end.state = State::GatePending {
+                since: clock::now(),
+                approval_requested: false,
+            };
+        }
+
+        assert_eq!(session.request_approval(), peer.request_approval());
+    }
+
+    #[test]
+    fn a_peer_is_announced_once_per_pubkey_it_proves() {
+        let mut session = secured_session(policy());
+
+        assert!(session.take_identified().is_empty());
+
+        session.identify([author(2)]);
+
+        assert_eq!(
+            session.take_identified(),
+            Identity::from([author(2)]),
+            "the first proof is announced"
+        );
+        assert!(session.take_identified().is_empty());
+
+        session.identify([author(2), author(3)]);
+
+        assert_eq!(
+            session.take_identified(),
+            Identity::from([author(3)]),
+            "and a later one announces only what is new"
+        );
     }
 
     #[test]

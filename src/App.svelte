@@ -1,13 +1,8 @@
 <script lang="ts">
   import {ModeWatcher} from "mode-watcher"
-  import Home from "$lib/components/Home.svelte"
+  import FirstRun from "$lib/components/FirstRun.svelte"
+  import Shell from "$lib/components/Shell.svelte"
   import {open, session} from "$lib/data/session"
-
-  const waiting: Record<string, string> = {
-    opening: "Opening…",
-    absent: "No identity on this device yet.",
-    unavailable: "The core is not running. This screen needs the app shell around it.",
-  }
 
   $effect(() => {
     open()
@@ -17,9 +12,15 @@
 <ModeWatcher />
 
 {#if $session.state === "ready"}
-  <Home />
+  <Shell />
+{:else if $session.state === "absent"}
+  <FirstRun />
 {:else}
   <div class="flex min-h-svh items-center justify-center bg-background px-8">
-    <p class="text-center text-sm text-pretty text-muted-foreground">{waiting[$session.state]}</p>
+    <p class="text-center text-sm text-pretty text-muted-foreground">
+      {$session.state === "opening"
+        ? "Opening…"
+        : "The core is not running. This screen needs the app shell around it."}
+    </p>
   </div>
 {/if}

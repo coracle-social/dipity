@@ -42,6 +42,14 @@ pub const BLOCK: u16 = 16_018;
 /// NIP-51's mute list. A display filter, and never a gate on propagation.
 pub const MUTE: u16 = 10_000;
 
+/// NIP-51's bookmark list, which the retention sweep reads.
+///
+/// The one list here the core does not otherwise care about: the view writes
+/// it, and [`forget_unseen_since`](crate::db::event::command::forget_unseen_since)
+/// spares whatever it names, because a bookmark is the only way a person says
+/// to keep something somebody else wrote. `docs/storage.md#retention`.
+pub const BOOKMARKS: u16 = 10_003;
+
 /// The `p` pubkeys in a tag set, deduplicated and in tag order.
 ///
 /// A value that is not a pubkey names nobody, so it contributes nothing and

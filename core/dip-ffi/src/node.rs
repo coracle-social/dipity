@@ -112,6 +112,18 @@ pub enum Action {
     RequestApproval {
         /// The link waiting on the answer.
         link: LinkId,
+        /// What the two users compare before either of them answers.
+        code: u32,
+    },
+    /// Who the peer on a link proved to be, once per pubkey it proves.
+    ///
+    /// The gate runs before either side names a pubkey, so a pet name the user
+    /// typed there is for a person. This says which key that person holds.
+    PeerIdentified {
+        /// The link the peer proved itself over.
+        link: LinkId,
+        /// The pubkey it proved, hex.
+        pubkey: String,
     },
     /// Present the share sheet over a key backup the core has written.
     ///
@@ -568,7 +580,14 @@ impl From<CoreAction> for Action {
                 link: link.into(),
                 fragment,
             },
-            CoreAction::RequestApproval(link) => Self::RequestApproval { link: link.into() },
+            CoreAction::RequestApproval(link, code) => Self::RequestApproval {
+                link: link.into(),
+                code,
+            },
+            CoreAction::PeerIdentified(link, pubkey) => Self::PeerIdentified {
+                link: link.into(),
+                pubkey: pubkey.to_hex(),
+            },
             CoreAction::ShareKeyBackup(path) => Self::ShareKeyBackup {
                 path: path.to_string_lossy().into_owned(),
             },
@@ -692,6 +711,7 @@ mod tests {
     fn every_action_the_core_emits_crosses_as_itself() {
         let link = dip::LinkId(3);
         let peripheral = dip::PeripheralId("CB-2".to_owned());
+        let proved = coracle_lib::keys::SecretKey::generate().public_key();
 
         let crossed: Vec<Action> = vec![
             CoreAction::Scan(true),
@@ -699,7 +719,8 @@ mod tests {
             CoreAction::Connect(peripheral.clone()),
             CoreAction::Disconnect(link),
             CoreAction::Send(link, vec![1, 2]),
-            CoreAction::RequestApproval(link),
+            CoreAction::RequestApproval(link, 7_654_321),
+            CoreAction::PeerIdentified(link, proved),
             CoreAction::ShareKeyBackup(PathBuf::from("/cache/dip-key.txt")),
             CoreAction::SendBulk(link, vec![3]),
             CoreAction::PublishL2cap(link),
@@ -728,7 +749,14 @@ mod tests {
                     link,
                     fragment: vec![1, 2]
                 },
-                Action::RequestApproval { link },
+                Action::RequestApproval {
+                    link,
+                    code: 7_654_321
+                },
+                Action::PeerIdentified {
+                    link,
+                    pubkey: proved.to_hex()
+                },
                 Action::ShareKeyBackup {
                     path: "/cache/dip-key.txt".to_owned()
                 },

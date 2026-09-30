@@ -3,15 +3,13 @@
 //!
 //! This is deliberate key exfiltration, so nothing about it is implicit. Both
 //! users act — the source starts the flow, the target answers a prompt, and the
-//! source answers one more — and both compare a six-digit
-//! [short authentication string](sas) derived from the Noise transcript before
-//! the key moves.
+//! source answers one more — and both compare the six digits
+//! [`sas`](crate::session::sas) derives from the Noise transcript before the key
+//! moves.
 //!
-//! The comparison is what authenticates the flow, and it is the only thing
-//! that does. Noise XX authenticates nobody here, and NIP-42 cannot help: the
-//! target does not hold the identity key yet, which is the whole point. A
-//! machine in the middle completes two handshakes and so holds two transcripts,
-//! and the two devices then display different numbers.
+//! The comparison is what authenticates the flow, and it is the only thing that
+//! does. NIP-42 cannot help: the target does not hold the identity key yet,
+//! which is the whole point.
 //!
 //! [`IdentityTransfer`] is the whole flow: the state, the wire form, and the
 //! two answers a user gives. It touches no session and no store — every method
@@ -20,7 +18,8 @@
 
 use anyhow::{Result, anyhow, bail};
 use coracle_lib::keys::SecretKey;
-use sha2::{Digest, Sha256};
+
+use crate::session::sas::{LOGIN_LABEL, LOGIN_SPACE, sas};
 
 /// Discriminants for the transfer exchange, one byte ahead of its payload,
 /// inside the control channel's own `TRANSFER` frame.
@@ -35,17 +34,6 @@ mod message {
     /// Either end refused, or could not run the flow at all.
     pub const DECLINE: u8 = 0x04;
 }
-
-/// How many decimal digits the comparison value carries.
-///
-/// Six, as Bluetooth numeric comparison uses: short enough to read off a screen
-/// and long enough that a machine in the middle has one chance in a million of
-/// showing both users the same number.
-pub const SAS_DIGITS: u32 = 6;
-
-/// Domain separation for the comparison value, so the transcript hash cannot be
-/// reused as one for anything else.
-const SAS_LABEL: &[u8] = b"dip/login-with-device/sas";
 
 /// One session's identity transfer, on whichever side is running it.
 ///
@@ -206,7 +194,7 @@ impl IdentityTransfer {
             Some(Step::Offered { prompted, .. } | Step::Invited { prompted }) if !*prompted => {
                 *prompted = true;
 
-                Some(sas(handshake_hash))
+                Some(sas(LOGIN_LABEL, handshake_hash, LOGIN_SPACE))
             }
             _ => None,
         }
@@ -244,19 +232,6 @@ impl IdentityTransfer {
         self.step = None;
         self.outcome = Some(outcome);
     }
-}
-
-/// The comparison value both devices display, derived from the handshake hash
-/// they share.
-#[must_use]
-pub fn sas(handshake_hash: &[u8; 32]) -> u32 {
-    let mut digest = Sha256::new();
-    digest.update(SAS_LABEL);
-    digest.update(handshake_hash);
-
-    let bytes: [u8; 4] = digest.finalize()[..4].try_into().expect("four bytes");
-
-    u32::from_be_bytes(bytes) % 10u32.pow(SAS_DIGITS)
 }
 
 /// A `KEY` frame: the discriminant and the 32 secret key bytes.
@@ -409,18 +384,6 @@ mod tests {
                 .is_err()
         );
         assert!(target.answer(true, &secret(2)).is_err());
-    }
-
-    #[test]
-    fn the_comparison_value_fits_in_its_digits() {
-        for seed in 0..64u8 {
-            assert!(sas(&[seed; 32]) < 10u32.pow(SAS_DIGITS));
-        }
-    }
-
-    #[test]
-    fn two_transcripts_give_two_numbers() {
-        assert_ne!(sas(&[1; 32]), sas(&[2; 32]));
     }
 
     #[test]

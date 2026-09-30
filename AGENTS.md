@@ -122,6 +122,7 @@ The packages in use are listed explicitly in `package.json` rather than resolved
 | [`keys.md`](./docs/keys.md) | The nostr identity key: custody, storage, login with device, backup |
 | [`privacy.md`](./docs/privacy.md) | Threat model, what leaks, what users wrongly assume |
 | [`ui.md`](./docs/ui.md) | Component framework, design tokens, the conventions the linter enforces |
+| [`stories.md`](./docs/stories.md) | What a person does with the app, the screen that answers each, and what has no screen yet |
 | [`nips/p2p-auth.md`](./docs/nips/p2p-auth.md) | Peer authentication — the NIP-42 additions covering transports without URLs |
 | [`nips/imeta-blake3.md`](./docs/nips/imeta-blake3.md) | The `imeta` addition carrying a BLAKE3 root, for verified streaming of blobs |
 | [`nips/imeta-preview.md`](./docs/nips/imeta-preview.md) | The `imeta` addition naming the original a preview stands in for |

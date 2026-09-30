@@ -281,3 +281,20 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* The emoji picker is a custom element, so its theme crosses as properties its
+   shadow root reads rather than as utilities. */
+emoji-picker {
+  --background: var(--color-popover);
+  --border-color: var(--color-border);
+  --input-border-color: var(--color-input);
+  --input-font-color: var(--color-foreground);
+  --button-active-background: var(--color-accent);
+  --button-hover-background: var(--color-accent);
+  --indicator-color: var(--color-primary);
+  --outline-color: var(--color-ring);
+  --num-columns: 8;
+
+  width: 100%;
+  max-width: 24rem;
+}

@@ -15,7 +15,7 @@ use rusqlite::params;
 use crate::db::Tx;
 use crate::db::blob::command as blob;
 use crate::db::sql::event_id_from_sql;
-use crate::model::Provenance;
+use crate::model::{BOOKMARKS, Provenance};
 
 use super::channel::{self, EventChange};
 use super::query;
@@ -145,17 +145,26 @@ pub fn delete(tx: &Tx<'_>, id: &EventId) -> Result<bool> {
 }
 
 /// Forget events last handed over before `cutoff`. `docs/storage.md#retention`.
+///
+/// A bookmarked event stays. The user's own bookmark list is the only thing
+/// that says to keep something somebody else wrote, so the sweep reads it
+/// rather than taking the note and leaving the bookmark naming nothing.
 pub fn forget_unseen_since(tx: &Tx<'_>, identity: &PublicKey, cutoff: i64) -> Result<usize> {
     let mut prepared = tx.prepare(
         "SELECT event.id, event.kind FROM event
          JOIN event_seen ON event_seen.event_id = event.id
          WHERE event.pubkey <> ?1
+           AND event.id NOT IN (
+               SELECT bookmark.value FROM event_tag bookmark
+               JOIN event list ON list.id = bookmark.event_id
+               WHERE list.kind = ?3 AND list.pubkey = ?1 AND bookmark.name = 'e'
+           )
          GROUP BY event.id
          HAVING MAX(event_seen.seen_at) < ?2",
     )?;
 
     let stale = prepared
-        .query_map(params![identity.to_hex(), cutoff], |row| {
+        .query_map(params![identity.to_hex(), cutoff, BOOKMARKS], |row| {
             Ok((
                 event_id_from_sql(&row.get::<_, String>(0)?, 0)?,
                 row.get::<_, u16>(1)?,
@@ -620,6 +629,55 @@ mod tests {
         assert!(query::get(&tx, &id(&ours)).unwrap().is_some());
         assert!(query::get(&tx, &id(&their_trust_list)).unwrap().is_some());
         assert!(query::get(&tx, &id(&their_note)).unwrap().is_none());
+    }
+
+    /// Bookmarking is the only way to say "keep this", so the sweep reads it.
+    #[test]
+    fn a_sweep_keeps_what_the_user_bookmarked() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        let us = author(9);
+        let kept = note(author(1), 100, "worth keeping", Tags::new());
+        let unkept = note(author(1), 100, "read and done with", Tags::new());
+        let bookmarks = event(
+            us,
+            BOOKMARKS,
+            100,
+            "",
+            Tags::new().add("e", [id(&kept).to_hex()]),
+        );
+
+        save(&tx, &kept, &[peer()], 100).unwrap();
+        save(&tx, &unkept, &[peer()], 100).unwrap();
+        save(&tx, &bookmarks, &[us], 100).unwrap();
+
+        assert_eq!(forget_unseen_since(&tx, &us, 500).unwrap(), 1);
+        assert!(query::get(&tx, &id(&kept)).unwrap().is_some());
+        assert!(query::get(&tx, &id(&unkept)).unwrap().is_none());
+    }
+
+    /// Somebody else's bookmark list is not an instruction to this device.
+    #[test]
+    fn another_persons_bookmark_does_not_keep_an_event_here() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        let us = author(9);
+        let theirs = note(author(1), 100, "they kept it, we did not", Tags::new());
+        let bookmarks = event(
+            author(1),
+            BOOKMARKS,
+            100,
+            "",
+            Tags::new().add("e", [id(&theirs).to_hex()]),
+        );
+
+        save(&tx, &theirs, &[peer()], 100).unwrap();
+        save(&tx, &bookmarks, &[peer()], 100).unwrap();
+
+        assert_eq!(forget_unseen_since(&tx, &us, 500).unwrap(), 1);
+        assert!(query::get(&tx, &id(&theirs)).unwrap().is_none());
     }
 
     /// `event.seen_at` is a cache of the earliest row in `event_seen`, and the

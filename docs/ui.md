@@ -46,7 +46,7 @@ It is not a second implementation of anything the core decides. Sync, policy, pr
 
 The shapes themselves are declared once, in `core.ts`, and the simulator answers with them rather than with types of its own — a stored event is `@welshman/util`'s `HashedEvent`, the same unsigned event `coracle-lib` stores, and a query narrows through `matchFilter`. A fixture that restates the contract in its own words is a fixture that can drift from it.
 
-`src/lib/core.ts` loads it by dynamic import under `import.meta.env.DEV`, so the branch is dead code in a shipped bundle and neither the simulator nor faker is in one. It is also `window.dip`, because most of that surface has no screen yet: a consent gate, a key backup and an identity transfer are answered from the console until something is built to answer them.
+`src/lib/core.ts` loads it by dynamic import under `import.meta.env.DEV`, so the branch is dead code in a shipped bundle and neither the simulator nor faker is in one. It is also `window.dip`, because part of that surface has no screen yet: a key backup and an identity transfer are answered from the console until something is built to answer them.
 
 **Nothing but `core.ts` may import it**, which `just lint` enforces. A view that reaches past the boundary for a fixture has a code path that only ever runs in a browser, and the screen it draws there is not the screen a device draws.
 
@@ -107,7 +107,7 @@ Semantic tokens only. `bg-card`, `text-muted-foreground`, `border-border` — ne
 
 Values are `oklch`, so lightness is perceptually even: `oklch(0.7 …)` reads as the same brightness at every hue, which makes the dark theme derivable rather than hand-tuned. Both themes are defined in `app.css`, and dark mode is a `.dark` class on `<html>` set before first paint by an inline script in `index.html` — `ModeWatcher` runs after the bundle parses, which on a cold launch is a white flash on a dark-mode phone.
 
-**`primary` is rationed.** One primary action per screen. Terracotta at scale stops being warm and starts being loud.
+**`primary` is rationed.** One primary action per screen. Terracotta at scale stops being warm and starts being loud. A state the user set themselves wears it too, and the lit bookmark is the only one. `secondary-accent` at 0.07 chroma is too quiet to find among four grey icons.
 
 `secondary-accent` is what carries color everywhere else. It sits at roughly half the chroma of `primary` (0.07 against 0.148), which is what makes it read as subordinate — not lower contrast, which would just make it hard to read, but less saturated, so it recedes while staying legible.
 
@@ -213,10 +213,12 @@ Styling happens in Tailwind utilities, or in the theme. A component-scoped rule 
 
 ```typescript
 // src/lib/kinds/post.ts
-export const Post = new KindFactory({reader: PostReader, writer: PostWriter})
+export const Post = new KindFactory({kind: NOTE, reader: PostReader, writer: PostWriter})
 ```
 
-Each factory is configured once, in the controller, with the dependencies it needs; components read through the resulting getters.
+Every factory is configured once, in `src/lib/kinds/index.ts`, against a resolver that answers no relays — which is the truth rather than a stub, since there are none and a writer's routing half is never asked. Components read through the getters that configuration mints.
+
+A kind `@welshman/domain` already models is re-exported configured rather than redeclared. The three it does not are ours: a boost (`repost.ts`), the trust and block lists (`people.ts`, whose plain `p` tags are what the core reads), and the roster of pet names (`roster.ts`).
 
 **`event.tags.find(t => t[0] === "…")` does not appear in a component.** A kind's shape is stated once, in its reader, and every screen reads it through getters. Unmodeled tags survive an edit, because a writer seeded from a reader re-emits whatever it did not model.
 

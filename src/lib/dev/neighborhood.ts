@@ -4,18 +4,13 @@
 // neighborhood rather than a new one and two screenshots are comparable.
 // Nothing here knows about time or about the store — the simulator decides when
 // a person walks past and what happens when they do.
+//
+// The first version of the app carries text, so nothing here attaches a file.
 
 import {faker} from "@faker-js/faker"
-import {CLASSIFIED, LONG_FORM, NOTE} from "@welshman/util"
-import type {Blob} from "$lib/core"
+import {EVENT_DATE, EVENT_TIME, LONG_FORM, NOTE, POLL} from "@welshman/util"
 
-/** What makes the same reload the same street. */
-const SEED = 20_214
-
-/** How many people are within radio range of this device over a session. */
-const POPULATION = 7
-
-faker.seed(SEED)
+faker.seed(20_214)
 
 /** A key-shaped 32 bytes. Nothing below the bridge checks it, and no key here signs. */
 const key = () => faker.string.hexadecimal({length: 64, casing: "lower", prefix: ""})
@@ -23,6 +18,8 @@ const key = () => faker.string.hexadecimal({length: 64, casing: "lower", prefix:
 /** Somebody the device keeps running into. */
 export type Person = {
   pubkey: string
+  /** What people who have paired with them call them. */
+  petname: string
   /** The most events they hand over in one burst, once they are paired. */
   talkative: number
   /** Whether this device had already paired with them before the session started. */
@@ -30,14 +27,15 @@ export type Person = {
 }
 
 /** Something one of them wrote. */
-export type Post = {kind: number; content: string; tags: string[][]; blobs: Blob[]}
+export type Post = {kind: number; content: string; tags: string[][]}
 
 /** The device's own identity, which the simulated shell reports as already stored. */
 export const identity = key()
 
 /** Everyone in range, the first few already paired so the screen opens with a history. */
-export const people: Person[] = Array.from({length: POPULATION}, (_, index) => ({
+export const people: Person[] = Array.from({length: 7}, (_, index) => ({
   pubkey: key(),
+  petname: faker.person.firstName(),
   talkative: faker.number.int({min: 1, max: 5}),
   known: index < 3,
 }))
@@ -56,66 +54,82 @@ const notes = [
   () => `Power was out on ${faker.location.street()} for an hour. Anyone else?`,
 ]
 
-const picture = (): Blob => {
-  const size = faker.number.int({min: 40_000, max: 900_000})
-  const sha256 = faker.string.hexadecimal({length: 64, casing: "lower", prefix: ""})
+const note = (): Post => ({
+  kind: NOTE,
+  content: faker.helpers.arrayElement(notes)(),
+  tags: [],
+})
+
+const poll = (): Post => ({
+  kind: POLL,
+  content: `${faker.date.weekday()} or the weekend for the ${faker.company.buzzNoun()}?`,
+  tags: [
+    ["option", faker.string.alphanumeric(6), faker.date.weekday()],
+    ["option", faker.string.alphanumeric(6), "Saturday"],
+    ["option", faker.string.alphanumeric(6), "Either suits me"],
+  ],
+})
+
+/** A gathering, either on a day or at a time, which is the difference between the two kinds. */
+const occasion = (): Post => {
+  const allDay = faker.datatype.boolean()
+  const starts = faker.date.soon({days: 9})
+  const title = `${faker.company.buzzNoun()} at ${street()}`
 
   return {
-    sha256,
-    role: "Original",
-    url: null,
-    mime_type: faker.helpers.arrayElement(["image/jpeg", "image/png", "image/webp"]),
-    size,
-    dim: `${faker.number.int({min: 600, max: 2400})}x${faker.number.int({min: 600, max: 2400})}`,
-    blurhash: null,
-    alt: faker.lorem.words({min: 2, max: 6}),
-    blake3: faker.string.hexadecimal({length: 64, casing: "lower", prefix: ""}),
-    imeta: [`x ${sha256}`, `size ${size}`],
-    stored_bytes: 0,
-    complete: false,
-    accessed_at: null,
+    kind: allDay ? EVENT_DATE : EVENT_TIME,
+    content: faker.lorem.sentence(),
+    tags: [
+      ["d", faker.lorem.slug()],
+      ["title", title],
+      ["location", street()],
+      [
+        "start",
+        allDay ? starts.toISOString().slice(0, 10) : String(Math.floor(starts.getTime() / 1000)),
+      ],
+    ],
   }
 }
-
-/** A `imeta` tag naming a blob, which is the only way media reaches an event. */
-const imeta = (blob: Blob) => ["imeta", ...blob.imeta]
-
-const classified = (): Post => ({
-  kind: CLASSIFIED,
-  content: `${faker.commerce.productName()}\n${faker.commerce.price({min: 0, max: 80, symbol: "£"})}, ${street()}`,
-  tags: [["title", faker.commerce.productName()]],
-  blobs: [],
-})
 
 const article = (): Post => ({
   kind: LONG_FORM,
-  content: `${faker.book.title()}\n${faker.lorem.sentence()}`,
+  content: faker.lorem.paragraphs(2),
   tags: [
     ["d", faker.lorem.slug()],
     ["title", faker.book.title()],
+    ["summary", faker.lorem.sentence()],
   ],
-  blobs: [],
 })
 
-const note = (): Post => {
-  const blobs = faker.datatype.boolean({probability: 0.25}) ? [picture()] : []
-
-  return {
-    kind: NOTE,
-    content: faker.helpers.arrayElement(notes)(),
-    tags: blobs.map(imeta),
-    blobs,
-  }
-}
-
-// Only kinds the view can render: a kind 0 gossips too, and today it draws as its own JSON.
 /** One thing somebody hands over, weighted the way a street is: mostly talk. */
 export const post = (): Post =>
   faker.helpers.weightedArrayElement([
     {weight: 8, value: note},
-    {weight: 2, value: classified},
+    {weight: 2, value: poll},
+    {weight: 2, value: occasion},
     {weight: 1, value: article},
   ])()
 
-/** The six digits both devices show during a login-with-device. `docs/keys.md`. */
-export const sas = () => faker.number.int({min: 0, max: 999_999})
+/** What somebody says about another person's thing, addressed to their own neighbours. */
+export const said = () =>
+  faker.helpers.arrayElement([
+    "Saw this too, still there as of an hour ago.",
+    "I can bring a van if that helps.",
+    faker.lorem.sentence(),
+    "Ours went the same way last winter.",
+  ])
+
+export const emoji = () => faker.helpers.arrayElement(["👍", "❤️", "😂", "🙏", "👀"])
+
+/**
+ * The code both phones show while pairing, and the six digits a login-with-device
+ * shows. `docs/keys.md`, `docs/discovery.md#the-consent-gate`.
+ */
+/** The six digits a login-with-device prompt compares. */
+export const shortCode = () => faker.number.int({min: 0, max: 999_999})
+
+/**
+ * What the pairing gate compares: five shapes of eight in three tints, which is
+ * `session::sas::PAIRING_SPACE` in the core.
+ */
+export const pairingCode = () => faker.number.int({min: 0, max: 24 ** 5 - 1})

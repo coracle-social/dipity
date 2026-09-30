@@ -47,9 +47,18 @@ Media is written to disk unsealed, protected by the platform's data-protection c
 
 The cutoff reads the latest row in `event_seen` rather than the `event.seen_at` the feed orders by, which is the earliest. A sighting is written once per peer, so an event that keeps arriving from peers it has not arrived from before keeps refreshing — repeated propagation, in the only unit a proximity network has. Keying on arrival instead would forget an event on its birthday no matter how many people were still passing it around.
 
-Two things are never swept:
+Three things are never swept:
 
 - Events the user wrote. This device is their origin and no peer hands one back, so a sweep would not be letting a copy go, it would be deleting the last one.
 - Replaceable events, which are state rather than content. A trust list arrives once and is never offered again, so a sweep reading only circulation would take the [graph](./policy.md#social-graph) that policy is measured against.
+- Events the user bookmarked. Circulation is a measure of what the neighbourhood is still interested in, and a bookmark is the one place the person holding the device says otherwise. The sweep reads the `e` tags on their own NIP-51 list, kind 10003, which is replaceable and so survives on the rule above; somebody else's bookmark list keeps nothing here.
 
 It runs when the core opens and at most hourly after that. Opening is the moment that always happens — a device meeting nobody never ticks — and an hour is far below a window measured in days. The query groups `event_seen` by event, which no index answers — affordable at that cadence, and the reason `event.seen_at` is cached on the row for the reads where it would not be.
+
+## Dropping one thing
+
+The sweep is the device deciding; dropping is the user deciding. Either removes the event, its sightings, the author's signature over it and the media it references, and both go through the same delete.
+
+Dropping is local and tells nobody. A device holds somebody else's writing at their author's sufferance and can stop holding it at any time, but it cannot ask the neighbourhood to do the same — only the author can, by publishing a kind 5, which travels the way the event did and is a request rather than an instruction. So the two are separate operations and the screen says which one it is offering.
+
+Nothing stops a dropped event arriving again from somebody who still has it. Dropping is not a block, and refusing a person's events is [policy](./policy.md#accept-and-gossip).

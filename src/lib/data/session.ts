@@ -2,10 +2,10 @@
 //
 // `listDetails` and friends answer only once the shell has opened the store and
 // the node, so a screen's first question is not "what arrived" but "is there
-// anything to ask". The four states below are the whole of that: the view has
-// no identity to create and no store to open itself.
+// anything to ask". The four states below are the whole of that.
 
 import {writable, type Readable} from "svelte/store"
+import {nip19} from "nostr-tools"
 import {Dip} from "$lib/core"
 
 /** How far the core has got, from the view's side of the bridge. */
@@ -21,16 +21,20 @@ export type Session = {
 }
 
 /** The core's own default, restated so a screen has a number before the read lands. */
-const RETENTION_DAYS = 30
-
-const store = writable<Session>({state: "opening", retentionDays: RETENTION_DAYS})
+const store = writable<Session>({state: "opening", retentionDays: 30})
 
 export const session: Readable<Session> = store
 
 const retentionDays = async () => {
   const {value} = await Dip.preference({key: "policy.retention_days"})
 
-  return value === null ? RETENTION_DAYS : Number(JSON.parse(value))
+  return value === null ? 30 : Number(JSON.parse(value))
+}
+
+const ready = async () => {
+  const {identity} = await Dip.start()
+
+  store.set({state: "ready", identity, retentionDays: await retentionDays()})
 }
 
 /**
@@ -44,13 +48,26 @@ export const open = async () => {
     const {exists} = await Dip.hasIdentity()
 
     if (exists) {
-      const {identity} = await Dip.start()
-
-      store.set({state: "ready", identity, retentionDays: await retentionDays()})
+      await ready()
     } else {
-      store.set({state: "absent", retentionDays: RETENTION_DAYS})
+      store.set({state: "absent", retentionDays: 30})
     }
   } catch {
-    store.set({state: "unavailable", retentionDays: RETENTION_DAYS})
+    store.set({state: "unavailable", retentionDays: 30})
   }
 }
+
+/** Make an identity and open the store under it. */
+export const createIdentity = async () => {
+  await Dip.createIdentity()
+  await ready()
+}
+
+/** Take an identity the user pasted in, and open the store under it. */
+export const importIdentity = async (nsec: string) => {
+  await Dip.importIdentity({nsec: nsec.trim()})
+  await ready()
+}
+
+/** The identity as a person would copy it down. */
+export const npubOf = (identity: string) => nip19.npubEncode(identity)
