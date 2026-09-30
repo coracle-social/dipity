@@ -17,7 +17,7 @@ import {Dip} from "$lib/core"
 /** The four places the bottom bar goes, plus the four that open over them. */
 export type Place =
   | {at: "board"}
-  | {at: "kept"}
+  | {at: "bookmarks"}
   | {at: "people"}
   | {at: "settings"}
   | {at: "contact"; pubkey: string}

@@ -41,9 +41,9 @@ Four facts about the transport decide most of the interface, and every story bel
 18. The user goes back, with the phone's own button or the one on the screen, and lands on what they came from as far down it as they had read. — `nav`
 19. The user deletes something they published, and the request travels the same way the thing did. — `ItemCard`
 20. The user drops somebody else's thing off their own device, which tells nobody and asks nothing. — `ItemCard`
-21. The user keeps something, so the retention sweep leaves it alone however long it stops circulating. — `ItemCard`
-22. The user looks at everything they kept, whatever the board's filter is set to. — `Kept`
-23. The user writes a poll, an occasion or an article rather than a note, and the form changes to suit. — `Composer`
+21. The user bookmarks something, so the retention sweep leaves it alone however long it stops circulating. — `ItemCard`
+22. The user looks at everything they bookmarked, whatever the board's filter is set to. — `Bookmarks`
+23. The user writes a poll, a calendar event or an article rather than a note, and the form changes to suit. — `Composer`
 
 ## Pairing
 

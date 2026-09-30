@@ -9,7 +9,7 @@
   import EmojiPicker from "$lib/components/EmojiPicker.svelte"
   import ItemBody from "$lib/components/ItemBody.svelte"
   import Reactions from "$lib/components/Reactions.svelte"
-  import {toggleKept} from "$lib/data/bookmarks"
+  import {toggleBookmark} from "$lib/data/bookmarks"
   import {isKnown, nameOf, type Social} from "$lib/data/contacts"
   import {
     drop,
@@ -31,7 +31,7 @@
     warmth,
     sweptAt,
     session,
-    kept,
+    bookmarked,
     onBoost,
     detailed = false,
   }: {
@@ -41,8 +41,8 @@
     warmth: Warmth
     sweptAt?: number
     session: Session
-    /** Whether the user asked to keep this, which also spares it from the sweep. */
-    kept: boolean
+    /** Whether the user bookmarked this, which also spares it from the sweep. */
+    bookmarked: boolean
     onBoost: (item: Item) => void
     /** Whether this is the card the detail page is about, which opens nothing. */
     detailed?: boolean
@@ -160,10 +160,10 @@
       <Button
         variant="ghost"
         size="icon-sm"
-        aria-label={kept ? "Stop keeping this" : "Keep this"}
-        aria-pressed={kept}
-        class={kept ? "text-primary" : undefined}
-        onclick={() => toggleKept(item)}>
+        aria-label={bookmarked ? "Remove bookmark" : "Bookmark this"}
+        aria-pressed={bookmarked}
+        class={bookmarked ? "text-primary" : undefined}
+        onclick={() => toggleBookmark(item)}>
         <Bookmark />
       </Button>
       <Button

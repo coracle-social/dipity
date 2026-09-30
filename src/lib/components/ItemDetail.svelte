@@ -1,10 +1,13 @@
 <script lang="ts">
   import ArrowLeft from "@lucide/svelte/icons/arrow-left"
+  import MessagesSquare from "@lucide/svelte/icons/messages-square"
+  import SearchX from "@lucide/svelte/icons/search-x"
   import {Button} from "$lib/components/ui/button"
   import Byline from "$lib/components/Byline.svelte"
+  import EmptyState from "$lib/components/EmptyState.svelte"
   import ItemCard from "$lib/components/ItemCard.svelte"
   import Quoted from "$lib/components/Quoted.svelte"
-  import {kept} from "$lib/data/bookmarks"
+  import {bookmarked} from "$lib/data/bookmarks"
   import {social} from "$lib/data/contacts"
   import {
     detailOf,
@@ -18,28 +21,32 @@
   import {back} from "$lib/data/nav"
   import {policy} from "$lib/data/policy"
   import {session} from "$lib/data/session"
-  import {commentedOn} from "$lib/kinds"
+  import {categoryOf, commentedOn} from "$lib/kinds"
 
   // Reached by id rather than handed down, so it survives the board re-reading under it.
   let {id, onBoost}: {id: string; onBoost: (item: Item) => void} = $props()
 
   const detail = $derived(detailOf(id))
 
-  const keeping = $derived($kept.has(id))
+  const marked = $derived($bookmarked.has(id))
 
   const now = Date.now() / 1000
+
+  const heading = $derived(
+    $detail.item ? `${categoryOf($detail.item.event.kind).noun} details` : "Details",
+  )
 </script>
 
 <header class="flex items-center gap-1 pt-4 pb-3">
   <Button variant="ghost" size="icon-sm" aria-label="Back" onclick={back}>
     <ArrowLeft />
   </Button>
-  <h1 class="text-2xl font-semibold">In full</h1>
+  <h1 class="text-2xl font-semibold">{heading}</h1>
 </header>
 
 {#if $detail.item}
   {@const item = $detail.item}
-  {@const swept = sweptAt(item, $session, $policy.retentionDays, keeping)}
+  {@const swept = sweptAt(item, $session, $policy.retentionDays, marked)}
   {@const answers = commentedOn(item.event)}
   {@const standing = {
     ...standingOf($responses, $saying, id),
@@ -65,7 +72,7 @@
     warmth={warmthOf(item, swept, now)}
     sweptAt={swept}
     session={$session}
-    kept={keeping}
+    bookmarked={marked}
     {onBoost}
     detailed />
 
@@ -91,12 +98,10 @@
   </ul>
 
   {#if $detail.comments.length === 0}
-    <p class="py-6 text-sm text-pretty text-muted-foreground">
-      Nobody has said anything about it yet.
-    </p>
+    <EmptyState icon={MessagesSquare}>Nobody has said anything about it yet.</EmptyState>
   {/if}
 {:else}
-  <p class="py-10 text-sm text-pretty text-muted-foreground">
-    This device does not have that. Things go once they stop going around, unless you keep them.
-  </p>
+  <EmptyState icon={SearchX}>
+    This device does not have that. Things go once they stop going around, unless you bookmark them.
+  </EmptyState>
 {/if}

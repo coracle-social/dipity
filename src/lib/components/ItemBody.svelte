@@ -70,7 +70,7 @@
   </div>
 {:else if occasion}
   <div class="rounded-md border border-secondary-accent/40 px-3 py-2">
-    <h4 class="text-base font-semibold text-pretty">{occasion.title ?? "An occasion"}</h4>
+    <h4 class="text-base font-semibold text-pretty">{occasion.title ?? "An event"}</h4>
     {#if occasion.when}
       <p class="mt-1 flex items-center gap-1.5 text-sm text-secondary-accent">
         <Clock class="size-3.5" />

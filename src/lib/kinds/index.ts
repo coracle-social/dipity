@@ -82,7 +82,7 @@ export const block = Block.configure(context)
 export const mute = MuteList.configure(context)
 
 /**
- * What the user asked to keep.
+ * What the user bookmarked.
  *
  * Only the public half is reachable: NIP-51 keeps private entries as ciphertext
  * and there is no signer here, so nothing could read them back. The list
@@ -176,7 +176,7 @@ export const categories: Category[] = [
   {
     id: "occasions",
     label: "Events",
-    noun: "Occasion",
+    noun: "Event",
     icon: CalendarDays,
     kinds: [EVENT_DATE, EVENT_TIME],
   },

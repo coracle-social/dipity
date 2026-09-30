@@ -1,6 +1,8 @@
 <script lang="ts">
+  import Bookmark from "@lucide/svelte/icons/bookmark"
+  import EmptyState from "$lib/components/EmptyState.svelte"
   import ItemCard from "$lib/components/ItemCard.svelte"
-  import {keeping, kept} from "$lib/data/bookmarks"
+  import {bookmarked, bookmarkedItems} from "$lib/data/bookmarks"
   import {social} from "$lib/data/contacts"
   import {responses, saying, standingOf, warmthOf, type Item} from "$lib/data/feed"
   import {session} from "$lib/data/session"
@@ -11,24 +13,25 @@
 </script>
 
 <header class="pt-4 pb-3">
-  <h1 class="text-2xl font-semibold">Kept</h1>
+  <h1 class="text-2xl font-semibold">Bookmarks</h1>
+  <p class="mt-1 text-sm text-muted-foreground">
+    What you bookmark is never cleared from this device, however long ago it stopped going around.
+  </p>
 </header>
 
 <div class="mt-1 space-y-3">
-  {#each $keeping as item (item.event.id)}
+  {#each $bookmarkedItems as item (item.event.id)}
     <ItemCard
       {item}
       social={$social}
       standing={standingOf($responses, $saying, item.event.id)}
       warmth={warmthOf(item, undefined, now)}
       session={$session}
-      kept={$kept.has(item.event.id)}
+      bookmarked={$bookmarked.has(item.event.id)}
       {onBoost} />
   {/each}
 </div>
 
-{#if $keeping.length === 0}
-  <p class="py-10 text-sm text-pretty text-muted-foreground">
-    Nothing kept yet. The bookmark on a card keeps it, and nothing you keep goes away.
-  </p>
+{#if $bookmarkedItems.length === 0}
+  <EmptyState icon={Bookmark}>No bookmarks yet. The bookmark on a card saves it here.</EmptyState>
 {/if}

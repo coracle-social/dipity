@@ -1,7 +1,10 @@
 <script lang="ts">
+  import Filter from "@lucide/svelte/icons/list-filter"
+  import Radar from "@lucide/svelte/icons/radar"
+  import EmptyState from "$lib/components/EmptyState.svelte"
   import FeedControls from "$lib/components/FeedControls.svelte"
   import ItemCard from "$lib/components/ItemCard.svelte"
-  import {kept} from "$lib/data/bookmarks"
+  import {bookmarked} from "$lib/data/bookmarks"
   import {social} from "$lib/data/contacts"
   import {
     board,
@@ -37,8 +40,8 @@
 
 <div class="mt-4 space-y-3">
   {#each $board as item (item.event.id)}
-    {@const keeping = $kept.has(item.event.id)}
-    {@const swept = sweptAt(item, $session, $policy.retentionDays, keeping)}
+    {@const marked = $bookmarked.has(item.event.id)}
+    {@const swept = sweptAt(item, $session, $policy.retentionDays, marked)}
     <ItemCard
       {item}
       social={$social}
@@ -46,15 +49,15 @@
       warmth={warmthOf(item, swept, now)}
       sweptAt={swept}
       session={$session}
-      kept={keeping}
+      bookmarked={marked}
       {onBoost} />
   {/each}
 </div>
 
 {#if $board.length === 0}
-  <p class="py-10 text-sm text-pretty text-muted-foreground">
+  <EmptyState icon={hidden ? Filter : Radar}>
     {hidden
       ? "Nothing is switched on in the filter."
       : "Nothing has reached this device yet. Things arrive when you are near other people."}
-  </p>
+  </EmptyState>
 {/if}

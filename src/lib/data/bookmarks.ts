@@ -1,8 +1,8 @@
-// What the user asked to keep.
+// What the user bookmarked.
 //
-// A bookmark is the only way to say "keep this" about something somebody else
-// wrote: the retention sweep takes whatever stops circulating, and spares what
-// this list names. `docs/storage.md#retention`.
+// A bookmark is the only way to spare something somebody else wrote from the
+// retention sweep, which takes whatever stops circulating except what this list
+// names. `docs/storage.md#retention`.
 //
 // The list is one replaceable event, so bookmarking is a read of the current
 // one and a write of the next. It is the user's own, so nothing here reads
@@ -16,7 +16,7 @@ import {session} from "$lib/data/session"
 import {bookmarks as list} from "$lib/kinds"
 import {itemsByIds, type Item} from "$lib/data/feed"
 
-/** The event ids the user is keeping, newest addition last. */
+/** The event ids the user bookmarked, newest addition last. */
 const held = async (identity?: string): Promise<string[]> => {
   if (!identity) return []
 
@@ -27,7 +27,7 @@ const held = async (identity?: string): Promise<string[]> => {
   return current ? (await list.reader(current).parse()).ids() : []
 }
 
-export const kept: Readable<Set<string>> = answering(
+export const bookmarked: Readable<Set<string>> = answering(
   derived([session, storedEvents], ([$session, revision]) => ({
     identity: $session.identity,
     revision,
@@ -36,17 +36,17 @@ export const kept: Readable<Set<string>> = answering(
   new Set<string>(),
 )
 
-export const isKept = (kept: Set<string>, id: string) => kept.has(id)
+export const isBookmarked = (bookmarked: Set<string>, id: string) => bookmarked.has(id)
 
 /**
- * Keep an item, or stop keeping it.
+ * Bookmark an item, or remove its bookmark.
  *
  * The whole list is rewritten either way, because a replaceable event is the
- * list rather than a change to it. Reading it again here rather than off `kept`
+ * list rather than a change to it. Reading it again here rather than off `bookmarked`
  * keeps the write based on what the store holds instead of on what a screen
  * last drew.
  */
-export const toggleKept = async (item: Item) => {
+export const toggleBookmark = async (item: Item) => {
   const {identity} = get(session)
   const [current] = await eventsOf({
     filter: JSON.stringify({kinds: [BOOKMARKS], authors: [identity], limit: 1}),
@@ -68,12 +68,15 @@ export const toggleKept = async (item: Item) => {
  * What the bookmarks screen draws, newest arrival first.
  *
  * Its own read rather than the board filtered: the board is a page of sixty
- * with categories switched off, and a kept thing has to be there whatever the
+ * with categories switched off, and a bookmarked thing has to be there whatever the
  * user is looking at elsewhere. An id the store no longer holds simply does not
  * come back, which is what a bookmark of something dropped by hand looks like.
  */
-export const keeping: Readable<Item[]> = answering(
-  derived([kept, storedEvents], ([$kept, revision]) => ({ids: [...$kept], revision})),
+export const bookmarkedItems: Readable<Item[]> = answering(
+  derived([bookmarked, storedEvents], ([$bookmarked, revision]) => ({
+    ids: [...$bookmarked],
+    revision,
+  })),
   ({ids}) => itemsByIds(ids),
   [] as Item[],
 )

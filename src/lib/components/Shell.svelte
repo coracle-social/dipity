@@ -2,12 +2,12 @@
   import Plus from "@lucide/svelte/icons/plus"
   import {Button} from "$lib/components/ui/button"
   import Board from "$lib/components/Board.svelte"
+  import Bookmarks from "$lib/components/Bookmarks.svelte"
   import BottomNav from "$lib/components/BottomNav.svelte"
   import Composer from "$lib/components/Composer.svelte"
   import ContactDetail from "$lib/components/ContactDetail.svelte"
   import DeviceLogin from "$lib/components/DeviceLogin.svelte"
   import ItemDetail from "$lib/components/ItemDetail.svelte"
-  import Kept from "$lib/components/Kept.svelte"
   import Pairing from "$lib/components/Pairing.svelte"
   import PairingTray from "$lib/components/PairingTray.svelte"
   import People from "$lib/components/People.svelte"
@@ -53,12 +53,12 @@
   })
 </script>
 
-<div class="min-h-svh bg-background pb-36">
-  <div class="mx-auto max-w-2xl px-5 pt-safe-t">
+<div class="flex min-h-svh flex-col bg-background pb-36">
+  <div class="mx-auto flex w-full max-w-2xl flex-1 flex-col px-5 pt-safe-t">
     {#if $place.at === "board"}
       <Board onBoost={compose} />
-    {:else if $place.at === "kept"}
-      <Kept onBoost={compose} />
+    {:else if $place.at === "bookmarks"}
+      <Bookmarks onBoost={compose} />
     {:else if $place.at === "people"}
       <People />
     {:else if $place.at === "settings"}

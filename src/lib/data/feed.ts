@@ -223,7 +223,7 @@ export const commentsOn = (ids: string[]): Promise<HashedEvent[]> =>
  * How many comments each stored event has.
  *
  * Every comment in the store rather than the ones answering what the board is
- * showing, the way `responses` reads every reaction: a kept item is drawn on a
+ * showing, the way `responses` reads every reaction: a bookmarked item is drawn on a
  * screen of its own, and narrowing to the board's page put a zero under it.
  */
 export const saying: Readable<Map<string, number>> = answering(
@@ -261,7 +261,7 @@ export const standingOf = (
  * The core's rule, restated rather than taken from `isReplaceableKind` in
  * `@welshman/util`: that one counts addressable kinds as replaceable and the
  * sweep does not, so an article would read as permanent when it is not.
- * A bookmarked event is spared too, which is what `kept` is for.
+ * A bookmarked event is spared too, which is what `bookmarked` is for.
  * `core/dip/src/db/event/command.rs`.
  */
 const spared = (item: Item, identity?: string) =>
@@ -277,8 +277,10 @@ const spared = (item: Item, identity?: string) =>
  * settings screen moves every ring on the board instead of waiting for the next
  * time the app opens.
  */
-export const sweptAt = (item: Item, session: Session, retentionDays: number, kept = false) =>
-  spared(item, session.identity) || kept ? undefined : item.lastSeenAt + retentionDays * 86_400
+export const sweptAt = (item: Item, session: Session, retentionDays: number, bookmarked = false) =>
+  spared(item, session.identity) || bookmarked
+    ? undefined
+    : item.lastSeenAt + retentionDays * 86_400
 
 /** How much of an item's life is left, as the one word the screen ever says. */
 export const warmthOf = (item: Item, swept: number | undefined, now: number): Warmth => {

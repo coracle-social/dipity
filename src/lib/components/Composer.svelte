@@ -10,6 +10,7 @@
   import {Textarea} from "$lib/components/ui/textarea"
   import {arrange, ask, boostItem, compose, write, type Item} from "$lib/data/feed"
   import {dismissable} from "$lib/data/nav"
+  import {policy} from "$lib/data/policy"
   import {categories} from "$lib/kinds"
 
   let {
@@ -43,6 +44,12 @@
   const nounOf = (id: Shape) => categories.find(category => category.id === id)!
 
   const chosen = $derived(nounOf(shape))
+
+  const reach = $derived(
+    $policy.forward === "nothing"
+      ? "Only people you personally come into contact with will see this."
+      : "They'll be able to pass it forward one time.",
+  )
 
   const answers = $derived(options.map(option => option.trim()).filter(Boolean))
 
@@ -100,15 +107,15 @@
 <Drawer.Root bind:open>
   <Drawer.Content>
     <Drawer.Header>
-      <Drawer.Title>{about ? "Pass it on" : "Something to say"}</Drawer.Title>
+      <Drawer.Title>{about ? "Pass it on" : "What do you want to say?"}</Drawer.Title>
       <Drawer.Description>
         {about
           ? "Say something about it, or send it on as it is."
-          : "This goes out to whoever comes into range next. It may not arrive."}
+          : `Post a note that only gets sent to people physically near you. ${reach}`}
       </Drawer.Description>
     </Drawer.Header>
 
-    <div class="space-y-3 px-4">
+    <div class="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-1">
       {#if about}
         <p
           class="line-clamp-2 rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">
@@ -208,7 +215,7 @@
       <Button size="lg" disabled={!ready || sending} onclick={send}>
         {about && !content.trim() ? "Send it on as it is" : "Send it out"}
       </Button>
-      <Button variant="ghost" size="lg" onclick={() => (open = false)}>Not now</Button>
+      <Button variant="ghost" size="lg" onclick={() => (open = false)}>Nevermind</Button>
     </Drawer.Footer>
   </Drawer.Content>
 </Drawer.Root>

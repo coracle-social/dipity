@@ -1,7 +1,9 @@
 <script lang="ts">
   import ArrowLeft from "@lucide/svelte/icons/arrow-left"
+  import BluetoothSearching from "@lucide/svelte/icons/bluetooth-searching"
   import Smartphone from "@lucide/svelte/icons/smartphone"
   import {Button} from "$lib/components/ui/button"
+  import EmptyState from "$lib/components/EmptyState.svelte"
   import {nameOf, social} from "$lib/data/contacts"
   import {links} from "$lib/data/links"
   import {back} from "$lib/data/nav"
@@ -53,10 +55,10 @@
   </ul>
 
   {#if $links.length === 0}
-    <p class="py-10 text-sm text-pretty text-muted-foreground">
+    <EmptyState icon={BluetoothSearching}>
       Nothing is in range. Open the app on the other phone and hold the two phones together. It
       appears here once they recognise each other.
-    </p>
+    </EmptyState>
   {/if}
 
   <p class="mt-2 text-xs text-pretty text-muted-foreground">
@@ -83,7 +85,7 @@
   {:else}
     <p class="max-w-prose text-sm text-pretty text-destructive">
       Say yes and this phone takes on the other phone's key. Everything it published under its own
-      key, including the names you gave people and what you kept, stays here but stops being yours.
+      key, including the names you gave people and your bookmarks, stays here but stops being yours.
     </p>
   {/if}
 

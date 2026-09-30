@@ -1,8 +1,10 @@
 <script lang="ts">
   import ArrowLeft from "@lucide/svelte/icons/arrow-left"
+  import UserX from "@lucide/svelte/icons/user-x"
   import {Button} from "$lib/components/ui/button"
   import {Input} from "$lib/components/ui/input"
   import {Label} from "$lib/components/ui/label"
+  import EmptyState from "$lib/components/EmptyState.svelte"
   import Shapes from "$lib/components/Shapes.svelte"
   import {back} from "$lib/data/nav"
   import {accept, decline, type Request} from "$lib/data/pairing"
@@ -52,7 +54,5 @@
     <Button variant="ghost" size="lg" onclick={() => answer(false)}>Not this person</Button>
   </div>
 {:else}
-  <p class="py-10 text-sm text-pretty text-muted-foreground">
-    That request is gone. They walked away, or it timed out.
-  </p>
+  <EmptyState icon={UserX}>That request is gone. They walked away, or it timed out.</EmptyState>
 {/if}

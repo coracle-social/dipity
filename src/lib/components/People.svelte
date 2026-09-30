@@ -1,6 +1,8 @@
 <script lang="ts">
   import ChevronRight from "@lucide/svelte/icons/chevron-right"
+  import Users from "@lucide/svelte/icons/users"
   import {Badge} from "$lib/components/ui/badge"
+  import EmptyState from "$lib/components/EmptyState.svelte"
   import {contacts, nameOf, short, social} from "$lib/data/contacts"
   import {go} from "$lib/data/nav"
 </script>
@@ -8,7 +10,7 @@
 <header class="pt-4 pb-3">
   <h1 class="text-2xl font-semibold">People</h1>
   <p class="mt-1 text-sm text-muted-foreground">
-    Everyone this device knows, and the name you know them by.
+    People you've met in person, or who you've heard about from others.
   </p>
 </header>
 
@@ -48,8 +50,8 @@
 </ul>
 
 {#if $contacts.length === 0}
-  <p class="py-10 text-sm text-pretty text-muted-foreground">
+  <EmptyState icon={Users}>
     Nobody yet. Pair with somebody in the room with you and they turn up here under the name you
     gave them.
-  </p>
+  </EmptyState>
 {/if}

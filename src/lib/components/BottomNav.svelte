@@ -9,7 +9,7 @@
 
   const items = [
     {tab: "board", label: "Board", icon: Signpost, to: {at: "board"} as Place},
-    {tab: "kept", label: "Kept", icon: Bookmark, to: {at: "kept"} as Place},
+    {tab: "bookmarks", label: "Bookmarks", icon: Bookmark, to: {at: "bookmarks"} as Place},
     {tab: "people", label: "People", icon: Users, to: {at: "people"} as Place},
     {tab: "settings", label: "Settings", icon: Settings, to: {at: "settings"} as Place},
   ]

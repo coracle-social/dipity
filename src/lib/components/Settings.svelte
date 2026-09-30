@@ -4,6 +4,7 @@
   import Smartphone from "@lucide/svelte/icons/smartphone"
   import {Button} from "$lib/components/ui/button"
   import {Input} from "$lib/components/ui/input"
+  import * as InputGroup from "$lib/components/ui/input-group"
   import {Label} from "$lib/components/ui/label"
   import {Separator} from "$lib/components/ui/separator"
   import {Dip} from "$lib/core"
@@ -54,36 +55,33 @@
   const tiers = $derived([
     {
       id: "accept",
-      label: "Whose things you take in",
-      detail:
-        "A phone that comes near yours offers you what it is carrying. This decides whose things you take a copy of.",
+      label: "What you accept",
+      detail: "This controls whose notes you accept from nearby devices.",
       scopes: ["trusted", "network", "lenient"] as Scope[],
       on: $policy.accept,
       set: setAccept,
     },
     {
       id: "gossip",
-      label: "Whose things you carry",
-      detail:
-        "Of what you take in, this decides whose things you hand on to the next phone you pass.",
+      label: "What you pass along",
+      detail: "This controls whose notes you pass along to nearby devices.",
       scopes: ["nothing", "trusted", "network", "lenient"] as Scope[],
       on: $policy.gossip,
       set: setGossip,
     },
     {
       id: "forward",
-      label: "May share your things forward",
-      detail:
-        "Somebody who can show they got a thing from you may hand it on further. This decides who may.",
+      label: "What others are allowed to pass along",
+      detail: "This controls who is allowed to pass your notes along to others.",
       scopes: ["nothing", "trusted", "network"] as Scope[],
       on: $policy.forward,
       set: setForward,
     },
     {
       id: "visibility",
-      label: "Who you hand yours to",
+      label: "What others are allowed to see",
       detail:
-        "Whose phones you offer your own things to. Your list of people goes only to people you paired with, whatever this says.",
+        "This controls who is allowed to see your notes. Your contact list is only ever shared with people you paired with.",
       scopes: ["trusted", "network", "lenient", "public"] as Scope[],
       on: $policy.visibility.default,
       set: setVisibility,
@@ -93,7 +91,7 @@
   const words: Record<Scope, string> = {
     nothing: "Nobody",
     trusted: "People you paired with",
-    network: "Their people too",
+    network: "People any of your contacts trust",
     lenient: "Anyone not blocked",
     public: "Anyone at all",
   }
@@ -137,7 +135,8 @@
 <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Being found</h2>
 
 <p class="mt-2 text-sm text-pretty text-muted-foreground">
-  Your phone only trades things with a phone that is in the room with it.
+  Your phone only trades things with a nearby device. These settings control your visibility to
+  nearby devices and how much you share with them.
 </p>
 
 <div class="mt-4 space-y-5">
@@ -150,13 +149,13 @@
       value={$policy.coolOffMinutes}
       onchange={event => setCoolOffMinutes(event.currentTarget.value)} />
     <p class="text-xs text-pretty text-muted-foreground">
-      Put the phone in your pocket and it keeps trading for this long. Zero means it stops the
-      moment you close the app, and you pick up nothing while you walk home.
+      How long after you put your phone in your pocket it keeps talking to other devices. Lower is
+      more private, higher is more robust.
     </p>
   </div>
 
   <div class="space-y-1.5">
-    <Label for="budget">People a day you will introduce yourself to</Label>
+    <Label for="budget">How many people a day you can pair with</Label>
     <Input
       id="budget"
       type="number"
@@ -164,21 +163,26 @@
       value={$policy.disclosureBudget}
       onchange={event => setDisclosureBudget(event.currentTarget.value)} />
     <p class="text-xs text-pretty text-muted-foreground">
-      Trading with somebody new means telling them who you are, and somebody who kept asking could
-      work out where you go. After this many in a day your phone stops answering strangers.
+      Meeting somebody new means telling them who you are, but somebody who kept asking could track
+      you. Your phone stops answering strangers after this many requests.
     </p>
   </div>
 
   <div class="space-y-1.5">
-    <Label for="retention">Days a thing stays after you last saw it going around</Label>
-    <Input
-      id="retention"
-      type="number"
-      min="1"
-      value={$policy.retentionDays}
-      onchange={event => setRetentionDays(event.currentTarget.value)} />
+    <Label for="retention">How long you keep notes before dropping them</Label>
+    <InputGroup.Root>
+      <InputGroup.Input
+        id="retention"
+        type="number"
+        min="1"
+        value={$policy.retentionDays}
+        onchange={event => setRetentionDays(event.currentTarget.value)} />
+      <InputGroup.Addon align="inline-end">
+        <InputGroup.Text>days</InputGroup.Text>
+      </InputGroup.Addon>
+    </InputGroup.Root>
     <p class="text-xs text-pretty text-muted-foreground">
-      Something nobody has handed you again in this long is deleted. Your own things stay.
+      How long your phone keeps something before it gets deleted. Bookmarks are never dropped.
     </p>
   </div>
 </div>
