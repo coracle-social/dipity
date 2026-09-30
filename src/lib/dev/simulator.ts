@@ -562,6 +562,14 @@ export class Simulator extends WebPlugin implements DipCore {
     return {identity: this.identity}
   }
 
+  /**
+   * Nothing: a browser has no back button to claim.
+   *
+   * `notifyListeners("backPressed", {})` from the console is how the trail is
+   * driven here, the same way a pairing request is.
+   */
+  async setCanGoBack() {}
+
   /** Put the same six digits in front of both users. */
   private invite(link: number, source: boolean) {
     const code = shortCode()
@@ -590,5 +598,13 @@ export class Simulator extends WebPlugin implements DipCore {
   }
 }
 
-/** One simulated core per page, which is what `registerPlugin` asks the web for. */
-export const simulated = () => new Simulator()
+/**
+ * One simulated core per page, which is what `registerPlugin` asks the web for.
+ *
+ * It loads the web implementation behind an await and caches it afterwards, so
+ * two calls made before the first one lands each build their own. Two stores
+ * means half the app reading an empty one.
+ */
+let running: Simulator | undefined
+
+export const simulated = () => (running ??= new Simulator())

@@ -15,7 +15,7 @@
     warmthOf,
     type Item,
   } from "$lib/data/feed"
-  import {go} from "$lib/data/nav"
+  import {back} from "$lib/data/nav"
   import {policy} from "$lib/data/policy"
   import {session} from "$lib/data/session"
   import {commentedOn} from "$lib/kinds"
@@ -31,7 +31,7 @@
 </script>
 
 <header class="flex items-center gap-1 pt-4 pb-3">
-  <Button variant="ghost" size="icon-sm" aria-label="Back" onclick={() => go({at: "board"})}>
+  <Button variant="ghost" size="icon-sm" aria-label="Back" onclick={back}>
     <ArrowLeft />
   </Button>
   <h1 class="text-2xl font-semibold">In full</h1>

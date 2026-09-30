@@ -4,7 +4,7 @@
   import {Input} from "$lib/components/ui/input"
   import {Label} from "$lib/components/ui/label"
   import Shapes from "$lib/components/Shapes.svelte"
-  import {go} from "$lib/data/nav"
+  import {back} from "$lib/data/nav"
   import {accept, decline, type Request} from "$lib/data/pairing"
 
   let {request}: {request?: Request} = $props()
@@ -16,12 +16,12 @@
       await (paired ? accept(request.link, petname.trim()) : decline(request.link))
     }
 
-    go({at: "board"})
+    back()
   }
 </script>
 
 <header class="flex items-center gap-1 pt-4 pb-3">
-  <Button variant="ghost" size="icon-sm" aria-label="Back" onclick={() => go({at: "board"})}>
+  <Button variant="ghost" size="icon-sm" aria-label="Back" onclick={back}>
     <ArrowLeft />
   </Button>
   <h1 class="text-2xl font-semibold">Pair</h1>

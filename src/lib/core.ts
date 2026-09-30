@@ -237,6 +237,22 @@ export type DipCore = {
    */
   takeTransferredIdentity(options: {link: number}): Promise<{identity: string}>
 
+  /**
+   * Whether the view has anywhere to go back to.
+   *
+   * Android closes an app on a back press nothing claims, which is right at the
+   * root and wrong everywhere else, so the shell claims the press only while
+   * this is true. iOS has no such button and does nothing with it.
+   */
+  setCanGoBack(options: {can: boolean}): Promise<void>
+
+  /**
+   * The user pressed the phone's own back button.
+   *
+   * Only ever sent while `setCanGoBack` last said there was somewhere to go, so
+   * the view leaves the top thing rather than deciding whether to.
+   */
+  addListener(event: "backPressed", handler: () => void): Promise<PluginListenerHandle>
   addListener(
     event: "requestApproval",
     handler: (approval: Approval) => void,

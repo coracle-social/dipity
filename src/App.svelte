@@ -2,10 +2,19 @@
   import {ModeWatcher} from "mode-watcher"
   import FirstRun from "$lib/components/FirstRun.svelte"
   import Shell from "$lib/components/Shell.svelte"
+  import {watchBack} from "$lib/data/nav"
   import {open, session} from "$lib/data/session"
 
   $effect(() => {
     open()
+  })
+
+  $effect(() => {
+    const watching = watchBack()
+
+    return () => {
+      watching.then(stop => stop()).catch(() => undefined)
+    }
   })
 </script>
 

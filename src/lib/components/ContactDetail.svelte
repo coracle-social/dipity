@@ -6,7 +6,7 @@
   import {Separator} from "$lib/components/ui/separator"
   import {Switch} from "$lib/components/ui/switch"
   import {name, nameOf, setBlocked, setMuted, setTrusted, short, social} from "$lib/data/contacts"
-  import {go} from "$lib/data/nav"
+  import {back} from "$lib/data/nav"
 
   let {pubkey}: {pubkey: string} = $props()
 
@@ -56,7 +56,7 @@
 </script>
 
 <header class="flex items-center gap-1 pt-4 pb-3">
-  <Button variant="ghost" size="icon-sm" aria-label="Back" onclick={() => go({at: "people"})}>
+  <Button variant="ghost" size="icon-sm" aria-label="Back" onclick={back}>
     <ArrowLeft />
   </Button>
   <h1 class="min-w-0 truncate text-2xl font-semibold">{named.name}</h1>

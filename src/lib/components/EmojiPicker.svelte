@@ -3,6 +3,7 @@
   import emojiData from "emoji-picker-element-data/en/emojibase/data.json?url"
   import type {NativeEmoji} from "emoji-picker-element/shared"
   import * as Drawer from "$lib/components/ui/drawer"
+  import {dismissable} from "$lib/data/nav"
 
   // The element carries its own search and data, and dispatches a custom event.
   let {
@@ -12,6 +13,10 @@
     open: boolean
     onPick: (emoji: string) => void
   } = $props()
+
+  $effect(() => {
+    if (open) return dismissable(() => (open = false))
+  })
 
   let picker = $state<HTMLElement | undefined>(undefined)
 

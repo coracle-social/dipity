@@ -9,6 +9,7 @@
   import {Label} from "$lib/components/ui/label"
   import {Textarea} from "$lib/components/ui/textarea"
   import {arrange, ask, boostItem, compose, write, type Item} from "$lib/data/feed"
+  import {dismissable} from "$lib/data/nav"
   import {categories} from "$lib/kinds"
 
   let {
@@ -19,6 +20,10 @@
     /** What this is passing on, or nothing for something of the user's own. */
     about?: Item
   } = $props()
+
+  $effect(() => {
+    if (open) return dismissable(() => (open = false))
+  })
 
   // Passing something on is already about something; everything else picks its own shape.
   const shapes = ["notes", "polls", "occasions", "articles"] as const

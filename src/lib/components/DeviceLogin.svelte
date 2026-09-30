@@ -4,13 +4,13 @@
   import {Button} from "$lib/components/ui/button"
   import {nameOf, social} from "$lib/data/contacts"
   import {links} from "$lib/data/links"
-  import {go} from "$lib/data/nav"
+  import {back} from "$lib/data/nav"
   import {npubOf, session} from "$lib/data/session"
   import {clear, compare, offer, step} from "$lib/data/transfer"
 
   const leave = () => {
     clear()
-    go({at: "settings"})
+    back()
   }
 
   /** Six digits, grouped the way a person reads a number off another screen. */

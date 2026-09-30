@@ -1,6 +1,7 @@
 package social.coracle.dip
 
 import android.Manifest
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.ActivityResult
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -104,8 +105,11 @@ class DipPlugin : Plugin(), Radio.Delegate {
     /** The `exportKey` call waiting on the chooser it opened. */
     private var exporting: PluginCall? = null
 
-    /** Where the core's log goes, installed before anything can log. */
-    override fun load() = Logcat.install(context)
+    /** The log, before anything can log, and the back button, before anything draws. */
+    override fun load() {
+        Logcat.install(context)
+        activity.onBackPressedDispatcher.addCallback(activity, back)
+    }
 
     // ------------------------------------------------------------- Identity
 
@@ -316,6 +320,35 @@ class DipPlugin : Plugin(), Radio.Delegate {
     override fun handleOnPause() = drive { it.notifyBackgrounded() }
 
     override fun handleOnDestroy() = close()
+
+    // ----------------------------------------------------------------- Back
+
+    /**
+     * The press, while the view has somewhere to go.
+     *
+     * Disabled at the root, so a press nobody claims is Android's own and closes
+     * the app.
+     */
+    private val back =
+        object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() {
+                notifyListeners("backPressed", JSObject())
+            }
+        }
+
+    /**
+     * Claim the back button, or hand it back.
+     *
+     * A plugin call arrives on Capacitor's own thread and the dispatcher is the
+     * main thread's, so the flip is posted rather than made here.
+     */
+    @PluginMethod
+    fun setCanGoBack(call: PluginCall) {
+        val can = call.getBoolean("can", false) ?: false
+
+        activity.runOnUiThread { back.isEnabled = can }
+        call.resolve()
+    }
 
     // ---------------------------------------------------------------- Store
 

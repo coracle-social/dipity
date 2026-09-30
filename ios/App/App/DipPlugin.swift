@@ -51,6 +51,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "preference", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setPreference", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "clearPreference", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setCanGoBack", returnType: CAPPluginReturnPromise),
     ]
 
     /// The store and the node, which are opened together and dropped together.
@@ -274,6 +275,13 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         } catch {
             call.reject("the transferred identity could not be adopted", nil, error)
         }
+    }
+
+    // ------------------------------------------------------------------ Back
+
+    /// Nothing: iOS has no back button, and the view asks both shells the same.
+    @objc func setCanGoBack(_ call: CAPPluginCall) {
+        call.resolve()
     }
 
     // ----------------------------------------------------------------- Store

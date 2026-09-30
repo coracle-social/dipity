@@ -38,7 +38,7 @@ Four facts about the transport decide most of the interface, and every story bel
 15. The user sees what other people made of something, and who each reaction came from. — `Reactions`
 16. The user opens one thing on its own and reads what people are saying about it. — `ItemDetail`
 17. The user reads a comment on a comment and can climb to whatever that one answered. — `ItemDetail`, `Quoted`
-18. The user comes back to the board and it is where they left it, however far down they had read. — `nav`
+18. The user goes back, with the phone's own button or the one on the screen, and lands on what they came from as far down it as they had read. — `nav`
 19. The user deletes something they published, and the request travels the same way the thing did. — `ItemCard`
 20. The user drops somebody else's thing off their own device, which tells nobody and asks nothing. — `ItemCard`
 21. The user keeps something, so the retention sweep leaves it alone however long it stops circulating. — `ItemCard`

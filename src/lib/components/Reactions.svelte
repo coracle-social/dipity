@@ -2,6 +2,7 @@
   import * as Drawer from "$lib/components/ui/drawer"
   import {nameOf, type Social} from "$lib/data/contacts"
   import type {Response} from "$lib/data/feed"
+  import {dismissable} from "$lib/data/nav"
   import type {Session} from "$lib/data/session"
 
   // Who reacted and with what, which is the only place a reaction names anyone.
@@ -16,6 +17,10 @@
     social: Social
     session: Session
   } = $props()
+
+  $effect(() => {
+    if (open) return dismissable(() => (open = false))
+  })
 
   const grouped = $derived(
     response.reactions

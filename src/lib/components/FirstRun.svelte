@@ -3,11 +3,16 @@
   import {Button} from "$lib/components/ui/button"
   import {Input} from "$lib/components/ui/input"
   import {Label} from "$lib/components/ui/label"
+  import {dismissable} from "$lib/data/nav"
   import {createIdentity, importIdentity} from "$lib/data/session"
 
   let nsec = $state("")
   let pasting = $state(false)
   let failed = $state("")
+
+  $effect(() => {
+    if (pasting) return dismissable(() => (pasting = false))
+  })
 
   const take = async (make: () => Promise<void>) => {
     failed = ""
