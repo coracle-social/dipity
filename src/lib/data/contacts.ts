@@ -151,7 +151,7 @@ export const name = async (pubkey: string, petname: string) => {
   const {own} = get(social)
   const seed = own.roster && roster.reader(own.roster).parse()
 
-  await publish(await roster.writer(seed).name(pubkey, petname).renderTemplate())
+  await publish(await roster.writer(seed).name(pubkey, petname).renderTemplate(), own.roster)
 }
 
 const amend = async (
@@ -162,7 +162,10 @@ const amend = async (
 ) => {
   const writer = kind.writer(current && kind.reader(current).parse())
 
-  await publish(await (onList ? writer.add(pubkey) : writer.remove(pubkey)).renderTemplate())
+  await publish(
+    await (onList ? writer.add(pubkey) : writer.remove(pubkey)).renderTemplate(),
+    current,
+  )
 }
 
 export const setTrusted = (pubkey: string, trusted: boolean) =>

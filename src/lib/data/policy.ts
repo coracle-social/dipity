@@ -8,7 +8,7 @@
 
 import {get, type Readable} from "svelte/store"
 import {Dip, type Pref} from "$lib/core"
-import {answering, storedPreferences} from "$lib/data/query"
+import {answering, parsed, storedPreferences} from "$lib/data/query"
 
 /** The tiers every setting is expressed on, narrowest first. */
 export type Scope = "nothing" | "trusted" | "network" | "lenient" | "public"
@@ -57,30 +57,19 @@ const keys = {
   disclosureBudget: "policy.disclosure_budget",
 } as const
 
-const parse = <Value>(stored: Pref | undefined, fallback: Value): Value => {
-  if (!stored) return fallback
-
-  try {
-    return JSON.parse(stored.value) as Value
-  } catch {
-    console.error(`${stored.key} is not a JSON document`, stored.value)
-
-    return fallback
-  }
-}
-
 const read = async (): Promise<Policy> => {
   const {preferences} = await Dip.preferences().catch(() => ({preferences: [] as Pref[]}))
-  const at = (key: string) => preferences.find(stored => stored.key === key)
+  const at = <Value>(key: string, fallback: Value) =>
+    parsed(key, preferences.find(stored => stored.key === key)?.value ?? null, fallback)
 
   return {
-    accept: parse(at(keys.accept), defaults.accept),
-    gossip: parse(at(keys.gossip), defaults.gossip),
-    forward: parse(at(keys.forward), defaults.forward),
-    visibility: parse(at(keys.visibility), defaults.visibility),
-    retentionDays: parse(at(keys.retentionDays), defaults.retentionDays),
-    coolOffMinutes: parse(at(keys.coolOffMinutes), defaults.coolOffMinutes),
-    disclosureBudget: parse(at(keys.disclosureBudget), defaults.disclosureBudget),
+    accept: at(keys.accept, defaults.accept),
+    gossip: at(keys.gossip, defaults.gossip),
+    forward: at(keys.forward, defaults.forward),
+    visibility: at(keys.visibility, defaults.visibility),
+    retentionDays: at(keys.retentionDays, defaults.retentionDays),
+    coolOffMinutes: at(keys.coolOffMinutes, defaults.coolOffMinutes),
+    disclosureBudget: at(keys.disclosureBudget, defaults.disclosureBudget),
   }
 }
 
@@ -95,12 +84,28 @@ export const setGossip = (scope: Scope) => write(keys.gossip, scope)
 
 export const setForward = (scope: Scope) => write(keys.forward, scope)
 
-export const setRetentionDays = (days: number) => write(keys.retentionDays, days)
+/**
+ * Write one of the three counts, ignoring anything that is not one.
+ *
+ * A value the core cannot decode is an error there rather than a default, so
+ * every later policy read fails and no screen clears a preference. A number
+ * field answers an emptied box as `""`, which reads as zero, and anything past
+ * the float range as `Infinity`, which stringifies to `null` — so what a person
+ * can type is narrowed here instead. `core/dip/src/db/pref/query.rs`.
+ */
+const writeCount = (key: string, typed: string, least: number) => {
+  const count = Math.floor(Number(typed))
 
-export const setCoolOffMinutes = (minutes: number) => write(keys.coolOffMinutes, minutes)
+  if (typed.trim() && Number.isSafeInteger(count) && count >= least) return write(key, count)
 
-export const setDisclosureBudget = (disclosures: number) =>
-  write(keys.disclosureBudget, disclosures)
+  return Promise.resolve()
+}
+
+export const setRetentionDays = (typed: string) => writeCount(keys.retentionDays, typed, 1)
+
+export const setCoolOffMinutes = (typed: string) => writeCount(keys.coolOffMinutes, typed, 0)
+
+export const setDisclosureBudget = (typed: string) => writeCount(keys.disclosureBudget, typed, 0)
 
 /** Widen or narrow who sees an event no rule covers, leaving the rules alone. */
 export const setVisibility = (scope: Scope) =>

@@ -17,6 +17,8 @@ Where events live, who can answer a query, and what happens while the app is asl
 | `pair_secret` | `pubkey`, `secret`, `updated_at`. One row per peer this device has paired with, derived from that session's handshake hash. What a later encounter is [recognized](./discovery.md#recognition) from before either side names a pubkey. Provenance, so it is never served. |
 | `disclosure` | `id`, `disclosed_at`. One row per `AUTH` response this device handed an unrecognized peer, bounding the [disclosure budget](./policy.md#discoverability) per window. No recipient: the dialer discloses before the peer has named itself. Rows older than the window are pruned on write. |
 
+An event with an address — replaceable or addressable — keeps one row for it, and the later `created_at` wins. Two versions carrying the same second are settled by the lower id, NIP-01's own rule, so the loser is refused outright rather than stored beside the winner. A write is therefore not proof that what it wrote is what a read answers, and anything rewriting a list it already holds stamps past the version it replaces.
+
 ## The sqlite store
 
 The store is `rusqlite` inside the core, with migrations and one instance per open database. This store provides regular query functionality, as well as reactive queries - when a record is written, subscribers should be notified. This allows the UI to be reactive, and for events to be gossiped immediately upon write.

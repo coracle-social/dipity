@@ -16,25 +16,16 @@ export type Session = {
   state: SessionState
   /** The identity the core started under, once it has. */
   identity?: string
-  /** `policy.retention_days`, which is what decides when an arrival is swept. */
-  retentionDays: number
 }
 
-/** The core's own default, restated so a screen has a number before the read lands. */
-const store = writable<Session>({state: "opening", retentionDays: 30})
+const store = writable<Session>({state: "opening"})
 
 export const session: Readable<Session> = store
-
-const retentionDays = async () => {
-  const {value} = await Dip.preference({key: "policy.retention_days"})
-
-  return value === null ? 30 : Number(JSON.parse(value))
-}
 
 const ready = async () => {
   const {identity} = await Dip.start()
 
-  store.set({state: "ready", identity, retentionDays: await retentionDays()})
+  store.set({state: "ready", identity})
 }
 
 /**
@@ -50,10 +41,10 @@ export const open = async () => {
     if (exists) {
       await ready()
     } else {
-      store.set({state: "absent", retentionDays: 30})
+      store.set({state: "absent"})
     }
   } catch {
-    store.set({state: "unavailable", retentionDays: 30})
+    store.set({state: "unavailable"})
   }
 }
 

@@ -398,6 +398,28 @@ mod tests {
     }
 
     #[test]
+    fn a_rewrite_in_the_same_second_wins_only_on_a_lower_id() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        let first = event(author(1), 10_003, 100, "one", Tags::new());
+        let again = event(author(1), 10_003, 100, "two", Tags::new());
+        let (kept, refused) = if id(&again) < id(&first) {
+            (&again, &first)
+        } else {
+            (&first, &again)
+        };
+
+        assert!(save(&tx, refused, &[peer()], 10).unwrap());
+        assert!(save(&tx, kept, &[peer()], 20).unwrap());
+
+        // Refused outright when the tie goes the other way, not stored beside the winner.
+        assert!(!save(&tx, refused, &[peer()], 30).unwrap());
+        assert_eq!(query::count(&tx, &everything()).unwrap(), 1);
+        assert!(query::get(&tx, &id(kept)).unwrap().is_some());
+    }
+
+    #[test]
     fn addressable_events_are_keyed_on_their_identifier() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();

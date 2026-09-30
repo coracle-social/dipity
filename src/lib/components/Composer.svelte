@@ -33,6 +33,7 @@
   let when = $state("")
   let options = $state(["", ""])
   let sending = $state(false)
+  let failed = $state(false)
 
   const nounOf = (id: Shape) => categories.find(category => category.id === id)!
 
@@ -53,21 +54,27 @@
     return Boolean(title.trim()) && Boolean(content.trim())
   })
 
+  const written = () => {
+    if (about) return boostItem(about, content)
+
+    if (shape === "notes") return write(content)
+
+    if (shape === "polls") return ask(title.trim(), answers)
+
+    if (shape === "occasions") {
+      return arrange(title.trim(), Date.parse(when) / 1000, where.trim(), content)
+    }
+
+    return compose(title.trim(), summary.trim(), content)
+  }
+
+  // A refused publish keeps what was typed, so the drawer staying open has to say why.
   const send = async () => {
     sending = true
+    failed = false
 
     try {
-      if (about) {
-        await boostItem(about, content)
-      } else if (shape === "notes") {
-        await write(content)
-      } else if (shape === "polls") {
-        await ask(title.trim(), answers)
-      } else if (shape === "occasions") {
-        await arrange(title.trim(), Date.parse(when) / 1000, where.trim(), content)
-      } else {
-        await compose(title.trim(), summary.trim(), content)
-      }
+      await written()
 
       content = ""
       title = ""
@@ -76,6 +83,9 @@
       when = ""
       options = ["", ""]
       open = false
+    } catch (error) {
+      failed = true
+      console.error("it could not be published", error)
     } finally {
       sending = false
     }
@@ -185,6 +195,11 @@
     </div>
 
     <Drawer.Footer>
+      {#if failed}
+        <p class="text-sm text-destructive">
+          That did not go out, and what you wrote is still here. Try again.
+        </p>
+      {/if}
       <Button size="lg" disabled={!ready || sending} onclick={send}>
         {about && !content.trim() ? "Send it on as it is" : "Send it out"}
       </Button>

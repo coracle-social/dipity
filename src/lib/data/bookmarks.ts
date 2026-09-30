@@ -61,7 +61,7 @@ export const toggleKept = async (item: Item) => {
     writer.bookmarkPublicly(["e", item.event.id])
   }
 
-  return publish(await writer.renderTemplate())
+  return publish(await writer.renderTemplate(), current)
 }
 
 /**

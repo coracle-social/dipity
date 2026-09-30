@@ -62,6 +62,44 @@ export const answering = <Asked, Answer>(
   )
 }
 
+/** One stored preference, as the document it was written as. */
+export const parsed = <Value>(key: string, value: string | null, fallback: Value): Value => {
+  if (value === null) return fallback
+
+  try {
+    return JSON.parse(value) as Value
+  } catch {
+    console.error(`${key} is not a JSON document`, value)
+
+    return fallback
+  }
+}
+
+/**
+ * A choice the user made, kept where it survives the app being suspended.
+ *
+ * `docs/ui.md#held-by-review` puts durable state in the plugin rather than in
+ * the view, and a preference is the plugin's own vocabulary for one. The write
+ * is announced back as a change, so the value on screen is always the value
+ * the core holds rather than a second copy of it.
+ */
+export const remembered = <Value>(key: string, fallback: Value) => {
+  const read = () =>
+    Dip.preference({key})
+      .catch(() => ({value: null}))
+      .then(({value}) => parsed(key, value, fallback))
+
+  const {subscribe} = answering(storedPreferences, read, fallback)
+
+  return {
+    subscribe,
+    set: (value: Value) =>
+      Dip.setPreference({key, value: JSON.stringify(value)}).catch(error =>
+        console.error(`${key} could not be written`, error),
+      ),
+  }
+}
+
 /** A read that failed is an empty screen, since the query is the only thing that knows better. */
 const unread = (error: unknown) => {
   console.error("the store could not be read", error)

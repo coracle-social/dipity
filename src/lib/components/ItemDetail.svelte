@@ -16,6 +16,7 @@
     type Item,
   } from "$lib/data/feed"
   import {go} from "$lib/data/nav"
+  import {policy} from "$lib/data/policy"
   import {session} from "$lib/data/session"
   import {commentedOn} from "$lib/kinds"
 
@@ -38,7 +39,7 @@
 
 {#if $detail.item}
   {@const item = $detail.item}
-  {@const swept = sweptAt(item, $session, keeping)}
+  {@const swept = sweptAt(item, $session, $policy.retentionDays, keeping)}
   {@const answers = commentedOn(item.event)}
   {@const standing = {
     ...standingOf($responses, $saying, id),

@@ -5,11 +5,12 @@
 // said about it, what was deleted, and which of it this device is in a position
 // to pass on at all.
 
-import {derived, get, writable, type Readable} from "svelte/store"
+import {derived, get, type Readable} from "svelte/store"
+import {randomId} from "@welshman/lib"
 import {COMMENT, DELETE, GENERIC_REPOST, POLL_RESPONSE, REACTION, REPOST} from "@welshman/util"
 import type {HashedEvent} from "@welshman/util"
 import {Dip, type EventDetail, type Order} from "$lib/core"
-import {answering, detailsOf, eventsOf, storedEvents} from "$lib/data/query"
+import {answering, detailsOf, eventsOf, remembered, storedEvents} from "$lib/data/query"
 import {publish} from "$lib/data/publish"
 import {session, type Session} from "$lib/data/session"
 import {
@@ -79,16 +80,28 @@ const toItem = ({event, sightings}: EventDetail): Item => ({
 
 const nothing = (): Response => ({boosts: [], reactions: [], votes: []})
 
-/** The board's own controls, which is view state and outlives nothing. */
-export const view = writable<View>({order: "seenAt", showing: categories.map(({id}) => id)})
+/**
+ * The board's own controls, kept in the store so they survive being suspended.
+ *
+ * Switching Articles off is a decision about what the board is for rather than
+ * where the user happens to be, so coming back to everything switched on again
+ * is the app forgetting something it was told.
+ */
+export const view = remembered<View>("ui.board", {
+  order: "seenAt",
+  showing: categories.map(({id}) => id),
+})
 
-export const setOrder = (order: Order) => view.update(showing => ({...showing, order}))
+export const setOrder = (order: Order) => view.set({...get(view), order})
 
-export const toggleCategory = (id: string) =>
-  view.update(({order, showing}) => ({
+export const toggleCategory = (id: string) => {
+  const {order, showing} = get(view)
+
+  view.set({
     order,
     showing: showing.includes(id) ? showing.filter(shown => shown !== id) : [...showing, id],
-  }))
+  })
+}
 
 /** The kinds the switched-on categories cover. */
 const shownKinds = ({showing}: View) =>
@@ -173,13 +186,17 @@ export const commentsOn = (ids: string[]): Promise<HashedEvent[]> =>
         filter: JSON.stringify({kinds: [COMMENT], "#e": ids}),
       })
 
-const shown = derived(board, $board => $board.map(item => item.event.id))
-
-/** How many comments each item on the board has. */
+/**
+ * How many comments each stored event has.
+ *
+ * Every comment in the store rather than the ones answering what the board is
+ * showing, the way `responses` reads every reaction: a kept item is drawn on a
+ * screen of its own, and narrowing to the board's page put a zero under it.
+ */
 export const saying: Readable<Map<string, number>> = answering(
-  shown,
-  ids =>
-    commentsOn(ids).then(found => {
+  storedEvents,
+  () =>
+    eventsOf({order: "createdAt", filter: JSON.stringify({kinds: [COMMENT]})}).then(found => {
       const counts = new Map<string, number>()
 
       for (const event of found) {
@@ -220,11 +237,15 @@ const spared = (item: Item, identity?: string) =>
   item.event.kind === 3 ||
   (item.event.kind >= 10_000 && item.event.kind < 20_000)
 
-/** When the sweep takes an item, or undefined for one it never will. */
-export const sweptAt = (item: Item, session: Session, kept = false) =>
-  spared(item, session.identity) || kept
-    ? undefined
-    : item.lastSeenAt + session.retentionDays * 86_400
+/**
+ * When the sweep takes an item, or undefined for one it never will.
+ *
+ * `retentionDays` is read from `policy` rather than held here, so an edit on the
+ * settings screen moves every ring on the board instead of waiting for the next
+ * time the app opens.
+ */
+export const sweptAt = (item: Item, session: Session, retentionDays: number, kept = false) =>
+  spared(item, session.identity) || kept ? undefined : item.lastSeenAt + retentionDays * 86_400
 
 /** How much of an item's life is left, as the one word the screen ever says. */
 export const warmthOf = (item: Item, swept: number | undefined, now: number): Warmth => {
@@ -252,7 +273,12 @@ export const ask = async (title: string, options: string[]) => {
 
 /** Put something on the calendar, at a time rather than on a date. */
 export const arrange = async (title: string, at: number, where: string, about: string) => {
-  const writer = timeEvent.writer().setTitle(title).setStart({at, allDay: false}).setContent(about)
+  const writer = timeEvent
+    .writer()
+    .setIdentifier(randomId())
+    .setTitle(title)
+    .setStart({at, allDay: false})
+    .setContent(about)
 
   if (where) writer.setLocation(where)
 
@@ -261,7 +287,7 @@ export const arrange = async (title: string, at: number, where: string, about: s
 
 /** Write something long enough to want a title. */
 export const compose = async (title: string, summary: string, body: string) => {
-  const writer = article.writer().setTitle(title).setContent(body)
+  const writer = article.writer().setIdentifier(randomId()).setTitle(title).setContent(body)
 
   if (summary) writer.setSummary(summary)
 

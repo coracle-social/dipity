@@ -44,6 +44,8 @@ A device reaches the real one through [the plugin boundary](./overview.md#archit
 
 It is not a second implementation of anything the core decides. Sync, policy, proofs and the radio are below the bridge and are not modelled; what is modelled is their observable shape, which is what a screen is built against.
 
+It refuses what the core refuses, and that half matters more than what it answers. A simulator that stores an ephemeral event, or keeps every version of a replaceable one, is more forgiving than the store a device writes to — so a write the core drops looks like it landed, and the screen that reads it back is only right in a browser.
+
 The shapes themselves are declared once, in `core.ts`, and the simulator answers with them rather than with types of its own — a stored event is `@welshman/util`'s `HashedEvent`, the same unsigned event `coracle-lib` stores, and a query narrows through `matchFilter`. A fixture that restates the contract in its own words is a fixture that can drift from it.
 
 `src/lib/core.ts` loads it by dynamic import under `import.meta.env.DEV`, so the branch is dead code in a shipped bundle and neither the simulator nor faker is in one. It is also `window.dip`, because part of that surface has no screen yet: a key backup and an identity transfer are answered from the console until something is built to answer them.
@@ -198,7 +200,7 @@ Styling happens in Tailwind utilities, or in the theme. A component-scoped rule 
 - **`cn()` last, always.** `class={cn(variants({size}), className)}` — the caller's class has to be able to win, and `twMerge` is what makes that deterministic.
 - **`tv()` for variants, not conditionals.** If a component has more than two visual states, it gets a variant table.
 - **Semantic HTML before ARIA.** bits-ui handles the wiring for anything interactive; hand-rolled `role` attributes are a sign the wrong primitive was used.
-- **The UI owns no durable state.** The view is suspended in the background, so anything that must survive that lives in the plugin. UI state is view state.
+- **The UI owns no durable state.** The view is suspended in the background, so anything that must survive that lives in the plugin. Where the user is does not survive; a choice they made about what a screen is for does, as a preference under a `ui.` key (`remembered` in `src/lib/data/query.ts`).
 - **Never claim posts only reach nearby people.** A second-hop recipient may be anywhere. Say reach is bounded at two hops.
 
 ## Organizing against welshman
@@ -227,6 +229,10 @@ A kind `@welshman/domain` already models is re-exported configured rather than r
 **A collection of events is a store in `src/lib/data/`, and components never open a query themselves.**
 
 A component takes a store and renders it; it does not know a bridge exists. `plugin` is an overloaded word here, which is why this directory is `data/` and never `plugins/` — the **native plugin** is the Capacitor boundary the core lives behind ([`overview.md`](./overview.md#architecture)).
+
+### Replacing a list
+
+**A replaceable event is published with the one it replaces, and `publish` stamps it a second later.** Two versions carrying the same second are settled by the lower id, so a rename or a bookmark made within a second of the last is refused by the store while `publish` still answers ([`storage.md`](./storage.md#the-schema)). The screen then redraws the version it thought it had just replaced.
 
 ### What does not transfer
 

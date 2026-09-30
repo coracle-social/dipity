@@ -6,7 +6,14 @@
 // what crosses the bridge is serde JSON of the Rust types.
 // `docs/storage.md#the-schema`.
 
-import {matchFilter, type Filter, type HashedEvent} from "@welshman/util"
+import {
+  getIdOrAddress,
+  isEphemeral,
+  isReplaceable,
+  matchFilter,
+  type Filter,
+  type HashedEvent,
+} from "@welshman/util"
 import type {Blob, EventDetail, Query} from "$lib/core"
 
 const parse = (filter?: string): Filter => (filter ? (JSON.parse(filter) as Filter) : {})
@@ -14,6 +21,11 @@ const parse = (filter?: string): Filter => (filter ? (JSON.parse(filter) as Filt
 /** An event's seen time is the earliest peer that handed it over. `storage.md`. */
 const seenAt = (detail: EventDetail) =>
   Math.min(...detail.sightings.map(sighting => sighting.seen_at))
+
+/** NIP-01's rule for which of two versions of one address wins. */
+const supersedes = (event: HashedEvent, current: HashedEvent) =>
+  event.created_at > current.created_at ||
+  (event.created_at === current.created_at && event.id < current.id)
 
 const withinProvenance = (detail: EventDetail, query: Query) => {
   const seen = seenAt(detail)
@@ -26,10 +38,14 @@ const withinProvenance = (detail: EventDetail, query: Query) => {
   )
 }
 
-/** Newest first, ties broken by id, which is what both of the core's orderings do. */
+/**
+ * Newest first, ties broken by id, which is what both of the core's orderings do.
+ *
+ * A query that names no order gets `createdAt`, which is the default on the
+ * uniffi record and what both shells send for an absent one.
+ */
 const byRecency = (order: Query["order"]) => (a: EventDetail, b: EventDetail) => {
-  const key =
-    order === "createdAt" ? b.event.created_at - a.event.created_at : seenAt(b) - seenAt(a)
+  const key = order === "seenAt" ? seenAt(b) - seenAt(a) : b.event.created_at - a.event.created_at
 
   return key || a.event.id.localeCompare(b.event.id)
 }
@@ -41,22 +57,47 @@ export class Store {
   private preferences = new Map<string, {value: string; updatedAt: number}>()
   /** Events the author's signature arrived with, which is what makes them forwardable. */
 
-  /** Store an event and a sighting of it, answering whether the event itself was new. */
+  /**
+   * Store an event and a sighting of it, answering whether the event itself was new.
+   *
+   * Refused the same three ways the core refuses: an ephemeral kind is never
+   * stored, and a replaceable one only when it beats whatever holds its address
+   * — later, or equal and lower id. A simulator that keeps every version is more
+   * forgiving than the core, and an edit the core silently drops then looks like
+   * it landed. `core/dip/src/db/event/command.rs`.
+   */
   record(event: HashedEvent, from: string, at: number, blobs: Blob[] = []) {
     const sighting = {event_id: event.id, pubkey: from, seen_at: at}
     const known = this.details.get(event.id)
+
+    if (known) {
+      known.sightings.push(sighting)
+
+      return false
+    }
+
+    if (isEphemeral(event)) return false
+
+    const current = isReplaceable(event) ? this.atAddress(event) : undefined
+
+    if (current && !supersedes(event, current.event)) return false
 
     for (const blob of blobs) {
       this.blobs.set(blob.sha256, this.blobs.get(blob.sha256) ?? blob)
     }
 
-    if (known) {
-      known.sightings.push(sighting)
-    } else {
-      this.details.set(event.id, {event, blobs, sightings: [sighting]})
-    }
+    if (current) this.forget(current.event.id)
 
-    return !known
+    this.details.set(event.id, {event, blobs, sightings: [sighting]})
+
+    return true
+  }
+
+  /** Whatever currently holds an event's address, for a kind that has one. */
+  private atAddress(event: HashedEvent) {
+    const address = getIdOrAddress(event)
+
+    return [...this.details.values()].find(detail => getIdOrAddress(detail.event) === address)
   }
 
   /**

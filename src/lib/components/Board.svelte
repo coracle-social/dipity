@@ -13,6 +13,7 @@
     warmthOf,
     type Item,
   } from "$lib/data/feed"
+  import {policy} from "$lib/data/policy"
   import {session} from "$lib/data/session"
 
   let {onBoost}: {onBoost: (item: Item) => void} = $props()
@@ -37,7 +38,7 @@
 <div class="mt-4 space-y-3">
   {#each $board as item (item.event.id)}
     {@const keeping = $kept.has(item.event.id)}
-    {@const swept = sweptAt(item, $session, keeping)}
+    {@const swept = sweptAt(item, $session, $policy.retentionDays, keeping)}
     <ItemCard
       {item}
       social={$social}
