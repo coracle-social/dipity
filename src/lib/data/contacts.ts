@@ -9,13 +9,14 @@
 // setting a preference. `docs/policy.md#social-graph`.
 
 import {derived, get, type Readable} from "svelte/store"
-import type {ConfiguredKind} from "@welshman/domain"
+import {spec} from "@welshman/lib"
+import type {ConfiguredKind, MuteListQuery, MuteListReader, MuteListWriter} from "@welshman/domain"
 import {FOLLOWS, MUTES, type HashedEvent} from "@welshman/util"
 import {answering, eventsOf, storedEvents} from "$lib/data/query"
 import {publish} from "$lib/data/publish"
 import {session} from "$lib/data/session"
 import {block, mute, roster, trust} from "$lib/kinds"
-import {BLOCK, TRUST, type PeopleListReader, type PeopleListWriter} from "$lib/kinds/people"
+import {BLOCK, TRUST} from "$lib/kinds/people"
 
 /** Somebody the device knows about. */
 export type Contact = {
@@ -48,12 +49,13 @@ const newest = (events: HashedEvent[], kind: number, author?: string) =>
     .filter(event => event.kind === kind && (!author || event.pubkey === author))
     .sort((a, b) => b.created_at - a.created_at)[0]
 
-const listed = (
-  event: HashedEvent | undefined,
-  kind: ConfiguredKind<PeopleListReader, PeopleListWriter>,
-) => new Set(event ? kind.reader(event).parse().pubkeys() : [])
+/** One of the three pubkey lists, all of which read as NIP-51's mute list does. */
+type PeopleList = ConfiguredKind<MuteListReader, MuteListWriter, MuteListQuery>
 
-const collate = (events: HashedEvent[], identity?: string): Social => {
+const listed = async (event: HashedEvent | undefined, kind: PeopleList) =>
+  new Set(event ? (await kind.reader(event).parse()).pubkeys() : [])
+
+const collate = async (events: HashedEvent[], identity?: string): Promise<Social> => {
   const own = {
     roster: newest(events, FOLLOWS, identity),
     trust: newest(events, TRUST, identity),
@@ -61,9 +63,9 @@ const collate = (events: HashedEvent[], identity?: string): Social => {
     mute: newest(events, MUTES, identity),
   }
 
-  const trusted = listed(own.trust, trust)
-  const blocked = listed(own.block, block)
-  const muted = listed(own.mute, mute)
+  const trusted = await listed(own.trust, trust)
+  const blocked = await listed(own.block, block)
+  const muted = await listed(own.mute, mute)
   const people = new Map<string, Contact>()
   const at = (pubkey: string) => {
     const contact = people.get(pubkey) ?? {
@@ -155,17 +157,15 @@ export const name = async (pubkey: string, petname: string) => {
 }
 
 const amend = async (
-  kind: ConfiguredKind<PeopleListReader, PeopleListWriter>,
+  kind: PeopleList,
   current: HashedEvent | undefined,
   pubkey: string,
   onList: boolean,
 ) => {
-  const writer = kind.writer(current && kind.reader(current).parse())
+  const writer = kind.writer(current && (await kind.reader(current).parse()))
+  const amended = onList ? writer.addPublic(["p", pubkey]) : writer.dropTags(spec(["p", pubkey]))
 
-  await publish(
-    await (onList ? writer.add(pubkey) : writer.remove(pubkey)).renderTemplate(),
-    current,
-  )
+  await publish(await amended.renderTemplate(), current)
 }
 
 export const setTrusted = (pubkey: string, trusted: boolean) =>

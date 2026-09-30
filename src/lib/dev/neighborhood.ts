@@ -8,7 +8,8 @@
 // The first version of the app carries text, so nothing here attaches a file.
 
 import {faker} from "@faker-js/faker"
-import {EVENT_DATE, EVENT_TIME, LONG_FORM, NOTE, POLL} from "@welshman/util"
+import type {EventTemplate} from "@welshman/util"
+import {article, dateEvent, note, poll, timeEvent} from "$lib/dev/kinds"
 
 faker.seed(20_214)
 
@@ -25,9 +26,6 @@ export type Person = {
   /** Whether this device had already paired with them before the session started. */
   known: boolean
 }
-
-/** Something one of them wrote. */
-export type Post = {kind: number; content: string; tags: string[][]}
 
 /** The device's own identity, which the simulated shell reports as already stored. */
 export const identity = key()
@@ -54,64 +52,66 @@ const notes = [
   () => `Power was out on ${faker.location.street()} for an hour. Anyone else?`,
 ]
 
-const note = (): Post => ({
-  kind: NOTE,
-  content: faker.helpers.arrayElement(notes)(),
-  tags: [],
-})
+const said = () => note.writer().setContent(faker.helpers.arrayElement(notes)()).renderTemplate()
 
-const poll = (): Post => ({
-  kind: POLL,
-  content: `${faker.date.weekday()} or the weekend for the ${faker.company.buzzNoun()}?`,
-  tags: [
-    ["option", faker.string.alphanumeric(6), faker.date.weekday()],
-    ["option", faker.string.alphanumeric(6), "Saturday"],
-    ["option", faker.string.alphanumeric(6), "Either suits me"],
-  ],
-})
+const asked = () => {
+  const writer = poll
+    .writer()
+    .setTitle(`${faker.date.weekday()} or the weekend for the ${faker.company.buzzNoun()}?`)
+
+  for (const label of [faker.date.weekday(), "Saturday", "Either suits me"]) {
+    writer.addOption(label)
+  }
+
+  return writer.renderTemplate()
+}
 
 /** A gathering, either on a day or at a time, which is the difference between the two kinds. */
-const occasion = (): Post => {
-  const allDay = faker.datatype.boolean()
+const gathering = () => {
   const starts = faker.date.soon({days: 9})
   const title = `${faker.company.buzzNoun()} at ${street()}`
 
-  return {
-    kind: allDay ? EVENT_DATE : EVENT_TIME,
-    content: faker.lorem.sentence(),
-    tags: [
-      ["d", faker.lorem.slug()],
-      ["title", title],
-      ["location", street()],
-      [
-        "start",
-        allDay ? starts.toISOString().slice(0, 10) : String(Math.floor(starts.getTime() / 1000)),
-      ],
-    ],
+  if (faker.datatype.boolean()) {
+    return dateEvent
+      .writer()
+      .setIdentifier()
+      .setTitle(title)
+      .setLocation(street())
+      .setStart(starts.toISOString().slice(0, 10))
+      .setContent(faker.lorem.sentence())
+      .renderTemplate()
   }
+
+  return timeEvent
+    .writer()
+    .setIdentifier()
+    .setTitle(title)
+    .setLocation(street())
+    .setStart(Math.floor(starts.getTime() / 1000))
+    .setContent(faker.lorem.sentence())
+    .renderTemplate()
 }
 
-const article = (): Post => ({
-  kind: LONG_FORM,
-  content: faker.lorem.paragraphs(2),
-  tags: [
-    ["d", faker.lorem.slug()],
-    ["title", faker.book.title()],
-    ["summary", faker.lorem.sentence()],
-  ],
-})
+const written = () =>
+  article
+    .writer()
+    .setIdentifier()
+    .setTitle(faker.book.title())
+    .setSummary(faker.lorem.sentence())
+    .setContent(faker.lorem.paragraphs(2))
+    .renderTemplate()
 
 /** One thing somebody hands over, weighted the way a street is: mostly talk. */
-export const post = (): Post =>
+export const post = (): Promise<EventTemplate> =>
   faker.helpers.weightedArrayElement([
-    {weight: 8, value: note},
-    {weight: 2, value: poll},
-    {weight: 2, value: occasion},
-    {weight: 1, value: article},
+    {weight: 8, value: said},
+    {weight: 2, value: asked},
+    {weight: 2, value: gathering},
+    {weight: 1, value: written},
   ])()
 
 /** What somebody says about another person's thing, addressed to their own neighbours. */
-export const said = () =>
+export const remark = () =>
   faker.helpers.arrayElement([
     "Saw this too, still there as of an hour ago.",
     "I can bring a van if that helps.",

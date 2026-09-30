@@ -22,27 +22,18 @@ import {faker} from "@faker-js/faker"
 import {blake3} from "@noble/hashes/blake3.js"
 import {sha256} from "@noble/hashes/sha2.js"
 import {bytesToHex} from "@noble/hashes/utils.js"
-import {
-  COMMENT,
-  FOLLOWS,
-  GENERIC_REPOST,
-  NOTE,
-  REACTION,
-  REPOST,
-  getPubkey,
-  hash,
-  makeSecret,
-  type HashedEvent,
-} from "@welshman/util"
+import {COMMENT, NOTE, REACTION, REPOST, getPubkey, hash, makeSecret} from "@welshman/util"
+import type {HashedEvent} from "@welshman/util"
 import {nip19} from "nostr-tools"
 import type {Blob, DipCore, Pref, Query} from "$lib/core"
+import {boost, comment, genericBoost, reaction, roster} from "$lib/dev/kinds"
 import {
   emoji,
   identity,
   pairingCode,
   people,
   post,
-  said,
+  remark,
   shortCode,
   type Person,
 } from "$lib/dev/neighborhood"
@@ -110,44 +101,14 @@ const fromImeta = (tag: string[]): Blob | undefined => {
     : undefined
 }
 
-/** The `e` and `p` tags naming an event, which is how everything but a comment refers to one. */
-const names = (about: HashedEvent) => [
-  ["e", about.id],
-  ["p", about.pubkey],
-]
-
-/** A boost, which states the kind it carries unless that kind is a note. */
-const boostOf = (about: HashedEvent) =>
-  about.kind === NOTE
-    ? {kind: REPOST, content: "", tags: names(about)}
-    : {kind: GENERIC_REPOST, content: "", tags: [...names(about), ["k", String(about.kind)]]}
-
 /**
- * NIP-22's two references: uppercase for the thread root, lowercase for the parent.
+ * A boost, which names what it passes on and does not embed it.
  *
- * A comment on a comment keeps the root its parent named, so a conversation
- * still says what it started from however deep it goes.
+ * NIP-18 puts a copy of the boosted event in the content and dip carries the
+ * reference alone, the same way the view writes one. `docs/sync.md#event-sync`.
  */
-const commentTags = (about: HashedEvent) => {
-  const tagged = (name: string) => about.tags.find(tag => tag[0] === name)?.[1]
-  const root =
-    about.kind === COMMENT
-      ? {
-          id: tagged("E") ?? about.id,
-          kind: tagged("K") ?? String(about.kind),
-          pubkey: tagged("P") ?? about.pubkey,
-        }
-      : {id: about.id, kind: String(about.kind), pubkey: about.pubkey}
-
-  return [
-    ["K", root.kind],
-    ["E", root.id, "", root.pubkey],
-    ["P", root.pubkey],
-    ["k", String(about.kind)],
-    ["e", about.id, "", about.pubkey],
-    ["p", about.pubkey],
-  ]
-}
+const boostOf = (about: HashedEvent) =>
+  (about.kind === NOTE ? boost : genericBoost).writer().setEvent(about).setContent("")
 
 /** An identity transfer running on one link, from whichever side started it. */
 type Transfer = {
@@ -180,8 +141,6 @@ export class Simulator extends WebPlugin implements DipCore {
       this.paired.add(person.pubkey)
     }
 
-    this.backlog()
-
     // Reachable as `dip` in the console, so a gate with no screen yet can still be answered.
     Object.assign(window, {dip: this})
   }
@@ -189,30 +148,33 @@ export class Simulator extends WebPlugin implements DipCore {
   // ------------------------------------------------------ the neighborhood
 
   /** What the device had already collected before this session opened. */
-  private backlog() {
+  private async backlog() {
     const at = now()
     const busiest = faker.number.int({min: 2, max: BAND_HOURS - 2})
     const known = people.filter(person => this.paired.has(person.pubkey))
 
-    this.rosters(at - DAY)
+    await this.rosters(at - DAY)
 
     for (let hour = 0; hour < BAND_HOURS; hour++) {
       const many = hour === busiest
       const count = faker.number.int(many ? {min: 4, max: 6} : {min: 0, max: 2})
 
       for (let index = 0; index < count; index++) {
-        this.arrive(faker.helpers.arrayElement(known), at - hour * HOUR - faker.number.int(HOUR))
+        await this.arrive(
+          faker.helpers.arrayElement(known),
+          at - hour * HOUR - faker.number.int(HOUR),
+        )
       }
     }
 
     for (let index = 0; index < 4; index++) {
-      this.arrive(
+      await this.arrive(
         faker.helpers.arrayElement(known),
         at - faker.number.int({min: 2 * DAY, max: 26 * DAY}),
       )
     }
 
-    for (const person of known) this.respond(person, at - faker.number.int(6 * HOUR))
+    for (const person of known) await this.respond(person, at - faker.number.int(6 * HOUR))
   }
 
   /**
@@ -221,15 +183,13 @@ export class Simulator extends WebPlugin implements DipCore {
    * The device's own roster is what it learned at pairing; a neighbour's roster
    * is how somebody it never met arrives with a name on them.
    */
-  private rosters(at: number) {
-    this.store.record(
-      this.naming(
-        this.identity,
-        people.filter(person => person.known),
-      ),
-      identity,
-      at,
+  private async rosters(at: number) {
+    const mine = await this.naming(
+      this.identity,
+      people.filter(person => person.known),
     )
+
+    this.store.record(mine, identity, at)
 
     for (const person of people.filter(known => known.known)) {
       const theirs = faker.helpers.arrayElements(
@@ -237,18 +197,16 @@ export class Simulator extends WebPlugin implements DipCore {
         3,
       )
 
-      this.store.record(this.naming(person.pubkey, theirs), person.pubkey, at)
+      this.store.record(await this.naming(person.pubkey, theirs), person.pubkey, at)
     }
   }
 
-  private naming(author: string, named: Person[]) {
-    return hash({
-      kind: FOLLOWS,
-      content: "",
-      created_at: now() - DAY,
-      pubkey: author,
-      tags: named.map(person => ["p", person.pubkey, "", person.petname]),
-    })
+  private async naming(author: string, named: Person[]) {
+    const writer = roster.writer()
+
+    for (const person of named) writer.follow(person.pubkey, "", person.petname)
+
+    return hash({...(await writer.renderTemplate()), created_at: now() - DAY, pubkey: author})
   }
 
   /**
@@ -257,7 +215,7 @@ export class Simulator extends WebPlugin implements DipCore {
    * A comment can be commented on in its turn, which is how a conversation more
    * than one deep exists to be read.
    */
-  private respond(person: Person, at: number) {
+  private async respond(person: Person, at: number) {
     const held = this.store
       .list({order: "seenAt", filter: JSON.stringify({kinds: [NOTE, COMMENT], limit: 20})})
       .filter(detail => detail.event.pubkey !== person.pubkey)
@@ -271,21 +229,27 @@ export class Simulator extends WebPlugin implements DipCore {
       {weight: 2, value: REPOST},
     ])
 
-    const written =
+    const writer =
       shape === REACTION
-        ? {kind: REACTION, content: emoji(), tags: names(about)}
+        ? reaction.writer().setEvent(about).setContent(emoji())
         : shape === COMMENT
-          ? {kind: COMMENT, content: said(), tags: commentTags(about)}
+          ? comment.writer().replyTo(about).setContent(remark())
           : boostOf(about)
 
-    this.store.record(hash({...written, created_at: at, pubkey: person.pubkey}), person.pubkey, at)
+    const written = hash({
+      ...(await writer.renderTemplate()),
+      created_at: at,
+      pubkey: person.pubkey,
+    })
+
+    this.store.record(written, person.pubkey, at)
   }
 
   /** One event handed over by a person, authored some time before they carried it here. */
-  private arrive(person: Person, at: number) {
-    const {kind, content, tags} = post()
+  private async arrive(person: Person, at: number) {
+    const template = await post()
     const written = at - faker.number.int({min: 0, max: 6 * HOUR})
-    const event = hash({kind, content, tags, created_at: written, pubkey: person.pubkey})
+    const event = hash({...template, created_at: written, pubkey: person.pubkey})
 
     this.store.record(event, person.pubkey, at)
 
@@ -307,16 +271,16 @@ export class Simulator extends WebPlugin implements DipCore {
   }
 
   /** Everything one encounter produces: a gate if they are a stranger, then a burst. */
-  private encounter() {
+  private async encounter() {
     const person = faker.helpers.arrayElement(people)
     const link = this.nextLink++
 
     if (this.paired.has(person.pubkey)) {
       this.open(link, person)
-      this.gossip(person, faker.number.int({min: 1, max: person.talkative}))
+      await this.gossip(person, faker.number.int({min: 1, max: person.talkative}))
     } else {
       this.gate(person, link)
-      this.gossip(person, 1)
+      await this.gossip(person, 1)
     }
 
     this.tick()
@@ -376,7 +340,7 @@ export class Simulator extends WebPlugin implements DipCore {
   }
 
   /** A burst of events off one peer, some of them things the device already had. */
-  private gossip(person: Person, count: number) {
+  private async gossip(person: Person, count: number) {
     const at = now()
     let fresh = 0
 
@@ -384,12 +348,12 @@ export class Simulator extends WebPlugin implements DipCore {
       const again = faker.datatype.boolean({probability: 0.3}) && this.resight(person, at)
 
       if (!again) {
-        this.arrive(person, at)
+        await this.arrive(person, at)
         fresh++
       }
     }
 
-    if (faker.datatype.boolean({probability: 0.5})) this.respond(person, at)
+    if (faker.datatype.boolean({probability: 0.5})) await this.respond(person, at)
 
     this.notifyListeners("storeChanged", {group: "events"})
     log(`${short(person.pubkey)} handed over ${count} (${fresh} new)`)
@@ -400,7 +364,7 @@ export class Simulator extends WebPlugin implements DipCore {
     clearTimeout(this.clock)
 
     this.clock = setTimeout(
-      () => this.encounter(),
+      () => void this.encounter(),
       ENCOUNTER_EVERY + faker.number.int(ENCOUNTER_JITTER),
     )
   }
@@ -437,6 +401,7 @@ export class Simulator extends WebPlugin implements DipCore {
   }
 
   async start() {
+    await this.backlog()
     log(`started as ${short(this.identity)}, ${people.length} people in range`)
     this.tick()
 

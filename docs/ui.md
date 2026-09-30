@@ -48,6 +48,8 @@ It refuses what the core refuses, and that half matters more than what it answer
 
 The shapes themselves are declared once, in `core.ts`, and the simulator answers with them rather than with types of its own — a stored event is `@welshman/util`'s `HashedEvent`, the same unsigned event `coracle-lib` stores, and a query narrows through `matchFilter`. A fixture that restates the contract in its own words is a fixture that can drift from it.
 
+What a simulated peer writes comes out of `@welshman/domain` too, bound in `src/lib/dev/kinds.ts` rather than taken from `src/lib/kinds/`. The dependency points one way: a stand-in for the core that reached for the app would only prove the app agrees with itself. Sharing the library instead means neither side spells a tag out, so a kind the view learns to read is a kind a peer already writes correctly.
+
 `src/lib/core.ts` loads it by dynamic import under `import.meta.env.DEV`, so the branch is dead code in a shipped bundle and neither the simulator nor faker is in one. It is also `window.dip`, because part of that surface has no screen yet: a key backup and an identity transfer are answered from the console until something is built to answer them.
 
 **Nothing but `core.ts` may import it**, which `just lint` enforces. A view that reaches past the boundary for a fixture has a code path that only ever runs in a browser, and the screen it draws there is not the screen a device draws.
@@ -220,7 +222,7 @@ export const Post = new KindFactory({kind: NOTE, reader: PostReader, writer: Pos
 
 Every factory is configured once, in `src/lib/kinds/index.ts`, against a resolver that answers no relays — which is the truth rather than a stub, since there are none and a writer's routing half is never asked. Components read through the getters that configuration mints.
 
-A kind `@welshman/domain` already models is re-exported configured rather than redeclared. The three it does not are ours: a boost (`repost.ts`), the trust and block lists (`people.ts`, whose plain `p` tags are what the core reads), and the roster of pet names (`roster.ts`).
+A kind `@welshman/domain` already models is re-exported configured rather than redeclared, and the rest are its classes at a kind number or a reader of its own it has none of. Trust and block (`people.ts`) are kinds of ours spelled the way NIP-51's mute list is, so they use its reader and writer. A roster (`roster.ts`) is a follow list read for its pet names, which is the one slot `FollowList` answers nothing about. A boost (`repost.ts`) is NIP-18 without the embedded copy of what it names, since an event on the gossip path carries no signature to embed.
 
 **`event.tags.find(t => t[0] === "…")` does not appear in a component.** A kind's shape is stated once, in its reader, and every screen reads it through getters. Unmodeled tags survive an edit, because a writer seeded from a reader re-emits whatever it did not model.
 

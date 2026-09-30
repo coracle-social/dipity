@@ -19,11 +19,14 @@ import {
   Article,
   BookmarkList,
   Comment,
+  DateEvent,
   Delete,
+  MuteList,
   Note,
   Poll,
   PollResponse,
   Reaction,
+  TimeEvent,
   type KindContext,
 } from "@welshman/domain"
 import {
@@ -41,9 +44,8 @@ import {
   Resolver,
   type HashedEvent,
 } from "@welshman/util"
-import {DateEvent, TimeEvent} from "$lib/kinds/calendar"
-import {Block, Mute, Trust} from "$lib/kinds/people"
-import {GenericRepost, Repost} from "$lib/kinds/repost"
+import {Block, Trust} from "$lib/kinds/people"
+import {Boost, GenericBoost} from "$lib/kinds/repost"
 import {Roster} from "$lib/kinds/roster"
 
 const context: KindContext = {resolver: new Resolver(() => [])}
@@ -63,9 +65,9 @@ export const pollResponse = PollResponse.configure(context)
 
 export const article = Article.configure(context)
 
-export const boost = Repost.configure(context)
+export const boost = Boost.configure(context)
 
-export const genericBoost = GenericRepost.configure(context)
+export const genericBoost = GenericBoost.configure(context)
 
 export const dateEvent = DateEvent.configure(context)
 
@@ -77,7 +79,7 @@ export const trust = Trust.configure(context)
 
 export const block = Block.configure(context)
 
-export const mute = Mute.configure(context)
+export const mute = MuteList.configure(context)
 
 /**
  * What the user asked to keep.
@@ -92,8 +94,39 @@ export const bookmarks = BookmarkList.configure(context)
 /** Which boost carries a kind: 6 is for notes and 16 states what it holds. */
 export const boostFor = (kind: number) => (kind === NOTE ? boost : genericBoost)
 
-/** A calendar entry reads the same either way; only `start` differs. */
+/** What a boost passes on, or undefined for anything that is not one. */
+export const boostedBy = (event: HashedEvent) => {
+  if (event.kind === REPOST) return boost.reader(event).parse().eventId()
+
+  if (event.kind === GENERIC_REPOST) return genericBoost.reader(event).parse().eventId()
+
+  return undefined
+}
+
+/** A calendar entry titles and locates itself the same either way; only `start` differs. */
 export const calendarFor = (kind: number) => (kind === EVENT_DATE ? dateEvent : timeEvent)
+
+/** When something happens, and whether it has a clock time at all. */
+export type Occasion = {at: number; allDay: boolean}
+
+/**
+ * When a calendar entry starts, in the one shape a screen can draw.
+ *
+ * NIP-52 spells the two kinds the same way apart from `start`, which is a
+ * `YYYY-MM-DD` day on 31922 and unix seconds on 31923 — so each reader answers
+ * in its own units and this is where the two meet.
+ */
+export const occasionOf = (event: HashedEvent): Occasion | undefined => {
+  if (event.kind === EVENT_TIME) {
+    const at = timeEvent.reader(event).parse().start()
+
+    return at === undefined ? undefined : {at, allDay: false}
+  }
+
+  const day = Date.parse(dateEvent.reader(event).parse().start() ?? "")
+
+  return Number.isNaN(day) ? undefined : {at: day / 1000, allDay: true}
+}
 
 /** What a comment answers, or undefined for anything that is not one. */
 export const commentedOn = (event: HashedEvent) =>
@@ -105,14 +138,7 @@ export const commentedOn = (event: HashedEvent) =>
  * A comment on a comment keeps the root its parent named, so however deep a
  * conversation goes it still says what it started from.
  */
-export const commentOn = (parent: HashedEvent) => {
-  const writer = comment.writer().setParentFromEvent(parent)
-  const root = parent.kind === COMMENT ? comment.reader(parent).parse().root() : undefined
-
-  return root?.id && root.kind && root.pubkey
-    ? writer.setRoot(Number(root.kind), root.id, root.pubkey)
-    : writer.setRootFromEvent(parent)
-}
+export const commentOn = (parent: HashedEvent) => comment.writer().replyTo(parent)
 
 /**
  * One thing a person can choose to see, and the kinds it covers.

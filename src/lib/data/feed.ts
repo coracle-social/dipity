@@ -7,7 +7,7 @@
 
 import {derived, get, type Readable} from "svelte/store"
 import {randomId} from "@welshman/lib"
-import {COMMENT, DELETE, GENERIC_REPOST, POLL_RESPONSE, REACTION, REPOST} from "@welshman/util"
+import {COMMENT, DELETE, POLL_RESPONSE, REACTION} from "@welshman/util"
 import type {HashedEvent} from "@welshman/util"
 import {Dip, type EventDetail, type Order} from "$lib/core"
 import {answering, detailsOf, eventsOf, remembered, storedEvents} from "$lib/data/query"
@@ -16,11 +16,10 @@ import {session, type Session} from "$lib/data/session"
 import {
   article,
   boostFor,
-  boost,
+  boostedBy,
   categories,
   commentOn,
   commentedOn,
-  genericBoost,
   note,
   poll,
   pollResponse,
@@ -113,7 +112,7 @@ const respondedTo = (event: EventDetail["event"]): string | undefined => {
 
   if (event.kind === POLL_RESPONSE) return pollResponse.reader(event).parse().pollId()
 
-  return (event.kind === REPOST ? boost : genericBoost).reader(event).parse().eventId()
+  return boostedBy(event)
 }
 
 const index = (found: EventDetail[]): Responses => {
@@ -277,7 +276,7 @@ export const arrange = async (title: string, at: number, where: string, about: s
     .writer()
     .setIdentifier(randomId())
     .setTitle(title)
-    .setStart({at, allDay: false})
+    .setStart(at)
     .setContent(about)
 
   if (where) writer.setLocation(where)
@@ -378,15 +377,6 @@ export const detailOf = (id: string): Readable<Detail> =>
     {item: undefined, comments: []},
   )
 
-/** What a boost is passing on, or undefined for anything that is not one. */
-export const boostedId = (item: Item) => {
-  if (item.event.kind === REPOST) return boost.reader(item.event).parse().eventId()
-
-  if (item.event.kind === GENERIC_REPOST) return genericBoost.reader(item.event).parse().eventId()
-
-  return undefined
-}
-
 /**
  * The page a card opens, which is its own only when it is about nothing else.
  *
@@ -394,4 +384,5 @@ export const boostedId = (item: Item) => {
  * answers, so both open their subject. A comment on a comment opens that
  * comment, which is the page the conversation above it is drawn on.
  */
-export const opensId = (item: Item) => boostedId(item) ?? commentedOn(item.event) ?? item.event.id
+export const opensId = (item: Item) =>
+  boostedBy(item.event) ?? commentedOn(item.event) ?? item.event.id

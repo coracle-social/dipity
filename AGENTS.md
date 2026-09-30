@@ -64,7 +64,7 @@ shadcn-svelte over bits-ui and Tailwind 4. Read [`ui.md`](./docs/ui.md) before t
 
 ## Stack and commands
 
-Capacitor 8 · Svelte 5 · Vite 8 · TypeScript · welshman `0.9.x` · Tailwind 4 + shadcn-svelte · Rust + uniffi for the core, with `coracle-lib` for nostr types there.
+Capacitor 8 · Svelte 5 · Vite 8 · TypeScript · welshman `0.12.x` · Tailwind 4 + shadcn-svelte · Rust + uniffi for the core, with `coracle-lib` for nostr types there.
 
 **Tasks live in the [`justfile`](./justfile), not in `package.json`** — which has no `scripts` block, deliberately, because half the pipeline is `cargo`. `just` on its own lists everything.
 
@@ -93,7 +93,7 @@ Native projects in `ios/` and `android/` are committed and regenerable. Capacito
 
 ## welshman
 
-The view uses [welshman](https://github.com/coracle-social/welshman) `0.9.x` for nostr types and typed kinds. Clone the source into `./ref/welshman` if you need to read or change it — see [Reference materials](#reference-materials).
+The view uses [welshman](https://github.com/coracle-social/welshman) `0.12.x` for nostr types and typed kinds. Clone the source into `./ref/welshman` if you need to read or change it — see [Reference materials](#reference-materials).
 
 **Per-package skills are installed** in `.agents/skills/` (symlinked into `.claude/skills/`) — `welshman`, plus `welshman-{app,util,lib,net,store,signer,feeds,domain,content,editor}`. Load the relevant one before working against a package rather than guessing at its API; they are the authoritative reference here. Refresh with `pnpm dlx skills add coracle-social/welshman`.
 

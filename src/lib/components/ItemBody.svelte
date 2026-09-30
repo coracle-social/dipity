@@ -4,8 +4,8 @@
   import {EVENT_DATE, EVENT_TIME, GENERIC_REPOST, LONG_FORM, POLL, REPOST} from "@welshman/util"
   import Poll from "$lib/components/Poll.svelte"
   import Quoted from "$lib/components/Quoted.svelte"
-  import {article, calendarFor, commentedOn} from "$lib/kinds"
-  import {boostedId, type Item, type Standing} from "$lib/data/feed"
+  import {article, boostedBy, calendarFor, commentedOn, occasionOf} from "$lib/kinds"
+  import type {Item, Standing} from "$lib/data/feed"
   import type {Social} from "$lib/data/contacts"
   import type {Session} from "$lib/data/session"
 
@@ -36,7 +36,7 @@
     if (event.kind !== EVENT_DATE && event.kind !== EVENT_TIME) return undefined
 
     const reader = calendarFor(event.kind).reader(event).parse()
-    const start = reader.start()
+    const start = occasionOf(event)
     const when = start
       ? new Date(start.at * 1000).toLocaleString(
           undefined,
@@ -56,7 +56,7 @@
 </script>
 
 {#if event.kind === REPOST || event.kind === GENERIC_REPOST}
-  {@const id = boostedId(item)}
+  {@const id = boostedBy(event)}
   {#if id}
     <Quoted {id} {social} absent="This device does not have what was passed on." />
   {/if}
