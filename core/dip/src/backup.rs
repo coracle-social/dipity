@@ -98,7 +98,7 @@ Most online services keep track of users by giving them a username and password.
 service total control over their users, allowing them to ban them at any time, or sell their \
 activity.
 
-On Nostr, you control your own identity and social data, through the magic of cryptography. The \
+On Nostr, you control your own identity and social data, using cryptography. The \
 basic idea is that you have a public key, which acts as your user ID, and a private key which \
 allows you to prove your identity.
 
@@ -109,9 +109,9 @@ access to your account.
 
 {key}
 
-Keep this file somewhere safe, like a password manager. It is what restores this app if you lose \
-this device, and it is also the same identity everywhere else on Nostr — other apps will take it \
-if you ever want to post from one.
+Keep this file somewhere safe, like a password manager. It restores this app if you lose this \
+device. It is also your identity everywhere else on Nostr, so other apps accept it if you want to \
+post from one.
 "
     )
 }

@@ -54,9 +54,9 @@
   const tiers = $derived([
     {
       id: "accept",
-      label: "Whose things you keep",
+      label: "Whose things you take in",
       detail:
-        "A phone that comes near yours offers you what it is carrying. This is whose things you take a copy of.",
+        "A phone that comes near yours offers you what it is carrying. This decides whose things you take a copy of.",
       scopes: ["trusted", "network", "lenient"] as Scope[],
       on: $policy.accept,
       set: setAccept,
@@ -64,7 +64,8 @@
     {
       id: "gossip",
       label: "Whose things you carry",
-      detail: "Everything you keep, you can hand on to the next phone you pass.",
+      detail:
+        "Of what you take in, this decides whose things you hand on to the next phone you pass.",
       scopes: ["nothing", "trusted", "network", "lenient"] as Scope[],
       on: $policy.gossip,
       set: setGossip,
@@ -73,7 +74,7 @@
       id: "forward",
       label: "May share your things forward",
       detail:
-        "Somebody who can show they got a thing from you may hand it on further. This is who you let do that.",
+        "Somebody who can show they got a thing from you may hand it on further. This decides who may.",
       scopes: ["nothing", "trusted", "network"] as Scope[],
       on: $policy.forward,
       set: setForward,
@@ -82,7 +83,7 @@
       id: "visibility",
       label: "Who you hand yours to",
       detail:
-        "Whose phone you will offer your own things to at all. Your list of people is never offered, whatever this says.",
+        "Whose phones you offer your own things to. Your list of people goes only to people you paired with, whatever this says.",
       scopes: ["trusted", "network", "lenient", "public"] as Scope[],
       on: $policy.visibility.default,
       set: setVisibility,
@@ -136,9 +137,7 @@
 <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Being found</h2>
 
 <p class="mt-2 text-sm text-pretty text-muted-foreground">
-  Your phone only trades things with a phone that is in the room with it. These are the three
-  numbers that decide how long it keeps looking, how often it is willing to say who you are, and how
-  long what you take in sticks around.
+  Your phone only trades things with a phone that is in the room with it.
 </p>
 
 <div class="mt-4 space-y-5">
@@ -179,8 +178,7 @@
       value={$policy.retentionDays}
       onchange={event => setRetentionDays(event.currentTarget.value)} />
     <p class="text-xs text-pretty text-muted-foreground">
-      A phone is not an archive. Something nobody has handed you again in this long is deleted. Your
-      own things stay.
+      Something nobody has handed you again in this long is deleted. Your own things stay.
     </p>
   </div>
 </div>
@@ -197,7 +195,7 @@
 
 <Button class="mt-4" variant="secondary" disabled={backup === "asking"} onclick={exportKey}>
   <Download />
-  Write it down somewhere safe
+  Save a copy somewhere safe
 </Button>
 
 {#if backup && backupSaid[backup]}

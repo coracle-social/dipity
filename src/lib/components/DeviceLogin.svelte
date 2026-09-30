@@ -54,8 +54,8 @@
 
   {#if $links.length === 0}
     <p class="py-10 text-sm text-pretty text-muted-foreground">
-      Nothing is in range. Open the app on the other phone and hold the two together — it turns up
-      here once the two have recognised each other.
+      Nothing is in range. Open the app on the other phone and hold the two phones together. It
+      appears here once they recognise each other.
     </p>
   {/if}
 
@@ -82,8 +82,8 @@
     </p>
   {:else}
     <p class="max-w-prose text-sm text-pretty text-destructive">
-      Say yes and this phone becomes the other one. What it published under its own key stays on it
-      and stops being yours — the names you gave people, and what you kept.
+      Say yes and this phone takes on the other phone's key. Everything it published under its own
+      key, including the names you gave people and what you kept, stays here but stops being yours.
     </p>
   {/if}
 
