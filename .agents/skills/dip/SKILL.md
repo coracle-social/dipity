@@ -38,6 +38,8 @@ Seven screens under `src/lib/components/`, switched by a `place` store rather th
 
 **A boost or a comment opens what it is about**, rather than its own page. `opensId` in `src/lib/data/feed.ts` is the one rule and `Quoted` draws the embedded line, off `summaryOf` in `src/lib/kinds/` — an article and an occasion title themselves in a tag rather than in their content. Reacting and boosting are offered on everything, since the user's own event travels whatever this device may do with what it names.
 
+**The board draws nothing whose subject this device does not hold.** A boost names what it passes on rather than carrying it, so one can arrive on its own and draw blank. `grounded` in `src/lib/data/feed.ts` drops a page entry whose subject is missing. A reaction and a vote need no filter, being drawn only on the card of the thing they are about, and a comment is exempt, since it says its own piece.
+
 **Saying something about a thing writes a NIP-22 comment on it**, which is what `Composer`'s "Pass it on" does when the user types. A comment on a comment keeps the root its parent named, so `ItemDetail` opens on the parent and heads the page with a "Commenting on" section climbing one further up. `commentOn` and `commentedOn` in `src/lib/kinds/index.ts` are both halves; nothing else reads a `q` tag.
 
 **The board holds its scroll offset and nothing else does.** `go` in `src/lib/data/nav.ts` records it on the way out and restores it after a `tick`. Every other screen opens at the top, being about the thing that was tapped to reach it.

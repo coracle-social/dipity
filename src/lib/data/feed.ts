@@ -6,7 +6,7 @@
 // to pass on at all.
 
 import {derived, get, type Readable} from "svelte/store"
-import {randomId} from "@welshman/lib"
+import {randomId, uniq} from "@welshman/lib"
 import {COMMENT, DELETE, POLL_RESPONSE, REACTION} from "@welshman/util"
 import type {HashedEvent} from "@welshman/util"
 import {Dip, type EventDetail, type Order} from "$lib/core"
@@ -115,6 +115,38 @@ const respondedTo = (event: EventDetail["event"]): string | undefined => {
   return boostedBy(event)
 }
 
+/**
+ * A page with everything whose subject this device does not hold left out.
+ *
+ * A boost is the only one of these the board draws and it carries no words of
+ * its own, so one that outran what it passes on says nothing at all. A comment
+ * keeps its place: it says its own piece, and `docs/stories.md` has one
+ * reaching people who never got the thing it answers. `coracle/dip#92`.
+ */
+const grounded = async (items: Item[]): Promise<Item[]> => {
+  const subjects = new Map<string, string>()
+
+  for (const {event} of items) {
+    const about = responseKinds.includes(event.kind) ? respondedTo(event) : undefined
+
+    if (about) subjects.set(event.id, about)
+  }
+
+  if (subjects.size === 0) return items
+
+  const found = await eventsOf({
+    order: "seenAt",
+    filter: JSON.stringify({ids: uniq(Array.from(subjects.values()))}),
+  })
+  const held = new Set(found.map(event => event.id))
+
+  return items.filter(({event}) => {
+    const about = subjects.get(event.id)
+
+    return about === undefined || held.has(about)
+  })
+}
+
 const index = (found: EventDetail[]): Responses => {
   const to = new Map<string, Response>()
   const deleted = new Set<string>()
@@ -157,7 +189,9 @@ const page = (asked: View): Promise<Item[]> =>
   detailsOf({
     order: asked.order,
     filter: JSON.stringify({kinds: shownKinds(asked), limit: 60}),
-  }).then(found => found.map(toItem))
+  })
+    .then(found => found.map(toItem))
+    .then(grounded)
 
 const arrived = answering(
   derived([view, storedEvents], ([$view]) => $view),
@@ -348,13 +382,8 @@ export const drop = async (item: Item) => {
 /** Whether an item is the user's own, which is the only thing they may retract. */
 export const isMine = (item: Item, session: Session) => item.event.pubkey === session.identity
 
-/**
- * One stored event by id, or null for a thing this device does not have.
- *
- * A boost names an event rather than embedding one, so a boost whose subject
- * never arrived is a state the card has to draw.
- */
-export const heldEvent = (id: string) =>
+/** One stored event by id, or null for a thing this device does not have. */
+const heldEvent = (id: string) =>
   Dip.getEvent({id}).then(({event}) => (event ? (JSON.parse(event) as EventDetail["event"]) : null))
 
 /** One thing and what was said about it, which is what the detail screen draws. */
@@ -375,6 +404,19 @@ export const detailOf = (id: string): Readable<Detail> =>
       ),
     }),
     {item: undefined, comments: []},
+  )
+
+/**
+ * One stored event by id, re-read whenever the store moves.
+ *
+ * What a line stands for can arrive after the line was drawn, so reading it
+ * once says the thing is missing for as long as the screen stays open.
+ */
+export const heldEventOf = (id: string): Readable<EventDetail["event"] | null | undefined> =>
+  answering(
+    derived(storedEvents, revision => ({id, revision})),
+    () => heldEvent(id),
+    undefined,
   )
 
 /**
