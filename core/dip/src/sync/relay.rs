@@ -10,12 +10,14 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, bail};
-use coracle_lib::events::HashedEvent;
+use coracle_lib::events::{EventId, HashedEvent};
 use coracle_lib::filters::Filter;
-use coracle_lib::keys::SecretKey;
+use coracle_lib::keys::{PublicKey, SecretKey};
 use coracle_lib::sync::{FrameBudget, SyncSet};
 
+use crate::clock;
 use crate::db::Db;
+use crate::db::command as db_command;
 use crate::db::query as db_query;
 use crate::model::{AuthorshipProof, Identity, Query, RecipientSignature, Registers};
 use crate::session::Peer;
@@ -215,18 +217,36 @@ pub fn serve(
     events.dedup_by(|a, b| a.id == b.id);
 
     let mut messages: Vec<Message> = Vec::new();
+    let page: Vec<HashedEvent> = events.into_iter().take(PAGE_SIZE).collect();
 
-    for event in events.into_iter().take(PAGE_SIZE) {
+    for event in &page {
         messages.push(Message::Event(
             subscription.clone(),
             Box::new(event.clone()),
         ));
-        attach(db, peer, identity, subscription, &event, &mut messages)?;
+        attach(db, peer, identity, subscription, event, &mut messages)?;
     }
 
     messages.push(Message::Eose(subscription.clone()));
+    record_shares(db, peer, &page)?;
 
     Ok(messages)
+}
+
+/// Record that events went to a peer, which is provenance in the outbound
+/// direction and never served to anyone.
+///
+/// Every path that hands a peer an event goes through here: [`serve`] for a
+/// subscription's page and
+/// [`Session::offer_event`](crate::session::Session::offer_event) for the live
+/// push. Written when the frames are handed to the transport rather than when
+/// the peer has them, since NIP-01 has a relay hear nothing back about an
+/// `EVENT`.
+pub fn record_shares(db: &Db, peer: &Peer, events: &[HashedEvent]) -> Result<()> {
+    let to: Vec<PublicKey> = peer.pubkeys.iter().copied().collect();
+    let ids: Vec<EventId> = events.iter().map(|event| event.id).collect();
+
+    db_command::record_shares(db, &ids, &to, clock::now())
 }
 
 /// Attach what lets an event travel its next hop, following the `EVENT`.
@@ -420,6 +440,45 @@ mod tests {
             Box::new(stored.clone()),
         )));
         assert!(replies.contains(&Message::Eose(SubscriptionId("sub".into()))));
+    }
+
+    #[test]
+    fn serving_an_event_records_where_it_went() {
+        let db = Db::open_in_memory().unwrap();
+        let stored = given(&db, author(1), 100, "one");
+
+        let req = |relay: &mut Relay| {
+            relay
+                .handle(
+                    &db,
+                    &peer(),
+                    &secret(1),
+                    Message::Req(
+                        SubscriptionId("sub".into()),
+                        vec![Filter::new().add_kinds([1])],
+                    ),
+                    Quota::STRANGER,
+                    &mut spending(),
+                )
+                .unwrap()
+        };
+
+        req(&mut Relay::default());
+
+        let shares = |db: &Db| {
+            db_query::with_details(db, vec![stored.clone()]).unwrap()[0]
+                .shares
+                .iter()
+                .map(|share| share.pubkey)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(shares(&db), vec![author(2)]);
+
+        // The same peer asking again is the same handoff, however many times it asks.
+        req(&mut Relay::default());
+
+        assert_eq!(shares(&db), vec![author(2)]);
     }
 
     #[test]

@@ -63,6 +63,27 @@ pub fn publish_event(db: &Db, event: &HashedEvent, identity: &PublicKey, at: i64
     })
 }
 
+/// Record that a page of events went to a peer.
+///
+/// One transaction for the page: a subscription is answered a few hundred events
+/// at a time, and a write each would put the cost of serving a peer into
+/// SQLite's commit rather than into the radio.
+pub fn record_shares(db: &Db, ids: &[EventId], to: &[PublicKey], at: i64) -> Result<()> {
+    if ids.is_empty() || to.is_empty() {
+        return Ok(());
+    }
+
+    db.write(|tx| {
+        for id in ids {
+            for pubkey in to {
+                event::record_shared(tx, id, pubkey, at)?;
+            }
+        }
+
+        Ok(())
+    })
+}
+
 /// Store the pair secret derived from a completed session against every pubkey
 /// the peer proved.
 pub fn pair_with(db: &Db, pubkeys: &[PublicKey], secret: &[u8; 32], at: i64) -> Result<()> {

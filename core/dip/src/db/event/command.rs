@@ -1,4 +1,5 @@
-//! Writes over `event`, `event_tag`, `event_fts` and `event_seen`.
+//! Writes over `event`, `event_tag`, `event_fts`, `event_seen` and
+//! `event_shared`.
 //!
 //! [`save`] is the whole of ingest below the policy layer: it enforces what the
 //! tables mean to each other
@@ -114,6 +115,35 @@ pub fn record_seen(
             seen_at,
         }),
     );
+
+    Ok(true)
+}
+
+/// Record that an event was handed to a peer, if that pair is not already
+/// recorded. Returns whether this is the first time it went there.
+///
+/// The one place a handoff is written. A peer this device has already served an
+/// event to is left alone, so a row says the device carried the event to
+/// somebody rather than how many times it answered for it.
+pub fn record_shared(
+    tx: &Tx<'_>,
+    event_id: &EventId,
+    pubkey: &PublicKey,
+    shared_at: i64,
+) -> Result<bool> {
+    let written = tx
+        .prepare_cached(
+            "INSERT OR IGNORE INTO event_shared (event_id, pubkey, shared_at)
+             VALUES (?1, ?2, ?3)",
+        )?
+        .execute(params![event_id.to_hex(), pubkey.to_hex(), shared_at])
+        .with_context(|| format!("recording {event_id} handed to {pubkey}"))?;
+
+    if written == 0 {
+        return Ok(false);
+    }
+
+    channel::notify(tx, EventChange::Shared(event_id.to_hex()));
 
     Ok(true)
 }
@@ -293,7 +323,7 @@ mod tests {
 
     use crate::db::Db;
     use crate::fixtures::{author, event, id, note, peer};
-    use crate::model::{ProvenanceFilter, Query};
+    use crate::model::{ProvenanceFilter, Query, Share};
 
     /// A query narrowed by a NIP-01 filter and nothing else.
     fn matching(filter: Filter) -> Query {
@@ -586,9 +616,10 @@ mod tests {
         let subject = note(author(1), 100, "note", Tags::new().add("t", ["town"]));
 
         save(&tx, &subject, &[peer()], 10).unwrap();
+        record_shared(&tx, &id(&subject), &author(2), 20).unwrap();
         assert!(delete(&tx, &id(&subject)).unwrap());
 
-        for table in ["event_tag", "event_seen", "event_fts"] {
+        for table in ["event_tag", "event_seen", "event_shared", "event_fts"] {
             let rows: i64 = tx
                 .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
                     row.get(0)
@@ -596,6 +627,40 @@ mod tests {
                 .unwrap();
             assert_eq!(rows, 0, "{table} kept a row for a deleted event");
         }
+    }
+
+    #[test]
+    fn a_peer_handed_the_same_event_twice_is_one_share() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        let subject = note(author(1), 100, "note", Tags::new());
+        let stored = id(&subject);
+
+        save(&tx, &subject, &[peer()], 10).unwrap();
+
+        assert!(record_shared(&tx, &stored, &author(2), 20).unwrap());
+        assert!(!record_shared(&tx, &stored, &author(2), 30).unwrap());
+        assert!(record_shared(&tx, &stored, &author(3), 30).unwrap());
+
+        let shares = query::shares_for(&tx, &[stored]).unwrap();
+
+        // The first handoff is the one kept, so its time survives the second.
+        assert_eq!(
+            shares[&stored],
+            vec![
+                Share {
+                    event_id: stored,
+                    pubkey: author(2),
+                    shared_at: 20,
+                },
+                Share {
+                    event_id: stored,
+                    pubkey: author(3),
+                    shared_at: 30,
+                },
+            ]
+        );
     }
 
     #[test]

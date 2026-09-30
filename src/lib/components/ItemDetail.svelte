@@ -35,6 +35,8 @@
   const heading = $derived(
     $detail.item ? `${categoryOf($detail.item.event.kind).noun} details` : "Details",
   )
+
+  const people = (count: number) => `${count} ${count === 1 ? "person" : "people"}`
 </script>
 
 <header class="flex items-center gap-1 pt-4 pb-3">
@@ -75,6 +77,13 @@
     bookmarked={marked}
     {onBoost}
     detailed />
+
+  {@const carried = item.from.filter(pubkey => pubkey !== $session.identity).length}
+  <p class="mt-2 px-1 text-xs text-muted-foreground">
+    {carried > 0 ? `Seen from ${people(carried)}` : "Written here"} · {item.to.length > 0
+      ? `shared with ${people(item.to.length)}`
+      : "not shared yet"}
+  </p>
 
   {#if $detail.comments.length > 0}
     <h2 class="mt-6 text-xs font-semibold tracking-widest text-muted-foreground uppercase">

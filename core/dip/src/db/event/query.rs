@@ -1,4 +1,5 @@
-//! Reads over `event`, `event_tag`, `event_fts` and `event_seen`.
+//! Reads over `event`, `event_tag`, `event_fts`, `event_seen` and
+//! `event_shared`.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -19,6 +20,7 @@ use crate::db::condition::{Conditions, text};
 use crate::db::sql::{event_id_from_sql, placeholders, pubkey_from_sql};
 use crate::model::{
     Authors, Order, PeerPolicy, Provenance, ProvenanceFilter, Query, Register, Registers, Scope,
+    Share,
 };
 
 /// The event columns, in the order [`to_event`] reads them.
@@ -164,6 +166,37 @@ pub fn provenance_for(tx: &Tx<'_>, ids: &[EventId]) -> Result<HashMap<EventId, V
     }
 
     Ok(sightings)
+}
+
+/// Every handoff of any of `ids`, grouped by the event.
+///
+/// The outbound half of [`provenance_for`], and one query for the same reason:
+/// the view asks it of a whole page. An event this device has never handed on is
+/// absent from the map.
+pub fn shares_for(tx: &Tx<'_>, ids: &[EventId]) -> Result<HashMap<EventId, Vec<Share>>> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = placeholders(1, ids.len());
+    let mut prepared = tx.prepare(&format!(
+        "SELECT event_id, pubkey, shared_at FROM event_shared
+         WHERE event_id IN ({placeholders})
+         ORDER BY shared_at ASC, pubkey ASC"
+    ))?;
+
+    // Ordered across the whole set, so each event's handoffs keep that order.
+    let mut shares: HashMap<EventId, Vec<Share>> = HashMap::new();
+
+    for share in prepared
+        .query_map(params_from_iter(ids.iter().map(EventId::to_hex)), to_share)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("reading handoffs for a page of events")?
+    {
+        shares.entry(share.event_id).or_default().push(share);
+    }
+
+    Ok(shares)
 }
 
 /// Which peers an event has been seen from.
@@ -514,6 +547,15 @@ fn to_provenance(row: &Row<'_>) -> rusqlite::Result<Provenance> {
         event_id: event_id_from_sql(&row.get::<_, String>("event_id")?, 0)?,
         pubkey: pubkey_from_sql(&row.get::<_, String>("pubkey")?, 1)?,
         seen_at: row.get("seen_at")?,
+    })
+}
+
+/// Read a row of `event_shared` into one handoff.
+fn to_share(row: &Row<'_>) -> rusqlite::Result<Share> {
+    Ok(Share {
+        event_id: event_id_from_sql(&row.get::<_, String>("event_id")?, 0)?,
+        pubkey: pubkey_from_sql(&row.get::<_, String>("pubkey")?, 1)?,
+        shared_at: row.get("shared_at")?,
     })
 }
 

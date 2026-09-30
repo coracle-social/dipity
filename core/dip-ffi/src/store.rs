@@ -214,10 +214,10 @@ impl Store {
         json_each(&events)
     }
 
-    /// The same events, each with the media it references and the peers it
-    /// arrived from.
+    /// The same events, each with the media it references, the peers it arrived
+    /// from and the peers it has been handed to.
     ///
-    /// Two reads for the page rather than two per event, which is why a feed
+    /// Three reads for the page rather than three per event, which is why a feed
     /// asks for this rather than looping over [`list_events`](Self::list_events).
     pub fn list_details(&self, query: Query) -> Result<Vec<String>, StoreError> {
         let events = query::list_events(&self.db, &query.try_into()?)?;
@@ -283,8 +283,8 @@ impl Store {
 
     /// Drop one event and everything hanging off it. Answers whether it was there.
     ///
-    /// Local and silent: the sightings, the author's signature and the media go
-    /// with the row, and no peer is told. Asking the network to forget
+    /// Local and silent: the sightings, who it was handed to, the author's
+    /// signature and the media go with the row, and no peer is told. Asking the network to forget
     /// something is a kind 5 through [`Node::publish`](crate::node::Node::publish),
     /// which only its author can make. `docs/storage.md#dropping-one-thing`.
     pub fn forget_event(&self, id: String) -> Result<bool, StoreError> {

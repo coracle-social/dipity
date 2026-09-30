@@ -1,4 +1,4 @@
-//! Where an event came from, and selecting on it.
+//! Where an event came from, where it went, and selecting on it.
 
 use std::collections::BTreeSet;
 
@@ -15,6 +15,17 @@ pub struct Provenance {
     pub pubkey: PublicKey,
     /// When it arrived, by the local clock.
     pub seen_at: i64,
+}
+
+/// One handoff: an event, a pubkey it was handed to, and when.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Share {
+    /// The event handed on.
+    pub event_id: EventId,
+    /// The pubkey of the peer it went to.
+    pub pubkey: PublicKey,
+    /// When it was handed over, by the local clock.
+    pub shared_at: i64,
 }
 
 /// Criteria over an event's sightings: when it arrived, and who from.

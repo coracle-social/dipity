@@ -23,7 +23,9 @@ use crate::db::event::query as event;
 use crate::db::pairing::query as pairing;
 use crate::db::pref::query as pref;
 use crate::db::recipient_signature::query as signature;
-use crate::model::{Blob, BlobHash, BlobRole, Policy, Pref, Provenance, Query, RecipientSignature};
+use crate::model::{
+    Blob, BlobHash, BlobRole, Policy, Pref, Provenance, Query, RecipientSignature, Share,
+};
 
 // ----------------------------------------------------- Policy and preferences
 
@@ -66,6 +68,8 @@ pub struct EventDetail {
     pub blobs: Vec<Blob>,
     /// Which peers it arrived from, and when. Never served to a peer.
     pub sightings: Vec<Provenance>,
+    /// Which peers it has been handed to, and when. Never served to a peer.
+    pub shares: Vec<Share>,
 }
 
 /// Events matching every constraint on `query`.
@@ -100,7 +104,7 @@ pub fn get_signature(
 
 /// Attach each event's media and provenance to it.
 ///
-/// Two reads for the page rather than two per event: the caller is the view
+/// Three reads for the page rather than three per event: the caller is the view
 /// rendering a feed, and asking per event made the cost of showing a screen
 /// scale with how much of it is on screen.
 pub fn with_details(db: &Db, events: Vec<HashedEvent>) -> Result<Vec<EventDetail>> {
@@ -114,6 +118,7 @@ pub fn with_details(db: &Db, events: Vec<HashedEvent>) -> Result<Vec<EventDetail
     db.read(|tx| {
         let blobs = blob::list_for_events(tx, &ids)?;
         let sightings = event::provenance_for(tx, &ids)?;
+        let shares = event::shares_for(tx, &ids)?;
 
         Ok(events
             .into_iter()
@@ -123,6 +128,7 @@ pub fn with_details(db: &Db, events: Vec<HashedEvent>) -> Result<Vec<EventDetail
                 EventDetail {
                     blobs: blobs.get(&id).cloned().unwrap_or_default(),
                     sightings: sightings.get(&id).cloned().unwrap_or_default(),
+                    shares: shares.get(&id).cloned().unwrap_or_default(),
                     event,
                 }
             })

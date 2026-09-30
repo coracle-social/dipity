@@ -2,9 +2,9 @@
 //
 // The shapes are the core's and come from `$lib/core`, which is where the
 // bridge contract is written down: an event is a `HashedEvent`, a sighting is a
-// row of `event_seen`, and a blob is `model::blob::Blob` in snake_case, because
-// what crosses the bridge is serde JSON of the Rust types.
-// `docs/storage.md#the-schema`.
+// row of `event_seen`, a share is a row of `event_shared`, and a blob is
+// `model::blob::Blob` in snake_case, because what crosses the bridge is serde
+// JSON of the Rust types. `docs/storage.md#the-schema`.
 
 import {
   getIdOrAddress,
@@ -71,7 +71,8 @@ export class Store {
     const known = this.details.get(event.id)
 
     if (known) {
-      known.sightings.push(sighting)
+      // One sighting per peer, which is what `event_seen`'s primary key enforces.
+      if (!known.sightings.some(seen => seen.pubkey === from)) known.sightings.push(sighting)
 
       return false
     }
@@ -88,7 +89,23 @@ export class Store {
 
     if (current) this.forget(current.event.id)
 
-    this.details.set(event.id, {event, blobs, sightings: [sighting]})
+    this.details.set(event.id, {event, blobs, sightings: [sighting], shares: []})
+
+    return true
+  }
+
+  /**
+   * Record that an event was handed to a peer, answering whether that is new.
+   *
+   * One row per peer, the way `event_shared`'s primary key is: serving somebody
+   * what they already have is reconciliation rather than another share.
+   */
+  share(id: string, pubkey: string, at: number) {
+    const detail = this.details.get(id)
+
+    if (!detail || detail.shares.some(share => share.pubkey === pubkey)) return false
+
+    detail.shares.push({event_id: id, pubkey, shared_at: at})
 
     return true
   }

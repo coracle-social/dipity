@@ -174,7 +174,10 @@ export class Simulator extends WebPlugin implements DipCore {
       )
     }
 
-    for (const person of known) await this.respond(person, at - faker.number.int(6 * HOUR))
+    for (const person of known) {
+      await this.respond(person, at - faker.number.int(6 * HOUR))
+      this.handOn(person, 6, at - faker.number.int(6 * HOUR))
+    }
   }
 
   /**
@@ -270,6 +273,24 @@ export class Simulator extends WebPlugin implements DipCore {
     return detail
   }
 
+  /**
+   * What this device hands the peer: whatever it holds that they did not bring.
+   *
+   * The core serves a peer's `REQ` out of the store and records who each event
+   * went to, which is what a detail screen reads. None of the negotiation is
+   * modelled — the observable shape is that somebody on an open link leaves
+   * with things.
+   */
+  private handOn(person: Person, count: number, at: number) {
+    const unheld = this.store
+      .list({order: "seenAt", filter: JSON.stringify({limit: 30})})
+      .filter(detail => !detail.sightings.some(sighting => sighting.pubkey === person.pubkey))
+
+    for (const detail of faker.helpers.arrayElements(unheld, {min: 0, max: count})) {
+      this.store.share(detail.event.id, person.pubkey, at)
+    }
+  }
+
   /** Everything one encounter produces: a gate if they are a stranger, then a burst. */
   private async encounter() {
     const person = faker.helpers.arrayElement(people)
@@ -355,6 +376,7 @@ export class Simulator extends WebPlugin implements DipCore {
 
     if (faker.datatype.boolean({probability: 0.5})) await this.respond(person, at)
 
+    this.handOn(person, 3, at)
     this.notifyListeners("storeChanged", {group: "events"})
     log(`${short(person.pubkey)} handed over ${count} (${fresh} new)`)
   }

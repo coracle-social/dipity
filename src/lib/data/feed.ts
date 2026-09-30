@@ -38,6 +38,8 @@ export type Item = {
   lastSeenAt: number
   /** The peers it was seen from, earliest first. Never leaves the device. */
   from: string[]
+  /** The peers this device passed it to, earliest first. Never leaves the device. */
+  to: string[]
 }
 
 /** How far through its retention window an item is. */
@@ -70,11 +72,12 @@ export type Standing = {
   saying: number
 }
 
-const toItem = ({event, sightings}: EventDetail): Item => ({
+const toItem = ({event, sightings, shares}: EventDetail): Item => ({
   event,
   seenAt: Math.min(...sightings.map(sighting => sighting.seen_at)),
   lastSeenAt: Math.max(...sightings.map(sighting => sighting.seen_at)),
   from: sightings.map(sighting => sighting.pubkey),
+  to: shares.map(share => share.pubkey),
 })
 
 const nothing = (): Response => ({boosts: [], reactions: [], votes: []})

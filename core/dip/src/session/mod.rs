@@ -771,7 +771,9 @@ impl Session {
             return Ok(());
         }
 
-        for subscription in self.relay.matching(event) {
+        let subscriptions = self.relay.matching(event);
+
+        for subscription in &subscriptions {
             let mut messages = vec![Message::Event(
                 subscription.clone(),
                 Box::new(event.clone()),
@@ -781,7 +783,7 @@ impl Session {
                 db,
                 &peer,
                 &self.custody.identity()?,
-                &subscription,
+                subscription,
                 event,
                 &mut messages,
             )?;
@@ -789,6 +791,10 @@ impl Session {
             for message in messages {
                 self.send_sync(&message)?;
             }
+        }
+
+        if !subscriptions.is_empty() {
+            relay::record_shares(db, &peer, std::slice::from_ref(event))?;
         }
 
         Ok(())

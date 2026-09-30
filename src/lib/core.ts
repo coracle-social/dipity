@@ -69,6 +69,9 @@ export type Query = {
  */
 export type Sighting = {event_id: string; pubkey: string; seen_at: number}
 
+/** One row of `event_shared`: which peer this device handed an event to, and when. */
+export type Share = {event_id: string; pubkey: string; shared_at: number}
+
 /** A blob an event references, whether or not this device holds the bytes. */
 export type Blob = {
   sha256: string
@@ -87,14 +90,19 @@ export type Blob = {
 }
 
 /**
- * What `listDetails` answers per event: the thing, its media, and how it got
- * here.
+ * What `listDetails` answers per event: the thing, its media, and everywhere it
+ * has been in both directions.
  *
  * A stored event is a `HashedEvent`, the same name coracle-lib gives it,
  * because content events are never signed — authorship is shown to one peer at
  * a time instead. `docs/proofs.md#events-are-not-signed`.
  */
-export type EventDetail = {event: HashedEvent; blobs: Blob[]; sightings: Sighting[]}
+export type EventDetail = {
+  event: HashedEvent
+  blobs: Blob[]
+  sightings: Sighting[]
+  shares: Share[]
+}
 
 /** One stored preference. */
 export type Pref = {key: string; value: string; updatedAt: number}
@@ -163,10 +171,10 @@ export type DipCore = {
   listEvents(options?: Query): Promise<{events: string[]}>
 
   /**
-   * The same events, each with the media it references and the peers it
-   * arrived from.
+   * The same events, each with the media it references, the peers it arrived
+   * from and the peers it has been handed to.
    *
-   * Two reads for the page rather than two per event, so a feed asks for this
+   * Three reads for the page rather than three per event, so a feed asks for this
    * rather than looping over `listEvents`.
    */
   listDetails(options?: Query): Promise<{details: string[]}>
@@ -177,8 +185,8 @@ export type DipCore = {
   /**
    * Drop one event from this device. Answers whether it was there.
    *
-   * Local and silent: the sightings, the author's signature and the media go
-   * with it and no peer is told. Asking the network to forget something is a
+   * Local and silent: the sightings, who it was handed to, the author's
+   * signature and the media go with it and no peer is told. Asking the network to forget something is a
    * kind 5 through `publish`, which only its author can make.
    */
   forgetEvent(options: {id: string}): Promise<{existed: boolean}>

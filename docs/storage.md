@@ -10,6 +10,7 @@ Where events live, who can answer a query, and what happens while the app is asl
 | `event_fts` | Full-text index over content, for search. |
 | `event_tag` | One row per tag, so NIP-01 tag filters are an index lookup. |
 | `event_seen` | `event_id`, `seen_at`, `peer_pubkey`. Unique on (`event_id`, `peer_pubkey`). |
+| `event_shared` | `event_id`, `pubkey`, `shared_at`. Unique on (`event_id`, `pubkey`). One row per peer this device has handed an event to, written where the event is served. Provenance in the other direction from `event_seen`, so it is never served either, and a later handoff to the same peer is ignored — a row says this device carried something to somebody rather than how often it answered for it. |
 | `recipient_signature` | `event_id`, `author_pubkey`, `recipient_pubkey`, `sig`. Unique on (`event_id`, `recipient_pubkey`). The author's signature naming a recipient, held by the peer it names. It is the witness an [authorship proof](./proofs.md#authorship-proofs) is built from, never the proof itself, and it is never served to a peer. The author is carried rather than joined, since a signature without the key it is by neither verifies nor proves; a composite foreign key onto `event (id, pubkey)` is what keeps the copy honest. |
 | `pref` | A key/value store for storing app policies and ui preferences. |
 | `blob` | A mapping of blob sha256 to the metadata in the `imeta` tag of the first event seen to reference it, plus how much of the file is on disk. |
@@ -59,7 +60,7 @@ It runs when the core opens and at most hourly after that. Opening is the moment
 
 ## Dropping one thing
 
-The sweep is the device deciding; dropping is the user deciding. Either removes the event, its sightings, the author's signature over it and the media it references, and both go through the same delete.
+The sweep is the device deciding; dropping is the user deciding. Either removes the event, its sightings, the record of who it was handed to, the author's signature over it and the media it references, and both go through the same delete.
 
 Dropping is local and tells nobody. A device holds somebody else's writing at their author's sufferance and can stop holding it at any time, but it cannot ask the neighbourhood to do the same — only the author can, by publishing a kind 5, which travels the way the event did and is a request rather than an instruction. So the two are separate operations and the screen says which one it is offering.
 

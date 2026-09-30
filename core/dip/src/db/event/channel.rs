@@ -1,6 +1,7 @@
 //! Change notifications for the event tables.
 //!
-//! Every write to `event`, `event_tag`, `event_fts` or `event_seen` announces
+//! Every write to `event`, `event_tag`, `event_fts`, `event_seen` or
+//! `event_shared` announces
 //! itself here once its transaction commits. Two subscribers matter: the view,
 //! which re-reads to stay live, and the session layer, which forwards a stored
 //! event to whoever is currently connected — which is what makes gossip
@@ -29,6 +30,9 @@ pub enum EventChange {
     Stored(Box<HashedEvent>),
     /// An event already stored was seen from another peer.
     Seen(Provenance),
+    /// An event was handed to a peer it had not been handed to before. Carries
+    /// its id, as lowercase hex.
+    Shared(String),
     /// An event was removed — superseded, deleted by its author, or forgotten.
     /// Carries its id, as lowercase hex.
     Deleted(String),

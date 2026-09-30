@@ -46,7 +46,7 @@ pub use kinds::{
 pub use order::Order;
 pub use policy::{DISCLOSURE_WINDOW_SECONDS, PeerPolicy, Policy};
 pub use pref::{Pref, keys};
-pub use provenance::{Provenance, ProvenanceFilter};
+pub use provenance::{Provenance, ProvenanceFilter, Share};
 pub use query::Query;
 pub use recipient_signature::RecipientSignature;
 pub use registers::{Register, Registers};
