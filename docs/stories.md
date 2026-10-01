@@ -71,7 +71,7 @@ Four facts about the transport decide most of the interface, and every story bel
 39. The user decides who may see what they publish. — `Settings`
 40. The user decides how long a thing carried for somebody else stays on the device. — `Settings`
 41. The user decides how long the device keeps answering strangers after the app goes into the pocket, and how many strangers it will name itself to. — `Settings`
-42. The user writes the key down somewhere safe. — `Settings`
+42. The user writes the key down somewhere safe, locked with a password if they choose, and a key made on this phone is written down before anything else happens. — `KeyBackup`, in `Settings` and `FirstRun`
 43. The user puts their key on a second phone, so both phones are them. — `DeviceLogin`
 44. The user takes the key off their other phone, and this one stops being the identity it made at first run. — `DeviceLogin`
 

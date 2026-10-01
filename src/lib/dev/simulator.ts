@@ -527,7 +527,11 @@ export class Simulator extends WebPlugin implements DipCore {
 
   // ---------------------------------------------------- key and its transfer
 
-  async exportKey() {
+  async exportKey({password}: {password?: string} = {}) {
+    if (password !== undefined && password.length < 12) {
+      throw new Error("a backup password has to be at least 12 characters")
+    }
+
     log("wrote a key backup and put it in front of the user")
     this.notifyListeners("keyBackupShared", {shared: true})
   }

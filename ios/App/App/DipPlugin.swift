@@ -1,5 +1,6 @@
 import Capacitor
 import Foundation
+import LocalAuthentication
 import UIKit
 
 /// The webview's end of the core.
@@ -217,7 +218,9 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// file was shared or dismissed. Answers once the sheet closes, which is
     /// also when the file goes. `docs/keys.md#backup`.
     @objc func exportKey(_ call: CAPPluginCall) {
-        onMain { self.export(into: call) }
+        onMain {
+            self.confirmOwner("Save a copy of your key", or: call) { self.export(into: call) }
+        }
     }
 
     private func export(into call: CAPPluginCall) {
@@ -248,8 +251,12 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func offerIdentity(_ call: CAPPluginCall) {
         guard let link = link(call) else { return call.reject("offerIdentity needs a link") }
 
-        perform(call, "that identity could not be offered") {
-            try $0.node.offerIdentity(link: link)
+        onMain {
+            self.confirmOwner("Put your key on another phone", or: call) {
+                self.perform(call, "that identity could not be offered") {
+                    try $0.node.offerIdentity(link: link)
+                }
+            }
         }
     }
 
@@ -440,6 +447,26 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
                 call.resolve()
             } catch {
                 call.reject(failure, nil, error)
+            }
+        }
+    }
+
+    /// Ask whoever holds the phone to prove they own it before the key leaves,
+    /// rejecting `call` if they do not. A phone with no passcode has nothing to
+    /// ask and goes straight through. `docs/keys.md#backup`.
+    private func confirmOwner(
+        _ reason: String, or call: CAPPluginCall, then: @escaping () -> Void
+    ) {
+        let context = LAContext()
+        var unavailable: NSError?
+
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &unavailable) else {
+            return then()
+        }
+
+        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { confirmed, _ in
+            DispatchQueue.main.async {
+                confirmed ? then() : call.reject("the owner did not confirm")
             }
         }
     }

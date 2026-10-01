@@ -1,13 +1,13 @@
 <script lang="ts">
   import Check from "@lucide/svelte/icons/check"
-  import Download from "@lucide/svelte/icons/download"
   import Smartphone from "@lucide/svelte/icons/smartphone"
   import {Button} from "$lib/components/ui/button"
   import {Input} from "$lib/components/ui/input"
   import * as InputGroup from "$lib/components/ui/input-group"
   import {Label} from "$lib/components/ui/label"
   import {Separator} from "$lib/components/ui/separator"
-  import {Dip, type Scope} from "$lib/core"
+  import KeyBackup from "$lib/components/KeyBackup.svelte"
+  import type {Scope} from "$lib/core"
   import {go} from "$lib/data/nav"
   import {
     policy,
@@ -20,36 +20,6 @@
     setVisibility,
   } from "$lib/data/policy"
   import {npubOf, session} from "$lib/data/session"
-
-  // The share sheet answers through a listener, so the button cannot report on its own.
-  let backup = $state<"asking" | "shared" | "dropped" | "failed" | undefined>(undefined)
-
-  $effect(() => {
-    const listening = Dip.addListener("keyBackupShared", ({shared}) => {
-      backup = shared ? "shared" : "dropped"
-    })
-
-    return () => {
-      listening.then(handle => handle.remove()).catch(() => undefined)
-    }
-  })
-
-  const exportKey = async () => {
-    backup = "asking"
-
-    try {
-      await Dip.exportKey()
-    } catch (error) {
-      backup = "failed"
-      console.error("the key could not be written", error)
-    }
-  }
-
-  const backupSaid: Record<string, string> = {
-    shared: "Written. Keep it somewhere that is not this phone.",
-    dropped: "Nothing took a copy, so there is still only one.",
-    failed: "The file could not be written. Try again.",
-  }
 
   const tiers = $derived([
     {
@@ -200,16 +170,9 @@
   </p>
 {/if}
 
-<Button class="mt-4" variant="secondary" disabled={backup === "asking"} onclick={exportKey}>
-  <Download />
-  Save a copy somewhere safe
-</Button>
-
-{#if backup && backupSaid[backup]}
-  <p class="mt-2 text-sm {backup === 'shared' ? 'text-secondary-accent' : 'text-destructive'}">
-    {backupSaid[backup]}
-  </p>
-{/if}
+<div class="mt-4">
+  <KeyBackup />
+</div>
 
 <p class="mt-2 text-xs text-pretty text-muted-foreground">
   This is the only proof that your things are yours. Lose the phone without a copy of it and you

@@ -232,7 +232,9 @@ class DipPlugin : Plugin(), Radio.Delegate {
     fun offerIdentity(call: PluginCall) {
         val link = link(call) ?: return call.reject("offerIdentity needs a link")
 
-        perform(call, "that identity could not be offered") { it.node.offerIdentity(link) }
+        OwnerCheck.confirm(activity, "Put your key on another phone", call) {
+            perform(call, "that identity could not be offered") { it.node.offerIdentity(link) }
+        }
     }
 
     /** The user answered a `confirmIdentityTransfer` the plugin sent up. */
@@ -284,6 +286,10 @@ class DipPlugin : Plugin(), Radio.Delegate {
      */
     @PluginMethod
     fun exportKey(call: PluginCall) {
+        OwnerCheck.confirm(activity, "Save a copy of your key", call) { export(call) }
+    }
+
+    private fun export(call: PluginCall) {
         val core = this.core ?: return call.reject("exportKey needs a started core")
 
         // One chooser means one call waiting on it, so whoever this displaces
