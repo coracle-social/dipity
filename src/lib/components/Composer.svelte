@@ -12,7 +12,7 @@
   import {dismissable} from "$lib/data/nav"
   import type {Scope} from "$lib/core"
   import {policy} from "$lib/data/policy"
-  import {categories} from "$lib/kinds"
+  import {categories, summaryOf} from "$lib/kinds"
 
   let {
     open = $bindable(false),
@@ -25,6 +25,13 @@
 
   $effect(() => {
     if (open) return dismissable(() => (open = false))
+  })
+
+  // What the user says about something they pass on is about that one thing, so it goes when the drawer does.
+  let remark = $state("")
+
+  $effect(() => {
+    if (!open) remark = ""
   })
 
   // Passing something on is already about something; everything else picks its own shape.
@@ -75,7 +82,7 @@
   })
 
   const written = () => {
-    if (about) return boostItem(about, content)
+    if (about) return boostItem(about, remark)
 
     if (shape === "notes") return write(content)
 
@@ -96,12 +103,16 @@
     try {
       await written()
 
-      content = ""
-      title = ""
-      summary = ""
-      where = ""
-      when = ""
-      options = ["", ""]
+      // Passing something on leaves the user's own draft where it was.
+      if (!about) {
+        content = ""
+        title = ""
+        summary = ""
+        where = ""
+        when = ""
+        options = ["", ""]
+      }
+
       open = false
     } catch (error) {
       failed = true
@@ -127,9 +138,9 @@
       {#if about}
         <p
           class="line-clamp-2 rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">
-          {about.event.content}
+          {summaryOf(about.event)}
         </p>
-        <Textarea bind:value={content} class="min-h-32" placeholder="Anything to add?" />
+        <Textarea bind:value={remark} class="min-h-32" placeholder="Anything to add?" />
       {:else}
         <DropdownMenu.Root>
           <DropdownMenu.Trigger>
@@ -221,7 +232,7 @@
         </p>
       {/if}
       <Button size="lg" disabled={!ready || sending} onclick={send}>
-        {about && !content.trim() ? "Send it on as it is" : "Send it out"}
+        {about && !remark.trim() ? "Send it on as it is" : "Send it out"}
       </Button>
       <Button variant="ghost" size="lg" onclick={() => (open = false)}>Nevermind</Button>
     </Drawer.Footer>
