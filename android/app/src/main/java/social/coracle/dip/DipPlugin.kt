@@ -1,6 +1,8 @@
 package social.coracle.dip
 
 import android.Manifest
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.ActivityResult
 import com.getcapacitor.JSObject
@@ -36,6 +38,9 @@ import uniffi.dip_ffi.outcomeName
 
 /** The three permissions the radio needs on 31+, asked for together. */
 private const val RADIO_PERMISSIONS = "radio"
+
+/** How long a shared backup stays on disk for the app it went to, in milliseconds. */
+private const val SHARE_GRACE = 5 * 60 * 1000L
 
 /**
  * The webview's end of the core.
@@ -154,7 +159,8 @@ class DipPlugin : Plugin(), Radio.Delegate {
      */
     @PluginMethod
     fun start(call: PluginCall) {
-        if (core != null) return call.resolve()
+        // A reloaded webview starts again over the same plugin, and is owed the same answer.
+        core?.let { return call.resolve(JSObject().put("identity", it.node.identity())) }
 
         if (getPermissionState(RADIO_PERMISSIONS) != com.getcapacitor.PermissionState.GRANTED) {
             return requestPermissionForAlias(RADIO_PERMISSIONS, call, "radioGranted")
@@ -317,7 +323,8 @@ class DipPlugin : Plugin(), Radio.Delegate {
     fun keyBackupClosed(call: PluginCall, result: ActivityResult) {
         notifyListeners("keyBackupShared", JSObject().put("shared", backup?.taken == true))
 
-        drive { it.keyExportFinished() }
+        // The chooser returns once an app is picked, which may read the file after; it goes later.
+        Handler(Looper.getMainLooper()).postDelayed({ drive { it.keyExportFinished() } }, SHARE_GRACE)
         call.resolve()
     }
 
@@ -697,12 +704,12 @@ class DipPlugin : Plugin(), Radio.Delegate {
      * the path on this side of the bridge.
      */
     private fun share(file: File) {
-        val call = exporting ?: return
+        val call = exporting ?: return abandonShare(null, "nobody is waiting on the backup")
         val backup = this.backup
 
         exporting = null
 
-        if (backup == null) return call.reject("there is nowhere to offer the backup")
+        if (backup == null) return abandonShare(call, "there is nowhere to offer the backup")
 
         startActivityForResult(call, backup.chooser(file), "keyBackupClosed")
     }
@@ -726,6 +733,12 @@ class DipPlugin : Plugin(), Radio.Delegate {
         lifecycle = null
         backup = null
         core = null
+    }
+
+    /** A backup that cannot be shared is deleted rather than left on disk, plaintext or not. */
+    private fun abandonShare(call: PluginCall?, reason: String) {
+        call?.reject(reason)
+        drive { it.keyExportFinished() }
     }
 
     /** Write an identity and answer the npub, which is all the view is owed. */

@@ -343,7 +343,8 @@ impl Node {
         self.after_receiving(link, received)
     }
 
-    /// End the link if reading it failed, and collect either way.
+    /// End the link if reading it, or answering on it, failed, and collect
+    /// either way.
     fn after_receiving(&mut self, link: LinkId, received: Result<()>) -> Vec<Action> {
         let Err(error) = received else {
             return self.collect();
@@ -420,17 +421,20 @@ impl Node {
     ///
     /// The link may already be down — a channel the shell was opening comes
     /// back after a disconnect as readily as before one — and an answer with no
-    /// session left to hear it is dropped rather than being an error.
+    /// session left to hear it is dropped rather than being an error. One the
+    /// session cannot take ends it, the way a frame it cannot read does, so the
+    /// shell is told to disconnect and the session does not hold its slot.
     fn on_session(
         &mut self,
         link: LinkId,
         answer: impl FnOnce(&mut Session) -> Result<()>,
     ) -> Result<Vec<Action>> {
-        if let Some(session) = self.sessions.get_mut(&link) {
-            answer(session)?;
-        }
+        let answered = match self.sessions.get_mut(&link) {
+            Some(session) => answer(session),
+            None => Ok(()),
+        };
 
-        Ok(self.collect())
+        Ok(self.after_receiving(link, answered))
     }
 
     /// Release the next write on one pipe.
@@ -1756,6 +1760,16 @@ mod tests {
             settle(&mut source, &mut target, backgrounded)
                 .contains(&Action::IdentityTransfer(LinkId(1), Outcome::Refused))
         );
+    }
+
+    #[test]
+    fn an_unusable_l2cap_channel_leaves_the_link_on_gatt() {
+        let (mut dialer, _receiver) = attended_pair();
+
+        let actions = dialer.l2cap_opened(LinkId(1), 1).unwrap();
+
+        assert!(!actions.contains(&Action::Disconnect(LinkId(1))));
+        assert_eq!(dialer.sessions[&LinkId(1)].state, State::Syncing);
     }
 
     #[test]

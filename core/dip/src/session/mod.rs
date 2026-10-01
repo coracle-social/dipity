@@ -691,8 +691,16 @@ impl Session {
     }
 
     /// The channel is up: bulk moves onto it at its MTU.
+    ///
+    /// A channel too small to carry a fragment is one this link does without,
+    /// rather than a reason to end it: the upgrade is bandwidth.
     pub fn l2cap_opened(&mut self, mtu: usize) -> Result<()> {
-        self.wire.open_bulk(mtu)?;
+        if let Err(error) = self.wire.open_bulk(mtu) {
+            log::warn!("staying on GATT on {:?}: {error:#}", self.link);
+
+            return self.l2cap_unavailable();
+        }
+
         self.upgrade.opened();
 
         Ok(())

@@ -127,7 +127,14 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// makes first run a screen rather than a failed open.
     @objc func start(_ call: CAPPluginCall) {
         onMain {
-            guard self.core == nil else { return call.resolve() }
+            // A reloaded webview starts again over the same plugin, and is owed the same answer.
+            if let core = self.core {
+                do {
+                    return call.resolve(["identity": try core.node.identity()])
+                } catch {
+                    return call.reject("the core could not say who it is", nil, error)
+                }
+            }
 
             self.open(into: call)
         }
@@ -602,6 +609,8 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
 
         DispatchQueue.main.async { [weak self] in
             guard let controller = self?.bridge?.viewController else {
+                // A backup that cannot be shared is deleted rather than left on disk.
+                self?.drive { try $0.keyExportFinished() }
                 call?.reject("there is nowhere to present the backup")
                 return
             }
