@@ -536,7 +536,11 @@ class DipPlugin : Plugin(), Radio.Delegate {
                 is Action.Scan -> radio.scan(action.on)
                 is Action.Advertise -> radio.advertise(action.on)
                 is Action.Connect -> radio.connect(action.peripheral.value)
-                is Action.Disconnect -> radio.disconnect(action.link.value)
+                is Action.Disconnect -> {
+                    // The view hears about a link the core ended as it does about one the radio lost.
+                    radio.disconnect(action.link.value)
+                    notifyListeners("linkClosed", JSObject().put("link", action.link.value.toLong()))
+                }
                 is Action.Send -> radio.send(action.link.value, action.fragment)
                 is Action.RequestApproval ->
                     notifyListeners(

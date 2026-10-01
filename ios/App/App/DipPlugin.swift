@@ -518,7 +518,9 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
             case .connect(let peripheral):
                 radio.connect(peripheral.value)
             case .disconnect(let link):
+                // The view hears about a link the core ended as it does about one the radio lost.
                 radio.disconnect(link.value)
+                notifyListeners("linkClosed", data: ["link": Int(link.value)])
             case .send(let link, let fragment):
                 radio.send(link.value, fragment)
             case .requestApproval(let link, let code):

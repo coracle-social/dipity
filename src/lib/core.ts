@@ -317,10 +317,10 @@ export type DipCore = {
     handler: (peer: PeerIdentity) => void,
   ): Promise<PluginListenerHandle>
   /**
-   * A link went down, whoever was on it.
+   * A link went down, whoever was on it and whichever end ended it: the radio
+   * losing it, or the core closing it, a lapsed consent gate included.
    *
-   * The core is told the same thing and closes the session; this is so a screen
-   * offering something over a named link stops offering it.
+   * This is so a screen offering something over a named link stops offering it.
    */
   addListener(
     event: "linkClosed",

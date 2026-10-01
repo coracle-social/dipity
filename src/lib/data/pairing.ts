@@ -20,34 +20,46 @@ const pending = writable<Request[]>([])
 /**
  * Who is asking, oldest first.
  *
- * A lapsed gate is silent — the core closes the link and announces nothing — so
- * a request leaves on the five-minute hold the gate gives the user.
+ * A request leaves when its link closes, which is the person walking away or
+ * the gate's five-minute hold lapsing; the shell reports both. The hold is
+ * also kept here, for a link whose close nobody heard.
  */
 export const requests: Readable<Request[]> = readable<Request[]>([], set => {
   let live = true
-  let handle: PluginListenerHandle | undefined
+  const handles: PluginListenerHandle[] = []
   const unsubscribe = pending.subscribe(set)
+
+  const hold = (listening: Promise<PluginListenerHandle>) =>
+    listening
+      .then(listener => {
+        handles.push(listener)
+
+        if (!live) listener.remove()
+      })
+      .catch(() => undefined)
 
   const lapse = setInterval(
     () => pending.update(waiting => waiting.filter(({asked}) => Date.now() - asked < 5 * 60_000)),
     10_000,
   )
 
-  Dip.addListener("requestApproval", ({link, code}) =>
-    pending.update(waiting => [...waiting, {link, code, asked: Date.now()}]),
+  hold(
+    Dip.addListener("requestApproval", ({link, code}) =>
+      pending.update(waiting => [...waiting, {link, code, asked: Date.now()}]),
+    ),
   )
-    .then(listener => {
-      handle = listener
 
-      if (!live) listener.remove()
-    })
-    .catch(() => undefined)
+  hold(
+    Dip.addListener("linkClosed", ({link}) =>
+      pending.update(waiting => waiting.filter(request => request.link !== link)),
+    ),
+  )
 
   return () => {
     live = false
     clearInterval(lapse)
     unsubscribe()
-    handle?.remove()
+    handles.forEach(handle => handle.remove())
   }
 })
 
