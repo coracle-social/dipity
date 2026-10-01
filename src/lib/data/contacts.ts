@@ -184,8 +184,16 @@ const amend = async (
 export const setTrusted = (pubkey: string, trusted: boolean) =>
   amend(trust, get(social).own.trust, pubkey, trusted)
 
-export const setBlocked = (pubkey: string, blocked: boolean) =>
-  amend(block, get(social).own.block, pubkey, blocked)
+/** Block somebody, which takes them off the trust list too: a block is a veto over trust. */
+export const setBlocked = async (pubkey: string, blocked: boolean) => {
+  const current = get(social)
+
+  if (blocked && current.people.get(pubkey)?.trusted) {
+    await amend(trust, current.own.trust, pubkey, false)
+  }
+
+  await amend(block, current.own.block, pubkey, blocked)
+}
 
 export const setMuted = (pubkey: string, muted: boolean) =>
   amend(mute, get(social).own.mute, pubkey, muted)

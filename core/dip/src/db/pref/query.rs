@@ -112,20 +112,27 @@ pub fn policy(tx: &Tx<'_>, identity: &PublicKey) -> Result<Policy> {
 /// the tier until it meant nothing, and a person two hops out is reachable
 /// rather than trusted. `docs/policy.md#social-graph`.
 ///
+/// Block is a veto over both tiers: a blocked person is neither trusted nor in
+/// the network, and their trust list adds nobody, whatever else names them.
+///
 /// One indexed lookup per trusted pubkey, plus three. This runs when a session
 /// opens and when a preference changes, not per event.
 fn graph(tx: &Tx<'_>, identity: &PublicKey) -> Result<Graph> {
-    let trusted = listed::<TRUST>(tx, identity)?;
+    let blocked = listed::<BLOCK>(tx, identity)?;
+    let trusted: BTreeSet<PublicKey> = listed::<TRUST>(tx, identity)?
+        .difference(&blocked)
+        .copied()
+        .collect();
     let mut network = BTreeSet::new();
 
     for pubkey in &trusted {
-        network.extend(listed::<TRUST>(tx, pubkey)?);
+        network.extend(listed::<TRUST>(tx, pubkey)?.difference(&blocked));
     }
 
     Ok(Graph {
         trusted,
         network,
-        blocked: listed::<BLOCK>(tx, identity)?,
+        blocked,
         muted: listed::<MUTE>(tx, identity)?,
     })
 }
@@ -226,6 +233,24 @@ mod tests {
         assert_eq!(graph.standing(&author(2)), Standing::Trusted);
         assert_eq!(graph.standing(&author(4)), Standing::Blocked);
         assert_eq!(graph.standing(&author(9)), Standing::Stranger);
+    }
+
+    #[test]
+    fn a_blocked_person_is_in_no_tier_and_their_trust_list_adds_nobody() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let us = author(1);
+
+        publish_list(&tx, us, TRUST, &[author(2), author(3)], 100);
+        publish_list(&tx, us, BLOCK, &[author(2), author(6)], 100);
+        publish_list(&tx, author(2), TRUST, &[author(5)], 100);
+        publish_list(&tx, author(3), TRUST, &[author(6)], 100);
+
+        let graph = policy(&tx, &us).unwrap().graph;
+
+        assert_eq!(graph.trusted, [author(3)].into());
+        assert!(graph.network.is_empty());
+        assert_eq!(graph.standing(&author(5)), Standing::Stranger);
     }
 
     #[test]
