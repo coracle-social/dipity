@@ -230,6 +230,14 @@ impl Node {
         self.identity
     }
 
+    /// The policy every live session is bound to, as
+    /// [`policy_changed`](Self::policy_changed) last compiled it, and the one
+    /// a screen draws.
+    #[must_use]
+    pub fn policy(&self) -> &Policy {
+        &self.policy
+    }
+
     // --------------------------------------- Radio events, all from the shell
 
     /// A peripheral advertising our service UUID was seen.

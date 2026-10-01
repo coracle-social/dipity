@@ -46,7 +46,7 @@
   const chosen = $derived(nounOf(shape))
 
   const reach = $derived(
-    $policy.forward === "nothing"
+    $policy?.forward === "nothing"
       ? "Only people you personally come into contact with will see this."
       : "They'll be able to pass it forward one time.",
   )

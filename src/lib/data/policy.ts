@@ -1,54 +1,13 @@
 // What the device does on its own, which is a preference because nobody is
 // awake to be asked during a background wake.
 //
-// The core reads these keys and compiles them; the view writes them and
-// computes nothing the core depends on. Every value is a JSON document, and the
-// defaults below are the core's own restated so a screen has something to draw
-// before the read lands. `docs/policy.md`.
+// The core compiles the preferences into a policy and answers it with its own
+// defaults filled in, so nothing here restates them. The writes go back one key
+// at a time as JSON documents. `docs/policy.md`.
 
 import {get, type Readable} from "svelte/store"
-import {Dip, type Pref} from "$lib/core"
-import {answering, parsed, storedPreferences} from "$lib/data/query"
-
-/** The tiers every setting is expressed on, narrowest first. */
-export type Scope = "nothing" | "trusted" | "network" | "lenient" | "public"
-
-/** Who may see an event no rule matches, and the rules that come first. */
-export type Visibility = {rules: {filter: unknown; scope: Scope}[]; default: Scope}
-
-/** Everything the settings screen edits. */
-export type Policy = {
-  accept: Scope
-  gossip: Scope
-  forward: Scope
-  visibility: Visibility
-  retentionDays: number
-  coolOffMinutes: number
-  disclosureBudget: number
-}
-
-/**
- * The core's own defaults, from `Policy::new`.
- *
- * The visibility rules are part of them rather than an empty list: an edit
- * writes the whole document back, so a missing rule would publish the user's
- * trust list to anyone who connects and serve their bookmarks to every peer.
- */
-const defaults: Policy = {
-  accept: "lenient",
-  gossip: "network",
-  forward: "trusted",
-  visibility: {
-    rules: [
-      {filter: {kinds: [10_000, 16_017, 16_018]}, scope: "trusted"},
-      {filter: {kinds: [10_003]}, scope: "nothing"},
-    ],
-    default: "public",
-  },
-  retentionDays: 30,
-  coolOffMinutes: 10,
-  disclosureBudget: 10,
-}
+import {Dip, type Policy, type Scope} from "$lib/core"
+import {answering, storedPreferences} from "$lib/data/query"
 
 const keys = {
   accept: "policy.accept",
@@ -60,23 +19,27 @@ const keys = {
   disclosureBudget: "policy.disclosure_budget",
 } as const
 
-const read = async (): Promise<Policy> => {
-  const {preferences} = await Dip.preferences().catch(() => ({preferences: [] as Pref[]}))
-  const at = <Value>(key: string, fallback: Value) =>
-    parsed(key, preferences.find(stored => stored.key === key)?.value ?? null, fallback)
+const read = (): Promise<Policy | undefined> =>
+  Dip.policy()
+    .then(({policy}) => JSON.parse(policy) as Policy)
+    .catch(error => {
+      console.error("the policy could not be read", error)
 
-  return {
-    accept: at(keys.accept, defaults.accept),
-    gossip: at(keys.gossip, defaults.gossip),
-    forward: at(keys.forward, defaults.forward),
-    visibility: at(keys.visibility, defaults.visibility),
-    retentionDays: at(keys.retentionDays, defaults.retentionDays),
-    coolOffMinutes: at(keys.coolOffMinutes, defaults.coolOffMinutes),
-    disclosureBudget: at(keys.disclosureBudget, defaults.disclosureBudget),
-  }
-}
+      return undefined
+    })
 
-export const policy: Readable<Policy> = answering(storedPreferences, read, defaults)
+/**
+ * The policy the core is applying, once it has said what it is.
+ *
+ * Undefined until the first read lands, so a screen draws nothing for a frame
+ * rather than a guess. A wrong retention window reads as a thing about to be
+ * dropped.
+ */
+export const policy: Readable<Policy | undefined> = answering(
+  storedPreferences,
+  read,
+  undefined as Policy | undefined,
+)
 
 const write = (key: string, value: unknown) =>
   Dip.setPreference({key, value: JSON.stringify(value)})
@@ -110,6 +73,16 @@ export const setCoolOffMinutes = (typed: string) => writeCount(keys.coolOffMinut
 
 export const setDisclosureBudget = (typed: string) => writeCount(keys.disclosureBudget, typed, 0)
 
-/** Widen or narrow who sees an event no rule covers, leaving the rules alone. */
-export const setVisibility = (scope: Scope) =>
-  write(keys.visibility, {...get(policy).visibility, default: scope})
+/**
+ * Widen or narrow who sees an event no rule covers, leaving the rules alone.
+ *
+ * The rules written back are the ones the core just answered, so a rule this
+ * build has never heard of survives the edit.
+ */
+export const setVisibility = (scope: Scope) => {
+  const visibility = get(policy)?.visibility
+
+  if (visibility) return write(keys.visibility, {...visibility, default: scope})
+
+  return Promise.resolve()
+}

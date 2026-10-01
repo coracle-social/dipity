@@ -415,6 +415,20 @@ impl Node {
             .map_err(|error| NodeError::link(link, &error))?)
     }
 
+    /// Everything the user has said about who gets what, as JSON, with the
+    /// core's own defaults where nothing is written.
+    ///
+    /// The compiled policy every live session is bound to, so the settings
+    /// screen edits what the gossip path obeys rather than a second reading of
+    /// the same preference keys. `docs/policy.md`.
+    pub fn policy(&self) -> Result<String, NodeError> {
+        let guard = self.inner.lock().map_err(|_| NodeError::poisoned())?;
+
+        serde_json::to_string(guard.policy()).map_err(|error| NodeError::Core {
+            reason: format!("the policy could not be encoded: {error}"),
+        })
+    }
+
     /// The user's preferences changed, so every live session is rebound under
     /// the policy they compile to.
     pub fn policy_changed(&self) -> Result<Vec<Action>, NodeError> {
@@ -682,6 +696,19 @@ mod tests {
         let node = node(&dir);
 
         assert_eq!(node.identity().unwrap().len(), 64);
+    }
+
+    #[test]
+    fn the_policy_crosses_with_its_defaults_already_filled_in() {
+        let dir = TempDir::new("policy");
+        let node = node(&dir);
+
+        let crossed: serde_json::Value = serde_json::from_str(&node.policy().unwrap()).unwrap();
+
+        // Nothing is written, so this is the core's own defaults and not an empty document.
+        assert_eq!(crossed["accept"], "lenient");
+        assert_eq!(crossed["retention_days"], 30);
+        assert_eq!(crossed["visibility"]["rules"].as_array().unwrap().len(), 2);
     }
 
     #[test]

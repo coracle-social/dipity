@@ -27,6 +27,7 @@ import type {HashedEvent} from "@welshman/util"
 import {nip19} from "nostr-tools"
 import type {Blob, DipCore, Pref, Query} from "$lib/core"
 import {boost, card, comment, genericBoost, reaction} from "$lib/dev/kinds"
+import {compiled} from "$lib/dev/policy"
 import {
   emoji,
   identity,
@@ -56,9 +57,6 @@ const GATE_OPEN = 45_000
 
 /** How long a refusal is respected before that person is asked about again. */
 const GATE_BACKOFF = 10 * 60_000
-
-/** The core's own default, which the simulated device has never overridden. */
-const RETENTION_DAYS = 30
 
 const now = () => Math.floor(Date.now() / 1000)
 
@@ -135,7 +133,6 @@ export class Simulator extends WebPlugin implements DipCore {
 
   constructor() {
     super()
-    this.store.setPref("policy.retention_days", JSON.stringify(RETENTION_DAYS), now())
 
     for (const person of people.filter(person => person.known)) {
       this.paired.add(person.pubkey)
@@ -502,6 +499,10 @@ export class Simulator extends WebPlugin implements DipCore {
   }
 
   // -------------------------------------------------------------- settings
+
+  async policy() {
+    return {policy: JSON.stringify(compiled(this.store))}
+  }
 
   async preferences(): Promise<{preferences: Pref[]}> {
     return {preferences: this.store.prefs()}

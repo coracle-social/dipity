@@ -48,7 +48,7 @@
 
 {#if $detail.item}
   {@const item = $detail.item}
-  {@const swept = sweptAt(item, $session, $policy.retentionDays, marked)}
+  {@const swept = sweptAt(item, $session, $policy?.retention_days, marked)}
   {@const answers = commentedOn(item.event)}
   {@const standing = {
     ...standingOf($responses, $saying, id),

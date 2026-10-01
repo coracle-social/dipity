@@ -394,6 +394,21 @@ class DipPlugin : Plugin(), Radio.Delegate {
         answer(call, "ids") { JSArray(it.eventsReferencingBlob(sha256)) }
     }
 
+    /**
+     * The compiled policy every live session is bound to, as JSON, with the
+     * core's own defaults where nothing is written.
+     */
+    @PluginMethod
+    fun policy(call: PluginCall) {
+        val core = this.core ?: return call.reject("policy needs a started core")
+
+        try {
+            call.resolve(JSObject().put("policy", core.node.policy()))
+        } catch (error: Exception) {
+            call.reject("the policy could not be read", error)
+        }
+    }
+
     @PluginMethod fun preferences(call: PluginCall) = answer(call, "preferences") { store ->
         JSArray(
             store.preferences().map {

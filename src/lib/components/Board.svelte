@@ -41,7 +41,7 @@
 <div class="mt-4 space-y-3">
   {#each $board as item (item.event.id)}
     {@const marked = $bookmarked.has(item.event.id)}
-    {@const swept = sweptAt(item, $session, $policy.retentionDays, marked)}
+    {@const swept = sweptAt(item, $session, $policy?.retention_days, marked)}
     <ItemCard
       {item}
       social={$social}

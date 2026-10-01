@@ -7,7 +7,7 @@
   import * as InputGroup from "$lib/components/ui/input-group"
   import {Label} from "$lib/components/ui/label"
   import {Separator} from "$lib/components/ui/separator"
-  import {Dip} from "$lib/core"
+  import {Dip, type Scope} from "$lib/core"
   import {go} from "$lib/data/nav"
   import {
     policy,
@@ -18,7 +18,6 @@
     setGossip,
     setRetentionDays,
     setVisibility,
-    type Scope,
   } from "$lib/data/policy"
   import {npubOf, session} from "$lib/data/session"
 
@@ -58,7 +57,7 @@
       label: "What you accept",
       detail: "This controls whose notes you accept from nearby devices.",
       scopes: ["trusted", "network", "lenient"] as Scope[],
-      on: $policy.accept,
+      on: $policy?.accept,
       set: setAccept,
     },
     {
@@ -66,7 +65,7 @@
       label: "What you pass along",
       detail: "This controls whose notes you pass along to nearby devices.",
       scopes: ["nothing", "trusted", "network", "lenient"] as Scope[],
-      on: $policy.gossip,
+      on: $policy?.gossip,
       set: setGossip,
     },
     {
@@ -74,7 +73,7 @@
       label: "What others are allowed to pass along",
       detail: "This controls who is allowed to pass your notes along to others.",
       scopes: ["nothing", "trusted", "network"] as Scope[],
-      on: $policy.forward,
+      on: $policy?.forward,
       set: setForward,
     },
     {
@@ -83,7 +82,7 @@
       detail:
         "This controls who is allowed to see your notes, and the names you give people. Your trust list only ever reaches people you paired with, and your bookmarks stay on this phone.",
       scopes: ["trusted", "network", "lenient", "public"] as Scope[],
-      on: $policy.visibility.default,
+      on: $policy?.visibility.default,
       set: setVisibility,
     },
   ])
@@ -101,93 +100,97 @@
   <h1 class="text-2xl font-semibold">Settings</h1>
 </header>
 
-<h2 class="mt-4 text-xs font-semibold tracking-widest text-muted-foreground uppercase">Content</h2>
+{#if $policy}
+  <h2 class="mt-4 text-xs font-semibold tracking-widest text-muted-foreground uppercase">
+    Content
+  </h2>
 
-<ul class="mt-3 space-y-5">
-  {#each tiers as tier (tier.id)}
-    <li>
-      <p class="text-sm font-semibold">{tier.label}</p>
-      <p class="mt-0.5 text-xs text-pretty text-muted-foreground">{tier.detail}</p>
-      <div class="mt-2 space-y-0.5 rounded-2xl bg-muted p-1">
-        {#each tier.scopes as scope (scope)}
-          <button
-            type="button"
-            class="flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left
-                   text-sm transition-colors
-                   {tier.on === scope
-              ? 'bg-card font-medium text-foreground shadow-xs'
-              : 'text-muted-foreground'}"
-            aria-pressed={tier.on === scope}
-            onclick={() => tier.set(scope)}>
-            {words[scope]}
-            {#if tier.on === scope}
-              <Check class="size-4 flex-none text-secondary-accent" />
-            {/if}
-          </button>
-        {/each}
-      </div>
-    </li>
-  {/each}
-</ul>
+  <ul class="mt-3 space-y-5">
+    {#each tiers as tier (tier.id)}
+      <li>
+        <p class="text-sm font-semibold">{tier.label}</p>
+        <p class="mt-0.5 text-xs text-pretty text-muted-foreground">{tier.detail}</p>
+        <div class="mt-2 space-y-0.5 rounded-2xl bg-muted p-1">
+          {#each tier.scopes as scope (scope)}
+            <button
+              type="button"
+              class="flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left
+                     text-sm transition-colors
+                     {tier.on === scope
+                ? 'bg-card font-medium text-foreground shadow-xs'
+                : 'text-muted-foreground'}"
+              aria-pressed={tier.on === scope}
+              onclick={() => tier.set(scope)}>
+              {words[scope]}
+              {#if tier.on === scope}
+                <Check class="size-4 flex-none text-secondary-accent" />
+              {/if}
+            </button>
+          {/each}
+        </div>
+      </li>
+    {/each}
+  </ul>
 
-<Separator class="my-6" />
+  <Separator class="my-6" />
 
-<h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Being found</h2>
+  <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Being found</h2>
 
-<p class="mt-2 text-sm text-pretty text-muted-foreground">
-  Your phone only trades things with a nearby device. These settings control your visibility to
-  nearby devices and how much you share with them.
-</p>
+  <p class="mt-2 text-sm text-pretty text-muted-foreground">
+    Your phone only trades things with a nearby device. These settings control your visibility to
+    nearby devices and how much you share with them.
+  </p>
 
-<div class="mt-4 space-y-5">
-  <div class="space-y-1.5">
-    <Label for="cool-off">Minutes you stay findable after closing the app</Label>
-    <Input
-      id="cool-off"
-      type="number"
-      min="0"
-      value={$policy.coolOffMinutes}
-      onchange={event => setCoolOffMinutes(event.currentTarget.value)} />
-    <p class="text-xs text-pretty text-muted-foreground">
-      How long after you put your phone in your pocket it keeps talking to other devices. Lower is
-      more private, higher is more robust.
-    </p>
-  </div>
-
-  <div class="space-y-1.5">
-    <Label for="budget">How many people a day you can pair with</Label>
-    <Input
-      id="budget"
-      type="number"
-      min="0"
-      value={$policy.disclosureBudget}
-      onchange={event => setDisclosureBudget(event.currentTarget.value)} />
-    <p class="text-xs text-pretty text-muted-foreground">
-      Meeting somebody new means telling them who you are, but somebody who kept asking could track
-      you. Your phone stops answering strangers after this many requests.
-    </p>
-  </div>
-
-  <div class="space-y-1.5">
-    <Label for="retention">How long you keep notes before dropping them</Label>
-    <InputGroup.Root>
-      <InputGroup.Input
-        id="retention"
+  <div class="mt-4 space-y-5">
+    <div class="space-y-1.5">
+      <Label for="cool-off">Minutes you stay findable after closing the app</Label>
+      <Input
+        id="cool-off"
         type="number"
-        min="1"
-        value={$policy.retentionDays}
-        onchange={event => setRetentionDays(event.currentTarget.value)} />
-      <InputGroup.Addon align="inline-end">
-        <InputGroup.Text>days</InputGroup.Text>
-      </InputGroup.Addon>
-    </InputGroup.Root>
-    <p class="text-xs text-pretty text-muted-foreground">
-      How long your phone keeps something before it gets deleted. Bookmarks are never dropped.
-    </p>
-  </div>
-</div>
+        min="0"
+        value={$policy.cool_off_minutes}
+        onchange={event => setCoolOffMinutes(event.currentTarget.value)} />
+      <p class="text-xs text-pretty text-muted-foreground">
+        How long after you put your phone in your pocket it keeps talking to other devices. Lower is
+        more private, higher is more robust.
+      </p>
+    </div>
 
-<Separator class="my-6" />
+    <div class="space-y-1.5">
+      <Label for="budget">How many people a day you can pair with</Label>
+      <Input
+        id="budget"
+        type="number"
+        min="0"
+        value={$policy.disclosure_budget}
+        onchange={event => setDisclosureBudget(event.currentTarget.value)} />
+      <p class="text-xs text-pretty text-muted-foreground">
+        Meeting somebody new means telling them who you are, but somebody who kept asking could
+        track you. Your phone stops answering strangers after this many requests.
+      </p>
+    </div>
+
+    <div class="space-y-1.5">
+      <Label for="retention">How long you keep notes before dropping them</Label>
+      <InputGroup.Root>
+        <InputGroup.Input
+          id="retention"
+          type="number"
+          min="1"
+          value={$policy.retention_days}
+          onchange={event => setRetentionDays(event.currentTarget.value)} />
+        <InputGroup.Addon align="inline-end">
+          <InputGroup.Text>days</InputGroup.Text>
+        </InputGroup.Addon>
+      </InputGroup.Root>
+      <p class="text-xs text-pretty text-muted-foreground">
+        How long your phone keeps something before it gets deleted. Bookmarks are never dropped.
+      </p>
+    </div>
+  </div>
+
+  <Separator class="my-6" />
+{/if}
 
 <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Your key</h2>
 

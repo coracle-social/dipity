@@ -47,6 +47,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "wantedBlobs", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getBlob", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "eventsReferencingBlob", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "policy", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "preferences", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "preference", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setPreference", returnType: CAPPluginReturnPromise),
@@ -327,6 +328,18 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         answer(call, "ids") { try $0.eventsReferencingBlob(sha256: sha256) }
+    }
+
+    /// The compiled policy every live session is bound to, as JSON, with the
+    /// core's own defaults where nothing is written.
+    @objc func policy(_ call: CAPPluginCall) {
+        guard let core else { return call.reject("policy needs a started core") }
+
+        do {
+            call.resolve(["policy": try core.node.policy()])
+        } catch {
+            call.reject("the policy could not be read", nil, error)
+        }
     }
 
     @objc func preferences(_ call: CAPPluginCall) {

@@ -21,6 +21,7 @@
 
 use coracle_lib::events::{HasCreatedAt, HasId, HasKind, HasPubkey, HasTags};
 use coracle_lib::keys::PublicKey;
+use serde::Serialize;
 
 use crate::model::{Authors, Graph, Scope, Standing, Visibility};
 use crate::util::Window;
@@ -32,9 +33,15 @@ use crate::util::Window;
 pub const DISCLOSURE_WINDOW_SECONDS: i64 = 24 * 60 * 60;
 
 /// Everything the user has said about who gets what, ready to apply.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Its serde form is the half a preference carries, which is what the view
+/// draws: [`identity`](Self::identity) and [`graph`](Self::graph) are skipped.
+/// So a setting added here reaches the view with nothing else naming it, and
+/// the defaults in [`Policy::new`] are the only ones anywhere.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Policy {
     /// This device's pubkey.
+    #[serde(skip)]
     pub identity: PublicKey,
     /// How long the device keeps accepting unknown peers after backgrounding.
     pub cool_off_minutes: i64,
@@ -54,11 +61,12 @@ pub struct Policy {
     /// How long a carried event outlives the last peer to hand it over.
     pub retention_days: u32,
     /// The trust graph the scopes above are measured against.
+    #[serde(skip)]
     pub graph: Graph,
 }
 
 impl Policy {
-    /// Create a policy with an identity and default values.s
+    /// Create a policy with an identity and default values.
     #[must_use]
     pub fn new(identity: PublicKey) -> Self {
         Self {
@@ -200,6 +208,8 @@ impl PeerPolicy {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
     use coracle_lib::tags::Tags;
 
@@ -219,6 +229,40 @@ mod tests {
             graph: graph(),
             ..Policy::new(us())
         }
+    }
+
+    #[test]
+    fn the_serde_form_is_every_setting_and_nothing_derived() {
+        let policy = policy();
+        let crossed: serde_json::Value = serde_json::to_value(&policy).unwrap();
+        let named: BTreeSet<&str> = crossed
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+
+        // Every preference key, so a screen reading this needs no defaults of its own.
+        assert_eq!(
+            named,
+            [
+                "accept",
+                "cool_off_minutes",
+                "disclosure_budget",
+                "discoverable_times",
+                "forward",
+                "gossip",
+                "retention_days",
+                "visibility",
+            ]
+            .into()
+        );
+
+        // Including the visibility rules, which an edit writes back whole.
+        assert_eq!(crossed["visibility"]["rules"].as_array().unwrap().len(), 2);
+        assert_eq!(crossed["visibility"]["default"], "public");
+        assert_eq!(crossed["accept"], "lenient");
+        assert_eq!(crossed["retention_days"], 30);
     }
 
     #[test]

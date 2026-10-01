@@ -107,6 +107,39 @@ export type EventDetail = {
 /** One stored preference. */
 export type Pref = {key: string; value: string; updatedAt: number}
 
+/** The tiers every setting is expressed on, narrowest first. */
+export type Scope = "nothing" | "trusted" | "network" | "lenient" | "public"
+
+/**
+ * Who may see what the user publishes: the rules tried in order, and who sees
+ * an event none of them match.
+ *
+ * A rule's filter is NIP-01, so withholding one kind and withholding one
+ * person's contact card are the same shape. `docs/policy.md#visibility`.
+ */
+export type Visibility = {rules: {filter: unknown; scope: Scope}[]; default: Scope}
+
+/** A span of the local day the device is findable in, in minutes from midnight. */
+export type Window = {start: number; end: number}
+
+/**
+ * Everything the user has said about who gets what, as the core compiled it.
+ *
+ * The defaults are already filled in, which is why nothing above the bridge
+ * carries a copy of them. `Policy::new` and `Visibility::default` are where
+ * they live.
+ */
+export type Policy = {
+  accept: Scope
+  gossip: Scope
+  forward: Scope
+  visibility: Visibility
+  retention_days: number
+  cool_off_minutes: number
+  disclosure_budget: number
+  discoverable_times: Window[]
+}
+
 /**
  * Which group of tables moved.
  *
@@ -199,6 +232,14 @@ export type DipCore = {
 
   /** Every stored event that references a hash, by id. */
   eventsReferencingBlob(options: {sha256: string}): Promise<{ids: string[]}>
+
+  /**
+   * Everything the user has said about who gets what, JSON, defaults filled in.
+   *
+   * The compiled policy every live session is bound to, so a screen shows what
+   * the gossip path obeys. `docs/policy.md`.
+   */
+  policy(): Promise<{policy: string}>
 
   /** Every stored preference. */
   preferences(): Promise<{preferences: Pref[]}>

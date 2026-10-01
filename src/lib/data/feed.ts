@@ -278,10 +278,16 @@ const spared = (item: Item, identity?: string) =>
  *
  * `retentionDays` is read from `policy` rather than held here, so an edit on the
  * settings screen moves every ring on the board instead of waiting for the next
- * time the app opens.
+ * time the app opens. It is undefined until the core has answered, and an item
+ * then reads as kept rather than as fading on a window nobody confirmed.
  */
-export const sweptAt = (item: Item, session: Session, retentionDays: number, bookmarked = false) =>
-  spared(item, session.identity) || bookmarked
+export const sweptAt = (
+  item: Item,
+  session: Session,
+  retentionDays: number | undefined,
+  bookmarked = false,
+) =>
+  retentionDays === undefined || spared(item, session.identity) || bookmarked
     ? undefined
     : item.lastSeenAt + retentionDays * 86_400
 
