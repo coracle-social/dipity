@@ -18,8 +18,7 @@ pub const RSSI_FLOOR: i16 = -90;
 /// How many central links may be open at once.
 pub const MAX_LINKS: usize = 6;
 
-/// Minimum gap between connect attempts. The doc calls for roughly one per
-/// 0.5s; the clock counts in whole seconds, so one per second.
+/// Minimum gap between connect attempts, in the whole seconds the clock counts.
 const CONNECT_INTERVAL_SECONDS: i64 = 1;
 
 /// How long a peripheral that never answered a connect is left alone before
@@ -42,16 +41,35 @@ pub(crate) const REFUSED_BACKOFF_SECONDS: i64 = 60;
 /// user just said no.
 pub(crate) const DECLINED_BACKOFF_SECONDS: i64 = 5 * 60;
 
+/// How long a sighting stays a candidate. A peripheral id rotates about every
+/// fifteen minutes, so one older than that names a device nobody can reach.
+pub(crate) const CANDIDATE_TTL_SECONDS: i64 = 15 * 60;
+
 /// Everything scheduling dials from an advertisement.
 #[derive(Debug, Default)]
 pub struct Scheduler {
     /// Candidates waiting for the floor, the cap, the rate limit or a backoff
     /// to clear, strongest first.
-    candidates: Vec<(PeripheralId, i16)>,
+    candidates: Vec<Candidate>,
     /// When each peripheral may next be dialed, and what set it.
     backoff: BTreeMap<PeripheralId, Backoff>,
+    /// Dials that went out and have not come up yet, by when they went. Each
+    /// spends a link slot until it connects or its never-answered backoff
+    /// lapses, so a crowd cannot bring up more links than the cap.
+    dialing: BTreeMap<PeripheralId, i64>,
     /// When the last connect attempt went out, for the global rate limit.
     last_attempt: Option<i64>,
+}
+
+/// One advertised peripheral, as last heard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Candidate {
+    /// Which one.
+    peripheral: PeripheralId,
+    /// Its latest signal strength.
+    rssi: i16,
+    /// When it was last heard.
+    seen_at: i64,
 }
 
 /// One peripheral's backoff: a deadline and the outcome that set it.
@@ -82,34 +100,39 @@ enum Tier {
 impl Scheduler {
     /// Remember a sighting. A candidate below the floor or behind a backoff
     /// stays queued; [`next_dial`](Self::next_dial) decides what goes out.
+    ///
+    /// The latest reading stands, weaker or not: a peer walking away should
+    /// sort behind one walking up.
     pub fn seen(&mut self, peripheral: PeripheralId, rssi: i16) {
-        match self
-            .candidates
-            .iter()
-            .position(|(candidate, _)| *candidate == peripheral)
-        {
-            Some(index) => {
-                // A stronger reading replaces the queued one.
-                if self.candidates[index].1 < rssi {
-                    self.candidates[index] = (peripheral, rssi);
-                }
-            }
-            None => {
-                self.candidates.push((peripheral, rssi));
-                self.candidates
-                    .sort_by_key(|(_, rssi)| std::cmp::Reverse(*rssi));
-            }
-        }
+        let seen_at = clock::now();
+
+        self.candidates
+            .retain(|candidate| candidate.peripheral != peripheral);
+        self.candidates.push(Candidate {
+            peripheral,
+            rssi,
+            seen_at,
+        });
+        self.candidates
+            .sort_by_key(|candidate| std::cmp::Reverse(candidate.rssi));
+    }
+
+    /// A dial came up, so it no longer holds a slot as a pending one.
+    pub fn connected(&mut self, peripheral: &PeripheralId) {
+        self.dialing.remove(peripheral);
     }
 
     /// The strongest admissible candidate, if the floor, the link cap, the
-    /// rate limit and its backoff all allow a dial.
+    /// rate limit and its backoff all allow a dial. `open_links` counts the
+    /// central links already up; dials still on their way count too.
     pub fn next_dial(&mut self, open_links: usize) -> Option<PeripheralId> {
-        if open_links >= MAX_LINKS {
+        let now = clock::now();
+
+        self.forget_stale(now);
+
+        if open_links + self.dialing.len() >= MAX_LINKS {
             return None;
         }
-
-        let now = clock::now();
 
         if self
             .last_attempt
@@ -120,7 +143,9 @@ impl Scheduler {
 
         // Strongest first: the first candidate past the floor and off backoff is dialed.
         for index in 0..self.candidates.len() {
-            let (peripheral, rssi) = self.candidates[index].clone();
+            let Candidate {
+                peripheral, rssi, ..
+            } = self.candidates[index].clone();
 
             if rssi < RSSI_FLOOR {
                 continue;
@@ -133,6 +158,7 @@ impl Scheduler {
 
             if admissible {
                 self.candidates.remove(index);
+                self.dialing.insert(peripheral.clone(), now);
                 self.last_attempt = Some(now);
                 // No answer re-advertises before this lapses; a connect supersedes it.
                 self.backoff.insert(
@@ -148,6 +174,17 @@ impl Scheduler {
         }
 
         None
+    }
+
+    /// Forget candidates nobody has heard from in a rotation, dials that never
+    /// came up, and backoffs that have lapsed, so none of them grows with every
+    /// peripheral id a crowd rotates through.
+    fn forget_stale(&mut self, now: i64) {
+        self.candidates
+            .retain(|candidate| now - candidate.seen_at < CANDIDATE_TTL_SECONDS);
+        self.dialing
+            .retain(|_, at| now - *at < NEVER_ANSWERED_BACKOFF_SECONDS);
+        self.backoff.retain(|_, backoff| now < backoff.until);
     }
 
     /// A peer was connected and left: redial soon, since they usually come

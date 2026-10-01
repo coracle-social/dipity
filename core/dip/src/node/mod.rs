@@ -299,6 +299,7 @@ impl Node {
         }
 
         if let Some(peripheral) = peripheral {
+            self.scheduler.connected(&peripheral);
             self.link_peripheral.insert(link, peripheral);
         }
 
@@ -1301,6 +1302,59 @@ mod tests {
         let actions = node.peripheral_seen(&peripheral(200), -80);
 
         assert!(actions.is_empty(), "a dial slipped past the link cap");
+    }
+
+    #[test]
+    fn dials_still_on_their_way_count_against_the_link_cap() {
+        let mut node = node();
+
+        for index in 0..MAX_LINKS {
+            clock::at(1_000 + index as i64, || {
+                assert_eq!(
+                    node.peripheral_seen(&peripheral(index as u8), -80),
+                    vec![Action::Connect(peripheral(index as u8))]
+                );
+            });
+        }
+
+        // None of the six has come up yet, and a seventh would exceed the cap when they do.
+        clock::at(1_000 + MAX_LINKS as i64, || {
+            assert!(node.peripheral_seen(&peripheral(200), -80).is_empty());
+        });
+    }
+
+    #[test]
+    fn a_weaker_reading_sorts_a_candidate_behind_a_nearer_one() {
+        let mut node = node();
+
+        // The first sighting takes the rate limit, so the rest queue.
+        clock::at(1_000, || {
+            node.peripheral_seen(&peripheral(1), -60);
+            node.peripheral_seen(&peripheral(2), -70);
+            node.peripheral_seen(&peripheral(3), -75);
+            node.peripheral_seen(&peripheral(2), -85);
+        });
+
+        // The second walked away while the third walked up.
+        clock::at(1_001, || {
+            assert_eq!(node.scheduler.next_dial(0), Some(peripheral(3)));
+        });
+    }
+
+    #[test]
+    fn a_candidate_unheard_for_a_rotation_is_forgotten() {
+        let mut node = node();
+
+        // The first sighting takes the rate limit, so the second queues.
+        clock::at(1_000, || {
+            node.peripheral_seen(&peripheral(9), -80);
+            node.peripheral_seen(&peripheral(1), -80);
+        });
+
+        // Long after its id rotated, dialing it would dial a ghost.
+        clock::at(1_000 + scheduler::CANDIDATE_TTL_SECONDS, || {
+            assert!(node.scheduler.next_dial(0).is_none());
+        });
     }
 
     #[test]
