@@ -247,9 +247,10 @@ pub fn forget_unseen_since(tx: &Tx<'_>, identity: &PublicKey, cutoff: i64) -> Re
 /// little it circulates.
 ///
 /// `is_replaceable` covers kind 0, kind 3 and the 10000s. A contact card is
-/// addressable, so it is named here. `docs/storage.md#retention`.
+/// addressable, so it is named here, and so is a deletion request, which is
+/// what keeps the event it deleted out. `docs/storage.md#retention`.
 fn is_state(kind: u16) -> bool {
-    is_replaceable(kind) || kind == CONTACT
+    is_replaceable(kind) || kind == CONTACT || kind == delete::KIND
 }
 
 /// Whether `event` supersedes whatever currently holds its address, removing
@@ -787,6 +788,28 @@ mod tests {
         assert_eq!(forget_unseen_since(&tx, &us, 500).unwrap(), 1);
         assert!(query::get(&tx, &id(&their_card)).unwrap().is_some());
         assert!(query::get(&tx, &id(&their_note)).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_sweep_keeps_a_deletion_so_what_it_deleted_stays_out() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        let us = author(9);
+        let subject = note(author(1), 100, "retracted", Tags::new());
+        let deletion = event(
+            author(1),
+            delete::KIND,
+            200,
+            "",
+            Tags::new().add("e", [id(&subject).to_hex()]),
+        );
+
+        save(&tx, &deletion, &[peer()], 100).unwrap();
+        forget_unseen_since(&tx, &us, 500).unwrap();
+
+        assert!(query::get(&tx, &id(&deletion)).unwrap().is_some());
+        assert!(!save(&tx, &subject, &[peer()], 600).unwrap());
     }
 
     /// Bookmarking is the only way to say "keep this", so the sweep reads it.

@@ -8,7 +8,7 @@
 
 import {derived, get, type Readable} from "svelte/store"
 import {randomId, uniq} from "@welshman/lib"
-import {COMMENT, POLL_RESPONSE, REACTION} from "@welshman/util"
+import {COMMENT, DELETE, POLL_RESPONSE, REACTION} from "@welshman/util"
 import type {HashedEvent} from "@welshman/util"
 import {Dip, type EventDetail, type Order} from "$lib/core"
 import {muted} from "$lib/data/contacts"
@@ -30,6 +30,7 @@ import {
   responseKinds,
   timeEvent,
 } from "$lib/kinds"
+import {CONTACT} from "$lib/kinds/contact"
 
 /** One stored event, and how it got here. */
 export type Item = {
@@ -277,6 +278,8 @@ const spared = (item: Item, identity?: string) =>
   item.event.pubkey === identity ||
   item.event.kind === 0 ||
   item.event.kind === 3 ||
+  item.event.kind === DELETE ||
+  item.event.kind === CONTACT ||
   (item.event.kind >= 10_000 && item.event.kind < 20_000)
 
 /**
