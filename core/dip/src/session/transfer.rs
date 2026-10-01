@@ -8,8 +8,8 @@
 //! moves.
 //!
 //! The comparison is what authenticates the flow, and it is the only thing that
-//! does. NIP-42 cannot help: the target does not hold the identity key yet,
-//! which is the whole point.
+//! does. NIP-42 cannot help: the target authenticates as the identity it made
+//! at first run, which says nothing about whether it is the user's own phone.
 //!
 //! [`IdentityTransfer`] is the whole flow: the state, the wire form, and the
 //! two answers a user gives. It touches no session and no store — every method
@@ -141,9 +141,10 @@ impl IdentityTransfer {
     /// One step of the exchange off the control channel, answering with
     /// whatever this end sends back.
     ///
-    /// `attended` is whether a user is in front of this screen. An offer
-    /// arriving at a device where nobody is is declined rather than held, since
-    /// a hold is only useful if somebody is there to compare.
+    /// `attended` is whether a user is in front of this screen, and every step
+    /// needs one, not just the first: a flow arriving at a device where nobody
+    /// is is declined rather than held, and neither end hands a key over or
+    /// takes one in the background.
     pub fn receive(
         &mut self,
         payload: &[u8],
@@ -154,8 +155,11 @@ impl IdentityTransfer {
             bail!("an empty identity transfer frame arrived");
         };
 
+        if !attended && message != message::DECLINE {
+            return Ok(Some(self.decline()));
+        }
+
         match (message, self.step) {
-            (message::OFFER, None) if !attended => Ok(Some(vec![message::DECLINE])),
             (message::OFFER, None) => {
                 self.step = Some(Step::Invited { prompted: false });
 
@@ -220,6 +224,22 @@ impl IdentityTransfer {
     #[must_use]
     pub fn running(&self) -> bool {
         self.step.is_some()
+    }
+
+    /// Give up whatever is running, because nobody is in front of the screen
+    /// any more, answering with the `DECLINE` the peer is owed.
+    pub fn cancel(&mut self) -> Option<Vec<u8>> {
+        self.running().then(|| self.decline())
+    }
+
+    /// End a running flow as refused and answer `DECLINE`. With nothing
+    /// running, the peer is told no and nobody here was waiting.
+    fn decline(&mut self) -> Vec<u8> {
+        if self.running() {
+            self.finish(Outcome::Refused);
+        }
+
+        vec![message::DECLINE]
     }
 
     /// Hand the identity key over, which both users have now agreed to.
@@ -318,6 +338,35 @@ mod tests {
         assert_eq!(target.take_outcome(), Some(Outcome::Received));
         assert!(!source.running());
         assert_eq!(source.take_outcome(), Some(Outcome::Sent));
+    }
+
+    #[test]
+    fn a_source_nobody_is_looking_at_declines_rather_than_sends() {
+        let (mut source, mut target) = offered();
+
+        assert_eq!(source.answer(true, &source_key()).unwrap(), None);
+
+        let accept = target.answer(true, &secret(2)).unwrap().unwrap();
+        let answer = source.receive(&accept, &source_key(), false).unwrap();
+
+        assert_eq!(answer, Some(vec![message::DECLINE]));
+        assert_eq!(source.take_outcome(), Some(Outcome::Refused));
+    }
+
+    #[test]
+    fn a_target_nobody_is_looking_at_does_not_take_the_key() {
+        let (mut source, mut target) = offered();
+
+        let accept = target.answer(true, &secret(2)).unwrap();
+        deliver(&mut source, &source_key(), accept);
+        let key = source.answer(true, &source_key()).unwrap().unwrap();
+
+        assert_eq!(
+            target.receive(&key, &secret(2), false).unwrap(),
+            Some(vec![message::DECLINE])
+        );
+        assert!(target.take_identity().is_none());
+        assert_eq!(target.take_outcome(), Some(Outcome::Refused));
     }
 
     #[test]

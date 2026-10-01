@@ -727,7 +727,18 @@ impl Session {
     /// The user answered the prompt, which on both devices is the same
     /// question: does the other one show this number.
     pub fn answer_transfer(&mut self, confirmed: bool) -> Result<()> {
+        if confirmed && !self.may_transfer() {
+            return self.cancel_transfer();
+        }
+
         let step = self.transfer.answer(confirmed, &self.custody.identity()?)?;
+
+        self.send_transfer(step)
+    }
+
+    /// Give up a running identity transfer, telling the peer.
+    pub fn cancel_transfer(&mut self) -> Result<()> {
+        let step = self.transfer.cancel();
 
         self.send_transfer(step)
     }

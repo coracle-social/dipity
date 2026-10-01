@@ -175,6 +175,9 @@ pub struct Node {
     /// Whether the shell has been told to scan and advertise, which the first
     /// tick does once. `docs/discovery.md#session-lifecycle`.
     radio_started: bool,
+    /// Keys an identity transfer delivered, kept here rather than on the
+    /// session so a link dropping before the shell takes one does not lose it.
+    transferred: BTreeMap<LinkId, SecretKey>,
 }
 
 impl Node {
@@ -207,6 +210,7 @@ impl Node {
             events_swept_at: None,
             key_backup: None,
             radio_started: false,
+            transferred: BTreeMap::new(),
         };
 
         // Whatever was removed while no node was listening is still on disk.
@@ -499,11 +503,23 @@ impl Node {
     }
 
     /// Record where the app is and rebind it on every live session.
+    ///
+    /// Leaving the foreground ends any identity transfer, which is the one
+    /// flow that does not run with nobody in front of the screen.
     fn set_presence(&mut self, presence: Presence) -> Vec<Action> {
         self.presence = Some(presence);
 
         for session in self.sessions.values_mut() {
             session.gate.presence = self.presence;
+
+            if presence != Presence::Foreground
+                && let Err(error) = session.cancel_transfer()
+            {
+                log::error!(
+                    "ending an identity transfer on link {:?} failed: {error:#}",
+                    session.link
+                );
+            }
         }
 
         self.collect()
@@ -560,9 +576,7 @@ impl Node {
     /// Keystore and reopens the node under it, which is the same custody path
     /// as a key generated on device. `docs/keys.md#key-custody`.
     pub fn take_transferred_identity(&mut self, link: LinkId) -> Option<SecretKey> {
-        self.sessions
-            .get_mut(&link)
-            .and_then(|session| session.transfer.take_identity())
+        self.transferred.remove(&link)
     }
 
     /// The user changed a preference, so re-read the policy and rebind it on
@@ -736,6 +750,11 @@ impl Node {
 
             if let Some(outcome) = session.transfer.take_outcome() {
                 actions.push(Action::IdentityTransfer(session.link, outcome));
+            }
+
+            // Out of the session before it can close, so a link dropping now does not lose the key.
+            if let Some(key) = session.transfer.take_identity() {
+                self.transferred.insert(session.link, key);
             }
 
             // A blob transfer is the opening that justifies a bulk channel.
@@ -1699,6 +1718,38 @@ mod tests {
             Some(key)
         );
         assert!(target.take_transferred_identity(LinkId(1)).is_none());
+    }
+
+    #[test]
+    fn a_transferred_key_survives_the_link_dropping_before_it_is_taken() {
+        let (mut source, mut target) = attended_pair();
+
+        let offered = source.offer_identity(LinkId(1)).unwrap();
+        settle(&mut source, &mut target, offered);
+        let accepted = target.answer_identity_transfer(LinkId(1), true).unwrap();
+        settle(&mut target, &mut source, accepted);
+        let confirmed = source.answer_identity_transfer(LinkId(1), true).unwrap();
+        settle(&mut source, &mut target, confirmed);
+
+        target.link_down(LinkId(1));
+
+        assert!(target.take_transferred_identity(LinkId(1)).is_some());
+    }
+
+    #[test]
+    fn backgrounding_ends_an_identity_transfer() {
+        let (mut source, mut target) = attended_pair();
+
+        let offered = source.offer_identity(LinkId(1)).unwrap();
+        settle(&mut source, &mut target, offered);
+
+        let backgrounded = source.notify_backgrounded();
+
+        assert!(backgrounded.contains(&Action::IdentityTransfer(LinkId(1), Outcome::Refused)));
+        assert!(
+            settle(&mut source, &mut target, backgrounded)
+                .contains(&Action::IdentityTransfer(LinkId(1), Outcome::Refused))
+        );
     }
 
     #[test]
