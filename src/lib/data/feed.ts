@@ -11,6 +11,7 @@ import {randomId, uniq} from "@welshman/lib"
 import {COMMENT, POLL_RESPONSE, REACTION} from "@welshman/util"
 import type {HashedEvent} from "@welshman/util"
 import {Dip, type EventDetail, type Order} from "$lib/core"
+import {muted} from "$lib/data/contacts"
 import {answering, detailsOf, eventsOf, remembered, storedEvents} from "$lib/data/query"
 import {publish} from "$lib/data/publish"
 import {session, type Session} from "$lib/data/session"
@@ -176,11 +177,15 @@ const index = (found: EventDetail[]): Responses => {
   return {to}
 }
 
-/** Every response the store holds, which is what puts a count on a card. */
-export const responses: Readable<Responses> = answering(
+const responding = answering(
   storedEvents,
-  () => detailsOf({order: "seenAt", filter: JSON.stringify({kinds: responseKinds})}).then(index),
-  {to: new Map()},
+  () => detailsOf({order: "seenAt", filter: JSON.stringify({kinds: responseKinds})}),
+  [] as EventDetail[],
+)
+
+/** Every response the store holds, which is what puts a count on a card, less the muted's. */
+export const responses: Readable<Responses> = derived([responding, muted], ([found, $muted]) =>
+  index(found.filter(({event}) => !$muted.has(event.pubkey))),
 )
 
 /** A page of sixty: a phone scrolls, and nothing here pages. */
@@ -192,11 +197,15 @@ const page = (asked: View): Promise<Item[]> =>
     .then(found => found.map(toItem))
     .then(grounded)
 
-/** What the board draws. */
-export const board: Readable<Item[]> = answering(
+const arrived = answering(
   derived([view, storedEvents], ([$view]) => $view),
   page,
   [] as Item[],
+)
+
+/** What the board draws, with nothing by anybody the user muted. */
+export const board: Readable<Item[]> = derived([arrived, muted], ([$arrived, $muted]) =>
+  $arrived.filter(({event}) => !$muted.has(event.pubkey)),
 )
 
 /** Stored items by id, for a screen that knows which ones it wants. */
@@ -221,21 +230,26 @@ export const commentsOn = (ids: string[]): Promise<HashedEvent[]> =>
  * showing, the way `responses` reads every reaction: a bookmarked item is drawn on a
  * screen of its own, and narrowing to the board's page put a zero under it.
  */
-export const saying: Readable<Map<string, number>> = answering(
-  storedEvents,
-  () =>
-    eventsOf({order: "createdAt", filter: JSON.stringify({kinds: [COMMENT]})}).then(found => {
-      const counts = new Map<string, number>()
+export const saying: Readable<Map<string, number>> = derived(
+  [
+    answering(
+      storedEvents,
+      () => eventsOf({order: "createdAt", filter: JSON.stringify({kinds: [COMMENT]})}),
+      [] as HashedEvent[],
+    ),
+    muted,
+  ],
+  ([found, $muted]) => {
+    const counts = new Map<string, number>()
 
-      for (const event of found) {
-        const about = commentedOn(event)
+    for (const event of found) {
+      const about = $muted.has(event.pubkey) ? undefined : commentedOn(event)
 
-        if (about) counts.set(about, (counts.get(about) ?? 0) + 1)
-      }
+      if (about) counts.set(about, (counts.get(about) ?? 0) + 1)
+    }
 
-      return counts
-    }),
-  new Map<string, number>(),
+    return counts
+  },
 )
 
 export const responseTo = (responses: Responses, id: string) => responses.to.get(id) ?? nothing()
@@ -395,18 +409,28 @@ export type Detail = {item?: Item; comments: HashedEvent[]}
 /**
  * Everything one event's own screen needs, re-read whenever the store moves.
  *
- * What people said is the comments naming it as their parent, oldest first.
+ * What people said is the comments naming it as their parent, oldest first,
+ * less any by somebody the user muted.
  */
 export const detailOf = (id: string): Readable<Detail> =>
-  answering(
-    derived(storedEvents, revision => ({id, revision})),
-    async () => ({
-      item: await itemsByIds([id]).then(found => found[0]),
-      comments: await commentsOn([id]).then(found =>
-        [...found].sort((a, b) => a.created_at - b.created_at),
+  derived(
+    [
+      answering(
+        derived(storedEvents, revision => ({id, revision})),
+        async () => ({
+          item: await itemsByIds([id]).then(found => found[0]),
+          comments: await commentsOn([id]).then(found =>
+            [...found].sort((a, b) => a.created_at - b.created_at),
+          ),
+        }),
+        {item: undefined, comments: []} as Detail,
       ),
+      muted,
+    ],
+    ([detail, $muted]) => ({
+      ...detail,
+      comments: detail.comments.filter(({pubkey}) => !$muted.has(pubkey)),
     }),
-    {item: undefined, comments: []},
   )
 
 /**

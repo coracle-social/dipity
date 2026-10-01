@@ -128,6 +128,13 @@ export const social: Readable<Social> = answering(
   {people: new Map(), own: {cards: new Map()}},
 )
 
+/** Everybody the user muted, whose things the screens leave out. Mute never reaches the wire. */
+export const muted: Readable<Set<string>> = derived(
+  social,
+  ({people}) =>
+    new Set([...people.values()].filter(contact => contact.muted).map(({pubkey}) => pubkey)),
+)
+
 /** The people list, the ones the user named first. */
 export const contacts: Readable<Contact[]> = derived(social, ({people}) =>
   [...people.values()].sort((a, b) => {
