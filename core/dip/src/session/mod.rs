@@ -166,8 +166,9 @@ pub struct Session {
     pub state: State,
     /// Why the session ended, read once the state is `Closed`.
     pub ending: Ending,
-    /// When the link came up, which bounds how long it may go unidentified.
-    opened_at: i64,
+    /// When the link has to have named somebody by. Sending recognition tags
+    /// hands the peer a gate the user may hold, so it extends this by the hold.
+    identify_by: i64,
     /// The encrypted pipe the session talks through.
     wire: Wire,
     /// Liveness: when the peer was last heard, and when to beat next.
@@ -222,7 +223,7 @@ impl Session {
             role,
             state: State::Linked,
             ending: Ending::WalkedAway,
-            opened_at: clock::now(),
+            identify_by: clock::now() + IDENTIFY_CAP_SECONDS,
             wire: Wire::new(role, mtu)?,
             heartbeat: Heartbeat::new()?,
             gate: Gate::default(),
@@ -312,6 +313,7 @@ impl Session {
 
         self.gate.passed = true;
         self.state = State::Secured;
+        self.identify_by = self.identify_by.max(clock::now() + IDENTIFY_CAP_SECONDS);
 
         // Resume the deferred turn, if its trigger has already arrived.
         match self.role {
@@ -828,7 +830,7 @@ impl Session {
             State::GatePending { since, .. } => now - since >= GATE_HOLD_SECONDS,
             // A link that has not named anyone cannot sync, so the phase has its own deadline.
             State::Linked | State::Secured | State::DialerIdentified => {
-                self.heartbeat.timed_out() || now - self.opened_at >= IDENTIFY_CAP_SECONDS
+                self.heartbeat.timed_out() || now >= self.identify_by
             }
             _ => self.heartbeat.timed_out(),
         }
@@ -854,10 +856,9 @@ impl Session {
         match self.state {
             State::Draining { since } => since + DRAIN_CAP_SECONDS,
             State::GatePending { since, .. } => since + GATE_HOLD_SECONDS,
-            State::Linked | State::Secured | State::DialerIdentified => self
-                .heartbeat
-                .timeout_deadline()
-                .min(self.opened_at + IDENTIFY_CAP_SECONDS),
+            State::Linked | State::Secured | State::DialerIdentified => {
+                self.heartbeat.timeout_deadline().min(self.identify_by)
+            }
             _ if self.beats() => self
                 .heartbeat
                 .next_beat_at
@@ -1079,6 +1080,10 @@ impl Session {
         let hash = self.wire.noise.handshake_hash()?;
         let secrets = crate::db::query::pair_secrets(db)?;
         let tags = recognition::select(&secrets, &hash)?;
+
+        self.identify_by = self
+            .identify_by
+            .max(clock::now() + GATE_HOLD_SECONDS + IDENTIFY_CAP_SECONDS);
 
         self.send_control(control::TAGS, &tags.encode())
     }
@@ -1942,6 +1947,72 @@ mod tests {
 
         // The dialer's cool-off admitted a stranger, so its disclosure is the budget's.
         assert_eq!(crate::db::query::disclosures_since(&db, 0).unwrap(), 1);
+    }
+
+    #[test]
+    fn the_side_waiting_on_a_held_gate_outlasts_the_hold() {
+        let db = Db::open_in_memory().unwrap();
+        let mut dialer = clock::at(1_000, || pair(4096, Role::Dialer, 1));
+        let mut receiver = clock::at(1_000, || pair(4096, Role::Receiver, 2));
+
+        dialer.gate.presence = Some(Presence::Foreground);
+
+        clock::at(1_000, || {
+            dialer.initiate().unwrap();
+            pump(&mut dialer, &mut receiver, &db); // msg1
+            pump(&mut receiver, &mut dialer, &db); // reply
+            pump(&mut dialer, &mut receiver, &db); // msg3
+            pump(&mut dialer, &mut receiver, &db); // dialer tags: the gate holds
+            pump(&mut dialer, &mut receiver, &db); // dialer challenge: held too
+        });
+
+        assert!(matches!(receiver.state, State::GatePending { .. }));
+
+        // The dialer waits out the whole hold rather than its identify cap.
+        clock::at(1_000 + GATE_HOLD_SECONDS - 1, || {
+            dialer.heartbeat.heard();
+            assert!(
+                !dialer.expired(),
+                "the waiting side gave up inside the hold"
+            );
+        });
+    }
+
+    #[test]
+    fn a_gate_approved_late_still_completes() {
+        let db = Db::open_in_memory().unwrap();
+        let mut dialer = clock::at(1_000, || pair(4096, Role::Dialer, 1));
+        let mut receiver = clock::at(1_000, || pair(4096, Role::Receiver, 2));
+
+        dialer.gate.presence = Some(Presence::Foreground);
+
+        clock::at(1_000, || {
+            dialer.initiate().unwrap();
+            pump(&mut dialer, &mut receiver, &db); // msg1
+            pump(&mut receiver, &mut dialer, &db); // reply
+            pump(&mut dialer, &mut receiver, &db); // msg3
+            pump(&mut dialer, &mut receiver, &db); // dialer tags: the gate holds
+            pump(&mut dialer, &mut receiver, &db); // dialer challenge: held too
+        });
+
+        let late = 1_000 + GATE_HOLD_SECONDS - 1;
+
+        clock::at(late, || {
+            receiver.approve(&db, true).unwrap();
+            receiver.heartbeat.heard();
+            assert!(
+                !receiver.expired(),
+                "an approval past the identify cap closed the link"
+            );
+
+            pump(&mut receiver, &mut dialer, &db); // receiver tags: dialer admits
+            pump(&mut receiver, &mut dialer, &db); // receiver challenge: dialer answers
+            pump(&mut dialer, &mut receiver, &db); // dialer response: receiver discloses
+            pump(&mut receiver, &mut dialer, &db); // receiver response: dialer identifies
+        });
+
+        assert_eq!(dialer.state, State::Syncing);
+        assert_eq!(receiver.state, State::Syncing);
     }
 
     #[test]
