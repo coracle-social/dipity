@@ -80,7 +80,7 @@
       id: "visibility",
       label: "What others are allowed to see",
       detail:
-        "This controls who is allowed to see your notes, and the names you give people. Your trust list only ever reaches people you paired with, and your bookmarks stay on this phone.",
+        "This controls who is allowed to see your notes, and the names you give people. Your trust list goes only to people you trust, who can pass it on once if you let them, and your bookmarks stay on this phone.",
       scopes: ["trusted", "network", "lenient", "public"] as Scope[],
       on: $policy?.visibility.default,
       set: setVisibility,
