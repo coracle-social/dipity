@@ -322,6 +322,20 @@ mod tests {
     }
 
     #[test]
+    fn a_partial_original_does_not_count_against_the_cache() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        let event_id = store_event(&tx, "with media");
+        let hash = blob_hash(1);
+        record(&tx, &Blob::new(hash.clone(), BlobRole::Original), &event_id).unwrap();
+        record_progress(&tx, &hash, 4_096).unwrap();
+
+        // Nothing could evict it, so counting it would hold the cache over its ceiling for good.
+        assert_eq!(query::stored_bytes(&tx, BlobRole::Original).unwrap(), 0);
+    }
+
+    #[test]
     fn eviction_order_is_least_recently_read() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();

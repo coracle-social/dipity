@@ -156,11 +156,17 @@ fn wanted_sql() -> String {
     )
 }
 
-/// How many bytes of held blobs a role accounts for, which is what the cache
+/// How many bytes of whole blobs a role accounts for, which is what the cache
 /// ceiling is measured against.
+///
+/// A partial blob is left out, because eviction takes only whole ones: counting
+/// bytes nothing can evict would hold the cache over its ceiling for good, and
+/// each completed fetch would evict whatever it could, itself included.
 pub fn stored_bytes(tx: &Tx<'_>, role: BlobRole) -> Result<i64> {
     let bytes = tx
-        .prepare_cached("SELECT COALESCE(SUM(stored_bytes), 0) FROM blob WHERE role = ?1")?
+        .prepare_cached(
+            "SELECT COALESCE(SUM(stored_bytes), 0) FROM blob WHERE role = ?1 AND complete = 1",
+        )?
         .query_row(params![role.as_str()], |row| row.get(0))
         .context("summing stored blob bytes")?;
 
