@@ -521,16 +521,22 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    /// Where the store and the blobs live: Application Support, which is backed
-    /// up and not purged, unlike Caches.
+    /// Where the store and the blobs live: Application Support, which is not
+    /// purged, unlike Caches, and is kept out of backups here, because
+    /// `event_seen` is a record of who the user was near.
+    /// `docs/storage.md#the-sqlite-store`.
     private func support() throws -> URL {
-        let directory = try FileManager.default.url(
+        var directory = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
             create: true)
 
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        var excluded = URLResourceValues()
+        excluded.isExcludedFromBackup = true
+        try directory.setResourceValues(excluded)
 
         return directory
     }

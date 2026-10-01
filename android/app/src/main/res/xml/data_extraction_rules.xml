@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The identity is wrapped by a Keystore key that never leaves the device, so a
+  restored copy is unreadable. The store lives in noBackupFilesDir, which neither
+  path copies. docs/storage.md#the-sqlite-store
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="social.coracle.dip.identity.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="social.coracle.dip.identity.xml" />
+    </device-transfer>
+</data-extraction-rules>

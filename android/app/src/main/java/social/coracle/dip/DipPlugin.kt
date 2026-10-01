@@ -625,7 +625,8 @@ class DipPlugin : Plugin(), Radio.Delegate {
 
     private fun open(call: PluginCall) {
         try {
-            val directory = context.filesDir
+            // Never backed up or transferred: event_seen is a record of who the user was near.
+            val directory = context.noBackupFilesDir
             val store = Store.open(File(directory, "dip.sqlite").absolutePath)
             val node = Node.open(store, KeystoreCustody(keystore), directory.absolutePath)
 
