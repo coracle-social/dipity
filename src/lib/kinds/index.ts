@@ -31,7 +31,6 @@ import {
 } from "@welshman/domain"
 import {
   COMMENT,
-  DELETE,
   EVENT_DATE,
   EVENT_TIME,
   GENERIC_REPOST,
@@ -214,4 +213,4 @@ export const summaryOf = (event: HashedEvent) => {
  * the board as well as a line under what it answers, and the screen that
  * collects it reads the parent tag instead.
  */
-export const responseKinds = [DELETE, REPOST, REACTION, GENERIC_REPOST, POLL_RESPONSE]
+export const responseKinds = [REPOST, REACTION, GENERIC_REPOST, POLL_RESPONSE]

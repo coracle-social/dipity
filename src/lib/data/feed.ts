@@ -2,12 +2,13 @@
 //
 // Reads rather than one per card. The page is what the user is looking at; the
 // rest answer questions a count on a card cannot ask for itself — what people
-// said about it, what was deleted, and which of it this device is in a position
-// to pass on at all.
+// said about it, and which of it this device is in a position to pass on at all.
+// A deletion needs no reading here: the core applies one its author was entitled
+// to make, and the deleted event is gone from the store.
 
 import {derived, get, type Readable} from "svelte/store"
 import {randomId, uniq} from "@welshman/lib"
-import {COMMENT, DELETE, POLL_RESPONSE, REACTION} from "@welshman/util"
+import {COMMENT, POLL_RESPONSE, REACTION} from "@welshman/util"
 import type {HashedEvent} from "@welshman/util"
 import {Dip, type EventDetail, type Order} from "$lib/core"
 import {answering, detailsOf, eventsOf, remembered, storedEvents} from "$lib/data/query"
@@ -54,8 +55,8 @@ export type Response = {
   votes: HashedEvent[]
 }
 
-/** Every response in the store, and every event a deletion asked to remove. */
-export type Responses = {to: Map<string, Response>; deleted: Set<string>}
+/** Every response in the store, by what it responds to. */
+export type Responses = {to: Map<string, Response>}
 
 /** What the board is showing: the order, and the categories left switched on. */
 export type View = {order: Order; showing: string[]}
@@ -152,7 +153,6 @@ const grounded = async (items: Item[]): Promise<Item[]> => {
 
 const index = (found: EventDetail[]): Responses => {
   const to = new Map<string, Response>()
-  const deleted = new Set<string>()
   const at = (id: string) => {
     const response = to.get(id) ?? nothing()
 
@@ -162,29 +162,25 @@ const index = (found: EventDetail[]): Responses => {
   }
 
   for (const {event} of found) {
-    if (event.kind === DELETE) {
-      for (const id of removal.reader(event).parse().ids()) deleted.add(id)
-    } else {
-      const about = respondedTo(event)
+    const about = respondedTo(event)
 
-      if (about && event.kind === REACTION) {
-        at(about).reactions.push({pubkey: event.pubkey, emoji: event.content || "+"})
-      } else if (about && event.kind === POLL_RESPONSE) {
-        at(about).votes.push(event)
-      } else if (about) {
-        at(about).boosts.push(event.pubkey)
-      }
+    if (about && event.kind === REACTION) {
+      at(about).reactions.push({pubkey: event.pubkey, emoji: event.content || "+"})
+    } else if (about && event.kind === POLL_RESPONSE) {
+      at(about).votes.push(event)
+    } else if (about) {
+      at(about).boosts.push(event.pubkey)
     }
   }
 
-  return {to, deleted}
+  return {to}
 }
 
 /** Every response the store holds, which is what puts a count on a card. */
 export const responses: Readable<Responses> = answering(
   storedEvents,
   () => detailsOf({order: "seenAt", filter: JSON.stringify({kinds: responseKinds})}).then(index),
-  {to: new Map(), deleted: new Set()},
+  {to: new Map()},
 )
 
 /** A page of sixty: a phone scrolls, and nothing here pages. */
@@ -196,15 +192,11 @@ const page = (asked: View): Promise<Item[]> =>
     .then(found => found.map(toItem))
     .then(grounded)
 
-const arrived = answering(
+/** What the board draws. */
+export const board: Readable<Item[]> = answering(
   derived([view, storedEvents], ([$view]) => $view),
   page,
   [] as Item[],
-)
-
-/** What the board draws, with whatever a deletion asked to remove left out. */
-export const board: Readable<Item[]> = derived([arrived, responses], ([$arrived, $responses]) =>
-  $arrived.filter(item => !$responses.deleted.has(item.event.id)),
 )
 
 /** Stored items by id, for a screen that knows which ones it wants. */
