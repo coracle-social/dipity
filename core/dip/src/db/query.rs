@@ -23,8 +23,9 @@ use crate::db::event::query as event;
 use crate::db::pairing::query as pairing;
 use crate::db::pref::query as pref;
 use crate::db::recipient_signature::query as signature;
+use crate::db::spending::query as spending;
 use crate::model::{
-    Blob, BlobHash, BlobRole, Policy, Pref, Provenance, Query, RecipientSignature, Share,
+    Blob, BlobHash, BlobRole, Charge, Policy, Pref, Provenance, Query, RecipientSignature, Share,
 };
 
 // ----------------------------------------------------- Policy and preferences
@@ -101,6 +102,11 @@ pub fn initiator_set(db: &Db, query: &Query) -> Result<SyncSet> {
     let refused = db.read(event::refused)?;
 
     Ok(SyncSet::from_items(held.chain(refused)))
+}
+
+/// Every charge in the quota ledger at or after `cutoff`, oldest first.
+pub fn charges_since(db: &Db, cutoff: i64) -> Result<Vec<Charge>> {
+    db.read(|tx| spending::since(tx, cutoff))
 }
 
 /// One event, by id, or `None` if it is not stored.

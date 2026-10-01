@@ -21,6 +21,7 @@
 mod authors;
 mod authorship_proof;
 mod blob;
+mod charge;
 mod graph;
 mod identity;
 mod kinds;
@@ -37,6 +38,7 @@ mod visibility;
 pub use authors::Authors;
 pub use authorship_proof::{AuthorshipClaim, AuthorshipProof};
 pub use blob::{Blob, BlobDigest, BlobHash, BlobRole};
+pub use charge::{Charge, Meter};
 pub use graph::{Graph, Standing};
 pub use identity::Identity;
 pub use kinds::{

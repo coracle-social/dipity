@@ -78,8 +78,9 @@ impl Relay {
 
                 match client::admits(peer, &event, None, quota, spent) {
                     Ok(()) => {
-                        client::ingest(db, peer, &local, &event, None)?;
-                        spending.record(peer, &event);
+                        if client::ingest(db, peer, &local, &event, None)? {
+                            spending.record(peer, &event);
+                        }
 
                         Ok(vec![Message::Ok(event.id.to_hex(), true, "stored".into())])
                     }

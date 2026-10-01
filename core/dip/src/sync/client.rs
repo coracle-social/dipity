@@ -237,9 +237,11 @@ impl Client {
         // Store what passes, and remember what Accept refused so reconciliation stops offering it.
         let mut take = |event: &HashedEvent, proof: Option<&AuthorshipProof>| -> Result<()> {
             match admits(peer, event, proof, quota, spent) {
+                // Only what was stored is charged: a duplicate or a proof that failed cost nothing.
                 Ok(()) => {
-                    ingest(db, peer, local, event, proof)?;
-                    spending.record(peer, event);
+                    if ingest(db, peer, local, event, proof)? {
+                        spending.record(peer, event);
+                    }
                 }
                 Err(Rejected::OutOfScope) => command::refuse_by_policy(db, event, clock::now())?,
                 Err(_) => {}
@@ -717,6 +719,29 @@ mod tests {
                 Err(Rejected::OverQuota)
             );
         });
+    }
+
+    #[test]
+    fn an_event_delivered_twice_is_charged_once() {
+        let db = Db::open_in_memory().unwrap();
+        let ledger = Arc::new(SpendingLedger::default());
+        let mut spending = SessionSpending::new(Arc::clone(&ledger));
+        let event = note_from(2, 100);
+
+        for _ in 0..2 {
+            client(BTreeMap::new())
+                .handle(
+                    &db,
+                    &peer([author(2)]),
+                    &local(),
+                    Message::Event(SubscriptionId("sub".into()), Box::new(event.clone())),
+                    Quota::STRANGER,
+                    &mut spending,
+                )
+                .unwrap();
+        }
+
+        assert_eq!(spending.spent(&peer([author(2)])).events, 1);
     }
 
     #[test]

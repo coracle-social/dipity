@@ -20,11 +20,16 @@
 //! free. The pool is the answer — it is not keyed on identity, so there is
 //! nothing for a burner to reset. `docs/sync.md#quotas`.
 //!
-//! Both live in memory and die with the process. Persisting them would put a
-//! database write on the path of every accepted event for a ceiling measured
-//! in megabytes, and leave rows behind describing traffic nobody will read
-//! again. The window prunes on every write, so neither meter grows without
+//! Both are read from memory and written through to the store's `spending`
+//! table, which a ledger opened over a store reads back at startup. A
+//! background relaunch is routine on both platforms, and a window that died
+//! with the process would refill the pool every time it happened. The window
+//! prunes on every write, in memory and in the table, so neither grows without
 //! bound.
+//!
+//! Blob bytes taken from a peer are a third meter over the same window, per
+//! peer only: a stranger is allowed no blob bytes at all, so there is nothing
+//! for a pool to bound.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -32,7 +37,8 @@ use std::sync::{Arc, Mutex};
 use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::PublicKey;
 
-use crate::model::Standing;
+use crate::db::{Db, command, query};
+use crate::model::{Charge, Meter, Standing};
 use crate::session::Peer;
 
 /// How far back spending counts, in seconds.
@@ -127,36 +133,110 @@ fn total(queue: &VecDeque<Entry>, cutoff: i64) -> (u32, u64) {
 }
 
 /// The shared, thread-safe rolling ledger, metered across sessions.
-#[derive(Debug, Default)]
+///
+/// One built with [`default`](Default::default) lives in memory alone, which
+/// is what a test wants; one built with [`open`](Self::open) writes every
+/// charge through to the store and starts from what the store remembers.
+#[derive(Default)]
 pub struct SpendingLedger {
-    inner: Mutex<Ledger>,
+    /// The event meter and the stranger pool.
+    events: Mutex<Ledger>,
+    /// Blob bytes taken from each peer.
+    blobs: Mutex<Ledger>,
+    /// The store the window is written through to, if there is one.
+    db: Option<Arc<Db>>,
 }
 
 impl SpendingLedger {
+    /// A ledger over `db`, starting from the charges it holds inside the window.
+    pub fn open(db: Arc<Db>) -> Self {
+        let ledger = Self::default();
+        let cutoff = crate::clock::now() - WINDOW_SECONDS;
+
+        match query::charges_since(&db, cutoff) {
+            Ok(charges) => {
+                for charge in charges {
+                    ledger.meter(charge.meter).record(
+                        &charge.pubkey,
+                        !charge.pooled,
+                        charge.at,
+                        charge.bytes,
+                    );
+                }
+            }
+            Err(error) => log::error!("reading the quota ledger failed: {error:#}"),
+        }
+
+        Self {
+            db: Some(db),
+            ..ledger
+        }
+    }
+
     /// Record one accepted event's bytes against the peer, and against the
     /// stranger pool when the peer is not one the user trusts.
     pub fn record(&self, pubkey: &PublicKey, trusted: bool, bytes: usize) {
-        self.inner
-            .lock()
-            .unwrap()
-            .record(pubkey, trusted, crate::clock::now(), bytes as u64);
+        self.charge(Meter::Event, pubkey, !trusted, bytes as u64);
+    }
+
+    /// Record blob bytes taken from the peer.
+    pub fn record_blob(&self, pubkey: &PublicKey, bytes: u64) {
+        self.charge(Meter::Blob, pubkey, false, bytes);
     }
 
     /// The accepted events and their bytes from `pubkey` within the rolling
     /// window, for testing the peer's quota across sessions.
     pub fn since(&self, pubkey: &PublicKey) -> (u32, u64) {
-        self.inner
+        self.events
             .lock()
             .unwrap()
             .since(pubkey, crate::clock::now())
     }
 
+    /// The blob bytes taken from `pubkey` within the rolling window.
+    pub fn blob_since(&self, pubkey: &PublicKey) -> u64 {
+        self.blobs
+            .lock()
+            .unwrap()
+            .since(pubkey, crate::clock::now())
+            .1
+    }
+
     /// What every untrusted peer together has written within the window.
     pub fn strangers(&self) -> (u32, u64) {
-        self.inner
+        self.events
             .lock()
             .unwrap()
             .strangers_since(crate::clock::now())
+    }
+
+    /// Charge one meter in memory, and in the store when there is one.
+    fn charge(&self, meter: Meter, pubkey: &PublicKey, pooled: bool, bytes: u64) {
+        let at = crate::clock::now();
+
+        self.meter(meter).record(pubkey, !pooled, at, bytes);
+
+        if let Some(db) = &self.db {
+            let charge = Charge {
+                pubkey: *pubkey,
+                meter,
+                pooled,
+                at,
+                bytes,
+            };
+
+            if let Err(error) = command::record_charge(db, &charge, at - WINDOW_SECONDS) {
+                log::error!("recording a charge to {pubkey} failed: {error:#}");
+            }
+        }
+    }
+
+    /// One meter's ledger, locked.
+    fn meter(&self, meter: Meter) -> std::sync::MutexGuard<'_, Ledger> {
+        match meter {
+            Meter::Event => self.events.lock().unwrap(),
+            Meter::Blob => self.blobs.lock().unwrap(),
+        }
     }
 }
 
@@ -182,7 +262,6 @@ pub struct Spent {
 /// and read at the highest, so dropping a key from the set next time carries
 /// the history forward rather than shedding it. A wholly fresh set still gets
 /// a fresh meter — that is what the pool is for.
-#[derive(Debug)]
 pub struct SessionSpending {
     /// The rolling window, shared with every other session.
     ledger: Arc<SpendingLedger>,
@@ -223,6 +302,25 @@ impl SessionSpending {
             bytes,
             pooled_events,
             pooled_bytes,
+        }
+    }
+
+    /// The blob bytes taken from the peer within the rolling window, at the
+    /// most-spent of the identities it proved.
+    #[must_use]
+    pub fn blob_spent(&self, peer: &Peer) -> u64 {
+        peer.pubkeys
+            .iter()
+            .map(|pubkey| self.ledger.blob_since(pubkey))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Count blob bytes taken from the peer against the rolling window,
+    /// charged to every identity it proved.
+    pub fn record_blob(&mut self, peer: &Peer, bytes: u64) {
+        for pubkey in &peer.pubkeys {
+            self.ledger.record_blob(pubkey, bytes);
         }
     }
 
@@ -321,6 +419,31 @@ mod tests {
 
             assert_eq!(ledger.since(&author(1)), (1, 500));
             assert_eq!(ledger.strangers(), (0, 0));
+        });
+    }
+
+    #[test]
+    fn a_ledger_over_a_store_remembers_the_window_across_a_relaunch() {
+        let db = Arc::new(crate::db::Db::open_in_memory().unwrap());
+
+        clock::at(1_000, || {
+            let ledger = SpendingLedger::open(Arc::clone(&db));
+            ledger.record(&author(1), false, 40);
+            ledger.record_blob(&author(2), 4_096);
+        });
+
+        clock::at(2_000, || {
+            let relaunched = SpendingLedger::open(Arc::clone(&db));
+
+            assert_eq!(relaunched.since(&author(1)), (1, 40));
+            assert_eq!(relaunched.strangers(), (1, 40));
+            assert_eq!(relaunched.blob_since(&author(2)), 4_096);
+        });
+
+        clock::at(1_000 + WINDOW_SECONDS + 1, || {
+            let later = SpendingLedger::open(Arc::clone(&db));
+
+            assert_eq!(later.since(&author(1)), (0, 0));
         });
     }
 

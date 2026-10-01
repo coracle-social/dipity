@@ -192,6 +192,8 @@ impl Node {
         let identity = custody.identity()?.public_key();
         let policy = Arc::new(query::policy(&db, &identity)?);
 
+        let spending = Arc::new(crate::sync::spending::SpendingLedger::open(Arc::clone(&db)));
+
         let mut node = Self {
             events: channel::subscribe(&db),
             blob_changes: blob_channel::subscribe(&db),
@@ -205,7 +207,7 @@ impl Node {
             sessions: BTreeMap::new(),
             link_peripheral: BTreeMap::new(),
             scheduler: Scheduler::default(),
-            spending: Arc::new(crate::sync::spending::SpendingLedger::default()),
+            spending,
             presence: None,
             events_swept_at: None,
             key_backup: None,

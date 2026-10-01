@@ -17,7 +17,8 @@ use crate::db::event::query as event_query;
 use crate::db::pairing::command as pairing;
 use crate::db::pref::command as pref;
 use crate::db::recipient_signature::command as signature;
-use crate::model::{Blob, BlobHash, BlobRole, RecipientSignature};
+use crate::db::spending::command as spending;
+use crate::model::{Blob, BlobHash, BlobRole, Charge, RecipientSignature};
 
 /// Take in an event from a peer, with the media it references.
 ///
@@ -161,6 +162,11 @@ pub fn set_preference(db: &Db, key: &str, value: &str, at: i64) -> Result<()> {
 /// Remove a preference. Returns whether it existed before.
 pub fn clear_preference(db: &Db, key: &str) -> Result<bool> {
     db.write(|tx| pref::remove(tx, key))
+}
+
+/// Charge a peer for what it wrote, forgetting charges older than `cutoff`.
+pub fn record_charge(db: &Db, charge: &Charge, cutoff: i64) -> Result<()> {
+    db.write(|tx| spending::record(tx, charge, cutoff))
 }
 
 /// Remember that this device refused `event` by the user's Accept scope, so

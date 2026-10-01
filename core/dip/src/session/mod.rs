@@ -551,7 +551,15 @@ impl Session {
                 self.send_blob(&Message::BlossomResponse(Box::new(reply)))
             }
             Message::BlossomResponse(response) => {
-                if let Some(request) = self.blobs.on_response(db, &peer, &response, quota)? {
+                let before = self.blobs.fetched_bytes();
+                let next = self.blobs.on_response(db, &peer, &response, quota)?;
+                let taken = self.blobs.fetched_bytes().saturating_sub(before);
+
+                if taken > 0 {
+                    self.spending.record_blob(&peer, taken);
+                }
+
+                if let Some(request) = next {
                     self.send_blob(&Message::BlossomRequest(Box::new(request)))?;
                 }
 
@@ -614,6 +622,10 @@ impl Session {
         }
 
         self.state = State::Syncing;
+
+        if let Some(peer) = &self.peer {
+            self.blobs.carry_fetched(self.spending.blob_spent(peer));
+        }
 
         self.pair(db)?;
         self.begin_negotiation(db, Filter::new())?;

@@ -187,6 +187,19 @@ impl BlobExchange {
         self.active.is_some()
     }
 
+    /// Blob bytes taken from the peer this session, starting from what the
+    /// rolling window had already charged it.
+    #[must_use]
+    pub fn fetched_bytes(&self) -> u64 {
+        self.fetched_bytes
+    }
+
+    /// Start this session's count from what the window already charged the
+    /// peer, so reconnecting refills nothing. `docs/sync.md#quotas`.
+    pub fn carry_fetched(&mut self, bytes: u64) {
+        self.fetched_bytes = self.fetched_bytes.max(bytes);
+    }
+
     /// Give up the fetch in flight, whose request or answer was lost with the
     /// pipe it rode, so the next [`poll`](Self::poll) resumes from the store.
     pub fn abandon_in_flight(&mut self) {

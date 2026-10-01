@@ -50,6 +50,10 @@ const MIGRATIONS: &[Migration] = &[
         name: "0006_event_refused",
         sql: include_str!("../../migrations/0006_event_refused.sql"),
     },
+    Migration {
+        name: "0007_spending",
+        sql: include_str!("../../migrations/0007_spending.sql"),
+    },
 ];
 
 /// The database file's name inside the directory the shell provides.
@@ -336,6 +340,7 @@ mod tests {
                 "pair_secret",
                 "pref",
                 "recipient_signature",
+                "spending",
             ]
         );
     }

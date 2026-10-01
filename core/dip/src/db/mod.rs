@@ -13,7 +13,8 @@
 //! threading that through however many tables the answer takes.
 //!
 //! Below them sits one module per group of tables — [`blob`], [`event`],
-//! [`pref`], [`recipient_signature`] — each holding three files:
+//! [`pairing`], [`pref`], [`recipient_signature`], [`spending`] — each holding
+//! a query file and a command file, and a channel where its writes announce:
 //!
 //! | File | Holds |
 //! | --- | --- |
@@ -23,7 +24,7 @@
 //!
 //! A group owns every table it touches and no table is touched from two of
 //! them, so the invariants between tables — an event and its indexes, a blob
-//! and the event anchoring it — have exactly one place they can be broken.
+//! and the events referencing it — have exactly one place they can be broken.
 //! Every function down here takes a [`Tx`] rather than reaching for the
 //! database itself, so several of them compose into one atomic write.
 //!
@@ -41,6 +42,7 @@ pub mod event;
 pub mod pairing;
 pub mod pref;
 pub mod recipient_signature;
+pub mod spending;
 
 pub(crate) mod channels;
 pub(crate) mod condition;

@@ -59,6 +59,8 @@ Accepting gossiped events is an unbounded write from whoever is standing nearby.
 
 The ceiling is the one that has to hold, because the per-peer budget below it does not bind a stranger. Content events carry no signature, so an identity costs an attacker a keypair: metering per pubkey assumes identity is expensive, and here it is free. The ceiling is keyed on nothing at all, so there is nothing for a burner to reset.
 
+The window lives in the store as well as in memory, so a background relaunch, which both platforms do routinely, refills nothing either. Only what was stored is charged: a duplicate, or an event whose proof did not verify, costs the peer nothing.
+
 ## Blob sync
 
 Blobs follow, on their own channel. They are addressed by the SHA-256 in the event's `imeta` tag and verified against the BLAKE3 root also included in the `imeta` tag ([`nips/imeta-blake3.md`](./nips/imeta-blake3.md)). Content addressing makes transfers resumable, dedupable across peers, and verifiable group by group as they arrive.
