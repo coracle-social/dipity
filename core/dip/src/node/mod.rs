@@ -168,6 +168,9 @@ pub struct Node {
     /// The backup file waiting on a share sheet, so the core can delete it
     /// whichever way the sheet ends.
     key_backup: Option<PathBuf>,
+    /// Whether the shell has been told to scan and advertise, which the first
+    /// tick does once. `docs/discovery.md#session-lifecycle`.
+    radio_started: bool,
 }
 
 impl Node {
@@ -198,6 +201,7 @@ impl Node {
             presence: None,
             events_swept_at: None,
             key_backup: None,
+            radio_started: false,
         };
 
         // Whatever was removed while no node was listening is still on disk.
@@ -443,8 +447,14 @@ impl Node {
 
         self.sweep_events();
 
-        // A queued candidate may now be past its rate limit, its backoff, or the link cap.
         let mut actions = Vec::new();
+
+        if !self.radio_started {
+            self.radio_started = true;
+            actions.extend([Action::Scan(true), Action::Advertise(true)]);
+        }
+
+        // A queued candidate may now be past its rate limit, its backoff, or the link cap.
         if let Some(peripheral) = self.scheduler.next_dial(self.central_links()) {
             actions.push(Action::Connect(peripheral));
         }
@@ -1120,6 +1130,22 @@ mod tests {
         assert!(!blobs.has(&orphan).unwrap());
         // A transfer in flight has a record from the moment its event was stored.
         assert!(blobs.has(&partial).unwrap());
+    }
+
+    #[test]
+    fn the_first_tick_starts_scanning_and_advertising_once() {
+        let mut node = node();
+
+        let first = node.tick();
+        assert!(first.contains(&Action::Scan(true)));
+        assert!(first.contains(&Action::Advertise(true)));
+
+        let second = node.tick();
+        assert!(
+            !second
+                .iter()
+                .any(|action| matches!(action, Action::Scan(_) | Action::Advertise(_)))
+        );
     }
 
     #[test]

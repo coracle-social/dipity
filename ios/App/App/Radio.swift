@@ -39,6 +39,11 @@ final class Radio: NSObject {
     /// The one characteristic this device serves.
     private var characteristic: CBMutableCharacteristic!
 
+    /// What the core last asked of each manager, applied again whenever the
+    /// manager powers on.
+    private var scanning = false
+    private var advertising = false
+
     /// Every live link, both roles, keyed the way the core names them.
     private var links: [UInt64: Link] = [:]
 
@@ -89,6 +94,7 @@ final class Radio: NSObject {
     // ------------------------------------------------------------- Actions
 
     func scan(_ on: Bool) {
+        scanning = on
         guard central.state == .poweredOn else { return }
 
         if on {
@@ -103,7 +109,8 @@ final class Radio: NSObject {
     }
 
     func advertise(_ on: Bool) {
-        guard peripheral.state == .poweredOn else { return }
+        advertising = on
+        guard peripheral.state == .poweredOn, characteristic != nil else { return }
 
         if on {
             // The service UUID and nothing else. In the background iOS strips
@@ -271,7 +278,7 @@ extension Radio: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ manager: CBCentralManager) {
         // The core asked to scan before the radio was ready, or the user turned
         // Bluetooth back on. Either way the standing request is still standing.
-        if manager.state == .poweredOn { scan(true) }
+        if manager.state == .poweredOn { scan(scanning) }
     }
 
     func centralManager(_ manager: CBCentralManager, willRestoreState state: [String: Any]) {
@@ -404,7 +411,7 @@ extension Radio: CBPeripheralManagerDelegate {
 
         manager.removeAllServices()
         manager.add(served)
-        advertise(true)
+        advertise(advertising)
     }
 
     func peripheralManager(_ manager: CBPeripheralManager, willRestoreState state: [String: Any]) {
