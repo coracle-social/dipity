@@ -4,7 +4,7 @@
 // query is the only thing that knows what belongs on screen: everything here
 // re-reads rather than patches. `docs/ui.md#components-do-not-query-the-core`.
 
-import {derived, readable, type Readable} from "svelte/store"
+import {derived, readable, writable, type Readable} from "svelte/store"
 import type {PluginListenerHandle} from "@capacitor/core"
 import type {HashedEvent} from "@welshman/util"
 import {Dip, type Change, type EventDetail, type Query} from "$lib/core"
@@ -79,9 +79,9 @@ export const parsed = <Value>(key: string, value: string | null, fallback: Value
  * A choice the user made, kept where it survives the app being suspended.
  *
  * `docs/ui.md#held-by-review` puts durable state in the plugin rather than in
- * the view, and a preference is the plugin's own vocabulary for one. The write
- * is announced back as a change, so the value on screen is always the value
- * the core holds rather than a second copy of it.
+ * the view, and a preference is the plugin's own vocabulary for one. A value set
+ * here is answered at once, ahead of the store's round trip, so two changes in
+ * quick succession build on each other rather than both on the value before.
  */
 export const remembered = <Value>(key: string, fallback: Value) => {
   const read = () =>
@@ -89,14 +89,22 @@ export const remembered = <Value>(key: string, fallback: Value) => {
       .catch(() => ({value: null}))
       .then(({value}) => parsed(key, value, fallback))
 
-  const {subscribe} = answering(storedPreferences, read, fallback)
+  const local = writable<{value: Value} | undefined>(undefined)
+  const stored = answering(storedPreferences, read, fallback)
+  const {subscribe} = derived([stored, local], ([$stored, $local]) =>
+    $local ? $local.value : $stored,
+  )
 
   return {
     subscribe,
-    set: (value: Value) =>
-      Dip.setPreference({key, value: JSON.stringify(value)}).catch(error =>
-        console.error(`${key} could not be written`, error),
-      ),
+    set: (value: Value) => {
+      local.set({value})
+
+      return Dip.setPreference({key, value: JSON.stringify(value)}).catch(error => {
+        local.set(undefined)
+        console.error(`${key} could not be written`, error)
+      })
+    },
   }
 }
 

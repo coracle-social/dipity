@@ -12,7 +12,7 @@
 import {derived, get, type Readable} from "svelte/store"
 import {spec} from "@welshman/lib"
 import type {ConfiguredKind, MuteListQuery, MuteListReader, MuteListWriter} from "@welshman/domain"
-import {MUTES, type HashedEvent} from "@welshman/util"
+import {MUTES, type EventTemplate, type HashedEvent} from "@welshman/util"
 import {answering, eventsOf, storedEvents} from "$lib/data/query"
 import {publish} from "$lib/data/publish"
 import {session} from "$lib/data/session"
@@ -161,39 +161,68 @@ export const nameOf = ({people}: Social, pubkey: string): Named => {
 export const isKnown = (social: Social, pubkey: string) =>
   Boolean(social.people.get(pubkey)?.petname)
 
-/** Name somebody, or rename them, which is a card addressed to them either way. */
-export const name = async (pubkey: string, petname: string) => {
-  const current = get(social).own.cards.get(pubkey)
-  const writer = contactCard.writer(current && contactCard.reader(current).parse())
+/** The last version of each of the user's own events written from here, by address. */
+const written = new Map<string, HashedEvent>()
 
-  await publish(await writer.name(pubkey, petname).renderTemplate(), current)
-}
+/** Edits run one at a time, so each reads what the one before it wrote. */
+let edits: Promise<unknown> = Promise.resolve()
 
-const amend = async (
-  kind: PeopleList,
-  current: HashedEvent | undefined,
-  pubkey: string,
-  onList: boolean,
+/**
+ * Supersede the user's event at `address`.
+ *
+ * The store answers a write only after a round trip, so an edit reading it
+ * straight after another would build on the version that one replaced and undo
+ * it. Each builds on whichever is newer: what the store holds, or what the edit
+ * before it wrote.
+ */
+const edit = (
+  address: string,
+  stored: HashedEvent | undefined,
+  change: (current?: HashedEvent) => Promise<EventTemplate>,
 ) => {
-  const writer = kind.writer(current && (await kind.reader(current).parse()))
-  const amended = onList ? writer.addPublic(["p", pubkey]) : writer.dropTags(spec(["p", pubkey]))
+  const run = edits
+    .catch(() => undefined)
+    .then(async () => {
+      const mine = written.get(address)
+      const current = mine && (!stored || mine.created_at >= stored.created_at) ? mine : stored
 
-  await publish(await amended.renderTemplate(), current)
+      written.set(address, await publish(await change(current), current))
+    })
+
+  edits = run
+
+  return run
 }
+
+/** Name somebody, or rename them, which is a card addressed to them either way. */
+export const name = (pubkey: string, petname: string) =>
+  edit(`${CONTACT}:${pubkey}`, get(social).own.cards.get(pubkey), current =>
+    contactCard
+      .writer(current && contactCard.reader(current).parse())
+      .name(pubkey, petname)
+      .renderTemplate(),
+  )
+
+const amend = (kind: PeopleList, list: keyof Omit<Own, "cards">, pubkey: string, onList: boolean) =>
+  edit(list, get(social).own[list], async current => {
+    const writer = kind.writer(current && (await kind.reader(current).parse()))
+    const amended = onList ? writer.addPublic(["p", pubkey]) : writer.dropTags(spec(["p", pubkey]))
+
+    return amended.renderTemplate()
+  })
 
 export const setTrusted = (pubkey: string, trusted: boolean) =>
-  amend(trust, get(social).own.trust, pubkey, trusted)
+  amend(trust, "trust", pubkey, trusted)
 
 /** Block somebody, which takes them off the trust list too: a block is a veto over trust. */
 export const setBlocked = async (pubkey: string, blocked: boolean) => {
   const current = get(social)
 
   if (blocked && current.people.get(pubkey)?.trusted) {
-    await amend(trust, current.own.trust, pubkey, false)
+    await amend(trust, "trust", pubkey, false)
   }
 
-  await amend(block, current.own.block, pubkey, blocked)
+  await amend(block, "block", pubkey, blocked)
 }
 
-export const setMuted = (pubkey: string, muted: boolean) =>
-  amend(mute, get(social).own.mute, pubkey, muted)
+export const setMuted = (pubkey: string, muted: boolean) => amend(mute, "mute", pubkey, muted)
