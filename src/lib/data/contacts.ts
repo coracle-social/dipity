@@ -164,10 +164,6 @@ export const nameOf = ({people}: Social, pubkey: string): Named => {
   return {name: alias.petname, according: people.get(alias.by)?.petname ?? short(alias.by)}
 }
 
-/** Whether the user paired with somebody themselves, which is what their own name means. */
-export const isKnown = (social: Social, pubkey: string) =>
-  Boolean(social.people.get(pubkey)?.petname)
-
 /** The last version of each of the user's own events written from here, by address. */
 const written = new Map<string, HashedEvent>()
 

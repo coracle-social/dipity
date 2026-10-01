@@ -10,7 +10,7 @@
   import ItemBody from "$lib/components/ItemBody.svelte"
   import Reactions from "$lib/components/Reactions.svelte"
   import {toggleBookmark} from "$lib/data/bookmarks"
-  import {isKnown, nameOf, type Social} from "$lib/data/contacts"
+  import {nameOf, type Social} from "$lib/data/contacts"
   import {
     drop,
     opensId,
@@ -53,7 +53,8 @@
 
   const mine = $derived(item.event.pubkey === session.identity)
 
-  const hops = $derived(mine || isKnown(social, item.event.pubkey) ? 1 : 2)
+  // Its author handed it over in person, or a neighbour carried it in with a proof.
+  const hops = $derived(mine || item.from.includes(item.event.pubkey) ? 1 : 2)
 
   const category = $derived(categoryOf(item.event.kind))
 
