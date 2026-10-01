@@ -87,6 +87,22 @@ pub fn reconciliation_set(db: &Db, query: &Query) -> Result<SyncSet> {
     ))
 }
 
+/// What this device opens a reconciliation with: everything it holds under
+/// `query`, and every id it has refused, so neither is reported missing.
+///
+/// A refused id carries no kind or author, so it joins the set whatever the
+/// filter says. That costs nothing: an id the peer does not hold under the
+/// filter lands in the unused `have` side of the diff.
+pub fn initiator_set(db: &Db, query: &Query) -> Result<SyncSet> {
+    let held = list_events(db, query)?.into_iter().map(|event| Item {
+        timestamp: event.created_at,
+        id: event.id,
+    });
+    let refused = db.read(event::refused)?;
+
+    Ok(SyncSet::from_items(held.chain(refused)))
+}
+
 /// One event, by id, or `None` if it is not stored.
 pub fn get_event(db: &Db, id: &EventId) -> Result<Option<HashedEvent>> {
     db.read(|tx| event::get(tx, id))

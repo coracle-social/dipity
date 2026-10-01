@@ -155,13 +155,6 @@ impl PeerPolicy {
                 .admits(self.policy.graph.standing(event.pubkey()))
     }
 
-    /// Which authors an event may be accepted from, for the filter this device
-    /// reconciles against the peer with.
-    #[must_use]
-    pub fn accept_authors(&self) -> Authors {
-        self.policy.accept.authors(&self.policy.graph)
-    }
-
     /// Whether an event may be shared with this peer.
     #[must_use]
     pub fn should_gossip<E>(&self, event: &E) -> bool

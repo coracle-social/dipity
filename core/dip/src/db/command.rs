@@ -163,7 +163,19 @@ pub fn clear_preference(db: &Db, key: &str) -> Result<bool> {
     db.write(|tx| pref::remove(tx, key))
 }
 
-/// Forget events last handed over before `cutoff`. Returns how many went.
+/// Remember that this device refused `event` by the user's Accept scope, so
+/// reconciliation stops offering it until the policy changes.
+pub fn refuse_by_policy(db: &Db, event: &HashedEvent, at: i64) -> Result<()> {
+    db.write(|tx| event::refuse(tx, event, true, at))
+}
+
+/// Forget the refusals the user's settings made, once those settings change.
+pub fn forget_policy_refusals(db: &Db) -> Result<usize> {
+    db.write(event::forget_policy_refusals)
+}
+
+/// Forget events whose latest sighting is before `cutoff`, and refusals made
+/// before it. Returns how many events went.
 pub fn forget_events_unseen_since(db: &Db, identity: &PublicKey, cutoff: i64) -> Result<usize> {
     db.write(|tx| event::forget_unseen_since(tx, identity, cutoff))
 }

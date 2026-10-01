@@ -83,12 +83,16 @@ impl Negotiation {
     /// re-dropped as a duplicate. Reconciliation would never converge, and the
     /// peer would spend its quota redelivering what this device already has.
     ///
+    /// Ids this device refused join the set for the same reason: a deleted
+    /// event, a superseded version or an author outside Accept is never stored,
+    /// so without them it too would be fetched and dropped on every encounter.
+    ///
     /// The relay half bounds its own answers separately, in
     /// [`reconcilable`](crate::sync::relay::reconcilable), so nothing here
     /// widens what this device will serve.
     pub fn begin(db: &Db, filter: Filter) -> Result<(Self, Message)> {
         let held = crate::model::Query::new().with_filter(filter.clone());
-        let local = db_query::reconciliation_set(db, &held)?;
+        let local = db_query::initiator_set(db, &held)?;
 
         let subscription = fresh_subscription()?;
         let negotiation = Self {
@@ -230,6 +234,20 @@ impl Client {
         // The quota is tested against the rolling window, so a reconnect refills nothing.
         let spent = spending.spent(peer);
 
+        // Store what passes, and remember what Accept refused so reconciliation stops offering it.
+        let mut take = |event: &HashedEvent, proof: Option<&AuthorshipProof>| -> Result<()> {
+            match admits(peer, event, proof, quota, spent) {
+                Ok(()) => {
+                    ingest(db, peer, local, event, proof)?;
+                    spending.record(peer, event);
+                }
+                Err(Rejected::OutOfScope) => command::refuse_by_policy(db, event, clock::now())?,
+                Err(_) => {}
+            }
+
+            Ok(())
+        };
+
         match message {
             Message::Event(subscription, event) => {
                 let id = event.id;
@@ -237,16 +255,10 @@ impl Client {
 
                 if let Some(proof) = &proof {
                     // Second hop: the proof authorizes the forwarded event.
-                    if admits(peer, &event, Some(proof), quota, spent).is_ok() {
-                        ingest(db, peer, local, &event, Some(proof))?;
-                        spending.record(peer, &event);
-                    }
+                    take(&event, Some(proof))?;
                 } else if peer.pubkeys.contains(&event.pubkey) {
                     // First hop: the authenticated session is the proof.
-                    if admits(peer, &event, None, quota, spent).is_ok() {
-                        ingest(db, peer, local, &event, None)?;
-                        spending.record(peer, &event);
-                    }
+                    take(&event, None)?;
                 } else if holdable(peer, &event, quota, spent) {
                     // Forwarded without its proof yet; hold it until one arrives.
                     self.pending_events.insert(id, *event);
@@ -270,10 +282,7 @@ impl Client {
 
                 match self.pending_events.remove(&event_id) {
                     Some(event) => {
-                        if admits(peer, &event, Some(&proof), quota, spent).is_ok() {
-                            ingest(db, peer, local, &event, Some(&proof))?;
-                            spending.record(peer, &event);
-                        }
+                        take(&event, Some(&proof))?;
                     }
                     None => {
                         self.pending_proofs.insert(event_id, proof);
@@ -594,6 +603,42 @@ mod tests {
             admits(&peer, &event, None, Quota::STRANGER, Spent::default()),
             Err(Rejected::OutOfScope)
         );
+    }
+
+    #[test]
+    fn an_event_outside_accept_counts_as_held_until_the_policy_changes() {
+        let db = Db::open_in_memory().unwrap();
+        let mut policy = Policy::new(us());
+        policy.accept = Scope::Trusted;
+
+        let peer = Peer::bind(LinkId(1), [author(2)], &policy);
+        let event = note_from(2, 100);
+
+        client(BTreeMap::new())
+            .handle(
+                &db,
+                &peer,
+                &local(),
+                Message::Event(SubscriptionId("sub".into()), Box::new(event.clone())),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
+
+        let opened = |db: &Db| {
+            let set = db_query::initiator_set(db, &Query::new()).unwrap();
+            set.iter().map(|item| item.id).collect::<Vec<_>>()
+        };
+
+        assert!(
+            db_query::list_events(&db, &Query::new())
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(opened(&db), vec![event.id]);
+
+        command::forget_policy_refusals(&db).unwrap();
+        assert!(opened(&db).is_empty());
     }
 
     #[test]

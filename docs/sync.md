@@ -16,7 +16,7 @@ Ingest applies this once, in the core. An event is accepted from the peer that a
 
 Once a connection reached `SYNCING` status, each side can initiate synchronization by requesting data it is missing. Event syncing uses the nostr client/relay protocol without modification. Each peer acts as both a client and a relay.
 
-Sync begins with a NIP 77 NEGENTROPY sync over events accepted from this peer according to policy. Peers may respond with fewer than the requested events depending on their visibility and gossip policies, and every event should be checked against the receiver's accept policy.
+Sync begins with a NIP 77 NEGENTROPY sync. The filter it opens with names no authors, because a filter is something the peer reads and the trust graph is not, so the dialing side's set is everything it holds plus every id it has refused: a deleted event, a version a newer one superseded, or an author outside its Accept scope. Counting a refusal as held is what stops the peer delivering it again on every encounter. Peers may respond with fewer than the requested events depending on their visibility and gossip policies, and every event is checked against the receiver's accept policy.
 
 Once the negentropy reconciliation is complete, a regular `REQ` is used to retrieve the desired events. Syncing is paginated in reverse chronological order by `created_at` timestamp with dynamic since/until windows.
 

@@ -46,6 +46,10 @@ const MIGRATIONS: &[Migration] = &[
         name: "0005_event_shared",
         sql: include_str!("../../migrations/0005_event_shared.sql"),
     },
+    Migration {
+        name: "0006_event_refused",
+        sql: include_str!("../../migrations/0006_event_refused.sql"),
+    },
 ];
 
 /// The database file's name inside the directory the shell provides.
@@ -325,6 +329,7 @@ mod tests {
                 "disclosure",
                 "event",
                 "event_fts",
+                "event_refused",
                 "event_seen",
                 "event_shared",
                 "event_tag",

@@ -38,6 +38,19 @@ pub fn get(tx: &Tx<'_>, id: &EventId) -> Result<Option<HashedEvent>> {
     Ok(event)
 }
 
+/// Every id this device refused, as the items reconciliation diffs.
+pub fn refused(tx: &Tx<'_>) -> Result<Vec<coracle_lib::sync::Item>> {
+    tx.prepare_cached("SELECT id, created_at FROM event_refused")?
+        .query_map([], |row| {
+            Ok(coracle_lib::sync::Item {
+                id: event_id_from_sql(&row.get::<_, String>(0)?, 0)?,
+                timestamp: row.get(1)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("reading refused ids")
+}
+
 /// Whether an event is stored, without loading it. The hot path on ingest.
 pub fn exists(tx: &Tx<'_>, id: &EventId) -> Result<bool> {
     let exists = tx

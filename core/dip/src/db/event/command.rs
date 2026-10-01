@@ -45,12 +45,14 @@ pub fn save(tx: &Tx<'_>, event: &HashedEvent, from: &[PublicKey], seen_at: i64) 
     }
 
     if query::is_deleted(tx, event)? {
+        refuse(tx, event, false, seen_at)?;
         return Ok(false);
     }
 
     if let Some(address) = event.address()
         && !replaces_current(tx, event, &address)?
     {
+        refuse(tx, event, false, seen_at)?;
         return Ok(false);
     }
 
@@ -63,6 +65,28 @@ pub fn save(tx: &Tx<'_>, event: &HashedEvent, from: &[PublicKey], seen_at: i64) 
     }
 
     Ok(true)
+}
+
+/// Remember that this device declined `event`, so reconciliation counts it as
+/// held and no peer delivers it again. `by_policy` marks a refusal the user's
+/// settings made, which [`forget_policy_refusals`] undoes.
+pub fn refuse(tx: &Tx<'_>, event: &HashedEvent, by_policy: bool, at: i64) -> Result<()> {
+    tx.prepare_cached(
+        "INSERT INTO event_refused (id, created_at, by_policy, refused_at) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (id) DO UPDATE SET refused_at = excluded.refused_at",
+    )?
+    .execute(params![event.id.to_hex(), event.created_at, by_policy, at])
+    .with_context(|| format!("remembering that {} was refused", event.id))?;
+
+    Ok(())
+}
+
+/// Forget the refusals the user's settings made, which settings that have
+/// since changed may no longer make.
+pub fn forget_policy_refusals(tx: &Tx<'_>) -> Result<usize> {
+    tx.prepare_cached("DELETE FROM event_refused WHERE by_policy = 1")?
+        .execute([])
+        .context("forgetting refusals the policy made")
 }
 
 /// Record a sighting of an event per pubkey a peer proved on one session.
@@ -174,7 +198,8 @@ pub fn delete(tx: &Tx<'_>, id: &EventId) -> Result<bool> {
     Ok(true)
 }
 
-/// Forget events last handed over before `cutoff`. `docs/storage.md#retention`.
+/// Forget events whose latest sighting is before `cutoff`, and refusals made
+/// before it. `docs/storage.md#retention`.
 ///
 /// A bookmarked event stays. The user's own bookmark list is the only thing
 /// that says to keep something somebody else wrote, so the sweep reads it
@@ -202,6 +227,10 @@ pub fn forget_unseen_since(tx: &Tx<'_>, identity: &PublicKey, cutoff: i64) -> Re
         })?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("finding events to forget")?;
+
+    tx.prepare_cached("DELETE FROM event_refused WHERE refused_at < ?1")?
+        .execute(params![cutoff])
+        .context("forgetting old refusals")?;
 
     let mut forgotten = 0;
 
@@ -557,6 +586,14 @@ mod tests {
         // The deletion arrived first, which is ordinary: peers meet in whatever order.
         assert!(!save(&tx, &subject, &[peer()], 20).unwrap());
         assert!(query::get(&tx, &id(&subject)).unwrap().is_none());
+
+        // Remembered as refused, so reconciliation stops reporting it missing.
+        let refused: Vec<_> = query::refused(&tx)
+            .unwrap()
+            .into_iter()
+            .map(|item| item.id)
+            .collect();
+        assert_eq!(refused, vec![id(&subject)]);
     }
 
     #[test]

@@ -593,8 +593,12 @@ impl Node {
     }
 
     /// Recompile the policy from the store and bind it on every live session.
+    ///
+    /// What the old policy refused, the new one may accept, so those refusals
+    /// are forgotten and the next reconciliation offers them again.
     fn rebind_policy(&mut self) -> Result<()> {
         self.policy = Arc::new(query::policy(&self.db, &self.identity)?);
+        db_command::forget_policy_refusals(&self.db)?;
 
         for session in self.sessions.values_mut() {
             session.set_policy(Arc::clone(&self.policy));
