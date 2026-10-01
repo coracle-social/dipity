@@ -13,6 +13,7 @@
   import People from "$lib/components/People.svelte"
   import Settings from "$lib/components/Settings.svelte"
   import type {Item} from "$lib/data/feed"
+  import {watchLinks} from "$lib/data/links"
   import {go, place} from "$lib/data/nav"
   import {requests, watchPairings} from "$lib/data/pairing"
   import {step, watchTransfers} from "$lib/data/transfer"
@@ -22,6 +23,14 @@
 
   $effect(() => {
     const watching = watchPairings()
+
+    return () => {
+      watching.then(stop => stop()).catch(() => undefined)
+    }
+  })
+
+  $effect(() => {
+    const watching = watchLinks()
 
     return () => {
       watching.then(stop => stop()).catch(() => undefined)
