@@ -50,7 +50,7 @@ The shapes themselves are declared once, in `core.ts`, and the simulator answers
 
 What a simulated peer writes comes out of `@welshman/domain` too, bound in `src/lib/dev/kinds.ts` rather than taken from `src/lib/kinds/`. The dependency points one way: a stand-in for the core that reached for the app would only prove the app agrees with itself. Sharing the library instead means neither side spells a tag out, so a kind the view learns to read is a kind a peer already writes correctly.
 
-`src/lib/core.ts` loads it by dynamic import under `import.meta.env.DEV`, so the branch is dead code in a shipped bundle and neither the simulator nor faker is in one. It is also `window.dip`, because part of that surface has no screen yet: a key backup and an identity transfer are answered from the console until something is built to answer them.
+`src/lib/core.ts` loads it by dynamic import under `import.meta.env.DEV`, so the branch is dead code in a shipped bundle and neither the simulator nor faker is in one. It is also `window.dip`, because a browser has no second phone: a peer offering this device its identity is started from the console with `dip.receiveOffer(link)`.
 
 **Nothing but `core.ts` may import it**, which `just lint` enforces. A view that reaches past the boundary for a fixture has a code path that only ever runs in a browser, and the screen it draws there is not the screen a device draws.
 
@@ -203,7 +203,7 @@ Styling happens in Tailwind utilities, or in the theme. A component-scoped rule 
 - **`tv()` for variants, not conditionals.** If a component has more than two visual states, it gets a variant table.
 - **Semantic HTML before ARIA.** bits-ui handles the wiring for anything interactive; hand-rolled `role` attributes are a sign the wrong primitive was used.
 - **The UI owns no durable state.** The view is suspended in the background, so anything that must survive that lives in the plugin. Where the user is does not survive; a choice they made about what a screen is for does, as a preference under a `ui.` key (`remembered` in `src/lib/data/query.ts`).
-- **Never claim posts only reach nearby people.** A second-hop recipient may be anywhere. Say reach is bounded at two hops.
+- **Never claim posts only reach nearby people.** Copy may say the phone trades with devices in range, since every link is physical. Copy about who ends up with a post says reach is bounded at two hops, because a second-hop recipient may be anywhere.
 
 ## Organizing against welshman
 

@@ -8,7 +8,7 @@ Each story names the screen that answers it. A story with no screen is a gap, an
 
 Four facts about the transport decide most of the interface, and every story below inherits them.
 
-**Nothing is guaranteed to arrive.** Content moves over Bluetooth, hop by hop, and stops at two. So the app never promises delivery, never shows a sent-and-read state, and never offers a private channel. A reply is said to the user's own neighbours rather than addressed to the author, so a comment carries its own words and reaches people who never got the thing it answers. A boost names what it passes on rather than carrying it, so one that outruns its subject draws blank. The board leaves it out until the subject arrives. Nothing here is addressed to anybody, and the word for passing something on is **boost**.
+**Nothing is guaranteed to arrive.** Content moves over Bluetooth, hop by hop, and stops at two. So the app never promises delivery, never shows a sent-and-read state, and never offers a private channel. A reply is said to the user's own neighbours rather than addressed to the author, so a comment can reach people who never got the thing it answers. A boost names what it passes on rather than carrying it, and a comment names what it answers, so either can outrun its subject. The board leaves both out until the subject arrives. Nothing here is addressed to anybody, and the word for passing something on is **boost**.
 
 **Passing something on takes permission.** An event travels a second hop only from a device holding the author's signature naming it, so a thing carried in from further out can be read and not forwarded. A boost or a reaction is the user's own event and travels either way; what it names may not.
 

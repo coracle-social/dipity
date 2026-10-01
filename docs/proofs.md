@@ -106,7 +106,7 @@ Soundness and zero-knowledge fail independently, and known-answer vectors only c
 
 ### Hygiene
 
-- **No key access when forwarding.** B proves knowledge of `s`, which B already holds, not B's own private key. Forwarding never reads secure storage, and no part of the proof can be steered into acting as a signing oracle for B's identity. The only signature B produces in an encounter is its own auth event.
+- **No key access when forwarding.** B proves knowledge of `s`, which B already holds, not B's own private key. Forwarding never reads secure storage, and no part of the proof can be steered into acting as a signing oracle for B's identity. B signs in an encounter only as an author: its own auth event, and recipient signatures over its own events.
 - **One key read per batch when signing.** 1500 Keychain or Keystore reads in a background wake is both slow and more exposure than necessary. Read once, sign the batch, zeroize.
 - **Reject before computing.** The verifier rejects malformed input — points not on the curve, out-of-range scalars — before any arithmetic runs. secp256k1's prime order and cofactor of 1 rule out small-subgroup attacks, but not malformed input.
 - **Constant time.** Scalar multiplications touching `s` or a nonce use constant-time paths. `k256`'s standard operations are; ad-hoc `Scalar` arithmetic assembled by hand may not be.

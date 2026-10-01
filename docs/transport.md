@@ -44,7 +44,7 @@ Every write is one fragment: a two-byte header, then the payload.
 
 A frame is the concatenation of its fragments' payloads. Reassembly is per channel, so an interleaved control frame does not disturb a blob transfer mid-frame. A frame whose fragments exceed 1 MiB is refused rather than buffered, and the link is dropped.
 
-An empty payload is still one fragment: the frame itself is the signal, which is what the heartbeat is.
+No frame is empty. The heartbeat is a control frame carrying only [its discriminant](#the-control-channels-header).
 
 #### The control channel's header
 

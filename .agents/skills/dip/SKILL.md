@@ -30,7 +30,7 @@ A plugin method is one of three shapes, and adding one means picking which: `ans
 
 The core's `log` goes nowhere until a shell installs a `Logger`, so `Logging.swift` and `Logging.kt` implement one over `os.Logger` and logcat, and each plugin's `load` installs it before the core is opened. The Rust module path is the record's target and becomes the category or the tag, which is the only thing making a subsystem filterable on a device.
 
-A browser has no shell, so `just dev` runs against `src/lib/dev/` — the plugin surface over an in-memory store and a neighborhood on a timer, reachable as `window.dip` for the key backup and the identity transfer, which have no screen. It is loaded by a dynamic import under `import.meta.env.DEV` and is in no shipped bundle. Nothing outside it imports it, and no view code branches on `DEV`: a browser-only fallback in the view is a path that never runs on a device.
+A browser has no shell, so `just dev` runs against `src/lib/dev/` — the plugin surface over an in-memory store and a neighborhood on a timer, reachable as `window.dip` for `receiveOffer`, since a browser has no second phone to offer it an identity. It is loaded by a dynamic import under `import.meta.env.DEV` and is in no shipped bundle. Nothing outside it imports it, and no view code branches on `DEV`: a browser-only fallback in the view is a path that never runs on a device.
 
 ## The view
 
@@ -38,7 +38,7 @@ Seven screens under `src/lib/components/`, switched by a `place` store rather th
 
 **A boost or a comment opens what it is about**, rather than its own page. `opensId` in `src/lib/data/feed.ts` is the one rule and `Quoted` draws the embedded line, off `summaryOf` in `src/lib/kinds/` — an article and a calendar event title themselves in a tag rather than in their content. Reacting and boosting are offered on everything, since the user's own event travels whatever this device may do with what it names.
 
-**The board draws nothing whose subject this device does not hold.** A boost names what it passes on rather than carrying it, so one can arrive on its own and draw blank. `grounded` in `src/lib/data/feed.ts` drops a page entry whose subject is missing. A reaction and a vote need no filter, being drawn only on the card of the thing they are about, and a comment is exempt, since it says its own piece.
+**The board draws nothing whose subject this device does not hold.** A boost names what it passes on rather than carrying it, so one can arrive on its own and draw blank. `grounded` in `src/lib/data/feed.ts` drops a page entry whose subject is missing. A comment whose parent is missing is dropped the same way. A reaction and a vote need no filter, being drawn only on the card of the thing they are about.
 
 **Saying something about a thing writes a NIP-22 comment on it**, which is what `Composer`'s "Pass it on" does when the user types. A comment on a comment keeps the root its parent named, so `ItemDetail` opens on the parent and heads the page with a "Commenting on" section climbing one further up. `commentOn` and `commentedOn` in `src/lib/kinds/index.ts` are both halves; nothing else reads a `q` tag.
 

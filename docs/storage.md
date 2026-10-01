@@ -9,7 +9,7 @@ Where events live, who can answer a query, and what happens while the app is asl
 | `event` | The events themselves, plus earliest `seen_at`: the earliest sighting in `event_seen`, cached on the row because the aggregate cannot be indexed and arrival order is how the feed reads. It is provenance, so it is never part of an event and never served. |
 | `event_fts` | Full-text index over content, for search. |
 | `event_tag` | One row per tag, so NIP-01 tag filters are an index lookup. |
-| `event_seen` | `event_id`, `seen_at`, `peer_pubkey`. Unique on (`event_id`, `peer_pubkey`). |
+| `event_seen` | `event_id`, `seen_at`, `pubkey`. Unique on (`event_id`, `pubkey`). |
 | `event_shared` | `event_id`, `pubkey`, `shared_at`. Unique on (`event_id`, `pubkey`). One row per peer this device has handed an event to, written where the event is served. Provenance in the other direction from `event_seen`, so it is never served either, and a later handoff to the same peer is ignored — a row says this device carried something to somebody rather than how often it answered for it. |
 | `recipient_signature` | `event_id`, `author_pubkey`, `recipient_pubkey`, `sig`. Unique on (`event_id`, `recipient_pubkey`). The author's signature naming a recipient, held by the peer it names. It is the witness an [authorship proof](./proofs.md#authorship-proofs) is built from, never the proof itself, and it is never served to a peer. The author is carried rather than joined, since a signature without the key it is by neither verifies nor proves; a composite foreign key onto `event (id, pubkey)` is what keeps the copy honest. |
 | `pref` | A key/value store for storing app policies and ui preferences. |
@@ -32,6 +32,8 @@ What the shell contributes is small: the database directory, the Keychain or Key
 
 On iOS the shell also sets the database's data-protection class, and SQLite's `-wal` and `-shm` sidecars have to carry the same class. A stricter class on any of the three breaks a write during a background wake on a locked phone, which is the failure mode [`AfterFirstUnlock`](./keys.md#signing-happens-in-the-background) exists to avoid. The default for app-container files is already the class we want, so the thing to avoid is hardening it later.
 
+The shell excludes the database and the blob directory from device backups, with `isExcludedFromBackup` on iOS and backup rules on Android. `event_seen` and `event_shared` record who the user was near, and [provenance never leaves the device](./overview.md#principles), including into a cloud backup. Android also excludes the Keystore-wrapped identity, because its wrapping key does not travel with a backup and a restored copy cannot be read.
+
 ## Blob store
 
 Blob bytes are stored outside the event store, keyed by SHA-256 hash. A partial transfer persists as the count of proved bytes on disk, so a transfer interrupted on BLE resumes later. Groups are fetched in order, so what is on disk is always a prefix and that count is the whole record of progress. A blob held whole is stored with the outboard BLAKE3 tree over it beside the bytes, under the same name with an `.obao` suffix; that is what the device proves a range with when a peer asks for one. See [`sync.md`](./sync.md#blob-sync).
@@ -50,10 +52,11 @@ Media is written to disk unsealed, protected by the platform's data-protection c
 
 The cutoff reads the latest row in `event_seen` rather than the `event.seen_at` the feed orders by, which is the earliest. A sighting is written once per peer, so an event that keeps arriving from peers it has not arrived from before keeps refreshing — repeated propagation, in the only unit a proximity network has. Keying on arrival instead would forget an event on its birthday no matter how many people were still passing it around.
 
-Three things are never swept:
+Four things are never swept:
 
 - Events the user wrote. This device is their origin and no peer hands one back, so a sweep would not be letting a copy go, it would be deleting the last one.
 - Replaceable events, which are state rather than content. A trust list arrives once and is never offered again, so a sweep reading only circulation would take the [graph](./policy.md#social-graph) that policy is measured against. A [contact card](./policy.md#social-graph) is addressable rather than replaceable, so the sweep spares its kind by name, since sweeping one would leave a person nameless on a device that still holds their writing.
+- Deletion requests, kind 5. The store refuses an event a stored request covers, so sweeping the request would let the deleted event back in the next time a peer offers it.
 - Events the user bookmarked. Circulation is a measure of what the neighbourhood is still interested in, and a bookmark is the one place the person holding the device says otherwise. The sweep reads the `e` tags on their own NIP-51 list, kind 10003, which is replaceable and so survives on the rule above; somebody else's bookmark list keeps nothing here.
 
 It runs when the core opens and at most hourly after that. Opening is the moment that always happens — a device meeting nobody never ticks — and an hour is far below a window measured in days. The query groups `event_seen` by event, which no index answers — affordable at that cadence, and the reason `event.seen_at` is cached on the row for the reads where it would not be.
