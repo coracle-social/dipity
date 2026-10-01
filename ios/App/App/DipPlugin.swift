@@ -22,6 +22,12 @@ import UIKit
 /// waiting on it, through `drive`. Each takes the opened core, runs one entry
 /// point and carries out the result; a method that spells any of that out again
 /// is a method doing something the other two are not.
+///
+/// # The main queue
+///
+/// Capacitor calls plugin methods on its own bridge queue, while the radio, the
+/// lifecycle timers and `core` itself belong to the main queue. Every method
+/// that touches any of them hops there first, through `onMain`.
 @objc(DipPlugin)
 public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "DipPlugin"
@@ -119,9 +125,11 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// The view calls this once it knows there is an identity, which is what
     /// makes first run a screen rather than a failed open.
     @objc func start(_ call: CAPPluginCall) {
-        guard core == nil else { return call.resolve() }
+        onMain {
+            guard self.core == nil else { return call.resolve() }
 
-        open(into: call)
+            self.open(into: call)
+        }
     }
 
     private func open(into call: CAPPluginCall) {
@@ -209,6 +217,10 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// file was shared or dismissed. Answers once the sheet closes, which is
     /// also when the file goes. `docs/keys.md#backup`.
     @objc func exportKey(_ call: CAPPluginCall) {
+        onMain { self.export(into: call) }
+    }
+
+    private func export(into call: CAPPluginCall) {
         guard let core else { return call.reject("exportKey needs a started core") }
 
         // One sheet means one call waiting on it, so whoever this displaces is
@@ -260,6 +272,10 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// the node is reopened under it. Answers what `start` answers, so the view
     /// reads the new identity off the same field.
     @objc func takeTransferredIdentity(_ call: CAPPluginCall) {
+        onMain { self.adoptTransferred(into: call) }
+    }
+
+    private func adoptTransferred(into call: CAPPluginCall) {
         guard let core else { return call.reject("takeTransferredIdentity needs a started core") }
         guard let link = link(call) else {
             return call.reject("takeTransferredIdentity needs a link")
@@ -333,12 +349,14 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// The compiled policy every live session is bound to, as JSON, with the
     /// core's own defaults where nothing is written.
     @objc func policy(_ call: CAPPluginCall) {
-        guard let core else { return call.reject("policy needs a started core") }
+        onMain {
+            guard let core = self.core else { return call.reject("policy needs a started core") }
 
-        do {
-            call.resolve(["policy": try core.node.policy()])
-        } catch {
-            call.reject("the policy could not be read", nil, error)
+            do {
+                call.resolve(["policy": try core.node.policy()])
+            } catch {
+                call.reject("the policy could not be read", nil, error)
+            }
         }
     }
 
@@ -371,29 +389,38 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func clearPreference(_ call: CAPPluginCall) {
-        guard let core else { return call.reject("clearPreference needs a started core") }
         guard let key = call.getString("key") else {
             return call.reject("clearPreference needs a key")
         }
 
-        do {
-            let existed = try core.store.clearPreference(key: key)
+        onMain {
+            guard let core = self.core else {
+                return call.reject("clearPreference needs a started core")
+            }
 
-            apply(try core.node.policyChanged())
-            call.resolve(["existed": existed])
-        } catch {
-            call.reject("that preference could not be cleared", nil, error)
+            do {
+                let existed = try core.store.clearPreference(key: key)
+
+                self.apply(try core.node.policyChanged())
+                call.resolve(["existed": existed])
+            } catch {
+                call.reject("that preference could not be cleared", nil, error)
+            }
         }
     }
 
     /// Run one store read and answer what it gave back under `key`.
-    private func answer(_ call: CAPPluginCall, _ key: String, _ read: (Store) throws -> Any) {
-        guard let core else { return call.reject("that call needs a started core") }
+    private func answer(
+        _ call: CAPPluginCall, _ key: String, _ read: @escaping (Store) throws -> Any
+    ) {
+        onMain {
+            guard let core = self.core else { return call.reject("that call needs a started core") }
 
-        do {
-            call.resolve([key: try read(core.store)])
-        } catch {
-            call.reject("the store could not answer", nil, error)
+            do {
+                call.resolve([key: try read(core.store)])
+            } catch {
+                call.reject("the store could not answer", nil, error)
+            }
         }
     }
 
@@ -403,16 +430,23 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// The other half of `answer`: a store read answers with what it read, and
     /// a node call answers with nothing.
     private func perform(
-        _ call: CAPPluginCall, _ failure: String, _ body: (Core) throws -> [Action]
+        _ call: CAPPluginCall, _ failure: String, _ body: @escaping (Core) throws -> [Action]
     ) {
-        guard let core else { return call.reject("that call needs a started core") }
+        onMain {
+            guard let core = self.core else { return call.reject("that call needs a started core") }
 
-        do {
-            apply(try body(core))
-            call.resolve()
-        } catch {
-            call.reject(failure, nil, error)
+            do {
+                self.apply(try body(core))
+                call.resolve()
+            } catch {
+                call.reject(failure, nil, error)
+            }
         }
+    }
+
+    /// Run `work` on the main queue, which owns the radio, the timers and `core`.
+    private func onMain(_ work: @escaping () -> Void) {
+        if Thread.isMainThread { work() } else { DispatchQueue.main.async(execute: work) }
     }
 
     /// The link the view named, which it only ever learned by being asked
