@@ -361,7 +361,8 @@ extension Radio: CBPeripheralDelegate {
             upOn: link,
             peripheral: target.identifier.uuidString,
             dialer: true,
-            mtu: UInt32(target.maximumWriteValueLength(for: .withResponse)))
+            // The single-write size: `.withResponse` answers 512 whatever the ATT MTU, which is a long write.
+            mtu: UInt32(target.maximumWriteValueLength(for: .withoutResponse)))
     }
 
     func peripheral(
@@ -457,15 +458,20 @@ extension Radio: CBPeripheralManagerDelegate {
         _ manager: CBPeripheralManager,
         didReceiveWrite requests: [CBATTRequest]
     ) {
+        guard let first = requests.first else { return }
+
+        // A long write splits one fragment across requests, which the core would read as several.
+        guard requests.allSatisfy({ $0.offset == 0 }) else {
+            return manager.respond(to: first, withResult: .invalidOffset)
+        }
+
         for request in requests {
             guard let link = link(for: request.central), let value = request.value else { continue }
 
             delegate?.radio(self, received: value, on: link)
         }
 
-        if let first = requests.first {
-            manager.respond(to: first, withResult: .success)
-        }
+        manager.respond(to: first, withResult: .success)
     }
 
     func peripheralManagerIsReady(toUpdateSubscribers manager: CBPeripheralManager) {

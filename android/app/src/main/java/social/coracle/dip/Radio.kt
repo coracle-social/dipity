@@ -118,6 +118,9 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     /** The server socket each publishing link is waiting for its peer on. */
     private val listening = mutableMapOf<ULong, BluetoothServerSocket>()
 
+    /** The ATT MTU each connection negotiated, by device address, until its link is made. */
+    private val negotiated = mutableMapOf<String, Int>()
+
     private var nextLink = 1UL
 
     /** One connection, from either side. */
@@ -289,7 +292,11 @@ class Radio(private val context: Context, private val delegate: Delegate) {
      * as an upgrade this device lost.
      */
     private fun forget(link: ULong) {
-        links.remove(link)
+        when (val held = links.remove(link)) {
+            is Link.Dialed -> negotiated.remove(held.gatt.device.address)
+            is Link.Received -> negotiated.remove(held.device.address)
+            null -> Unit
+        }
         bulk.remove(link)?.close()
         listening.remove(link)?.let(::shut)
     }
@@ -327,6 +334,10 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
         delegate.bulkUp(link, socket.maxTransmitPacketSize.toUInt())
     }
+
+    /** One fragment's size on [device]'s connection: its ATT MTU less the header, within an attribute. */
+    private fun fragmentSize(device: BluetoothDevice): UInt =
+        ((negotiated[device.address] ?: DEFAULT_MTU) - ATT_OVERHEAD).coerceAtMost(MAX_ATTRIBUTE).toUInt()
 
     private fun shut(closeable: Closeable) {
         try {
@@ -433,23 +444,33 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                 }
 
             override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) = confined {
+                if (status == BluetoothGatt.GATT_SUCCESS) negotiated[gatt.device.address] = mtu
+
                 gatt.discoverServices()
             }
 
             override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) = confined {
                 val found = gatt.getService(service)?.getCharacteristic(characteristicId)
+                val subscription = found?.getDescriptor(CLIENT_CONFIGURATION)
 
-                if (found == null) return@confined gatt.disconnect()
+                if (found == null || subscription == null) return@confined gatt.disconnect()
 
                 gatt.setCharacteristicNotification(found, true)
-                found.getDescriptor(CLIENT_CONFIGURATION)?.let {
-                    gatt.writeDescriptor(it, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-                }
+                gatt.writeDescriptor(subscription, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+            }
+
+            // Android runs one GATT operation at a time, so the link is up once the subscription lands.
+            override fun onDescriptorWrite(
+                gatt: BluetoothGatt,
+                descriptor: BluetoothGattDescriptor,
+                status: Int,
+            ) = confined {
+                if (status != BluetoothGatt.GATT_SUCCESS) return@confined gatt.disconnect()
 
                 val link = take()
-                links[link] = Link.Dialed(gatt, found)
+                links[link] = Link.Dialed(gatt, descriptor.characteristic)
 
-                delegate.linkUp(link, gatt.device.address, true, (MTU - ATT_OVERHEAD).toUInt())
+                delegate.linkUp(link, gatt.device.address, true, fragmentSize(gatt.device))
             }
 
             override fun onCharacteristicChanged(
@@ -498,7 +519,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                     val link = take()
                     links[link] = Link.Received(device)
 
-                    delegate.linkUp(link, null, false, (MTU - ATT_OVERHEAD).toUInt())
+                    delegate.linkUp(link, null, false, fragmentSize(device))
                 }
 
                 if (responseNeeded) {
@@ -515,11 +536,22 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                 offset: Int,
                 value: ByteArray,
             ) = confined {
-                linkFor(device)?.let { delegate.received(it, value) }
+                // A long write splits one fragment across requests, which the core would read as several.
+                val status =
+                    if (preparedWrite || offset != 0) {
+                        BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED
+                    } else {
+                        linkFor(device)?.let { delegate.received(it, value) }
+                        BluetoothGatt.GATT_SUCCESS
+                    }
 
                 if (responseNeeded) {
-                    server?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                    server?.sendResponse(device, requestId, status, 0, null)
                 }
+            }
+
+            override fun onMtuChanged(device: BluetoothDevice, mtu: Int) = confined {
+                negotiated[device.address] = mtu
             }
 
             override fun onNotificationSent(device: BluetoothDevice, status: Int) = confined {
@@ -536,6 +568,12 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
         /** The ATT header a write carries, off the negotiated MTU. */
         const val ATT_OVERHEAD = 3
+
+        /** The ATT MTU a connection has before either side negotiates one. */
+        const val DEFAULT_MTU = 23
+
+        /** The longest attribute value BLE allows, whatever the MTU. */
+        const val MAX_ATTRIBUTE = 512
 
         /**
          * How long a published channel waits for its peer, in milliseconds.
