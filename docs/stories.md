@@ -14,7 +14,7 @@ Four facts about the transport decide most of the interface, and every story bel
 
 **Arrival time is not authorship time.** An event carries when it was written and the device records when it turned up. The feed is ordered by arrival, because that is the order the user lived through, and the other ordering is one tap away.
 
-**People are named by their neighbours.** Nobody publishes a profile. A name is a pet name one person gave another and it travels with the content, so a name always arrives with a claimant attached — yours, or the person who handed it over.
+**People are named by their neighbours.** Nobody publishes a profile. A name is what one person calls another, carried on a card that travels with the named person's events, so a name always arrives with a claimant attached — yours, or the person who handed it over.
 
 ## First run
 

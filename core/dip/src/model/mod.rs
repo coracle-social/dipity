@@ -40,8 +40,8 @@ pub use blob::{Blob, BlobDigest, BlobHash, BlobRole};
 pub use graph::{Graph, Standing};
 pub use identity::Identity;
 pub use kinds::{
-    BLOCK, BOOKMARKS, BlockListReader, BlockListWriter, MUTE, MuteListReader, MuteListWriter,
-    PeopleListReader, PeopleListWriter, TRUST, TrustListReader, TrustListWriter,
+    BLOCK, BOOKMARKS, BlockListReader, BlockListWriter, CONTACT, MUTE, MuteListReader,
+    MuteListWriter, PeopleListReader, PeopleListWriter, TRUST, TrustListReader, TrustListWriter,
 };
 pub use order::Order;
 pub use policy::{DISCLOSURE_WINDOW_SECONDS, PeerPolicy, Policy};

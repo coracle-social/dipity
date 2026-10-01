@@ -26,7 +26,7 @@ import {COMMENT, NOTE, REACTION, REPOST, getPubkey, hash, makeSecret} from "@wel
 import type {HashedEvent} from "@welshman/util"
 import {nip19} from "nostr-tools"
 import type {Blob, DipCore, Pref, Query} from "$lib/core"
-import {boost, comment, genericBoost, reaction, roster} from "$lib/dev/kinds"
+import {boost, card, comment, genericBoost, reaction} from "$lib/dev/kinds"
 import {
   emoji,
   identity,
@@ -153,7 +153,7 @@ export class Simulator extends WebPlugin implements DipCore {
     const busiest = faker.number.int({min: 2, max: BAND_HOURS - 2})
     const known = people.filter(person => this.paired.has(person.pubkey))
 
-    await this.rosters(at - DAY)
+    this.cards(at - DAY)
 
     for (let hour = 0; hour < BAND_HOURS; hour++) {
       const many = hour === busiest
@@ -181,35 +181,28 @@ export class Simulator extends WebPlugin implements DipCore {
   }
 
   /**
-   * Who calls whom what.
+   * Who calls whom what, one card per person.
    *
-   * The device's own roster is what it learned at pairing; a neighbour's roster
-   * is how somebody it never met arrives with a name on them.
+   * The device's own cards are what it learned at pairing; a neighbour's card
+   * for somebody is how a person it never met arrives with a name on them.
    */
-  private async rosters(at: number) {
-    const mine = await this.naming(
-      this.identity,
-      people.filter(person => person.known),
-    )
+  private cards(at: number) {
+    const known = people.filter(person => person.known)
 
-    this.store.record(mine, identity, at)
+    for (const person of known) {
+      this.store.record(card(this.identity, person.pubkey, person.petname, at), identity, at)
+    }
 
-    for (const person of people.filter(known => known.known)) {
+    for (const person of known) {
       const theirs = faker.helpers.arrayElements(
         people.filter(other => other.pubkey !== person.pubkey),
         3,
       )
 
-      this.store.record(await this.naming(person.pubkey, theirs), person.pubkey, at)
+      for (const other of theirs) {
+        this.store.record(card(person.pubkey, other.pubkey, other.petname, at), person.pubkey, at)
+      }
     }
-  }
-
-  private async naming(author: string, named: Person[]) {
-    const writer = roster.writer()
-
-    for (const person of named) writer.follow(person.pubkey, "", person.petname)
-
-    return hash({...(await writer.renderTemplate()), created_at: now() - DAY, pubkey: author})
   }
 
   /**

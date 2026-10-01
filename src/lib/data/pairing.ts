@@ -73,7 +73,7 @@ export const decline = (link: number) => answer(link, false)
 /**
  * Bind promised names to the peers that turn out to hold them.
  *
- * Started once, from the shell, because the roster write is a publish and not a
+ * Started once, from the shell, because writing the card is a publish and not a
  * screen: the user may have moved on by the time the peer identifies itself.
  *
  * A device may prove several pubkeys over one link and the announcement comes

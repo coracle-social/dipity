@@ -222,7 +222,7 @@ export const Post = new KindFactory({kind: NOTE, reader: PostReader, writer: Pos
 
 Every factory is configured once, in `src/lib/kinds/index.ts`, against a resolver that answers no relays — which is the truth rather than a stub, since there are none and a writer's routing half is never asked. Components read through the getters that configuration mints.
 
-A kind `@welshman/domain` already models is re-exported configured rather than redeclared, and the rest are its classes at a kind number or a reader of its own it has none of. Trust and block (`people.ts`) are kinds of ours spelled the way NIP-51's mute list is, so they use its reader and writer. A roster (`roster.ts`) is a follow list read for its pet names, which is the one slot `FollowList` answers nothing about. A boost (`repost.ts`) is NIP-18 without the embedded copy of what it names, since an event on the gossip path carries no signature to embed.
+A kind `@welshman/domain` already models is re-exported configured rather than redeclared, and the rest are its classes at a kind number or a reader of its own it has none of. Trust and block (`people.ts`) are kinds of ours spelled the way NIP-51's mute list is, so they use its reader and writer. A contact card (`contact.ts`) is ours, addressed to the person it names and carrying that name as its content. A boost (`repost.ts`) is NIP-18 without the embedded copy of what it names, since an event on the gossip path carries no signature to embed.
 
 **`event.tags.find(t => t[0] === "…")` does not appear in a component.** A kind's shape is stated once, in its reader, and every screen reads it through getters. Unmodeled tags survive an edit, because a writer seeded from a reader re-emits whatever it did not model.
 

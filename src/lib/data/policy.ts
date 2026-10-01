@@ -30,16 +30,19 @@ export type Policy = {
 /**
  * The core's own defaults, from `Policy::new`.
  *
- * The visibility rule is part of them rather than an empty list: an edit writes
- * the whole document back, and a missing rule would publish the user's trust
- * list to anyone who connects.
+ * The visibility rules are part of them rather than an empty list: an edit
+ * writes the whole document back, so a missing rule would publish the user's
+ * trust list to anyone who connects and serve their bookmarks to every peer.
  */
 const defaults: Policy = {
   accept: "lenient",
   gossip: "network",
   forward: "trusted",
   visibility: {
-    rules: [{filter: {kinds: [10_000, 16_017, 16_018]}, scope: "trusted"}],
+    rules: [
+      {filter: {kinds: [10_000, 16_017, 16_018]}, scope: "trusted"},
+      {filter: {kinds: [10_003]}, scope: "nothing"},
+    ],
     default: "public",
   },
   retentionDays: 30,

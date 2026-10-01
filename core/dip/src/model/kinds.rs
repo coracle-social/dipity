@@ -1,5 +1,5 @@
 //! The kinds this app defines: the people lists the trust graph is built
-//! from.
+//! from, and the card that says what somebody is called.
 //!
 //! Every kind the core reads and does not define comes from `coracle-kinds` —
 //! [`delete`](coracle_kinds::delete) for kind 5, [`profile`](coracle_kinds::profile)
@@ -49,6 +49,13 @@ pub const MUTE: u16 = 10_000;
 /// spares whatever it names, because a bookmark is the only way a person says
 /// to keep something somebody else wrote. `docs/storage.md#retention`.
 pub const BOOKMARKS: u16 = 10_003;
+
+/// One person, as somebody else calls them.
+///
+/// Ours, and addressable at the person it names. The core reads nothing out of
+/// a card, but the retention sweep spares it the way it spares a replaceable
+/// list. `docs/policy.md#social-graph`.
+pub const CONTACT: u16 = 36_017;
 
 /// The `p` pubkeys in a tag set, deduplicated and in tag order.
 ///

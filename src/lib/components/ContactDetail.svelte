@@ -14,7 +14,7 @@
 
   const named = $derived(nameOf($social, pubkey))
 
-  // Deriving this would reset the field every time an arriving event re-collates the roster.
+  // Deriving this would reset the field every time an arriving event re-collates the people.
   let typed = $state<string | undefined>(undefined)
 
   const renaming = $derived(typed ?? contact?.petname ?? "")

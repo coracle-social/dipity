@@ -36,6 +36,10 @@ Each is a replaceable event whose `p` tags name people, so the current list is o
 
 **Neither is encrypted.** NIP-51 keeps private entries as ciphertext in `content`, which would put them beyond the peers who need them — trusted peers read these lists by design. What keeps them from anyone else is [Visibility](#visibility).
 
+A fourth kind says what the user calls somebody: a contact card, kind 36017, addressed to the person it names at `36017:<author>:<subject>`. Nobody publishes a profile here, so a card is the only way anybody has a name. The name is the card's content.
+
+There is one card per contact rather than one list naming everybody the user has met, so a name travels with that contact's own events, and a [visibility](#visibility) rule matching a single `d` tag withholds one person's card and leaves the rest.
+
 Every setting below is expressed on the same tiers, applied either to the peer on the other end of a session or to the author of an event:
 
 - **Trusted** - people the user explicitly trusts.
@@ -80,7 +84,9 @@ It is therefore its own setting, and a narrow one. At the default a peer outside
 
 ## Visibility
 
-Who can see what the user publishes. By default social graph metadata is only shared with `trusted` peers, while everything else a user publishes is `public`.
+Who can see what the user publishes. By default the trust, block and mute lists reach `trusted` peers, the bookmark list reaches nobody, and everything else is `public`.
+
+Nobody else reads a bookmark list. It cannot be encrypted, because there is no signer on this path, so it is served to no peer, including the user's own second phone.
 
 ## Retention
 

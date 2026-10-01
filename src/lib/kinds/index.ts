@@ -44,9 +44,9 @@ import {
   Resolver,
   type HashedEvent,
 } from "@welshman/util"
+import {ContactCard} from "$lib/kinds/contact"
 import {Block, Trust} from "$lib/kinds/people"
 import {Boost, GenericBoost} from "$lib/kinds/repost"
-import {Roster} from "$lib/kinds/roster"
 
 const context: KindContext = {resolver: new Resolver(() => [])}
 
@@ -73,7 +73,8 @@ export const dateEvent = DateEvent.configure(context)
 
 export const timeEvent = TimeEvent.configure(context)
 
-export const roster = Roster.configure(context)
+/** What somebody calls somebody else, which is the only name anybody has here. */
+export const contactCard = ContactCard.configure(context)
 
 export const trust = Trust.configure(context)
 
@@ -85,8 +86,8 @@ export const mute = MuteList.configure(context)
  * What the user bookmarked.
  *
  * Only the public half is reachable: NIP-51 keeps private entries as ciphertext
- * and there is no signer here, so nothing could read them back. The list
- * travels like any other replaceable event, governed by
+ * and there is no signer here, so nothing could read them back. The list is
+ * served to no peer instead, which is what keeps it private.
  * `docs/policy.md#visibility`.
  */
 export const bookmarks = BookmarkList.configure(context)

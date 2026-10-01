@@ -1,8 +1,9 @@
 // Who the device knows, and the name each one is known by.
 //
-// Nobody publishes a profile, so every name here is a pet name somebody gave
-// somebody else — the user's own, or one that arrived with a neighbour's roster.
-// A name therefore always has a claimant, and a card says whose it is.
+// Nobody publishes a profile, so every name here is one somebody gave somebody
+// else — the user's own card for a person, or a card that arrived from a
+// neighbour. A name therefore always has a claimant, and the screen says whose
+// it is.
 //
 // Trust, block and mute are the user's own lists and the core derives the trust
 // graph from them, so writing one is publishing a replaceable event rather than
@@ -11,11 +12,12 @@
 import {derived, get, type Readable} from "svelte/store"
 import {spec} from "@welshman/lib"
 import type {ConfiguredKind, MuteListQuery, MuteListReader, MuteListWriter} from "@welshman/domain"
-import {FOLLOWS, MUTES, type HashedEvent} from "@welshman/util"
+import {MUTES, type HashedEvent} from "@welshman/util"
 import {answering, eventsOf, storedEvents} from "$lib/data/query"
 import {publish} from "$lib/data/publish"
 import {session} from "$lib/data/session"
-import {block, mute, roster, trust} from "$lib/kinds"
+import {block, contactCard, mute, trust} from "$lib/kinds"
+import {CONTACT} from "$lib/kinds/contact"
 import {BLOCK, TRUST} from "$lib/kinds/people"
 
 /** Somebody the device knows about. */
@@ -23,22 +25,23 @@ export type Contact = {
   pubkey: string
   /** What the user calls them, which only somebody they paired with has. */
   petname?: string
-  /** What other people call them, newest roster first. */
+  /** What other people call them, newest card first. */
   aliases: {by: string; petname: string}[]
   trusted: boolean
   muted: boolean
   blocked: boolean
 }
 
-/** The user's own lists, kept so an edit supersedes rather than replaces. */
+/** What the user wrote, kept so an edit supersedes rather than replaces. */
 export type Own = {
-  roster?: HashedEvent
+  /** The user's own card for each person they have named. */
+  cards: Map<string, HashedEvent>
   trust?: HashedEvent
   block?: HashedEvent
   mute?: HashedEvent
 }
 
-/** Everybody, and the lists the user would be editing. */
+/** Everybody, and what the user would be editing. */
 export type Social = {people: Map<string, Contact>; own: Own}
 
 /** Eight characters of a key, which is what a person with no name is called. */
@@ -55,9 +58,25 @@ type PeopleList = ConfiguredKind<MuteListReader, MuteListWriter, MuteListQuery>
 const listed = async (event: HashedEvent | undefined, kind: PeopleList) =>
   new Set(event ? (await kind.reader(event).parse()).pubkeys() : [])
 
+/** One name a card carries, and who gave it. A card saying nothing names nobody. */
+type Naming = {by: string; about: string; petname: string; event: HashedEvent}
+
+const namings = (events: HashedEvent[]): Naming[] =>
+  events
+    .filter(event => event.kind === CONTACT)
+    .sort((a, b) => b.created_at - a.created_at)
+    .flatMap(event => {
+      const card = contactCard.reader(event).parse()
+      const about = card.subject()
+      const petname = card.petname()
+
+      return about && petname ? [{by: event.pubkey, about, petname, event}] : []
+    })
+
 const collate = async (events: HashedEvent[], identity?: string): Promise<Social> => {
+  const named = namings(events)
   const own = {
-    roster: newest(events, FOLLOWS, identity),
+    cards: new Map(named.filter(({by}) => by === identity).map(({about, event}) => [about, event])),
     trust: newest(events, TRUST, identity),
     block: newest(events, BLOCK, identity),
     mute: newest(events, MUTES, identity),
@@ -81,17 +100,11 @@ const collate = async (events: HashedEvent[], identity?: string): Promise<Social
     return contact
   }
 
-  const rosters = events
-    .filter(event => event.kind === FOLLOWS)
-    .sort((a, b) => b.created_at - a.created_at)
-
-  for (const event of rosters) {
-    for (const {pubkey, petname} of roster.reader(event).parse().namings()) {
-      if (event.pubkey === identity) {
-        at(pubkey).petname = petname
-      } else {
-        at(pubkey).aliases.push({by: event.pubkey, petname})
-      }
+  for (const {by, about, petname} of named) {
+    if (by === identity) {
+      at(about).petname = petname
+    } else {
+      at(about).aliases.push({by, petname})
     }
   }
 
@@ -101,18 +114,18 @@ const collate = async (events: HashedEvent[], identity?: string): Promise<Social
 }
 
 const read = ([identity]: [string | undefined, number]) =>
-  eventsOf({filter: JSON.stringify({kinds: [FOLLOWS, MUTES, TRUST, BLOCK]})}).then(events =>
+  eventsOf({filter: JSON.stringify({kinds: [CONTACT, MUTES, TRUST, BLOCK]})}).then(events =>
     collate(events, identity),
   )
 
-/** Everybody the device knows about, re-collated whenever a list arrives. */
+/** Everybody the device knows about, re-collated whenever a card or a list arrives. */
 export const social: Readable<Social> = answering(
   derived([session, storedEvents], ([$session, revision]): [string | undefined, number] => [
     $session.identity,
     revision,
   ]),
   read,
-  {people: new Map(), own: {}},
+  {people: new Map(), own: {cards: new Map()}},
 )
 
 /** The people list, the ones the user named first. */
@@ -148,12 +161,12 @@ export const nameOf = ({people}: Social, pubkey: string): Named => {
 export const isKnown = (social: Social, pubkey: string) =>
   Boolean(social.people.get(pubkey)?.petname)
 
-/** Name somebody, or rename them. */
+/** Name somebody, or rename them, which is a card addressed to them either way. */
 export const name = async (pubkey: string, petname: string) => {
-  const {own} = get(social)
-  const seed = own.roster && roster.reader(own.roster).parse()
+  const current = get(social).own.cards.get(pubkey)
+  const writer = contactCard.writer(current && contactCard.reader(current).parse())
 
-  await publish(await roster.writer(seed).name(pubkey, petname).renderTemplate(), own.roster)
+  await publish(await writer.name(pubkey, petname).renderTemplate(), current)
 }
 
 const amend = async (

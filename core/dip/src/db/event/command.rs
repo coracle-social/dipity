@@ -16,7 +16,7 @@ use rusqlite::params;
 use crate::db::Tx;
 use crate::db::blob::command as blob;
 use crate::db::sql::event_id_from_sql;
-use crate::model::{BOOKMARKS, Provenance};
+use crate::model::{BOOKMARKS, CONTACT, Provenance};
 
 use super::channel::{self, EventChange};
 use super::query;
@@ -205,13 +205,22 @@ pub fn forget_unseen_since(tx: &Tx<'_>, identity: &PublicKey, cutoff: i64) -> Re
 
     let mut forgotten = 0;
 
-    for (id, _) in stale.iter().filter(|(_, kind)| !is_replaceable(*kind)) {
+    for (id, _) in stale.iter().filter(|(_, kind)| !is_state(*kind)) {
         if delete(tx, id)? {
             forgotten += 1;
         }
     }
 
     Ok(forgotten)
+}
+
+/// Whether a kind is state rather than content, which the sweep keeps however
+/// little it circulates.
+///
+/// `is_replaceable` covers kind 0, kind 3 and the 10000s. A contact card is
+/// addressable, so it is named here. `docs/storage.md#retention`.
+fn is_state(kind: u16) -> bool {
+    is_replaceable(kind) || kind == CONTACT
 }
 
 /// Whether `event` supersedes whatever currently holds its address, removing
@@ -715,6 +724,31 @@ mod tests {
         assert_eq!(forget_unseen_since(&tx, &us, 500).unwrap(), 1);
         assert!(query::get(&tx, &id(&ours)).unwrap().is_some());
         assert!(query::get(&tx, &id(&their_trust_list)).unwrap().is_some());
+        assert!(query::get(&tx, &id(&their_note)).unwrap().is_none());
+    }
+
+    /// A card is addressable rather than replaceable, so `is_replaceable`
+    /// answers no for it and the sweep has to spare it by name.
+    #[test]
+    fn a_sweep_keeps_somebody_elses_name_for_a_person() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        let us = author(9);
+        let their_card = event(
+            author(1),
+            CONTACT,
+            100,
+            "Ben",
+            Tags::new().add("d", [author(2).to_hex()]),
+        );
+        let their_note = note(author(1), 100, "we carried this", Tags::new());
+
+        save(&tx, &their_card, &[peer()], 100).unwrap();
+        save(&tx, &their_note, &[peer()], 100).unwrap();
+
+        assert_eq!(forget_unseen_since(&tx, &us, 500).unwrap(), 1);
+        assert!(query::get(&tx, &id(&their_card)).unwrap().is_some());
         assert!(query::get(&tx, &id(&their_note)).unwrap().is_none());
     }
 
