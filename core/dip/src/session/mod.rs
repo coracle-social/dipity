@@ -657,9 +657,13 @@ impl Session {
 
     /// The channel went away, or the shell could not make one.
     ///
-    /// Either way this link finishes on GATT, and whatever the blob channel had
-    /// queued for the bulk pipe goes back over the characteristic.
+    /// Either way this link finishes on GATT. What the blob channel had on the
+    /// bulk pipe is lost, so a fetch waiting on it starts again from the store.
     pub fn l2cap_unavailable(&mut self) -> Result<()> {
+        if self.wire.bulk_is_open() {
+            self.blobs.abandon_in_flight();
+        }
+
         self.wire.close_bulk();
 
         let owed = self.upgrade.unavailable();
@@ -2115,6 +2119,26 @@ mod tests {
         assert_eq!(dialer.poll_l2cap().unwrap(), None);
         assert!(!dialer.wire.bulk_is_open());
         assert!(!receiver.wire.bulk_is_open());
+    }
+
+    #[test]
+    fn losing_the_channel_mid_write_leaves_nothing_in_flight() {
+        let (mut dialer, _receiver) = secured_pair(policy());
+
+        dialer.l2cap_opened(512).unwrap();
+        dialer
+            .send(&Frame {
+                channel: Channel::Blob,
+                payload: b"bytes".to_vec(),
+            })
+            .unwrap();
+        assert!(dialer.wire.next_write(Pipe::Bulk).unwrap().is_some());
+
+        // Nobody acknowledges a write on a channel that is gone, so the close has to.
+        dialer.l2cap_unavailable().unwrap();
+
+        assert!(dialer.wire.outbox.is_idle());
+        assert!(!dialer.has_work_in_flight());
     }
 
     /// Two sessions synchronizing, both with a user in front of the screen.

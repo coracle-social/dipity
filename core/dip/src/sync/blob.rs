@@ -187,6 +187,12 @@ impl BlobExchange {
         self.active.is_some()
     }
 
+    /// Give up the fetch in flight, whose request or answer was lost with the
+    /// pipe it rode, so the next [`poll`](Self::poll) resumes from the store.
+    pub fn abandon_in_flight(&mut self) {
+        self.active = None;
+    }
+
     /// The battery level in percent, which gates new transfers.
     pub fn set_battery(&mut self, level: Option<u8>) {
         self.battery = level;

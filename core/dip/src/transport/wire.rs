@@ -81,14 +81,16 @@ impl Wire {
 
     /// The L2CAP channel went away, so bulk goes back on GATT.
     ///
-    /// Whatever was queued for it is still queued: a fragment sized for the
-    /// bulk MTU would overrun an ATT write, so the partial frame it belongs to
-    /// is dropped and the transfer resumes from what the store already holds.
+    /// Whatever was queued for it is dropped, and so is the write in flight on
+    /// it, which nobody will acknowledge: a fragment sized for the bulk MTU
+    /// would overrun an ATT write, so the transfer resumes from what the store
+    /// already holds.
     pub fn close_bulk(&mut self) {
         self.bulk_mtu = None;
         self.bulk_inbox.clear();
         self.outbox.set_bulk(false);
         self.outbox.discard(Channel::Blob);
+        self.outbox.acknowledge(Pipe::Bulk);
         self.codec.forget(Channel::Blob);
     }
 
@@ -535,6 +537,24 @@ mod tests {
         assert!(!dialer.bulk_is_open());
         assert!(dialer.next_write(Pipe::Bulk).unwrap().is_none());
         assert!(dialer.next_write(Pipe::Gatt).unwrap().is_none());
+    }
+
+    #[test]
+    fn closing_the_channel_releases_the_write_in_flight_on_it() {
+        let (mut dialer, _receiver) = secured_pair(4096);
+
+        dialer.open_bulk(4096).unwrap();
+        dialer
+            .send(&Frame {
+                channel: Channel::Blob,
+                payload: b"bytes".to_vec(),
+            })
+            .unwrap();
+        assert!(dialer.next_write(Pipe::Bulk).unwrap().is_some());
+
+        dialer.close_bulk();
+
+        assert!(dialer.outbox.is_idle());
     }
 
     #[test]
