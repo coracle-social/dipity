@@ -193,14 +193,14 @@ pub struct Store {
 
 #[uniffi::export]
 impl Store {
-    /// Open the store at `path`, migrating it to the current schema.
+    /// Open the store in `directory`, migrating it to the current schema.
     ///
-    /// The shell picks the path; the core has no opinion about where an app's
-    /// data lives on either platform. `docs/storage.md`.
+    /// The shell picks the directory; the core has no opinion about where an
+    /// app's data lives on either platform. `docs/storage.md`.
     #[uniffi::constructor]
-    pub fn open(path: String) -> Result<Arc<Self>, StoreError> {
+    pub fn open(directory: String) -> Result<Arc<Self>, StoreError> {
         Ok(Arc::new(Self {
-            db: Arc::new(Db::open(path)?),
+            db: Arc::new(Db::open(directory)?),
             subscriptions: Mutex::new(Vec::new()),
         }))
     }
@@ -459,7 +459,7 @@ mod tests {
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
 
-            let store = Store::open(dir.join("dip.sqlite").to_string_lossy().into_owned()).unwrap();
+            let store = Store::open(dir.to_string_lossy().into_owned()).unwrap();
 
             Self { store, dir }
         }

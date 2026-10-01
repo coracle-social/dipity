@@ -684,7 +684,7 @@ mod tests {
     }
 
     fn node(dir: &TempDir) -> Arc<Node> {
-        let store = Store::open(dir.0.join("dip.sqlite").to_string_lossy().into_owned()).unwrap();
+        let store = Store::open(dir.0.to_string_lossy().into_owned()).unwrap();
         let custody = Arc::new(Held(coracle_lib::keys::SecretKey::generate()));
 
         Node::open(store, custody, dir.0.to_string_lossy().into_owned()).unwrap()

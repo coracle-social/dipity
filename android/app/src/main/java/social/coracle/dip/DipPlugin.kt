@@ -629,11 +629,30 @@ class DipPlugin : Plugin(), Radio.Delegate {
 
     // ---------------------------------------------------------- Bookkeeping
 
+    /**
+     * Where the store and the blobs live, which nothing backs up or transfers:
+     * `event_seen` is a record of who the user was near.
+     * `docs/storage.md#the-sqlite-store`.
+     */
+    private fun storeDirectory(): File {
+        val directory = File(context.noBackupFilesDir, "dip")
+        val earlier = File(context.filesDir, "dip.sqlite")
+
+        // Earlier builds opened the store in a directory named dip.sqlite, beside the blobs.
+        if (!directory.exists() && earlier.isDirectory) {
+            earlier.renameTo(directory)
+            File(context.filesDir, "blobs").takeIf { it.exists() }?.renameTo(File(directory, "blobs"))
+        }
+
+        directory.mkdirs()
+
+        return directory
+    }
+
     private fun open(call: PluginCall) {
         try {
-            // Never backed up or transferred: event_seen is a record of who the user was near.
-            val directory = context.noBackupFilesDir
-            val store = Store.open(File(directory, "dip.sqlite").absolutePath)
+            val directory = storeDirectory()
+            val store = Store.open(directory.absolutePath)
             val node = Node.open(store, KeystoreCustody(keystore), directory.absolutePath)
 
             core = Core(store, node)

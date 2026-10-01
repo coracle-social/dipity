@@ -136,8 +136,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     private func open(into call: CAPPluginCall) {
         do {
             let directory = try support()
-            let store = try Store.open(
-                path: directory.appendingPathComponent("dip.sqlite").path)
+            let store = try Store.open(directory: directory.path)
             let node = try Node.open(
                 store: store,
                 custody: KeychainCustody(),
@@ -548,17 +547,19 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    /// Where the store and the blobs live: Application Support, which is not
-    /// purged, unlike Caches, and is kept out of backups here, because
+    /// Where the store and the blobs live: a directory in Application Support,
+    /// which is not purged, unlike Caches, and kept out of backups, because
     /// `event_seen` is a record of who the user was near.
     /// `docs/storage.md#the-sqlite-store`.
     private func support() throws -> URL {
-        var directory = try FileManager.default.url(
+        let base = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
             create: true)
+        var directory = base.appendingPathComponent("dip", isDirectory: true)
 
+        try adoptEarlierLayout(in: base, into: directory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         var excluded = URLResourceValues()
@@ -566,6 +567,27 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         try directory.setResourceValues(excluded)
 
         return directory
+    }
+
+    /// Move a store from where earlier builds opened it: a directory named
+    /// `dip.sqlite` holding the database, beside the blob directory.
+    private func adoptEarlierLayout(in base: URL, into directory: URL) throws {
+        let files = FileManager.default
+        let earlier = base.appendingPathComponent("dip.sqlite")
+        var isDirectory: ObjCBool = false
+
+        guard !files.fileExists(atPath: directory.path),
+            files.fileExists(atPath: earlier.path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+        else { return }
+
+        try files.moveItem(at: earlier, to: directory)
+
+        let blobs = base.appendingPathComponent("blobs")
+
+        if files.fileExists(atPath: blobs.path) {
+            try files.moveItem(at: blobs, to: directory.appendingPathComponent("blobs"))
+        }
     }
 
     /// Put the backup in front of the user, and tell the core when it closes.
