@@ -7,18 +7,19 @@ use rusqlite::params;
 use crate::db::Tx;
 use crate::model::DISCLOSURE_WINDOW_SECONDS;
 
-/// Store a pair secret for a pubkey. The first pairing wins: a later encounter
-/// derives the same secret, and overwriting it would only risk desyncing the
-/// two devices if one side ever missed a session.
-pub fn save_secret(tx: &Tx<'_>, pubkey: &PublicKey, secret: &[u8; 32], at: i64) -> Result<bool> {
-    let written = tx
-        .prepare_cached(
-            "INSERT OR IGNORE INTO pair_secret (pubkey, secret, updated_at) VALUES (?1, ?2, ?3)",
-        )?
-        .execute(params![pubkey.to_hex(), hex::encode(secret), at])
-        .with_context(|| format!("storing a pair secret for {pubkey}"))?;
+/// Store a pair secret for a pubkey, replacing whatever was held for it.
+///
+/// The session calls this only for a peer it did not recognize, so what it
+/// replaces is a secret the two devices no longer share.
+pub fn save_secret(tx: &Tx<'_>, pubkey: &PublicKey, secret: &[u8; 32], at: i64) -> Result<()> {
+    tx.prepare_cached(
+        "INSERT INTO pair_secret (pubkey, secret, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT (pubkey) DO UPDATE SET secret = excluded.secret, updated_at = excluded.updated_at",
+    )?
+    .execute(params![pubkey.to_hex(), hex::encode(secret), at])
+    .with_context(|| format!("storing a pair secret for {pubkey}"))?;
 
-    Ok(written > 0)
+    Ok(())
 }
 
 /// Record that this device disclosed its identity, naming no recipient: the

@@ -95,7 +95,7 @@ pair_secret = SHA256("dip/pair-secret" ‖ h)      # h at pairing time
 tag         = HMAC-SHA256(pair_secret, h)        # h at this encounter
 ```
 
-Domain-separated, so the secret cannot collide with any other use of the handshake hash. The first pairing for a peer establishes the secret and later encounters leave it alone.
+Domain-separated, so the secret cannot collide with any other use of the handshake hash. A session that recognized the peer leaves the secret alone. One that authenticated the peer without recognizing it replaces the secret on both sides, so a pairing one device missed the end of is repaired the next time the two meet.
 
 ### The consent gate
 

@@ -46,15 +46,14 @@ mod tests {
     use crate::model::DISCLOSURE_WINDOW_SECONDS;
 
     #[test]
-    fn a_pair_secret_is_stored_once_per_pubkey() {
+    fn a_pubkey_holds_one_pair_secret_and_a_new_one_replaces_it() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
-        let secret = [1u8; 32];
 
-        assert!(command::save_secret(&tx, &author(1), &secret, 100).unwrap());
-        assert!(!command::save_secret(&tx, &author(1), &secret, 200).unwrap());
+        command::save_secret(&tx, &author(1), &[1u8; 32], 100).unwrap();
+        command::save_secret(&tx, &author(1), &[2u8; 32], 200).unwrap();
 
-        assert_eq!(secrets(&tx).unwrap(), vec![(author(1), secret)]);
+        assert_eq!(secrets(&tx).unwrap(), vec![(author(1), [2u8; 32])]);
     }
 
     #[test]

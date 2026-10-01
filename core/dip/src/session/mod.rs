@@ -188,6 +188,9 @@ pub struct Session {
     identity: PublicKey,
     /// The proved pubkeys bound under policy, once the peer has proved any.
     pub peer: Option<Peer>,
+    /// Who the peer's recognition tags resolved to, which is who this device
+    /// already shares a working pair secret with.
+    recognized: Vec<PublicKey>,
     /// The proved pubkeys the shell has already been told about.
     announced: Identity,
     /// The relay half: what this device serves, and the subscriptions it
@@ -232,6 +235,7 @@ impl Session {
             identity: custody.identity()?.public_key(),
             custody,
             peer: None,
+            recognized: Vec::new(),
             announced: Identity::default(),
             relay: Relay::default(),
             client: Client::default(),
@@ -600,14 +604,24 @@ impl Session {
     }
 
     /// Store the pair secret derived from this session against every pubkey the
-    /// peer proved. The first pairing for a pubkey establishes its secret.
+    /// peer proved and recognition did not.
+    ///
+    /// A recognized peer already shares a secret with this device and keeps it.
+    /// One that was not either never paired or holds a secret this device does
+    /// not, because one side missed the end of an earlier session, and both
+    /// sides replacing theirs here is what brings the two back into agreement.
     fn pair(&mut self, db: &Db) -> Result<()> {
         let Some(peer) = self.peer.as_ref() else {
             return Ok(());
         };
 
         let secret = recognition::derive_secret(&self.wire.noise.handshake_hash()?);
-        let pubkeys: Vec<PublicKey> = peer.pubkeys.iter().copied().collect();
+        let pubkeys: Vec<PublicKey> = peer
+            .pubkeys
+            .iter()
+            .filter(|pubkey| !self.recognized.contains(pubkey))
+            .copied()
+            .collect();
 
         crate::db::command::pair_with(db, &pubkeys, &secret, clock::now())
     }
@@ -960,6 +974,8 @@ impl Session {
         }
 
         let resolved = self.resolve_recognition(db, payload)?;
+
+        self.recognized.clone_from(&resolved);
 
         match self.gate.evaluate(db, &self.policy, &resolved)? {
             Verdict::Pass => {}
@@ -1898,6 +1914,51 @@ mod tests {
         let secrets = crate::db::query::pair_secrets(&db).unwrap();
         assert_eq!(secrets.len(), 2);
         assert_eq!(secrets[0].1, secrets[1].1);
+    }
+
+    /// [`full_exchange`] between two devices that each keep their own store.
+    fn exchange_apart(
+        dialer: &mut Session,
+        receiver: &mut Session,
+        dialer_db: &Db,
+        receiver_db: &Db,
+    ) {
+        dialer.initiate().unwrap();
+        pump(dialer, receiver, receiver_db); // handshake msg1
+        pump(receiver, dialer, dialer_db); // handshake reply
+        pump(dialer, receiver, receiver_db); // msg3
+        pump(dialer, receiver, receiver_db); // dialer tags
+        pump(dialer, receiver, receiver_db); // dialer challenge
+        pump(receiver, dialer, dialer_db); // receiver tags
+        pump(receiver, dialer, dialer_db); // receiver challenge
+        pump(dialer, receiver, receiver_db); // dialer response
+        pump(receiver, dialer, dialer_db); // receiver response
+
+        assert_eq!(dialer.state, State::Syncing);
+        assert_eq!(receiver.state, State::Syncing);
+    }
+
+    #[test]
+    fn pair_secrets_that_disagree_are_replaced_on_the_next_encounter() {
+        let dialer_db = Db::open_in_memory().unwrap();
+        let receiver_db = Db::open_in_memory().unwrap();
+
+        // The receiver holds a secret the dialer never learned, as if the dialer missed the end of a session.
+        crate::db::command::pair_with(&receiver_db, &[author(1)], &[9u8; 32], 0).unwrap();
+
+        let mut dialer = pair(4096, Role::Dialer, 1);
+        let mut receiver = pair(4096, Role::Receiver, 2);
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
+        exchange_apart(&mut dialer, &mut receiver, &dialer_db, &receiver_db);
+
+        let held = |db: &Db| crate::db::query::pair_secrets(db).unwrap()[0].1;
+        assert_eq!(held(&dialer_db), held(&receiver_db));
+
+        // Agreeing again, they recognize each other with nobody in front of the screen.
+        let mut dialer = pair(4096, Role::Dialer, 1);
+        let mut receiver = pair(4096, Role::Receiver, 2);
+        exchange_apart(&mut dialer, &mut receiver, &dialer_db, &receiver_db);
     }
 
     #[test]
