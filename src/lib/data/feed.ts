@@ -124,16 +124,17 @@ const respondedTo = (event: EventDetail["event"]): string | undefined => {
 /**
  * A page with everything whose subject this device does not hold left out.
  *
- * A boost is the only one of these the board draws and it carries no words of
- * its own, so one that outran what it passes on says nothing at all. A comment
- * keeps its place: it says its own piece, and `docs/stories.md` has one
- * reaching people who never got the thing it answers. `coracle/dip#92`.
+ * A boost carries no words of its own, so one that outran what it passes on
+ * says nothing at all. A comment opens what it answers, so one whose parent
+ * has not arrived opens onto nothing; it waits for the parent the way a boost
+ * waits for its subject. `docs/stories.md`.
  */
 const grounded = async (items: Item[]): Promise<Item[]> => {
   const subjects = new Map<string, string>()
 
   for (const {event} of items) {
-    const about = responseKinds.includes(event.kind) ? respondedTo(event) : undefined
+    const about =
+      commentedOn(event) ?? (responseKinds.includes(event.kind) ? respondedTo(event) : undefined)
 
     if (about) subjects.set(event.id, about)
   }
