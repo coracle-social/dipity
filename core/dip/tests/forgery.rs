@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use coracle_lib::events::{EventContent, HashedEvent};
+use coracle_lib::events::{EventContent, EventExtensionId, HashedEvent};
 use coracle_lib::keys::SecretKey;
 use coracle_lib::tags::Tags;
 
@@ -99,18 +99,16 @@ fn a_forwarder_cannot_reuse_a_proof_for_content_the_author_never_wrote() {
 }
 
 #[test]
-fn the_wire_refuses_an_event_whose_id_is_not_its_hash() {
+fn a_forged_event_decodes_so_that_admission_refuses_one_message_rather_than_the_link() {
     let alice = SecretKey::generate();
     let real = authored(&alice, "the real note");
     let forged = forged_under(&alice, &real, "FORGED");
-
-    // Encoding is this device's own, so it round-trips; the check is on the way in.
     let carrier = Message::Event(SubscriptionId("sub".into()), Box::new(forged));
 
-    assert!(
-        Message::decode(&carrier.encode()).is_err(),
-        "the decoder accepted an event whose id is not its hash"
-    );
+    match Message::decode(&carrier.encode()).unwrap() {
+        Message::Event(_, decoded) => assert!(!decoded.verify_id()),
+        other => panic!("expected an EVENT, got {other:?}"),
+    }
 }
 
 #[test]

@@ -292,6 +292,12 @@ impl Client {
 
                 Ok(Vec::new())
             }
+            // The peer could not run the diff, which ends it and nothing else.
+            Message::NegErr(subscription, _) => {
+                self.negotiations.remove(&subscription);
+
+                Ok(Vec::new())
+            }
             Message::NegMsg(subscription, frame) => {
                 let Some(negotiation) = self.negotiations.get_mut(&subscription) else {
                     bail!("a NEG-MSG arrived for a subscription that is not open");

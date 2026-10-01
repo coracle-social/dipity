@@ -8,9 +8,9 @@
 //! `docs/sync.md`. The additions for a transport with no URL are in
 //! `docs/nips/p2p-auth.md`.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use base64::Engine as _;
-use coracle_lib::events::{Event, EventExtensionId, EventId, HashedEvent};
+use coracle_lib::events::{Event, EventId, HashedEvent};
 use coracle_lib::filters::Filter;
 use serde_json::{Value, json};
 
@@ -51,6 +51,8 @@ pub enum Message {
     NegMsg(SubscriptionId, Vec<u8>),
     /// End one.
     NegClose(SubscriptionId),
+    /// The relay could not run one, and why. Relay → client.
+    NegErr(SubscriptionId, String),
     /// A Blossom request, wrapped because there is no HTTP on a BLE link.
     /// `docs/sync.md#blob-sync`.
     BlossomRequest(Box<BlossomRequest>),
@@ -156,16 +158,9 @@ impl Message {
                 .context("decoding a body")
         }
 
+        // An id that is not the event's hash still decodes: admission refuses it, which drops one message rather than the link.
         fn event(value: &Value) -> Result<HashedEvent> {
-            let event: HashedEvent =
-                serde_json::from_value(value.clone()).context("parsing EVENT")?;
-
-            // Authorization commits to the id rather than to the bytes. `proofs.md`.
-            if !event.verify_id() {
-                bail!("an event's id is not the hash of its content");
-            }
-
-            Ok(event)
+            serde_json::from_value(value.clone()).context("parsing EVENT")
         }
 
         match kind {
@@ -270,6 +265,11 @@ impl Message {
                 Ok(Self::NegMsg(subscription, message))
             }
             "NEG-CLOSE" => Ok(Self::NegClose(id(&mut items)?)),
+            "NEG-ERR" => {
+                let subscription = id(&mut items)?;
+
+                Ok(Self::NegErr(subscription, string(&mut items)?))
+            }
             "BLOSSOM-REQ" => {
                 let id = string(&mut items)?;
                 let method = string(&mut items)?;
@@ -359,6 +359,9 @@ impl Message {
                 bytes(json!(["NEG-MSG", subscription.0.clone(), hex(message)]))
             }
             Self::NegClose(subscription) => bytes(json!(["NEG-CLOSE", subscription.0])),
+            Self::NegErr(subscription, reason) => {
+                bytes(json!(["NEG-ERR", subscription.0.clone(), reason]))
+            }
             Self::BlossomRequest(payload) => bytes(json!([
                 "BLOSSOM-REQ",
                 payload.id.clone(),
@@ -424,6 +427,7 @@ mod tests {
         ));
         round_trips(Message::NegMsg(SubscriptionId("a".into()), vec![4, 5, 6]));
         round_trips(Message::NegClose(SubscriptionId("a".into())));
+        round_trips(Message::NegErr(SubscriptionId("a".into()), "closed".into()));
         round_trips(Message::RecipientSignature(
             SubscriptionId("a".into()),
             EventId::new([1u8; 32]),

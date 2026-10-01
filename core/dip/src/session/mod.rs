@@ -471,8 +471,17 @@ impl Session {
     /// Handle one frame on the sync channel, routing it to the blob, relay or
     /// client half.
     pub fn handle_sync(&mut self, db: &Db, frame: &Frame) -> Result<()> {
-        let message = Message::decode(&frame.payload)
-            .context("the sync channel carried a malformed message")?;
+        let message = match Message::decode(&frame.payload) {
+            Ok(message) => message,
+            // One message this build cannot read is one message lost, not the link.
+            Err(error) => {
+                log::warn!(
+                    "dropping a malformed sync message on {:?}: {error:#}",
+                    self.link
+                );
+                return Ok(());
+            }
+        };
 
         let Some(peer) = self.peer.as_ref().cloned() else {
             bail!("sync traffic before the peer is identified");
@@ -516,8 +525,16 @@ impl Session {
     /// channel buys them is a queue of their own, and an L2CAP channel to ride
     /// wherever one opens.
     pub fn handle_blob(&mut self, db: &Db, frame: &Frame) -> Result<()> {
-        let message = Message::decode(&frame.payload)
-            .context("the blob channel carried a malformed message")?;
+        let message = match Message::decode(&frame.payload) {
+            Ok(message) => message,
+            Err(error) => {
+                log::warn!(
+                    "dropping a malformed blob message on {:?}: {error:#}",
+                    self.link
+                );
+                return Ok(());
+            }
+        };
 
         let Some(peer) = self.peer.as_ref().cloned() else {
             bail!("blob traffic before the peer is identified");
@@ -2223,6 +2240,21 @@ mod tests {
         full_exchange(&mut dialer, &mut receiver, db);
 
         (dialer, receiver)
+    }
+
+    #[test]
+    fn a_sync_message_this_build_cannot_read_is_dropped_rather_than_the_link() {
+        let db = Db::open_in_memory().unwrap();
+        let (_dialer, mut receiver) = attended_pair(&db);
+
+        let garbage = Frame {
+            channel: Channel::Sync,
+            payload: br#"["NOT-A-VERB", 1, 2]"#.to_vec(),
+        };
+
+        receiver.handle_sync(&db, &garbage).unwrap();
+
+        assert_eq!(receiver.state, State::Syncing);
     }
 
     #[test]
