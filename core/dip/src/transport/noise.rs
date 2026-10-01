@@ -6,10 +6,17 @@
 //! cannot collect a durable identifier by dialing. The nostr identity is
 //! bound to this channel by mutual NIP-42 instead, for the life of one
 //! session. `docs/transport.md#the-static-key-is-generated-per-session`.
+//!
+//! The transport cipher takes explicit nonces, one sequence per [`Pipe`]: the
+//! GATT characteristic and an L2CAP channel deliver independently, so a single
+//! sequence would fail to open whichever write overtook the other. GATT takes
+//! the even nonces and bulk the odd ones, so the two never collide, and each
+//! still opens strictly in order. `docs/transport.md#the-l2cap-bandwidth-upgrade`.
 
 use anyhow::{Context, Result, bail};
-use snow::{Builder, HandshakeState, TransportState};
+use snow::{Builder, HandshakeState, StatelessTransportState};
 
+use super::Pipe;
 use crate::link::Role;
 
 /// The pattern's parameters.
@@ -33,7 +40,11 @@ pub struct Noise {
     /// The snow handshake state, until it completes.
     handshake: Option<HandshakeState>,
     /// The snow transport state, once it has.
-    transport: Option<TransportState>,
+    transport: Option<StatelessTransportState>,
+    /// How many payloads this side has sealed on each pipe.
+    sealed: [u64; 2],
+    /// How many payloads this side has opened from each pipe.
+    opened: [u64; 2],
 }
 
 impl Noise {
@@ -76,6 +87,8 @@ impl Noise {
             hash: None,
             handshake: Some(handshake),
             transport: None,
+            sealed: [0; 2],
+            opened: [0; 2],
         })
     }
 
@@ -154,7 +167,7 @@ impl Noise {
 
             key
         });
-        self.transport = Some(handshake.into_transport_mode()?);
+        self.transport = Some(handshake.into_stateless_transport_mode()?);
 
         Ok(())
     }
@@ -171,33 +184,69 @@ impl Noise {
         bail!("the hash exists only once the handshake has completed")
     }
 
-    /// Encrypt one fragment's payload.
+    /// Encrypt one fragment's payload for `pipe`.
     ///
-    /// The cipher is a strict sequence — snow steps a nonce per call and keeps
-    /// no window — so calls have to happen in the order the writes go out.
-    pub fn encrypt(&mut self, payload: &[u8]) -> Result<Vec<u8>> {
-        let Some(transport) = &mut self.transport else {
+    /// Each pipe is a strict sequence, so calls have to happen in the order
+    /// that pipe's writes go out.
+    pub fn encrypt(&mut self, pipe: Pipe, payload: &[u8]) -> Result<Vec<u8>> {
+        let Some(transport) = &self.transport else {
             bail!("traffic encrypts only once the handshake has completed");
         };
 
+        let nonce = step(&mut self.sealed, pipe)?;
+
         // One AEAD tag over the payload.
         let mut out = vec![0u8; payload.len() + Self::TAG];
-        let written = transport.write_message(payload, &mut out)?;
+        let written = transport.write_message(nonce, payload, &mut out)?;
 
         Ok(out[..written].to_vec())
     }
 
-    /// Decrypt one fragment's payload, in the order the peer sealed it.
-    pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>> {
-        let Some(transport) = &mut self.transport else {
+    /// Decrypt one fragment's payload off `pipe`, in the order the peer sealed
+    /// it for that pipe.
+    pub fn decrypt(&mut self, pipe: Pipe, ciphertext: &[u8]) -> Result<Vec<u8>> {
+        let Some(transport) = &self.transport else {
             bail!("traffic decrypts only once the handshake has completed");
         };
 
+        let index = pipe_index(pipe);
+        let nonce = nonce(self.opened[index], pipe)?;
+
         let mut out = vec![0u8; ciphertext.len()];
-        let written = transport.read_message(ciphertext, &mut out)?;
+        let written = transport.read_message(nonce, ciphertext, &mut out)?;
+
+        // A payload that failed to open does not advance the sequence.
+        self.opened[index] += 1;
 
         Ok(out[..written].to_vec())
     }
+}
+
+/// Where `pipe` keeps its count.
+fn pipe_index(pipe: Pipe) -> usize {
+    match pipe {
+        Pipe::Gatt => 0,
+        Pipe::Bulk => 1,
+    }
+}
+
+/// The nonce for the `count`th payload on `pipe`: GATT even, bulk odd.
+fn nonce(count: u64, pipe: Pipe) -> Result<u64> {
+    let Some(doubled) = count.checked_mul(2) else {
+        bail!("the {pipe:?} nonce sequence is exhausted");
+    };
+
+    Ok(doubled | pipe_index(pipe) as u64)
+}
+
+/// Take the next nonce for `pipe` and advance its count.
+fn step(counts: &mut [u64; 2], pipe: Pipe) -> Result<u64> {
+    let index = pipe_index(pipe);
+    let nonce = nonce(counts[index], pipe)?;
+
+    counts[index] += 1;
+
+    Ok(nonce)
 }
 
 #[cfg(test)]
@@ -235,11 +284,63 @@ mod tests {
 
         complete(&mut dialer, &mut receiver);
 
-        let forward = dialer.encrypt(b"toward the receiver").unwrap();
-        let backward = receiver.encrypt(b"toward the dialer").unwrap();
+        let forward = dialer.encrypt(Pipe::Gatt, b"toward the receiver").unwrap();
+        let backward = receiver.encrypt(Pipe::Gatt, b"toward the dialer").unwrap();
 
-        assert_eq!(receiver.decrypt(&forward).unwrap(), b"toward the receiver");
-        assert_eq!(dialer.decrypt(&backward).unwrap(), b"toward the dialer");
+        assert_eq!(
+            receiver.decrypt(Pipe::Gatt, &forward).unwrap(),
+            b"toward the receiver"
+        );
+        assert_eq!(
+            dialer.decrypt(Pipe::Gatt, &backward).unwrap(),
+            b"toward the dialer"
+        );
+    }
+
+    #[test]
+    fn the_two_pipes_open_in_either_order() {
+        let mut dialer = Noise::begin(Role::Dialer).unwrap();
+        let mut receiver = Noise::begin(Role::Receiver).unwrap();
+
+        complete(&mut dialer, &mut receiver);
+
+        let gatt = dialer.encrypt(Pipe::Gatt, b"a sync message").unwrap();
+        let bulk = dialer.encrypt(Pipe::Bulk, b"a blob fragment").unwrap();
+
+        // The bulk write lands first, as an L2CAP read can.
+        assert_eq!(
+            receiver.decrypt(Pipe::Bulk, &bulk).unwrap(),
+            b"a blob fragment"
+        );
+        assert_eq!(
+            receiver.decrypt(Pipe::Gatt, &gatt).unwrap(),
+            b"a sync message"
+        );
+    }
+
+    #[test]
+    fn a_payload_sealed_for_one_pipe_does_not_open_on_the_other() {
+        let mut dialer = Noise::begin(Role::Dialer).unwrap();
+        let mut receiver = Noise::begin(Role::Receiver).unwrap();
+
+        complete(&mut dialer, &mut receiver);
+
+        let gatt = dialer.encrypt(Pipe::Gatt, b"a sync message").unwrap();
+
+        assert!(receiver.decrypt(Pipe::Bulk, &gatt).is_err());
+    }
+
+    #[test]
+    fn a_replayed_payload_does_not_open() {
+        let mut dialer = Noise::begin(Role::Dialer).unwrap();
+        let mut receiver = Noise::begin(Role::Receiver).unwrap();
+
+        complete(&mut dialer, &mut receiver);
+
+        let sealed = dialer.encrypt(Pipe::Gatt, b"once").unwrap();
+
+        receiver.decrypt(Pipe::Gatt, &sealed).unwrap();
+        assert!(receiver.decrypt(Pipe::Gatt, &sealed).is_err());
     }
 
     #[test]
@@ -253,7 +354,7 @@ mod tests {
     fn nothing_encrypts_before_the_handshake_completes() {
         let mut dialer = Noise::begin(Role::Dialer).unwrap();
 
-        assert!(dialer.encrypt(b"early").is_err());
+        assert!(dialer.encrypt(Pipe::Gatt, b"early").is_err());
         assert!(dialer.handshake_hash().is_err());
     }
 

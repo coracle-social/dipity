@@ -8,10 +8,10 @@
 //! and [`read_handshake`](Wire::read_handshake) without the caller ever
 //! seeing a raw Noise message.
 //!
-//! A payload is sealed as it leaves the outbox, not as it is queued. The
-//! transport cipher steps a nonce per call and keeps no window, while the
-//! scheduler lets a control frame overtake queued bulk fragments, so sealing
-//! at enqueue would hand the peer ciphertext in an order it cannot open.
+//! A payload is sealed as it leaves the outbox, not as it is queued. Each pipe's
+//! nonce sequence keeps no window, while the scheduler lets a control frame
+//! overtake queued bulk fragments, so sealing at enqueue would hand the peer
+//! ciphertext in an order it cannot open.
 
 use anyhow::{Result, bail};
 
@@ -136,11 +136,16 @@ impl Wire {
     /// Take one write off the characteristic, returning a decrypted frame
     /// once its last fragment lands.
     pub fn receive(&mut self, write: &[u8]) -> Result<Option<Frame>> {
+        self.receive_on(Pipe::Gatt, write)
+    }
+
+    /// Take one write off `pipe`, opening it under that pipe's nonce sequence.
+    fn receive_on(&mut self, pipe: Pipe, write: &[u8]) -> Result<Option<Frame>> {
         let mut fragment = Fragment::decode(write)?;
 
         // Everything after the handshake is sealed, so one that will not open is not theirs.
         if self.noise.is_complete() {
-            fragment.payload = self.noise.decrypt(&fragment.payload)?;
+            fragment.payload = self.noise.decrypt(pipe, &fragment.payload)?;
         }
 
         self.codec.absorb(fragment)
@@ -159,7 +164,7 @@ impl Wire {
         };
 
         if secrecy == Secrecy::Sealed {
-            fragment.payload = self.noise.encrypt(&fragment.payload)?;
+            fragment.payload = self.noise.encrypt(pipe, &fragment.payload)?;
         }
 
         let write = fragment.encode();
@@ -187,7 +192,7 @@ impl Wire {
                 bail!("{:?} arrived on the bulk pipe", fragment.channel);
             }
 
-            if let Some(frame) = self.receive(&write)? {
+            if let Some(frame) = self.receive_on(Pipe::Bulk, &write)? {
                 frames.push(frame);
             }
         }
@@ -467,6 +472,32 @@ mod tests {
         assert!(dialer.next_write(Pipe::Gatt).unwrap().is_some());
         assert!(dialer.next_write(Pipe::Gatt).unwrap().is_none());
         assert!(dialer.next_write(Pipe::Bulk).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_bulk_write_that_overtakes_a_gatt_write_still_opens() {
+        let (mut dialer, mut receiver) = secured_pair(4096);
+
+        dialer.open_bulk(4096).unwrap();
+        receiver.open_bulk(4096).unwrap();
+
+        let events = Frame {
+            channel: Channel::Sync,
+            payload: b"events".to_vec(),
+        };
+        let bytes = Frame {
+            channel: Channel::Blob,
+            payload: b"bytes".to_vec(),
+        };
+        dialer.send(&events).unwrap();
+        dialer.send(&bytes).unwrap();
+
+        let gatt = dialer.next_write(Pipe::Gatt).unwrap().unwrap();
+        let bulk = dialer.next_write(Pipe::Bulk).unwrap().unwrap();
+
+        // The two pipes deliver independently, so the later seal can land first.
+        assert_eq!(receiver.receive_bulk(&bulk).unwrap(), vec![bytes]);
+        assert_eq!(receiver.receive(&gatt).unwrap(), Some(events));
     }
 
     #[test]

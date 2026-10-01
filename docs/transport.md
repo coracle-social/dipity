@@ -60,7 +60,7 @@ Channel 0 carries several kinds of application frame, distinguished by a payload
 
 Both directions of `AUTH` share one byte, because the message names itself. The handshake travels on the same channel with no byte: its frames are the only ones to arrive before the channel is encrypted, and they are raw Noise messages read by the peer's handshake state rather than by anything that dispatches on a byte. Channels 1 and 2 need no byte either, since both carry NIP-01 arrays, which name themselves in their first element.
 
-**The payload is sealed as it leaves the queue, not as it is queued.** The transport cipher steps a nonce per message and keeps no window, while the scheduler lets a control frame overtake queued bulk; sealing at enqueue would hand the peer ciphertext in an order it cannot open. The handshake is the exception: its messages are queued in the clear and stay that way even though the sender's own session may already have finished, because the peer must read them with its handshake state.
+**The payload is sealed as it leaves the queue, not as it is queued.** Each pipe has its own nonce sequence, GATT on the even nonces and an L2CAP channel on the odd ones, because the two deliver independently and a shared sequence would fail to open whichever write overtook the other. A sequence keeps no window, while the scheduler lets a control frame overtake queued bulk; sealing at enqueue would hand the peer ciphertext in an order it cannot open. The handshake is the exception: its messages are queued in the clear and stay that way even though the sender's own session may already have finished, because the peer must read them with its handshake state.
 
 ### Throughput
 
