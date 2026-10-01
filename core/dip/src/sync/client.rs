@@ -179,8 +179,11 @@ pub struct Client {
     /// The standing subscription for what the peer writes from now on, once
     /// reconciliation has settled what both sides already held.
     live: Option<SubscriptionId>,
-    /// Events the peer forwarded that are waiting on their authorship proof.
-    pending_events: BTreeMap<EventId, HashedEvent>,
+    /// Events the peer forwarded that are waiting on their authorship proof,
+    /// with the subscription each arrived on. A proof follows its event on the
+    /// same subscription, so one still waiting at that subscription's `EOSE`
+    /// is not coming.
+    pending_events: BTreeMap<EventId, (SubscriptionId, HashedEvent)>,
     /// Authorship proofs waiting on the event they prove.
     pending_proofs: BTreeMap<EventId, AuthorshipProof>,
 }
@@ -194,11 +197,14 @@ impl Client {
     }
 
     /// Whether this device is still waiting on the peer for something it asked
-    /// for: a reconciliation round, a page of a fetch, or a proof for an event
-    /// already in hand.
+    /// for: a reconciliation round, or a page of a fetch, which includes the
+    /// proofs for the events that page has already delivered.
+    ///
+    /// An event held on the standing subscription has no `EOSE` to end the
+    /// wait, so it does not hold a drain open; it is bounded by count instead.
     #[must_use]
     pub fn is_awaiting(&self) -> bool {
-        !self.negotiations.is_empty() || !self.fetches.is_empty() || !self.pending_events.is_empty()
+        !self.negotiations.is_empty() || !self.fetches.is_empty()
     }
 
     /// Ask the peer for what it writes from here on, once per session.
@@ -263,7 +269,8 @@ impl Client {
                     take(&event, None)?;
                 } else if holdable(peer, &event, quota, spent) {
                     // Forwarded without its proof yet; hold it until one arrives.
-                    self.pending_events.insert(id, *event);
+                    self.pending_events
+                        .insert(id, (subscription.clone(), *event));
                     bound(&mut self.pending_events);
                 }
 
@@ -283,7 +290,7 @@ impl Client {
                 let proof = AuthorshipProof::from_bytes(&proof);
 
                 match self.pending_events.remove(&event_id) {
-                    Some(event) => {
+                    Some((_, event)) => {
                         take(&event, Some(&proof))?;
                     }
                     None => {
@@ -332,6 +339,10 @@ impl Client {
                 Ok(replies)
             }
             Message::Eose(subscription) => {
+                // Every proof this subscription was going to carry has arrived by now.
+                self.pending_events
+                    .retain(|_, (held_on, _)| *held_on != subscription);
+
                 let Some(fetch) = self.fetches.get_mut(&subscription) else {
                     return Ok(Vec::new());
                 };
@@ -1078,21 +1089,29 @@ mod tests {
     fn an_unproven_forwarded_event_is_dropped_at_eose() {
         let db = Db::open_in_memory().unwrap();
         let forwarded = note_from(3, 100);
+        let subscription = SubscriptionId("sub".into());
 
         let mut client = Client::default();
 
-        client
-            .handle(
-                &db,
-                &peer([author(2)]),
-                &local(),
-                Message::Event(SubscriptionId("sub".into()), Box::new(forwarded)),
-                Quota::STRANGER,
-                &mut spending(),
-            )
-            .unwrap();
+        for message in [
+            Message::Event(subscription.clone(), Box::new(forwarded.clone())),
+            Message::Eose(subscription.clone()),
+        ] {
+            client
+                .handle(
+                    &db,
+                    &peer([author(2)]),
+                    &local(),
+                    message,
+                    Quota::STRANGER,
+                    &mut spending(),
+                )
+                .unwrap();
+        }
 
-        // No proof ever comes, so the held event is simply not stored.
+        // No proof came before the EOSE, so none is coming and nothing waits on one.
+        assert!(!client.pending_events.contains_key(&forwarded.id));
+        assert!(!client.is_awaiting());
         assert!(
             db_query::list_events(&db, &Query::new())
                 .unwrap()
