@@ -46,10 +46,11 @@ use crate::db::blob::channel as blob_channel;
 use crate::db::blob::channel::BlobChange;
 use crate::db::command as db_command;
 use crate::db::event::channel::{self, EventChange};
+use crate::db::pref::channel::{self as pref_channel, PrefChange};
 use crate::db::{Db, query};
 use crate::keys::KeyCustody;
 use crate::link::{LinkId, PeripheralId, Role};
-use crate::model::{Blob, BlobHash, Policy};
+use crate::model::{BLOCK, Blob, BlobHash, MUTE, Policy, TRUST};
 use crate::session::gate::Presence;
 use crate::session::l2cap::Step;
 use crate::session::transfer::Outcome;
@@ -163,6 +164,9 @@ pub struct Node {
     /// This store's blob channel, so bytes are reclaimed when their record
     /// goes without whoever removed it holding the blob store.
     blob_changes: broadcast::Receiver<BlobChange>,
+    /// This store's preference channel, so a written preference rebinds every
+    /// live session without the writer knowing a node exists.
+    pref_changes: broadcast::Receiver<PrefChange>,
     /// When the retention sweep last ran, so ticking often sweeps rarely.
     events_swept_at: Option<i64>,
     /// The backup file waiting on a share sheet, so the core can delete it
@@ -188,6 +192,7 @@ impl Node {
         let mut node = Self {
             events: channel::subscribe(&db),
             blob_changes: blob_channel::subscribe(&db),
+            pref_changes: pref_channel::subscribe(&db),
             db,
             custody,
             identity,
@@ -563,17 +568,25 @@ impl Node {
     /// The user changed a preference, so re-read the policy and rebind it on
     /// every live session.
     ///
-    /// Driven by [`db::pref::channel`](crate::db::pref::channel), because a
-    /// session that cached a policy would keep serving a peer the user has just
-    /// blocked. A session whose peer the new policy blocks closes here.
+    /// Every entry point does this on its own once the store announces a
+    /// preference or a trust, block or mute list, because a session that cached
+    /// a policy would keep serving a peer the user has just blocked. A session
+    /// whose peer the new policy blocks closes here.
     pub fn policy_changed(&mut self) -> Result<Vec<Action>> {
+        self.rebind_policy()?;
+
+        Ok(self.collect())
+    }
+
+    /// Recompile the policy from the store and bind it on every live session.
+    fn rebind_policy(&mut self) -> Result<()> {
         self.policy = Arc::new(query::policy(&self.db, &self.identity)?);
 
         for session in self.sessions.values_mut() {
             session.set_policy(Arc::clone(&self.policy));
         }
 
-        Ok(self.collect())
+        Ok(())
     }
 
     /// Store an event the user wrote and the media it attaches, then offer both.
@@ -681,7 +694,15 @@ impl Node {
     /// The one place actions are produced, so an entry point cannot forget to
     /// flush a session it advanced.
     fn collect(&mut self) -> Vec<Action> {
-        self.offer_saved_events();
+        let preferences_moved = self.drain_preferences();
+        let graph_moved = self.offer_saved_events();
+
+        if (preferences_moved || graph_moved)
+            && let Err(error) = self.rebind_policy()
+        {
+            log::error!("recompiling the policy failed: {error:#}");
+        }
+
         self.reclaim_removed_blobs();
 
         // Heartbeats go out before writes are drained, so a quiet session still proves alive.
@@ -769,12 +790,22 @@ impl Node {
     /// — so the writer never has to know a peer is attached. Only events
     /// authored by this device travel this way; everything else waits for the
     /// next reconciliation, where the registers are checked.
-    fn offer_saved_events(&mut self) {
+    ///
+    /// Answers whether a trust, block or mute list arrived, which the policy is
+    /// compiled from, or whether changes were missed and one might have.
+    fn offer_saved_events(&mut self) -> bool {
         let identity = self.identity;
+        let mut graph_moved = false;
 
         loop {
             match self.events.try_recv() {
-                Ok(EventChange::Stored(event)) if event.pubkey == identity => {
+                Ok(EventChange::Stored(event)) => {
+                    graph_moved |= [TRUST, BLOCK, MUTE].contains(&event.kind);
+
+                    if event.pubkey != identity {
+                        continue;
+                    }
+
                     for session in self.sessions.values_mut() {
                         if let Err(error) = session.offer_event(&self.db, &event) {
                             log::error!(
@@ -786,11 +817,24 @@ impl Node {
                 }
                 // Seen events are not newly stored, and Deleted are gone. Both are the view's.
                 Ok(_) => {}
-                // A lag says the subscriber missed changes; the next reconciliation covers them.
                 Err(TryRecvError::Empty | TryRecvError::Closed) => break,
-                Err(TryRecvError::Lagged(_)) => {}
+                // The next reconciliation covers missed offers; the policy is re-read in case.
+                Err(TryRecvError::Lagged(_)) => graph_moved = true,
             }
         }
+
+        graph_moved
+    }
+
+    /// Drain the store's preference channel, answering whether anything moved.
+    fn drain_preferences(&mut self) -> bool {
+        let mut moved = false;
+
+        while let Ok(_) | Err(TryRecvError::Lagged(_)) = self.pref_changes.try_recv() {
+            moved = true;
+        }
+
+        moved
     }
 
     /// Delete the bytes of blobs whose record has gone.
@@ -1280,6 +1324,43 @@ mod tests {
 
         let stored = query::list_events(&db, &Query::new()).unwrap();
         assert_eq!(stored, vec![event]);
+    }
+
+    #[test]
+    fn publishing_a_trust_list_recompiles_the_policy() {
+        let mut node = Node::new(
+            db(),
+            custody(secret(1)),
+            Arc::new(crate::blobs::MemoryBlobStore::default()),
+        )
+        .unwrap();
+        let trust = crate::fixtures::event(
+            author(1),
+            TRUST,
+            100,
+            "",
+            Tags::new().add("p", [author(2).to_hex()]),
+        );
+
+        node.publish(&trust, &[]).unwrap();
+
+        assert!(node.policy().graph.trusted.contains(&author(2)));
+    }
+
+    #[test]
+    fn writing_a_preference_recompiles_the_policy_without_being_told() {
+        let db = db();
+        let mut node = Node::new(
+            Arc::clone(&db),
+            custody(secret(1)),
+            Arc::new(crate::blobs::MemoryBlobStore::default()),
+        )
+        .unwrap();
+
+        db_command::set_preference(&db, "policy.retention_days", "7", 100).unwrap();
+        node.tick();
+
+        assert_eq!(node.policy().retention_days, 7);
     }
 
     #[test]
