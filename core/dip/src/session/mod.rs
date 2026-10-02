@@ -44,7 +44,7 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::blobs::BlobStore;
 use crate::clock;
 use crate::db::Db;
-use crate::keys::KeyCustody;
+use crate::keys::{Batch, KeyCustody};
 use crate::link::{LinkId, Role};
 use crate::model::{Identity, Policy, Standing};
 use crate::sync::blob::BlobExchange;
@@ -502,7 +502,7 @@ impl Session {
             self.relay.handle(
                 db,
                 &peer,
-                &self.custody.identity()?,
+                &Batch::new(self.identity, &*self.custody),
                 message,
                 quota,
                 &mut self.spending,
@@ -845,6 +845,8 @@ impl Session {
         }
 
         let subscriptions = self.relay.matching(event);
+        let custody = Arc::clone(&self.custody);
+        let signer = Batch::new(self.identity, &*custody);
 
         for subscription in &subscriptions {
             let mut messages = vec![Message::Event(
@@ -852,14 +854,7 @@ impl Session {
                 Box::new(event.clone()),
             )];
 
-            relay::attach(
-                db,
-                &peer,
-                &self.custody.identity()?,
-                subscription,
-                event,
-                &mut messages,
-            )?;
+            relay::attach(db, &peer, &signer, subscription, event, &mut messages)?;
 
             for message in messages {
                 self.send_sync(&message)?;

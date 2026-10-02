@@ -6,9 +6,10 @@
 //!
 //! # The call shape
 //!
-//! Every entry point returns [`Action`]s. Nothing calls the shell back, so no
-//! lock is ever held across a foreign call and the shell can answer an action
-//! synchronously without deadlocking the core against itself.
+//! Every entry point returns [`Action`]s. The one thing that calls the shell
+//! back is [`KeyCustody`], for the key a signature needs, and it acts on
+//! nothing; everything the shell does for the core it does from an action, so
+//! it can answer one synchronously without deadlocking the core against itself.
 //!
 //! Nothing here takes the time. Whatever needs it calls
 //! [`clock::now`](crate::clock::now), and a test drives the heartbeat timeout
@@ -637,12 +638,26 @@ impl Node {
         // A retry writes over the last attempt's file, so only the newest is ever on disk.
         let path = backup::write(&self.custody.identity()?, cache.as_ref(), password)?;
 
+        Ok(self.key_backup_written(path))
+    }
+
+    /// A backup was written at `path`, by [`export_key`](Self::export_key) or
+    /// by a caller that wrote it without holding the node: keep it until the
+    /// share sheet closes, and ask for the sheet.
+    pub fn key_backup_written(&mut self, path: PathBuf) -> Vec<Action> {
         self.key_backup = Some(path.clone());
 
         let mut actions = self.collect();
         actions.push(Action::ShareKeyBackup(path));
 
-        Ok(actions)
+        actions
+    }
+
+    /// Where the identity key is read from, for work that reads it without
+    /// holding the node, the backup's scrypt above all.
+    #[must_use]
+    pub fn custody(&self) -> Arc<dyn KeyCustody> {
+        Arc::clone(&self.custody)
     }
 
     /// The share sheet closed, shared or dismissed, so the file goes.

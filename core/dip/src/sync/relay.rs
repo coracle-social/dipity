@@ -12,7 +12,9 @@ use std::collections::BTreeMap;
 use anyhow::{Context, Result, bail};
 use coracle_lib::events::{EventId, HashedEvent};
 use coracle_lib::filters::Filter;
-use coracle_lib::keys::{PublicKey, SecretKey};
+use coracle_lib::keys::PublicKey;
+
+use crate::keys::Signer;
 use coracle_lib::sync::{FrameBudget, SyncSet};
 
 use crate::clock;
@@ -65,12 +67,12 @@ impl Relay {
         &mut self,
         db: &Db,
         peer: &Peer,
-        identity: &SecretKey,
+        identity: &dyn Signer,
         message: Message,
         quota: Quota,
         spending: &mut SessionSpending,
     ) -> Result<Vec<Message>> {
-        let local = Identity::from([identity.public_key()]);
+        let local = Identity::from([identity.pubkey()]);
 
         match message {
             Message::Publish(event) => {
@@ -201,11 +203,11 @@ fn paged(filter: &Filter) -> Filter {
 pub fn serve(
     db: &Db,
     peer: &Peer,
-    identity: &SecretKey,
+    identity: &dyn Signer,
     subscription: &SubscriptionId,
     filters: &[Filter],
 ) -> Result<Vec<Message>> {
-    let local = Identity::from([identity.public_key()]);
+    let local = Identity::from([identity.pubkey()]);
     let mut events = Vec::new();
 
     for filter in filters {
@@ -261,20 +263,20 @@ pub fn record_shares(db: &Db, peer: &Peer, events: &[HashedEvent]) -> Result<()>
 pub fn attach(
     db: &Db,
     peer: &Peer,
-    identity: &SecretKey,
+    identity: &dyn Signer,
     subscription: &SubscriptionId,
     event: &coracle_lib::events::HashedEvent,
     messages: &mut Vec<Message>,
 ) -> Result<()> {
     // One artifact per identity the peer proved, since nothing on the wire says which it uses.
-    if event.pubkey == identity.public_key() {
+    if event.pubkey == identity.pubkey() {
         // The signature is transferable evidence, so who gets one is a policy question.
         if !peer.policy.may_forward() {
             return Ok(());
         }
 
         for recipient in peer.pubkeys.iter() {
-            let signature = RecipientSignature::sign(identity, event.id, *recipient);
+            let signature = RecipientSignature::sign(identity.key()?, event.id, *recipient);
 
             messages.push(Message::RecipientSignature(
                 subscription.clone(),
@@ -282,8 +284,7 @@ pub fn attach(
                 Box::new(signature.sig),
             ));
         }
-    } else if let Some(signature) = db_query::get_signature(db, &event.id, &identity.public_key())?
-    {
+    } else if let Some(signature) = db_query::get_signature(db, &event.id, &identity.pubkey())? {
         // A proof is designated to one peer and worthless to anyone else, so it is not gated.
         for verifier in peer.pubkeys.iter() {
             let proof = AuthorshipProof::prove(&signature, *verifier)?;

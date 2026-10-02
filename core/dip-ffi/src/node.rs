@@ -9,9 +9,11 @@
 //! # The lock
 //!
 //! The core takes `&mut self` and uniffi hands out `Arc`, so the mutex lives
-//! here. Nothing calls the shell back from inside the core, so it is never held
-//! across a foreign call: each method takes it, runs one entry point, and drops
-//! it before the actions are converted.
+//! here. Each method takes it, runs one entry point, and drops it before the
+//! actions are converted. Two callbacks can still run under it: the logger, and
+//! a read of the identity key when a session signs mid-call, which is one
+//! Keychain or Keystore read. Anything slower, the backup's scrypt above all,
+//! runs with the lock released.
 //!
 //! # The vocabulary
 //!
@@ -493,14 +495,26 @@ impl Node {
     /// `password` encrypts it as a NIP-49 `ncryptsec`; without one the file
     /// carries a plain `nsec`. Either way the key is encoded in the core and
     /// the caller is handed no part of it.
+    ///
+    /// The key is read and the file written without the lock: scrypt takes
+    /// long enough that holding it would stall every radio event behind it.
     pub fn export_key(
         &self,
         cache: String,
         password: Option<String>,
     ) -> Result<Vec<Action>, NodeError> {
-        drive!(self, |node| node
-            .export_key(&cache, password.as_deref())
-            .map_err(|error| NodeError::core(&error))?)
+        let custody = self
+            .inner
+            .lock()
+            .map_err(|_| NodeError::poisoned())?
+            .custody();
+        let identity = custody
+            .identity()
+            .map_err(|error| NodeError::core(&error))?;
+        let path = dip::backup::write(&identity, std::path::Path::new(&cache), password.as_deref())
+            .map_err(|error| NodeError::core(&error))?;
+
+        drive!(self, |node| node.key_backup_written(path))
     }
 
     /// The share sheet closed, shared or dismissed, so the file goes.

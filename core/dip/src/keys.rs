@@ -18,8 +18,10 @@
 //! Whoever implements it owns the wipe of whatever they read out of storage on
 //! the way here.
 
+use std::cell::OnceCell;
+
 use anyhow::Result;
-use coracle_lib::keys::SecretKey;
+use coracle_lib::keys::{PublicKey, SecretKey};
 
 /// The identity key, read out of wherever the platform keeps it.
 ///
@@ -33,6 +35,69 @@ pub trait KeyCustody: Send + Sync {
     /// authenticate — so it fails the link rather than degrading it to an
     /// unauthenticated one.
     fn identity(&self) -> Result<SecretKey>;
+}
+
+/// The identity as serving a peer needs it: the pubkey always, and the key only
+/// when there is something to sign.
+///
+/// Forwarding signs nothing, so a batch that only forwards never reads secure
+/// storage. `docs/proofs.md#hygiene`.
+pub trait Signer {
+    /// The identity's pubkey, which costs no read.
+    fn pubkey(&self) -> PublicKey;
+
+    /// The identity key, read at most once however often it is asked for.
+    fn key(&self) -> Result<&SecretKey>;
+}
+
+/// One batch's signer over custody: the key is read the first time a signature
+/// wants it, kept for the rest of the batch, and dropped with it.
+pub struct Batch<'a> {
+    /// The identity's pubkey, which the node already holds.
+    pubkey: PublicKey,
+    /// Where the key is read from, if it is needed.
+    custody: &'a dyn KeyCustody,
+    /// The key, once read.
+    key: OnceCell<SecretKey>,
+}
+
+impl<'a> Batch<'a> {
+    /// A batch acting as `pubkey`, reading its key out of `custody` on demand.
+    #[must_use]
+    pub fn new(pubkey: PublicKey, custody: &'a dyn KeyCustody) -> Self {
+        Self {
+            pubkey,
+            custody,
+            key: OnceCell::new(),
+        }
+    }
+}
+
+impl Signer for Batch<'_> {
+    fn pubkey(&self) -> PublicKey {
+        self.pubkey
+    }
+
+    fn key(&self) -> Result<&SecretKey> {
+        if let Some(key) = self.key.get() {
+            return Ok(key);
+        }
+
+        let key = self.custody.identity()?;
+
+        Ok(self.key.get_or_init(|| key))
+    }
+}
+
+/// A key in hand signs as itself.
+impl Signer for SecretKey {
+    fn pubkey(&self) -> PublicKey {
+        self.public_key()
+    }
+
+    fn key(&self) -> Result<&SecretKey> {
+        Ok(self)
+    }
 }
 
 /// A key already in hand, which is what the host and `cargo test` have.
