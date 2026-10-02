@@ -6,9 +6,17 @@
   import * as InputGroup from "$lib/components/ui/input-group"
   import {Label} from "$lib/components/ui/label"
   import {Separator} from "$lib/components/ui/separator"
+  import {Switch} from "$lib/components/ui/switch"
   import KeyBackup from "$lib/components/KeyBackup.svelte"
   import type {Scope} from "$lib/core"
   import {go} from "$lib/data/nav"
+  import {
+    notifyContent,
+    notifyPairing,
+    permission,
+    refreshPermission,
+    setNotify,
+  } from "$lib/data/notifications"
   import {
     policy,
     setAccept,
@@ -63,6 +71,26 @@
     lenient: "Anyone not blocked",
     public: "Anyone at all",
   }
+
+  // The phone's answer changes in its own settings, so it is read again whenever this screen opens.
+  $effect(() => {
+    refreshPermission()
+  })
+
+  const alerts = $derived([
+    {
+      id: "notify-pairing",
+      label: "Somebody nearby wants to pair",
+      on: $notifyPairing,
+      set: (on: boolean) => setNotify(notifyPairing, on),
+    },
+    {
+      id: "notify-content",
+      label: "New things reach the board",
+      on: $notifyContent,
+      set: (on: boolean) => setNotify(notifyContent, on),
+    },
+  ])
 </script>
 
 <header class="pt-4 pb-3">
@@ -147,6 +175,33 @@
 
   <Separator class="my-6" />
 {/if}
+
+<h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Notifications</h2>
+
+<p class="mt-2 text-sm text-pretty text-muted-foreground">
+  Only while the app is closed. Notifications are made on this phone and sent nowhere.
+</p>
+
+<ul class="mt-4 space-y-4">
+  {#each alerts as alert (alert.id)}
+    <li class="flex items-center justify-between gap-4">
+      <Label for={alert.id} class="text-sm font-semibold">{alert.label}</Label>
+      <Switch
+        id={alert.id}
+        checked={alert.on && $permission !== "denied"}
+        onCheckedChange={alert.set} />
+    </li>
+  {/each}
+</ul>
+
+{#if $permission === "denied"}
+  <p class="mt-3 text-xs text-pretty text-destructive">
+    Your phone does not let Dip notify you. Allow it in your phone's settings, then switch these
+    back on.
+  </p>
+{/if}
+
+<Separator class="my-6" />
 
 <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Your key</h2>
 

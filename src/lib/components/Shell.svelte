@@ -9,6 +9,7 @@
   import ContactDetail from "$lib/components/ContactDetail.svelte"
   import DeviceLogin from "$lib/components/DeviceLogin.svelte"
   import ItemDetail from "$lib/components/ItemDetail.svelte"
+  import NotificationOffer from "$lib/components/NotificationOffer.svelte"
   import Pairing from "$lib/components/Pairing.svelte"
   import PairingTray from "$lib/components/PairingTray.svelte"
   import People from "$lib/components/People.svelte"
@@ -111,3 +112,4 @@
 </div>
 
 <Composer bind:open={composing} {about} />
+<NotificationOffer />

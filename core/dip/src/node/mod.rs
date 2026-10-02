@@ -27,6 +27,9 @@
 //!   view ─────────────────► Db ◄┘
 //! ```
 
+mod notify;
+pub use notify::Notification;
+use notify::Notifier;
 mod scheduler;
 
 pub use scheduler::{MAX_LINKS, RSSI_FLOOR};
@@ -57,7 +60,7 @@ use crate::db::recipient_signature::channel::{
 use crate::db::{Db, query};
 use crate::keys::KeyCustody;
 use crate::link::{LinkId, PeripheralId, Role};
-use crate::model::{BLOCK, Blob, BlobHash, MUTE, Policy, TRUST};
+use crate::model::{BLOCK, Blob, BlobHash, MUTE, NotificationPrefs, Policy, TRUST};
 use crate::session::gate::Presence;
 use crate::session::l2cap::Step;
 use crate::session::transfer::Outcome;
@@ -141,6 +144,9 @@ pub enum Action {
     /// with [`Node::take_transferred_identity`], write it to secure storage,
     /// and reopen the node under it.
     IdentityTransfer(LinkId, Outcome),
+    /// Post a notification. Raised only while the app is in the background and
+    /// only for what the user switched on. `docs/storage.md#notifications`.
+    Notify(Notification),
     /// Call [`Node::tick`] at or after this unix second.
     ///
     /// Advisory: iOS runs no timer for a suspended app, so the heartbeat and
@@ -205,6 +211,8 @@ pub struct Node {
     /// Who each peripheral this device dialed turned out to be, so a person
     /// already connected over a link they dialed is not dialed a second time.
     dialed_as: BTreeMap<PeripheralId, PublicKey>,
+    /// What has arrived since the user last looked, and what was announced.
+    notifier: Notifier,
 }
 
 impl Node {
@@ -243,7 +251,13 @@ impl Node {
             transferred: BTreeMap::new(),
             duplicates: std::collections::BTreeSet::new(),
             dialed_as: BTreeMap::new(),
+            notifier: Notifier::default(),
         };
+
+        node.notifier.prefs = query::notification_prefs(&node.db).unwrap_or_else(|error| {
+            log::error!("reading the notification preferences failed: {error:#}");
+            NotificationPrefs::default()
+        });
 
         // Whatever was removed while no node was listening is still on disk.
         if let Err(error) = node.sweep_blobs() {
@@ -553,6 +567,10 @@ impl Node {
     fn set_presence(&mut self, presence: Presence) -> Vec<Action> {
         self.presence = Some(presence);
 
+        if presence == Presence::Foreground {
+            self.notifier.seen();
+        }
+
         for session in self.sessions.values_mut() {
             session.gate.presence = self.presence;
 
@@ -815,6 +833,13 @@ impl Node {
             log::error!("recompiling the policy failed: {error:#}");
         }
 
+        if preferences_moved {
+            match query::notification_prefs(&self.db) {
+                Ok(prefs) => self.notifier.prefs = prefs,
+                Err(error) => log::error!("reading the notification preferences failed: {error:#}"),
+            }
+        }
+
         self.reclaim_removed_blobs();
 
         // Heartbeats go out before writes are drained, so a quiet session still proves alive.
@@ -828,12 +853,14 @@ impl Node {
         }
 
         let mut actions = Vec::new();
+        let mut asking = Vec::new();
 
         // Whatever each session wants of the shell, asked once apiece.
         for session in self.sessions.values_mut() {
             // A held gate, and the value the two users compare over it.
             if let Some(code) = session.request_approval() {
                 actions.push(Action::RequestApproval(session.link, code));
+                asking.push((session.link, None));
             }
 
             // Who the link turned out to be, so a name typed at the gate lands, or one can be given now.
@@ -852,6 +879,7 @@ impl Node {
                     let dialed = session.role == Role::Dialer;
 
                     actions.push(Action::PeerIdentified(session.link, pubkey, code, dialed));
+                    asking.push((session.link, Some(pubkey)));
                 }
             }
 
@@ -881,6 +909,8 @@ impl Node {
                 Err(error) => log::error!("asking for L2CAP on link {link:?} failed: {error:#}"),
             }
         }
+
+        actions.extend(self.notifications(asking));
 
         for session in self.sessions.values_mut() {
             actions.extend(writes(session));
@@ -989,6 +1019,11 @@ impl Node {
             match self.events.try_recv() {
                 Ok(EventChange::Stored(event)) => {
                     graph_moved |= [TRUST, BLOCK, MUTE].contains(&event.kind);
+                    // What arrives on screen is seen as it arrives.
+                    if self.presence != Some(Presence::Foreground) {
+                        self.notifier
+                            .stored(&event, &self.identity, &self.policy.graph.muted);
+                    }
                     saved.push(*event);
                 }
                 // Seen events are not newly stored, and Deleted are gone. Both are the view's.
@@ -1089,6 +1124,32 @@ impl Node {
         }
 
         Ok(())
+    }
+
+    /// What to tell a user who is not looking: somebody unnamed asking on one
+    /// of `asking`, and new writing. A held gate names nobody, and a peer
+    /// already named is not asking to be.
+    fn notifications(&mut self, asking: Vec<(LinkId, Option<PublicKey>)>) -> Vec<Action> {
+        let background = self.presence != Some(Presence::Foreground);
+        let mut notifications = Vec::new();
+
+        for (link, pubkey) in asking {
+            let unnamed = pubkey.is_none_or(|pubkey| {
+                !query::has_named(&self.db, &self.identity, &pubkey).unwrap_or(true)
+            });
+
+            if unnamed && let Some(notification) = self.notifier.pairing(link, pubkey, background) {
+                notifications.push(Action::Notify(notification));
+            }
+        }
+
+        notifications.extend(
+            self.notifier
+                .content(clock::now(), background)
+                .map(Action::Notify),
+        );
+
+        notifications
     }
 
     /// Delete everything in the trash: retract what the user wrote, and drop
@@ -1206,7 +1267,7 @@ mod tests {
     use coracle_lib::tags::Tags;
 
     use crate::fixtures::{TempDir, author, custody, note, secret, settle};
-    use crate::model::{BlobHash, Policy, Query};
+    use crate::model::{BlobHash, Policy, Query, keys};
     use crate::session::Session;
     use crate::sync::{Message, SubscriptionId};
     use crate::transport::Frame;
@@ -1896,6 +1957,31 @@ mod tests {
         assert!(db_command::set_trashed(&db, &theirs.id, true, 200).unwrap());
         assert!(db_command::set_trashed(&db, &theirs.id, false, 300).unwrap());
         assert!(query::trashed(&db).unwrap().is_empty());
+    }
+
+    #[test]
+    fn writing_that_arrives_in_the_background_is_announced_once_switched_on() {
+        let db = db();
+        let mut node = trash_node(&db);
+        let arrived = |n: u8| note(author(3), 100 + i64::from(n), "on the board", Tags::new());
+
+        db_command::set_preference(&db, keys::NOTIFY_CONTENT, "true", 10).unwrap();
+        node.notify_foregrounded();
+
+        db_command::receive_event(&db, &arrived(1), &[author(3)], 100).unwrap();
+        let looking = node.tick();
+        assert!(
+            !looking
+                .iter()
+                .any(|action| matches!(action, Action::Notify(_)))
+        );
+
+        node.notify_backgrounded();
+        db_command::receive_event(&db, &arrived(2), &[author(3)], 100).unwrap();
+        let pocketed = node.tick();
+
+        // Counted since the user last looked, which was before the second arrived.
+        assert!(pocketed.contains(&Action::Notify(Notification::Content(1))));
     }
 
     #[test]

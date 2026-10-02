@@ -148,6 +148,9 @@ export type Policy = {
   strangers_per_day: number
 }
 
+/** What the phone says about letting the app notify. */
+export type NotificationPermission = "granted" | "denied" | "prompt"
+
 /**
  * Which group of tables moved.
  *
@@ -240,6 +243,12 @@ export type DipCore = {
 
   /** Delete everything in the trash: the user's own events are retracted, the rest dropped. */
   emptyTrash(): Promise<void>
+
+  /** Whether the phone lets the app notify. */
+  notificationPermission(): Promise<{permission: NotificationPermission}>
+
+  /** Ask the phone to let the app notify, if the user has not been asked. */
+  requestNotificationPermission(): Promise<{permission: NotificationPermission}>
 
   /** Blobs a stored event references and this device does not hold. */
   wantedBlobs(options?: {limit?: number}): Promise<{blobs: string[]}>

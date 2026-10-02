@@ -27,7 +27,10 @@ use std::sync::{Arc, Mutex};
 use coracle_lib::events::HashedEvent;
 use dip::keys::KeyCustody as CoreCustody;
 use dip::session::transfer::Outcome;
-use dip::{Action as CoreAction, LinkId as CoreLinkId, PeripheralId as CorePeripheralId};
+use dip::{
+    Action as CoreAction, LinkId as CoreLinkId, Notification as CoreNotification,
+    PeripheralId as CorePeripheralId,
+};
 
 use crate::keys::{Custody, KeyCustody};
 use crate::store::Store;
@@ -188,6 +191,12 @@ pub enum Action {
         /// What happened.
         outcome: TransferOutcome,
     },
+    /// Post a notification, which the core raises only while the app is in
+    /// the background and only for what the user switched on.
+    Notify {
+        /// What to tell the user.
+        announcement: Announcement,
+    },
     /// Call [`Node::tick`] at or after this unix second.
     ///
     /// Advisory: iOS runs no timer for a suspended app, so the heartbeat and the
@@ -196,6 +205,27 @@ pub enum Action {
         /// The unix second to wake at.
         at: i64,
     },
+}
+
+/// Something worth interrupting a user who is not looking at the app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum Announcement {
+    /// Somebody the user has not named is in range and can be paired with.
+    Pairing,
+    /// This much new writing has arrived since the user last opened the app.
+    Content {
+        /// How many things.
+        count: u32,
+    },
+}
+
+impl From<CoreNotification> for Announcement {
+    fn from(notification: CoreNotification) -> Self {
+        match notification {
+            CoreNotification::Pairing => Self::Pairing,
+            CoreNotification::Content(count) => Self::Content { count },
+        }
+    }
 }
 
 /// Why an entry point could not finish.
@@ -673,6 +703,9 @@ impl From<CoreAction> for Action {
             CoreAction::IdentityTransfer(link, outcome) => Self::IdentityTransfer {
                 link: link.into(),
                 outcome: outcome.into(),
+            },
+            CoreAction::Notify(notification) => Self::Notify {
+                announcement: notification.into(),
             },
             CoreAction::WakeAt(at) => Self::WakeAt { at },
         }

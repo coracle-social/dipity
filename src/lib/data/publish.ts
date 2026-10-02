@@ -7,6 +7,7 @@
 import {get} from "svelte/store"
 import {hash, own, stamp, type EventTemplate, type HashedEvent} from "@welshman/util"
 import {Dip} from "$lib/core"
+import {afterPublish} from "$lib/data/notifications"
 import {session} from "$lib/data/session"
 
 const now = () => Math.floor(Date.now() / 1000)
@@ -35,6 +36,8 @@ export const publish = async (
   const event = hash(own(stamp(template, at), identity))
 
   await Dip.publish({event: JSON.stringify(event)})
+
+  afterPublish(event.kind).catch(error => console.error("the notification offer failed", error))
 
   return event
 }

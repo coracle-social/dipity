@@ -50,6 +50,8 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "setTrashed", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "trashed", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "emptyTrash", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "notificationPermission", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "requestNotificationPermission", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "wantedBlobs", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getBlob", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "eventsReferencingBlob", returnType: CAPPluginReturnPromise),
@@ -317,6 +319,16 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func trashed(_ call: CAPPluginCall) {
         answer(call, "trashed") { try $0.trashed() }
+    }
+
+    /// Whether the user has let the app notify: `granted`, `denied` or `prompt`.
+    @objc func notificationPermission(_ call: CAPPluginCall) {
+        Alerts.permission { call.resolve(["permission": $0]) }
+    }
+
+    /// Ask the user to let the app notify, if they have not been asked.
+    @objc func requestNotificationPermission(_ call: CAPPluginCall) {
+        Alerts.request { call.resolve(["permission": $0]) }
     }
 
     /// Delete everything in the trash, which retracts the user's own events.

@@ -25,7 +25,7 @@ import {bytesToHex} from "@noble/hashes/utils.js"
 import {COMMENT, NOTE, REACTION, REPOST, getPubkey, hash, makeSecret} from "@welshman/util"
 import type {HashedEvent} from "@welshman/util"
 import {nip19} from "nostr-tools"
-import type {Blob, Bluetooth, DipCore, Pref, Query} from "$lib/core"
+import type {Blob, Bluetooth, DipCore, NotificationPermission, Pref, Query} from "$lib/core"
 import {boost, card, comment, genericBoost, reaction} from "$lib/dev/kinds"
 import {compiled} from "$lib/dev/policy"
 import {
@@ -123,6 +123,9 @@ type Transfer = {
 export class Simulator extends WebPlugin implements DipCore {
   private store = new Store()
   private identity = identity
+
+  /** What the phone would say about notifications; a browser has no background to notify from. */
+  private notifying: NotificationPermission = "prompt"
 
   /** What the user put in the trash, by id, with when it went in. */
   private trash = new Map<string, number>()
@@ -556,6 +559,16 @@ export class Simulator extends WebPlugin implements DipCore {
     }
 
     if (moved) this.notifyListeners("storeChanged", {group: "events"})
+  }
+
+  async notificationPermission() {
+    return {permission: this.notifying}
+  }
+
+  async requestNotificationPermission() {
+    if (this.notifying === "prompt") this.notifying = "granted"
+
+    return {permission: this.notifying}
   }
 
   async wantedBlobs(options?: {limit?: number}) {

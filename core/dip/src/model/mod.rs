@@ -49,7 +49,7 @@ pub use kinds::{
 };
 pub use order::Order;
 pub use policy::{PeerPolicy, Policy};
-pub use pref::{Pref, keys};
+pub use pref::{NotificationPrefs, Pref, keys};
 pub use provenance::{Provenance, ProvenanceFilter, Share};
 pub use query::Query;
 pub use recipient_signature::RecipientSignature;

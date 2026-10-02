@@ -75,3 +75,11 @@ Nothing stops a dropped event arriving again from somebody who still has it. Dro
 ### The trash
 
 The user drops and retracts through the trash. Throwing something out marks it in `event_trashed`, which hides it from the board and from the saved bookmarks and tells nobody. It can be put back until the trash is emptied, by hand or by the hourly sweep once it has been there a week. Emptying retracts the user's own events with a kind 5 that the core writes itself, so a retraction goes out while the view is suspended, and drops everything else.
+
+## Notifications
+
+Notifications are local. Nothing here talks to a server, so there is no push service to send one, and the core decides when to raise one because the view is suspended whenever it would matter. It raises them only while the app is in the background, and only for what the user switched on in `notifications.pairing` and `notifications.content`, both off until they do.
+
+A pairing notification goes out once for each person the user has not named, or once per held link while the gate does not yet know who is on it. New writing is counted rather than announced one event at a time: notes, comments, polls, calendar entries and articles from anybody the user has not muted, and not reactions, boosts, deletions, lists or contact cards. The count runs from the last time the app was open, so a first sync that brings in a hundred things is one notification, and it is updated at most once a minute. Opening the app clears both.
+
+The view offers notifications once, after the user has published writing twice, and asks the phone for permission only when the user switches one on.

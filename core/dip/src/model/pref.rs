@@ -17,8 +17,23 @@ pub struct Pref {
     pub updated_at: i64,
 }
 
+/// Which notifications the user switched on, each off until they say so.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NotificationPrefs {
+    /// Somebody nearby wants to pair.
+    pub pairing: bool,
+    /// New writing arrived.
+    pub content: bool,
+}
+
 /// The keys defined for user preferences.
 pub mod keys {
+    /// Whether to notify, in the background, that somebody nearby wants to pair.
+    pub const NOTIFY_PAIRING: &str = "notifications.pairing";
+
+    /// Whether to notify, in the background, that new writing arrived.
+    pub const NOTIFY_CONTENT: &str = "notifications.content";
+
     /// Times of day, in the device's local timezone, when no stranger is told who the user is.
     pub const QUIET_TIMES: &str = "policy.quiet_times";
 

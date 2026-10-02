@@ -92,7 +92,10 @@ final class Encounters {
         watching = store.observe(observer: StoreChanges())
 
         lifecycle = Lifecycle(
-            foregrounded: { [weak self] in self?.drive { try $0.notifyForegrounded() } },
+            foregrounded: { [weak self] in
+                Alerts.clear()
+                self?.drive { try $0.notifyForegrounded() }
+            },
             backgrounded: { [weak self] in self?.drive { try $0.notifyBackgrounded() } },
             battery: { [weak self] level in self?.drive { try $0.battery(level: level) } },
             tick: { [weak self] in self?.drive { try $0.tick() } })
@@ -170,6 +173,8 @@ final class Encounters {
                 if view?.share(URL(fileURLWithPath: path)) != true {
                     drive { try $0.keyExportFinished() }
                 }
+            case .notify(let announcement):
+                Alerts.post(announcement)
             case .wakeAt(let at):
                 // Advisory: a suspended app runs no timer, and the next radio callback covers it.
                 lifecycle?.wake(at: at)

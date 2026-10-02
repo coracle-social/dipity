@@ -22,6 +22,7 @@
 		D1B0BB0300000000000000A3 /* Lifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0300000000000000A3 /* Lifecycle.swift */; };
 		D1B0BB03000000000000E0C1 /* Encounters.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA03000000000000E0C1 /* Encounters.swift */; };
 		D1B0BB04000000000000E0C1 /* BridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA04000000000000E0C1 /* BridgeViewController.swift */; };
+		D1B0BB05000000000000E0C1 /* Alerts.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA05000000000000E0C1 /* Alerts.swift */; };
 		D1B0BB0600000000000000A6 /* Logging.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0600000000000000A6 /* Logging.swift */; };
 		D1B0BB0400000000000000A4 /* Radio.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0400000000000000A4 /* Radio.swift */; };
 		D1B0BB0500000000000000A5 /* dip_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0500000000000000A5 /* dip_ffi.swift */; };
@@ -45,6 +46,7 @@
 		D1B0AA0300000000000000A3 /* Lifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lifecycle.swift; sourceTree = "<group>"; };
 		D1B0AA03000000000000E0C1 /* Encounters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Encounters.swift; sourceTree = "<group>"; };
 		D1B0AA04000000000000E0C1 /* BridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeViewController.swift; sourceTree = "<group>"; };
+		D1B0AA05000000000000E0C1 /* Alerts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Alerts.swift; sourceTree = "<group>"; };
 		D1B0AA0600000000000000A6 /* Logging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logging.swift; sourceTree = "<group>"; };
 		D1B0AA0400000000000000A4 /* Radio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Radio.swift; sourceTree = "<group>"; };
 		D1B0AA0500000000000000A5 /* dip_ffi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = dip_ffi.swift; path = Generated/dip_ffi.swift; sourceTree = "<group>"; };
@@ -89,6 +91,7 @@
 				D1B0AA0300000000000000A3 /* Lifecycle.swift */,
 				D1B0AA03000000000000E0C1 /* Encounters.swift */,
 				D1B0AA04000000000000E0C1 /* BridgeViewController.swift */,
+				D1B0AA05000000000000E0C1 /* Alerts.swift */,
 				D1B0AA0600000000000000A6 /* Logging.swift */,
 				D1B0AA0400000000000000A4 /* Radio.swift */,
 				D1B0AA0500000000000000A5 /* dip_ffi.swift */,
@@ -218,6 +221,7 @@
 				D1B0BB0300000000000000A3 /* Lifecycle.swift in Sources */,
 				D1B0BB03000000000000E0C1 /* Encounters.swift in Sources */,
 				D1B0BB04000000000000E0C1 /* BridgeViewController.swift in Sources */,
+				D1B0BB05000000000000E0C1 /* Alerts.swift in Sources */,
 				D1B0BB0600000000000000A6 /* Logging.swift in Sources */,
 				D1B0BB0400000000000000A4 /* Radio.swift in Sources */,
 				D1B0BB0500000000000000A5 /* dip_ffi.swift in Sources */,

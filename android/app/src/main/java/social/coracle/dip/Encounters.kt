@@ -228,6 +228,7 @@ object Encounters : Radio.Delegate {
                     // A backup with nowhere to go is deleted rather than left on disk.
                     if (view?.share(File(action.path)) != true) drive { it.keyExportFinished() }
                 }
+                is Action.Notify -> Alerts.post(context, action.announcement)
                 is Action.WakeAt -> lifecycle?.wake(action.at)
                 is Action.SendBulk -> radio.sendBulk(action.link.value, action.fragment)
                 is Action.PublishL2cap -> radio.publishL2cap(action.link.value)
@@ -291,6 +292,7 @@ object Encounters : Radio.Delegate {
         if (!::context.isInitialized) return
 
         radio.foreground(on)
+        if (on) Alerts.clear(context)
         drive { if (on) it.notifyForegrounded() else it.notifyBackgrounded() }
     }
 

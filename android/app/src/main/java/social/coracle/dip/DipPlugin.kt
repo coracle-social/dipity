@@ -32,6 +32,8 @@ import uniffi.dip_ffi.mediaTags as coreMediaTags
 /** The three permissions the radio needs on 31+, asked for together. */
 private const val RADIO_PERMISSIONS = "radio"
 
+private const val NOTIFICATION_PERMISSION = "notifications"
+
 /** How long a shared backup stays on disk for the app it went to, in milliseconds. */
 private const val SHARE_GRACE = 5 * 60 * 1000L
 
@@ -71,7 +73,8 @@ private const val SHARE_GRACE = 5 * 60 * 1000L
                         Manifest.permission.BLUETOOTH_ADVERTISE,
                         Manifest.permission.BLUETOOTH_CONNECT,
                     ],
-            )
+            ),
+            Permission(alias = NOTIFICATION_PERMISSION, strings = [Manifest.permission.POST_NOTIFICATIONS]),
         ],
 )
 class DipPlugin : Plugin(), Encounters.View {
@@ -410,6 +413,36 @@ class DipPlugin : Plugin(), Encounters.View {
 
     @PluginMethod fun trashed(call: PluginCall) = answer(call, "trashed") {
         JSArray(it.trashed())
+    }
+
+    /** Whether the user has let the app notify: `granted`, `denied` or `prompt`. */
+    @PluginMethod
+    fun notificationPermission(call: PluginCall) {
+        call.resolve(JSObject().put("permission", notificationState()))
+    }
+
+    /** Ask the user to let the app notify, if they have not been asked. */
+    @PluginMethod
+    fun requestNotificationPermission(call: PluginCall) {
+        if (notificationState() != "prompt") return notificationPermission(call)
+
+        requestPermissionForAlias(NOTIFICATION_PERMISSION, call, "notificationsAnswered")
+    }
+
+    @PermissionCallback
+    fun notificationsAnswered(call: PluginCall) = notificationPermission(call)
+
+    // Before Android 13 there is no runtime permission, only whether the user turned them off.
+    private fun notificationState(): String {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+            return if (Alerts.enabled(context)) "granted" else "denied"
+        }
+
+        return when (getPermissionState(NOTIFICATION_PERMISSION)) {
+            com.getcapacitor.PermissionState.GRANTED -> if (Alerts.enabled(context)) "granted" else "denied"
+            com.getcapacitor.PermissionState.DENIED -> "denied"
+            else -> "prompt"
+        }
     }
 
     /** Delete everything in the trash, which retracts the user's own events. */

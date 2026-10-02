@@ -79,7 +79,7 @@ pub mod transport;
 pub mod util;
 
 pub use link::{LinkId, PeripheralId, Role};
-pub use node::{Action, Node};
+pub use node::{Action, Node, Notification};
 
 #[cfg(test)]
 pub(crate) mod fixtures;

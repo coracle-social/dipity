@@ -25,8 +25,8 @@ use crate::db::pref::query as pref;
 use crate::db::recipient_signature::query as signature;
 use crate::db::spending::query as spending;
 use crate::model::{
-    Blob, BlobHash, BlobRole, Charge, DisclosureBucket, Policy, Pref, Provenance, Query,
-    RecipientSignature, Share,
+    Blob, BlobHash, BlobRole, Charge, DisclosureBucket, NotificationPrefs, Policy, Pref,
+    Provenance, Query, RecipientSignature, Share, keys,
 };
 
 // ----------------------------------------------------- Policy and preferences
@@ -39,6 +39,24 @@ pub fn preferences(db: &Db) -> Result<Vec<Pref>> {
 /// One preference's raw JSON value, or `None` if it has never been written.
 pub fn preference(db: &Db, key: &str) -> Result<Option<String>> {
     db.read(|tx| pref::get(tx, key))
+}
+
+/// Which notifications the user switched on.
+pub fn notification_prefs(db: &Db) -> Result<NotificationPrefs> {
+    db.read(|tx| {
+        Ok(NotificationPrefs {
+            pairing: pref::get_as(tx, keys::NOTIFY_PAIRING)?.unwrap_or(false),
+            content: pref::get_as(tx, keys::NOTIFY_CONTENT)?.unwrap_or(false),
+        })
+    })
+}
+
+/// Whether the user has named `pubkey`, which is a contact card of theirs addressed to it.
+pub fn has_named(db: &Db, identity: &PublicKey, pubkey: &PublicKey) -> Result<bool> {
+    let address =
+        coracle_lib::addresses::Address::new(crate::model::CONTACT, *identity, pubkey.to_hex());
+
+    db.read(|tx| Ok(event::by_address(tx, &address)?.is_some()))
 }
 
 /// Everything the user has said about who gets what.
