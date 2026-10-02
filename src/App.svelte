@@ -22,7 +22,7 @@
 
 {#if $session.state === "ready"}
   <Shell />
-{:else if $session.state === "absent" || $session.state === "backup"}
+{:else if $session.state === "absent"}
   <FirstRun />
 {:else}
   <div class="flex min-h-svh items-center justify-center bg-background px-8">

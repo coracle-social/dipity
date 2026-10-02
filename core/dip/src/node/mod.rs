@@ -662,8 +662,8 @@ impl Node {
 
     /// The share sheet closed, shared or dismissed, so the file goes.
     ///
-    /// Dismissing counts as not downloaded rather than an error — the view
-    /// leaves its gate closed and the user exports again.
+    /// Dismissing counts as not downloaded rather than an error, and the user
+    /// can export again.
     pub fn key_export_finished(&mut self) -> Result<Vec<Action>> {
         if let Some(path) = self.key_backup.take() {
             backup::remove(&path)?;

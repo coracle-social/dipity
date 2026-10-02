@@ -52,6 +52,5 @@ A single text file containing prose instructions and the key itself:
 - **The view never holds the key, encrypted or not.** It starts the flow and learns only *shared* or *canceled*, the second counting as not downloaded rather than an error, so the user can retry.
 - **Minimum 12-character password**, stated in the UI, with "write this down" guidance. There is no recovery for a forgotten backup password either.
 - **Instructions, not just a key.** The copy explains what a keypair is, why the private half matters, and what to do with the file — following Flotilla's, with one adjustment. Flotilla tells the user to "import into a Nostr Signer app," which is misleading here, because this app holds the key itself. The wording instead says the key restores this app, and separately identifies them on the open network via other clients.
-- **Gated flow.** The download must complete before the user can continue past the screen, so nobody skips it by accident.
 
 The core writes the file to the cache directory and the shell presents the share sheet, so the key never crosses the bridge. Android carries a FileProvider entry (`android/app/src/main/res/xml/file_paths.xml`) for the cache directory. Returning a path instead would not help, since `Capacitor.convertFileSrc` lets the view fetch any path back.
