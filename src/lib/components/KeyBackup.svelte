@@ -15,8 +15,8 @@
 
   const said: Record<string, string> = {
     shared: "Saved. Keep it somewhere other than this phone.",
-    dropped: "Nothing took a copy, so there is still only one.",
-    failed: "The file could not be written. Try again.",
+    dropped: "No copy was saved.",
+    failed: "The file couldn't be saved. Try again.",
   }
 </script>
 
@@ -25,8 +25,8 @@
     <Label for="locked" class="text-sm font-semibold">Lock the file with a password</Label>
     <p class="mt-0.5 text-xs text-pretty text-muted-foreground">
       {locked
-        ? `At least ${MIN_PASSWORD} characters. Write it down, because nobody can recover the key without it.`
-        : "Without one, anyone who finds the file can be you."}
+        ? `At least ${MIN_PASSWORD} characters. Write it down. Without it, nobody can open the file.`
+        : "Without a password, anyone who finds the file can post as you."}
     </p>
   </div>
   <Switch id="locked" bind:checked={locked} />

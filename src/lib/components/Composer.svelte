@@ -227,9 +227,7 @@
 
     <Drawer.Footer>
       {#if failed}
-        <p class="text-sm text-destructive">
-          That did not go out, and what you wrote is still here. Try again.
-        </p>
+        <p class="text-sm text-destructive">Your post couldn't be sent. Try again.</p>
       {/if}
       <!-- One row, dismiss on the left: the keyboard leaves little enough room as it is. -->
       <div class="flex gap-2">

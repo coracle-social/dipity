@@ -60,9 +60,9 @@
 {#if $board.length === 0}
   <EmptyState icon={hidden ? Filter : searching ? Search : Radar}>
     {hidden
-      ? "Nothing is switched on in the filter."
+      ? "No categories are selected."
       : searching
-        ? "Nothing on this phone matches that. Search covers only what has reached it."
-        : "Nothing has reached this phone yet. Things arrive when you are near other people."}
+        ? "No posts on this phone match that."
+        : "No posts yet. Posts arrive when you are near other people."}
   </EmptyState>
 {/if}

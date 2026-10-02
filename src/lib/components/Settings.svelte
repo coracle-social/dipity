@@ -32,7 +32,7 @@
     {
       id: "accept",
       label: "What you accept",
-      detail: "Whose notes your phone takes in from phones nearby.",
+      detail: "Whose notes your phone accepts from phones nearby.",
       scopes: ["trusted", "network", "lenient"] as Scope[],
       on: $policy?.accept,
       set: setAccept,
@@ -86,7 +86,7 @@
     },
     {
       id: "notify-content",
-      label: "New things reach the board",
+      label: "New posts arrive",
       on: $notifyContent,
       set: (on: boolean) => setNotify(notifyContent, on),
     },
@@ -134,7 +134,7 @@
   <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Being found</h2>
 
   <p class="mt-2 text-sm text-pretty text-muted-foreground">
-    Your phone trades things only with phones near it, including while it is in your pocket.
+    Your phone exchanges posts with phones nearby, even while it's in your pocket.
   </p>
 
   <div class="mt-4 space-y-5">
@@ -147,9 +147,9 @@
         value={$policy.strangers_per_day}
         onchange={event => setStrangersPerDay(event.currentTarget.value)} />
       <p class="text-xs text-pretty text-muted-foreground">
-        Meeting somebody new means telling them who you are, even with your phone in your pocket.
-        Each time tells them where you were, so your phone spreads these out across the day, a few
-        at a time. People you have paired with or trust do not count.
+        Each stranger your phone meets learns who you are and where you were. Your phone spreads
+        these meetings across the day, a few at a time. People you've paired with or trust don't
+        count.
       </p>
     </div>
 
@@ -167,8 +167,8 @@
         </InputGroup.Addon>
       </InputGroup.Root>
       <p class="text-xs text-pretty text-muted-foreground">
-        Counted from the last time anybody handed it to you, so something people keep passing on
-        stays. Your own things and your bookmarks are never dropped.
+        Counted from the last time someone passed a post to you. Your own posts and your bookmarks
+        are kept.
       </p>
     </div>
   </div>
@@ -179,7 +179,7 @@
 <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Notifications</h2>
 
 <p class="mt-2 text-sm text-pretty text-muted-foreground">
-  Your phone notifies you only while the app is closed, and makes the notifications itself.
+  Notifications appear only while Dipity is closed, and are created on this phone.
 </p>
 
 <ul class="mt-4 space-y-4">
@@ -196,7 +196,7 @@
 
 {#if $permission === "denied"}
   <p class="mt-3 text-xs text-pretty text-destructive">
-    Your phone does not let Dipity notify you. Allow it in your phone's settings, then switch these
+    Notifications are turned off for Dipity. Allow them in your phone's settings, then turn these
     back on.
   </p>
 {/if}
@@ -216,8 +216,8 @@
 </div>
 
 <p class="mt-2 text-xs text-pretty text-muted-foreground">
-  This is the only proof that your things are yours. Lose the phone without a copy of it and you
-  start again as somebody new.
+  Your key proves your posts are yours. If you lose this phone without a copy, you can't get your
+  identity back.
 </p>
 
 <Button class="mt-6" variant="secondary" onclick={() => go({at: "device"})}>
@@ -226,6 +226,6 @@
 </Button>
 
 <p class="mt-2 text-xs text-pretty text-muted-foreground">
-  Two phones holding one key are both you, so losing one costs nothing. The key goes across the same
-  way everything else does, with the two phones in the room together.
+  Both phones post as you, so losing one doesn't lose your identity. The two phones need to be
+  together.
 </p>

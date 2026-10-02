@@ -30,8 +30,8 @@
 
 {#if $step.at === "idle"}
   <p class="max-w-prose text-sm text-pretty text-muted-foreground">
-    Two phones can hold the same key, so both of them are you. Pair with your other phone first, the
-    way you would pair with anybody, then pick it here.
+    Put your key on another phone so both phones post as you. Pair with the other phone first, then
+    pick it here.
   </p>
 
   <ul class="mt-6 space-y-2">
@@ -45,7 +45,7 @@
           <Smartphone class="size-5 flex-none text-muted-foreground" />
           <div class="min-w-0 flex-1">
             <p class="truncate font-semibold">{nameOf($social, live.pubkey).name}</p>
-            <p class="text-xs text-muted-foreground">in the room now</p>
+            <p class="text-xs text-muted-foreground">nearby</p>
           </div>
         </button>
       </li>
@@ -54,22 +54,22 @@
 
   {#if $links.length === 0}
     <EmptyState icon={BluetoothSearching}>
-      Nothing is in range. Open the app on the other phone and hold the two phones together. It
-      appears here once they recognise each other.
+      No phones in range. Open Dipity on the other phone and hold the two phones together. It
+      appears here once they connect.
     </EmptyState>
   {/if}
 
   <p class="mt-2 text-xs text-pretty text-muted-foreground">
-    Whoever you pick ends up holding your key, so pick your own phone and nobody else's.
+    The phone you pick gets your key. Only pick your own phone.
   </p>
 {:else if $step.at === "offering"}
   <p class="py-10 text-sm text-pretty text-muted-foreground">
-    Asking the other phone. It has to be open and in somebody's hand.
+    Waiting for the other phone. Dipity needs to be open on it.
   </p>
 {:else if $step.at === "comparing"}
   <p class="max-w-prose text-sm text-pretty text-muted-foreground">
-    Both phones are showing six digits. If they are the same six, the two phones are talking to each
-    other and to nothing in between.
+    Check that both phones show the same six digits. If they match, the phones are connected
+    directly to each other.
   </p>
 
   <p class="my-8 text-center font-mono text-4xl font-semibold tabular-nums">
@@ -78,12 +78,12 @@
 
   {#if $step.source}
     <p class="max-w-prose text-sm text-pretty text-muted-foreground">
-      Say yes and that phone holds your key as well. It posts as you, and you cannot take it back.
+      If the digits match, that phone gets your key and can post as you. This can't be undone.
     </p>
   {:else}
     <p class="max-w-prose text-sm text-pretty text-destructive">
-      Say yes and this phone takes on the other phone's key. Everything this phone gathered under
-      its own key, including the names you gave people and your bookmarks, is erased.
+      If the digits match, this phone switches to the other phone's key. Everything on this phone,
+      including the names you gave people and your bookmarks, is erased.
     </p>
   {/if}
 
@@ -93,14 +93,14 @@
   </div>
 {:else if $step.at === "waiting"}
   <p class="py-10 text-sm text-pretty text-muted-foreground">
-    Waiting for the other phone. Whoever is holding it has the same question in front of them.
+    Waiting for the other phone to confirm.
   </p>
 {:else if $step.at === "sent"}
-  <p class="py-10 text-sm text-pretty">That phone is you as well now.</p>
+  <p class="py-10 text-sm text-pretty">That phone now has your key.</p>
 
   <Button size="lg" onclick={back}>Done</Button>
 {:else if $step.at === "arrived"}
-  <p class="pt-10 text-sm text-pretty">This phone is you now.</p>
+  <p class="pt-10 text-sm text-pretty">This phone now has your key.</p>
 
   {#if $session.identity}
     <p class="mt-3 font-mono text-xs break-all text-muted-foreground">
@@ -111,7 +111,7 @@
   <Button class="mt-8" size="lg" onclick={back}>Done</Button>
 {:else if $step.at === "refused"}
   <p class="py-10 text-sm text-pretty text-muted-foreground">
-    Nothing moved. One of the two phones said no, or it went out of range.
+    No key was transferred. One of the phones declined, or they went out of range.
   </p>
 
   <Button size="lg" onclick={back}>Done</Button>

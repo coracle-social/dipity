@@ -42,7 +42,7 @@
 <Drawer.Root bind:open>
   <Drawer.Content>
     <Drawer.Header>
-      <Drawer.Title>What people made of it</Drawer.Title>
+      <Drawer.Title>Reactions</Drawer.Title>
     </Drawer.Header>
 
     <ul class="space-y-4 px-4 pb-4">

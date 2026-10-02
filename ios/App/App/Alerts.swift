@@ -19,8 +19,8 @@ enum Alerts {
             content.body = "Open Dipity to compare shapes with them."
         case .content(let count):
             identifier = "content"
-            content.title = count == 1 ? "Something new on the board" : "\(count) new things on the board"
-            content.body = "Open Dipity to read them."
+            content.title = count == 1 ? "New post on the board" : "\(count) new posts on the board"
+            content.body = "Open Dipity to read."
         }
 
         content.sound = .default

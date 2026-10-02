@@ -6,7 +6,7 @@
   const said: Record<string, string> = {
     off: "Bluetooth is off, so nothing can reach this phone. Turn it on to start meeting people.",
     denied:
-      "Dipity doesn't have permission use Bluetooth. Turn it on in settings to start meeting people.",
+      "Dipity doesn't have permission to use Bluetooth. Turn it on in settings to start meeting people.",
     unsupported: "This phone doesn't seem to have Bluetooth. Dipity probably won't work for you.",
   }
 </script>

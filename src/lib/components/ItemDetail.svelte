@@ -60,7 +60,10 @@
       Commenting on
     </h2>
     <div class="mt-3 mb-4 rounded-lg bg-card px-4 py-3 shadow-sm">
-      <Quoted id={answers} social={$social} absent="This phone does not have what this is about." />
+      <Quoted
+        id={answers}
+        social={$social}
+        absent="The post this replies to isn't on this phone." />
     </div>
   {/if}
 
@@ -84,7 +87,7 @@
 
   {#if $detail.comments.length > 0}
     <h2 class="mt-6 text-xs font-semibold tracking-widest text-muted-foreground uppercase">
-      What people are saying
+      Comments
     </h2>
   {/if}
 
@@ -104,10 +107,10 @@
   </ul>
 
   {#if $detail.comments.length === 0}
-    <EmptyState icon={MessagesSquare}>Nobody has said anything about it yet.</EmptyState>
+    <EmptyState icon={MessagesSquare}>No comments yet.</EmptyState>
   {/if}
 {:else}
   <EmptyState icon={SearchX}>
-    We couldn't find that. Things are dropped after a while unless you bookmark them.
+    This post isn't on this phone. Posts are deleted after a while unless you bookmark them.
   </EmptyState>
 {/if}

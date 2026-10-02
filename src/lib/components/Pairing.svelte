@@ -57,8 +57,8 @@
 
 {#if request}
   <p class="max-w-prose text-sm text-pretty text-muted-foreground">
-    Both phones are showing five shapes. If they are the same five in the same order, the two phones
-    are talking to each other and to nothing in between.
+    Check that both phones show the same five shapes in the same order. If they match, the phones
+    are connected directly to each other.
   </p>
 
   <div class="my-8">
@@ -77,7 +77,7 @@
     <Label for="petname">What do you call them?</Label>
     <Input id="petname" bind:value={petname} placeholder="Ben" autocomplete="off" />
     <p class="text-xs text-pretty text-muted-foreground">
-      Nobody publishes a name here, so this is the name you and your neighbours see them under.
+      Dipity has no profiles, so the name you choose here is how they appear.
     </p>
   </div>
 
@@ -92,7 +92,7 @@
 
   {#if $requests.length > 1}
     <p class="mt-8 text-xs text-pretty text-muted-foreground">
-      More than one phone is asking. Each pair of phones has its own shapes, so if these do not
+      Several people are asking to pair. Each pair of phones has its own shapes, so if these don't
       match, the other person may be looking at a different request.
     </p>
     <nav class="mt-2 flex items-center justify-between" aria-label="Other pairing requests">
@@ -112,5 +112,6 @@
     </nav>
   {/if}
 {:else}
-  <EmptyState icon={UserX}>That request is gone. They walked away, or it timed out.</EmptyState>
+  <EmptyState icon={UserX}
+    >This request has ended. They moved out of range, or it timed out.</EmptyState>
 {/if}

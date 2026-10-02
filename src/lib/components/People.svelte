@@ -86,19 +86,18 @@
     </ul>
 
     {#if words.length && shown.length === 0}
-      <EmptyState icon={Users}>Nobody you know goes by that.</EmptyState>
+      <EmptyState icon={Users}>No contacts match that.</EmptyState>
     {:else if $contacts.length === 0}
       <EmptyState icon={Users}>
-        Nobody yet. Pair with somebody in the room with you and they turn up here under the name you
-        gave them.
+        No contacts yet. Pair with someone nearby and they appear here under the name you give them.
       </EmptyState>
     {/if}
   </Tabs.Content>
 
   <Tabs.Content value="aliases">
     <p class="mt-3 text-sm text-pretty text-muted-foreground">
-      Nobody publishes a name here, so the people you pair with each give you one. These are the
-      names other people know you by, and who gave you each one.
+      Dipity has no profiles, so everyone you pair with names you. These are the names people know
+      you by, and who gave each one.
     </p>
 
     <ul class="mt-4 space-y-2">
@@ -113,11 +112,10 @@
     </ul>
 
     {#if words.length && given.length === 0}
-      <EmptyState icon={Tag}>Nobody calls you that.</EmptyState>
+      <EmptyState icon={Tag}>No aliases match that.</EmptyState>
     {:else if $aliases.length === 0}
       <EmptyState icon={Tag}>
-        Nobody has named you yet. When somebody pairs with you, the name they give you shows up
-        here.
+        No aliases yet. When someone pairs with you, the name they give you appears here.
       </EmptyState>
     {/if}
   </Tabs.Content>

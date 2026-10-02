@@ -33,22 +33,21 @@
     {
       id: "trusted",
       label: "Trusted",
-      detail: "They can pass your things on, so what you write reaches the people they meet too.",
+      detail: "They can pass your posts on to the people they meet.",
       on: Boolean(contact?.trusted),
       set: (on: boolean) => setTrusted(pubkey, on),
     },
     {
       id: "muted",
       label: "Muted",
-      detail: "Their things stop appearing here. Your phone still carries them for other people.",
+      detail: "Their posts are hidden from you. Your phone still passes them on to others.",
       on: Boolean(contact?.muted),
       set: (on: boolean) => setMuted(pubkey, on),
     },
     {
       id: "blocked",
       label: "Blocked",
-      detail:
-        "Your phone will not exchange anything with theirs, and drops whatever arrives from them.",
+      detail: "Your phone won't connect to theirs, and deletes anything of theirs it receives.",
       on: Boolean(contact?.blocked),
       set: (on: boolean) => setBlocked(pubkey, on),
     },

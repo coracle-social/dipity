@@ -14,8 +14,8 @@
     <Drawer.Header>
       <Drawer.Title>Turn on notifications?</Drawer.Title>
       <Drawer.Description>
-        Your phone keeps trading with the people around you while it is in your pocket. It can tell
-        you when somebody nearby wants to pair, and when new things reach the board.
+        Get notified when someone nearby wants to pair, or when new posts arrive while Dipity is
+        closed.
       </Drawer.Description>
     </Drawer.Header>
 

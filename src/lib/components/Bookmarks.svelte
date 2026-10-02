@@ -59,7 +59,7 @@
 
   <Tabs.Content value="saved">
     <p class="mt-2 text-sm text-pretty text-muted-foreground">
-      What you bookmark stays on this phone, however long ago it stopped going around.
+      Bookmarked posts stay on this phone until you remove the bookmark.
     </p>
 
     <div class="mt-3 space-y-3">
@@ -76,17 +76,17 @@
     </div>
 
     {#if words.length && saved.length === 0 && $bookmarkedItems.length > 0}
-      <EmptyState icon={Bookmark}>None of your bookmarks says that.</EmptyState>
+      <EmptyState icon={Bookmark}>No bookmarks match that.</EmptyState>
     {:else if $bookmarkedItems.length === 0}
       <EmptyState icon={Bookmark}
-        >No bookmarks yet. The bookmark on a card saves it here.</EmptyState>
+        >No bookmarks yet. Tap the bookmark icon on a post to save it here.</EmptyState>
     {/if}
   </Tabs.Content>
 
   <Tabs.Content value="trash">
     <p class="mt-2 text-sm text-pretty text-muted-foreground">
-      Things you throw out wait here for a week, then they are deleted. Deleting something you wrote
-      asks everyone who has it to forget it.
+      Posts in the trash are deleted after 7 days. Deleting your own post asks everyone who has it
+      to delete it too.
     </p>
 
     {#if $trashedItems.length > 0}
@@ -119,7 +119,7 @@
     </div>
 
     {#if words.length && binned.length === 0 && $trashedItems.length > 0}
-      <EmptyState icon={Trash}>Nothing in the trash says that.</EmptyState>
+      <EmptyState icon={Trash}>Nothing in the trash matches that.</EmptyState>
     {:else if $trashedItems.length === 0}
       <EmptyState icon={Trash}>The trash is empty.</EmptyState>
     {/if}

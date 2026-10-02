@@ -34,9 +34,9 @@ object Alerts {
                     Triple(PAIRING, "Somebody nearby wants to pair", "Open Dipity to compare shapes with them.")
                 is Announcement.Content -> {
                     val count = announcement.count.toInt()
-                    val title = if (count == 1) "Something new on the board" else "$count new things on the board"
+                    val title = if (count == 1) "New post on the board" else "$count new posts on the board"
 
-                    Triple(CONTENT, title, "Open Dipity to read them.")
+                    Triple(CONTENT, title, "Open Dipity to read.")
                 }
             }
 

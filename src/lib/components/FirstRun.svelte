@@ -20,7 +20,7 @@
     try {
       await make()
     } catch (error) {
-      failed = "That does not read as a key. A key starts with nsec1."
+      failed = "That isn't a valid key. Keys start with nsec1."
       console.error("the identity could not be stored", error)
     }
   }

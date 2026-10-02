@@ -77,7 +77,7 @@
 </script>
 
 {#if $held === undefined}
-  <p class="border-l-2 border-border pl-3 text-sm text-muted-foreground">Looking for it…</p>
+  <p class="border-l-2 border-border pl-3 text-sm text-muted-foreground">Loading…</p>
 {:else if preview}
   {@const Mark = preview.category.icon}
   <!-- Drawn over the card's own tap target, so this opens what it stands for. -->

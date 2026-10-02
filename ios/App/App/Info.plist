@@ -25,9 +25,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Dipity checks it is you before your key leaves this phone.</string>
+	<string>Dipity confirms it's you before sending your key to another phone.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Dipity trades posts with phones near you over Bluetooth, without a server.</string>
+	<string>Dipity exchanges posts with phones nearby over Bluetooth.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>
