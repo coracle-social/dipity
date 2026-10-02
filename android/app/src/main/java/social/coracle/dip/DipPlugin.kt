@@ -649,13 +649,6 @@ class DipPlugin : Plugin(), Radio.Delegate {
      */
     private fun storeDirectory(): File {
         val directory = File(context.noBackupFilesDir, "dip")
-        val earlier = File(context.filesDir, "dip.sqlite")
-
-        // Earlier builds opened the store in a directory named dip.sqlite, beside the blobs.
-        if (!directory.exists() && earlier.isDirectory) {
-            earlier.renameTo(directory)
-            File(context.filesDir, "blobs").takeIf { it.exists() }?.renameTo(File(directory, "blobs"))
-        }
 
         directory.mkdirs()
 

@@ -1,4 +1,4 @@
--- The initial schema. See docs/storage.md for what each table is for.
+-- The schema. See docs/storage.md for what each table is for.
 --
 -- Ids, pubkeys and signatures are lowercase hex TEXT rather than BLOB. They are
 -- hex on the wire, in every log line and in every test fixture, and a phone's
@@ -87,6 +87,37 @@ CREATE TABLE event_seen (
 -- sightings of one event are a primary key lookup.
 CREATE INDEX event_seen_pubkey ON event_seen (pubkey, seen_at DESC);
 
+-- Provenance in the other direction: one row per event per peer this device has
+-- handed it to. `event_seen` says where something came from and this says where
+-- it went, so the two together are the user's movements and who they were with
+-- — never served to a peer, and as readable as `event_seen` on a seized device.
+--
+-- The first handoff is kept and a later one to the same peer is ignored: a row
+-- says the device carried something to somebody, and re-serving what a peer
+-- already has is a reconciliation detail rather than another share.
+CREATE TABLE event_shared (
+    event_id  TEXT    NOT NULL REFERENCES event (id) ON DELETE CASCADE,
+    pubkey    TEXT    NOT NULL,
+    shared_at INTEGER NOT NULL,
+    PRIMARY KEY (event_id, pubkey)
+) STRICT;
+
+-- Ids this device was offered and declined to store, for a reason that holds
+-- on the next encounter too: the author deleted the event, a newer version
+-- holds its address, or the user's Accept scope leaves its author out.
+-- Reconciliation counts these as held, so a peer stops delivering them every
+-- time the two meet. No peer is named and nothing here is served.
+--
+-- `by_policy` marks a refusal the user's settings made, which a change to them
+-- can undo, so those rows go whenever the policy is recompiled. The rest go
+-- with the retention sweep, measured from the last time the id was refused.
+CREATE TABLE event_refused (
+    id         TEXT    PRIMARY KEY,
+    created_at INTEGER NOT NULL,
+    by_policy  INTEGER NOT NULL,
+    refused_at INTEGER NOT NULL
+) STRICT;
+
 -- The author's signature over `event_id ‖ recipient_pubkey`, held by the peer
 -- it names. It is portable evidence, so it is never served to anyone: a second
 -- hop gets an authorship proof derived from it instead. See docs/proofs.md.
@@ -115,15 +146,13 @@ CREATE TABLE pref (
     updated_at INTEGER NOT NULL
 ) STRICT;
 
--- Blob metadata, extracted from the imeta tag of the first event seen to
--- reference the hash. That event anchors the blob's permissions, so the row
--- dies with it and is rebuilt from whatever else references the hash.
--- Bytes live outside the database, keyed by sha256.
+-- Blob metadata, extracted from the imeta tag of an event that references the
+-- hash. Bytes live outside the database, keyed by sha256. The row lives as long
+-- as any reference in `blob_reference` does.
 CREATE TABLE blob (
     -- 64 lowercase hex, parsed before it is written: TEXT compares byte for
     -- byte, so a hash in any other spelling is a row nothing can read back.
     sha256       TEXT PRIMARY KEY,
-    event_id     TEXT    NOT NULL REFERENCES event (id) ON DELETE CASCADE,
     -- 'preview' or 'original'. Previews take precedence and are kept as long as
     -- their events are; originals are a cache with an LRU ceiling.
     role         TEXT    NOT NULL,
@@ -140,18 +169,16 @@ CREATE TABLE blob (
     -- The imeta tag as it arrived, JSON, minus the tag name. The columns above
     -- are the keys this build reads; this is everything the event carried, so a
     -- key we do not model yet — or one a peer's build knows and ours does not —
-    -- survives to be read later without a migration to recover it.
+    -- survives to be read later.
     imeta        TEXT    NOT NULL DEFAULT '[]',
+    -- Groups are fetched in order, so what is on disk is always a prefix and
+    -- this is the resume point on its own.
     stored_bytes INTEGER NOT NULL DEFAULT 0,
-    -- Reserved for a bitmap of verified chunks; dropped in 0002, where
-    -- `stored_bytes` turned out to be the resume point on its own.
-    chunks       BLOB,
     complete     INTEGER NOT NULL DEFAULT 0,
     -- Last read, for LRU eviction of originals.
     accessed_at  INTEGER
 ) STRICT;
 
-CREATE INDEX blob_event ON blob (event_id);
 -- Each mirrors its read's ORDER BY exactly, or the planner sorts the whole partition in a temp b-tree.
 CREATE INDEX blob_wanted ON blob (
     CASE role WHEN 'preview' THEN 0 ELSE 1 END,
@@ -160,13 +187,26 @@ CREATE INDEX blob_wanted ON blob (
 ) WHERE complete = 0;
 CREATE INDEX blob_lru ON blob (role, accessed_at, sha256) WHERE complete = 1;
 
+-- Every event whose imeta names a hash references it, not only the first to
+-- arrive, so a blob outlives any one of them and goes with the last.
+-- docs/sync.md#blob-sync.
+CREATE TABLE blob_reference (
+    sha256   TEXT NOT NULL,
+    event_id TEXT NOT NULL REFERENCES event (id) ON DELETE CASCADE,
+    PRIMARY KEY (sha256, event_id)
+) STRICT;
+
+-- Deleting an event asks for its references by event, which the primary key
+-- orders the other way round.
+CREATE INDEX blob_reference_event ON blob_reference (event_id);
+
 -- Pairing: what lets one encounter recognize the next, and what bounds how
 -- many strangers it discloses to.
 
 -- A pair secret is derived from a completed session's handshake hash and stored
 -- against the peer, so a later encounter is recognized from its tags before
--- either side names a pubkey. One row per pubkey this device has paired with;
--- the first pairing establishes it and later encounters leave it alone.
+-- either side names a pubkey. One row per pubkey this device has paired with,
+-- replaced by a session that authenticated the peer without recognizing it.
 CREATE TABLE pair_secret (
     pubkey     TEXT PRIMARY KEY,
     secret     TEXT NOT NULL,
@@ -181,3 +221,22 @@ CREATE TABLE disclosure (
     id           INTEGER PRIMARY KEY,
     disclosed_at INTEGER NOT NULL
 ) STRICT;
+
+-- The quota ledger: what each peer wrote to this device in the last 24 hours,
+-- kept so the window survives the process. A background relaunch otherwise
+-- refills every meter, and the stranger pool is the ceiling that has to hold.
+-- `docs/sync.md#quotas`.
+--
+-- `meter` is `event` or `blob`. `pooled` is whether the row counts against the
+-- pool every untrusted peer shares. Rows older than the window are deleted as
+-- new ones are written, and none is ever served: like `event_seen`, it says who
+-- handed this device something and when.
+CREATE TABLE spending (
+    pubkey   TEXT    NOT NULL,
+    meter    TEXT    NOT NULL,
+    pooled   INTEGER NOT NULL,
+    spent_at INTEGER NOT NULL,
+    bytes    INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX spending_spent_at ON spending (spent_at);
