@@ -227,7 +227,7 @@ CREATE TABLE disclosure (
 -- refills every meter, and the stranger pool is the ceiling that has to hold.
 -- `docs/sync.md#quotas`.
 --
--- `meter` is `event` or `blob`. `pooled` is whether the row counts against the
+-- `meter` is `event`, `blob` for bytes taken or `served` for bytes given. `pooled` is whether the row counts against the
 -- pool every untrusted peer shares. Rows older than the window are deleted as
 -- new ones are written, and none is ever served: like `event_seen`, it says who
 -- handed this device something and when.

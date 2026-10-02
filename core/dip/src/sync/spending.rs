@@ -27,9 +27,9 @@
 //! prunes on every write, in memory and in the table, so neither grows without
 //! bound.
 //!
-//! Blob bytes taken from a peer are a third meter over the same window, per
-//! peer only: a stranger is allowed no blob bytes at all, so there is nothing
-//! for a pool to bound.
+//! Blob bytes taken from a peer and served to one are two more meters over the
+//! same window, per peer only: a stranger is allowed no blob bytes at all, so
+//! there is nothing for a pool to bound.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -143,6 +143,8 @@ pub struct SpendingLedger {
     events: Mutex<Ledger>,
     /// Blob bytes taken from each peer.
     blobs: Mutex<Ledger>,
+    /// Blob bytes served to each peer.
+    served: Mutex<Ledger>,
     /// The store the window is written through to, if there is one.
     db: Option<Arc<Db>>,
 }
@@ -184,6 +186,11 @@ impl SpendingLedger {
         self.charge(Meter::Blob, pubkey, false, bytes);
     }
 
+    /// Record blob bytes served to the peer.
+    pub fn record_served(&self, pubkey: &PublicKey, bytes: u64) {
+        self.charge(Meter::Served, pubkey, false, bytes);
+    }
+
     /// The accepted events and their bytes from `pubkey` within the rolling
     /// window, for testing the peer's quota across sessions.
     pub fn since(&self, pubkey: &PublicKey) -> (u32, u64) {
@@ -196,6 +203,15 @@ impl SpendingLedger {
     /// The blob bytes taken from `pubkey` within the rolling window.
     pub fn blob_since(&self, pubkey: &PublicKey) -> u64 {
         self.blobs
+            .lock()
+            .unwrap()
+            .since(pubkey, crate::clock::now())
+            .1
+    }
+
+    /// The blob bytes served to `pubkey` within the rolling window.
+    pub fn served_since(&self, pubkey: &PublicKey) -> u64 {
+        self.served
             .lock()
             .unwrap()
             .since(pubkey, crate::clock::now())
@@ -236,6 +252,7 @@ impl SpendingLedger {
         match meter {
             Meter::Event => self.events.lock().unwrap(),
             Meter::Blob => self.blobs.lock().unwrap(),
+            Meter::Served => self.served.lock().unwrap(),
         }
     }
 }
@@ -321,6 +338,24 @@ impl SessionSpending {
     pub fn record_blob(&mut self, peer: &Peer, bytes: u64) {
         for pubkey in &peer.pubkeys {
             self.ledger.record_blob(pubkey, bytes);
+        }
+    }
+
+    /// The blob bytes served to the peer within the rolling window, at the
+    /// most-served of the identities it proved.
+    #[must_use]
+    pub fn served(&self, peer: &Peer) -> u64 {
+        peer.pubkeys
+            .iter()
+            .map(|pubkey| self.ledger.served_since(pubkey))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Count blob bytes served to the peer against the rolling window.
+    pub fn record_served(&mut self, peer: &Peer, bytes: u64) {
+        for pubkey in &peer.pubkeys {
+            self.ledger.record_served(pubkey, bytes);
         }
     }
 
@@ -430,6 +465,7 @@ mod tests {
             let ledger = SpendingLedger::open(Arc::clone(&db));
             ledger.record(&author(1), false, 40);
             ledger.record_blob(&author(2), 4_096);
+            ledger.record_served(&author(2), 1_024);
         });
 
         clock::at(2_000, || {
@@ -438,6 +474,7 @@ mod tests {
             assert_eq!(relaunched.since(&author(1)), (1, 40));
             assert_eq!(relaunched.strangers(), (1, 40));
             assert_eq!(relaunched.blob_since(&author(2)), 4_096);
+            assert_eq!(relaunched.served_since(&author(2)), 1_024);
         });
 
         clock::at(1_000 + WINDOW_SECONDS + 1, || {

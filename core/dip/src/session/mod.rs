@@ -545,9 +545,15 @@ impl Session {
 
         match message {
             Message::BlossomRequest(request) => {
+                let before = self.blobs.served_bytes();
                 let reply = self
                     .blobs
                     .serve(db, &peer, &self.local(), &request, quota)?;
+                let given = self.blobs.served_bytes().saturating_sub(before);
+
+                if given > 0 {
+                    self.spending.record_served(&peer, given);
+                }
 
                 self.send_blob(&Message::BlossomResponse(Box::new(reply)))
             }
@@ -626,6 +632,7 @@ impl Session {
 
         if let Some(peer) = &self.peer {
             self.blobs.carry_fetched(self.spending.blob_spent(peer));
+            self.blobs.carry_served(self.spending.served(peer));
         }
 
         self.pair(db)?;

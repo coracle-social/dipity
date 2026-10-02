@@ -18,10 +18,10 @@ pub fn since(tx: &Tx<'_>, cutoff: i64) -> Result<Vec<Charge>> {
         .query_map(params![cutoff], |row| {
             Ok(Charge {
                 pubkey: pubkey_from_sql(&row.get::<_, String>(0)?, 0)?,
-                meter: if row.get::<_, String>(1)? == Meter::Blob.as_str() {
-                    Meter::Blob
-                } else {
-                    Meter::Event
+                meter: match row.get::<_, String>(1)?.as_str() {
+                    "blob" => Meter::Blob,
+                    "served" => Meter::Served,
+                    _ => Meter::Event,
                 },
                 pooled: row.get(2)?,
                 at: row.get(3)?,

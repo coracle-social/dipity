@@ -9,6 +9,8 @@ pub enum Meter {
     Event,
     /// Blob bytes this device took from a peer.
     Blob,
+    /// Blob bytes this device served to a peer.
+    Served,
 }
 
 impl Meter {
@@ -18,6 +20,7 @@ impl Meter {
         match self {
             Self::Event => "event",
             Self::Blob => "blob",
+            Self::Served => "served",
         }
     }
 }

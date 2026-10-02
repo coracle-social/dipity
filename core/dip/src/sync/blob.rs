@@ -200,6 +200,18 @@ impl BlobExchange {
         self.fetched_bytes = self.fetched_bytes.max(bytes);
     }
 
+    /// Blob bytes served to the peer this session, starting from what the
+    /// rolling window had already served it.
+    #[must_use]
+    pub fn served_bytes(&self) -> u64 {
+        self.served_bytes
+    }
+
+    /// Start this session's serving count from the window, for the same reason.
+    pub fn carry_served(&mut self, bytes: u64) {
+        self.served_bytes = self.served_bytes.max(bytes);
+    }
+
     /// Give up the fetch in flight, whose request or answer was lost with the
     /// pipe it rode, so the next [`poll`](Self::poll) resumes from the store.
     pub fn abandon_in_flight(&mut self) {

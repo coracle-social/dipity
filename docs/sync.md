@@ -91,5 +91,5 @@ A peer is served the bytes when it may be served every event that references the
 
 Blob quotas are separate from and much tighter than event quotas:
 
-- Per-peer bytes per session and per rolling 24 h.
+- Per-peer bytes per rolling 24 h, in each direction, which a session starts from rather than resetting.
 - A `original` cache ceiling in bytes, evicted LRU. Previews are kept as long as their events are. Serving a blob's bytes to a peer is what marks it used, and is the only read of them the core has.
