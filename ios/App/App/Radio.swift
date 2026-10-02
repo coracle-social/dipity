@@ -88,11 +88,11 @@ final class Radio: NSObject {
         central = CBCentralManager(
             delegate: self,
             queue: nil,
-            options: [CBCentralManagerOptionRestoreIdentifierKey: "social.coracle.dip.central"])
+            options: [CBCentralManagerOptionRestoreIdentifierKey: "social.coracle.dipity.central"])
         peripheral = CBPeripheralManager(
             delegate: self,
             queue: nil,
-            options: [CBPeripheralManagerOptionRestoreIdentifierKey: "social.coracle.dip.peripheral"])
+            options: [CBPeripheralManagerOptionRestoreIdentifierKey: "social.coracle.dipity.peripheral"])
     }
 
     // ------------------------------------------------------------- Actions

@@ -1,4 +1,4 @@
-# Dip — Overview
+# Dipity — Overview
 
 Offline-first nostr social gossip over Bluetooth. This is the overview; each subsystem has its own document.
 
@@ -16,7 +16,7 @@ It differs from its closest relatives:
 - **Manyverse** (SSB) gets offline gossip right but bridges freely over rooms and pubs, and its data model is SSB's append-only log rather than nostr's signed events.
 - **Rhizome** (Serval Project) is the unbounded case, and the one the reach rules here are written against: a bundle may end up replicated on every node in the network, and the project's own disclaimer says the app copies shared files to every other device running it, regardless of size, content, or intended recipient.
 
-Dip takes Manyverse's sync model, bitchat's transport engineering, nostr's data model, and none of their bridging.
+Dipity takes Manyverse's sync model, bitchat's transport engineering, nostr's data model, and none of their bridging.
 
 ## Background
 

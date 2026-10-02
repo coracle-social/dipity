@@ -11,7 +11,7 @@ import os
 /// `os.Logger` and the core's `Logger` are two protocols of that name in this
 /// module, so both are spelled out.
 final class OsLog: App.Logger {
-    private static let subsystem = Bundle.main.bundleIdentifier ?? "social.coracle.dip"
+    private static let subsystem = Bundle.main.bundleIdentifier ?? "social.coracle.dipity"
 
     /// Route the core's log here, at the level this build carries.
     ///

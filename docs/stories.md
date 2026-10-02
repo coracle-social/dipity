@@ -1,4 +1,4 @@
-# Dip — user stories
+# Dipity — user stories
 
 What a person does with the app, in the order they meet it. [`ui.md`](./ui.md) covers how it looks; this is what has to be reachable.
 

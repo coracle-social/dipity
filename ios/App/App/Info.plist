@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-        <string>Dip</string>
+        <string>Dipity</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -25,9 +25,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Dip checks it is you before your key leaves this phone.</string>
+	<string>Dipity checks it is you before your key leaves this phone.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Dip trades posts with phones near you over Bluetooth, without a server.</string>
+	<string>Dipity trades posts with phones near you over Bluetooth, without a server.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>

@@ -1,4 +1,4 @@
-package social.coracle.dip
+package social.coracle.dipity
 
 import android.app.Activity
 import android.hardware.biometrics.BiometricManager

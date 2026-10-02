@@ -1,4 +1,4 @@
-package social.coracle.dip
+package social.coracle.dipity
 
 import android.app.AlarmManager
 import android.app.PendingIntent
@@ -10,7 +10,7 @@ import android.os.BatteryManager
 import androidx.core.content.ContextCompat
 
 /** The private broadcast an armed [Lifecycle.wake] comes back on. */
-private const val WAKE = "social.coracle.dip.WAKE"
+private const val WAKE = "social.coracle.dipity.WAKE"
 
 /**
  * What the battery is at, and when the core wants ticking.

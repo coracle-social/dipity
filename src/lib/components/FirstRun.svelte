@@ -28,7 +28,7 @@
 
 <div class="flex min-h-svh flex-col justify-center px-6 pt-safe-t pb-safe-b">
   <div class="mx-auto w-full max-w-sm">
-    <Wordmark class="mx-auto h-auto w-40" />
+    <Wordmark class="mx-auto h-auto w-56" />
     <h1 class="mt-6 text-center text-2xl font-semibold text-balance">Where your town talks.</h1>
 
     {#if pasting}

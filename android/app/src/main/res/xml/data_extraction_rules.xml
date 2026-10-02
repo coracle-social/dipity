@@ -6,9 +6,9 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <exclude domain="sharedpref" path="social.coracle.dip.identity.xml" />
+        <exclude domain="sharedpref" path="social.coracle.dipity.identity.xml" />
     </cloud-backup>
     <device-transfer>
-        <exclude domain="sharedpref" path="social.coracle.dip.identity.xml" />
+        <exclude domain="sharedpref" path="social.coracle.dipity.identity.xml" />
     </device-transfer>
 </data-extraction-rules>

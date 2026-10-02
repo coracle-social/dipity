@@ -20,7 +20,7 @@ import Security
 /// either platform.
 enum Keychain {
     /// The one item, under the app's own service name.
-    private static let service = "social.coracle.dip.identity"
+    private static let service = "social.coracle.dipity.identity"
     private static let account = "nostr"
 
     /// Whether an identity has been generated or imported yet.

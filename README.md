@@ -1,8 +1,8 @@
-# Dip
+# Dipity
 
 Offline-first nostr social gossip over Bluetooth. The network is the people physically around you — events propagate device-to-device with no internet dependency in the core loop.
 
-Dip is a nostr client whose transport is proximity. It takes Manyverse's sync model, bitchat's transport engineering, and nostr's data model. Reach is capped at two hops by construction, not by policy.
+Dipity is a nostr client whose transport is proximity. It takes Manyverse's sync model, bitchat's transport engineering, and nostr's data model. Reach is capped at two hops by construction, not by policy.
 
 ## How it works
 
@@ -42,7 +42,7 @@ Native projects live in `ios/` and `android/` and are committed. After changing 
 
 TypeScript + Svelte 5 + Tailwind 4 + shadcn-svelte → Rust + uniffi + Swift/Kotlin. Capacitor 8 bridges the halves. Core deps: `coracle-lib` (nostr types), `snow` (Noise XX), `rusqlite` (SQLite), `secp256k1` + `k256` (signing). View deps: welshman `0.9.x` (`util`, `lib`, `domain`).
 
-App ID `social.coracle.dip`. Web build output to `dist/`.
+App ID `social.coracle.dipity`. Web build output to `dist/`.
 
 ## Documents
 

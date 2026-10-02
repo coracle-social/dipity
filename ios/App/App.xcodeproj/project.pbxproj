@@ -384,7 +384,7 @@
 					"-lresolv",
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
-				PRODUCT_BUNDLE_IDENTIFIER = social.coracle.dip;
+				PRODUCT_BUNDLE_IDENTIFIER = social.coracle.dipity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_INCLUDE_PATHS = (
@@ -419,7 +419,7 @@
 					"-ldip_ffi",
 					"-lresolv",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = social.coracle.dip;
+				PRODUCT_BUNDLE_IDENTIFIER = social.coracle.dipity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
 				SWIFT_INCLUDE_PATHS = (

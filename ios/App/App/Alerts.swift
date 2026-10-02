@@ -16,11 +16,11 @@ enum Alerts {
         case .pairing:
             identifier = "pairing"
             content.title = "Somebody nearby wants to pair"
-            content.body = "Open Dip to compare shapes with them."
+            content.body = "Open Dipity to compare shapes with them."
         case .content(let count):
             identifier = "content"
             content.title = count == 1 ? "Something new on the board" : "\(count) new things on the board"
-            content.body = "Open Dip to read them."
+            content.body = "Open Dipity to read them."
         }
 
         content.sound = .default

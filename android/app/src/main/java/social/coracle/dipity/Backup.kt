@@ -1,4 +1,4 @@
-package social.coracle.dip
+package social.coracle.dipity
 
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -10,7 +10,7 @@ import androidx.core.content.FileProvider
 import java.io.File
 
 /** The private broadcast the chooser reports a chosen app on. */
-private const val TAKEN = "social.coracle.dip.BACKUP_TAKEN"
+private const val TAKEN = "social.coracle.dipity.BACKUP_TAKEN"
 
 /**
  * The chooser a key backup is offered through, and the one honest answer it

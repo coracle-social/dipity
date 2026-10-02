@@ -2,10 +2,10 @@ apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 
 android {
-    namespace = "social.coracle.dip"
+    namespace = "social.coracle.dipity"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "social.coracle.dip"
+        applicationId "social.coracle.dipity"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

@@ -1,10 +1,10 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Dip</string>
-    <string name="title_activity_main">Dip</string>
-    <string name="package_name">social.coracle.dip</string>
-    <string name="custom_url_scheme">social.coracle.dip</string>
+    <string name="app_name">Dipity</string>
+    <string name="title_activity_main">Dipity</string>
+    <string name="package_name">social.coracle.dipity</string>
+    <string name="custom_url_scheme">social.coracle.dipity</string>
     <string name="encounter_channel">Encounters</string>
-    <string name="encounter_title">Dip is listening</string>
+    <string name="encounter_title">Dipity is listening</string>
     <string name="encounter_text">Meeting people nearby over Bluetooth.</string>
 </resources>

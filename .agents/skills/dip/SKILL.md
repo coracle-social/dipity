@@ -5,7 +5,7 @@ description: "Use this skill when working in the dip repository — the Rust cor
 
 # dip — the codebase
 
-Dip is a nostr client whose transport is proximity: events gossip device to device over BLE, and reach is capped at two hops by construction. `AGENTS.md` states the rules a change must not break, and `docs/` argues for each of them. This skill says where the code is and what shape it has.
+Dipity is a nostr client whose transport is proximity: events gossip device to device over BLE, and reach is capped at two hops by construction. `AGENTS.md` states the rules a change must not break, and `docs/` argues for each of them. This skill says where the code is and what shape it has.
 
 ## What is built
 

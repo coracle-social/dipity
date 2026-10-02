@@ -1,4 +1,4 @@
-# Dip — agent guide
+# Dipity — agent guide
 
 Read [`docs/overview.md`](./docs/overview.md) before making design decisions — it carries what the app is, the principles, and the architecture. This file is the short version plus the things that are easy to get wrong.
 
@@ -86,7 +86,7 @@ just android      # sync-android, then open Android Studio
 
 [`.gitea/workflows/ci.yml`](./.gitea/workflows/ci.yml) runs one step per `qa` recipe on every push to `master`, in two jobs split by toolchain. `android-check` is the exception: provisioning the SDK costs the shared runner more than the compile does, so the Kotlin is compiled by `just qa` and by nothing after the push. Pull requests are not built, so `just qa` locally is the gate before opening one. The Swift is compiled by nothing anywhere — that needs a macOS runner. What CI can read is the project file and the names: `just xcode` fails if a file under `ios/App/App/` is not in the App target, which is the failure that produces a stock app rather than a build error, and `just swift` fails if the shell names an enum case the generated bindings do not have. See [`core/README.md`](./core/README.md#the-xcode-project).
 
-App ID `social.coracle.dip`. Web assets build to `dist/`; the Android shell loads the *built* output, so `just sync-android` after web changes or it runs stale code. iOS rebuilds them on every build.
+App ID `social.coracle.dipity`. Web assets build to `dist/`; the Android shell loads the *built* output, so `just sync-android` after web changes or it runs stale code. iOS rebuilds them on every build.
 
 **The core builds before the shells**, and `just sync` enforces the order — `cargo` cross-compiles for each target, `uniffi-bindgen` generates bindings from the *compiled* library, then `cap sync`. Never run `pnpm exec cap sync` directly; it skips the first two steps and the Android shell links against whatever was there before. The iOS project runs that same order itself, as the App target's first build phase, which is why opening it is all a fresh clone needs. Generated output stages in `core/target/ffi/` and is never committed. [`core/README.md`](./core/README.md#the-xcode-project).
 

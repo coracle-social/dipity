@@ -1,4 +1,4 @@
-package social.coracle.dip
+package social.coracle.dipity
 
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
@@ -110,9 +110,9 @@ class Keystore(context: Context) {
 
     private companion object {
         const val PROVIDER = "AndroidKeyStore"
-        const val PREFERENCES = "social.coracle.dip.identity"
+        const val PREFERENCES = "social.coracle.dipity.identity"
         const val IDENTITY = "nostr"
-        const val WRAPPING_KEY = "social.coracle.dip.identity.wrap"
+        const val WRAPPING_KEY = "social.coracle.dipity.identity.wrap"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val IV_BYTES = 12
         const val TAG_BITS = 128

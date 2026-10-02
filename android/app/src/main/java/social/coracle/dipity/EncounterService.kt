@@ -1,4 +1,4 @@
-package social.coracle.dip
+package social.coracle.dipity
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -49,7 +49,7 @@ class EncounterService : Service() {
     }
 
     companion object {
-        private const val CHANNEL = "social.coracle.dip.encounters"
+        private const val CHANNEL = "social.coracle.dipity.encounters"
         private const val NOTIFICATION = 1
 
         /** Start it, creating its notification channel the first time. */

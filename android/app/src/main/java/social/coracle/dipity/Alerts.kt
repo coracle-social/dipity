@@ -1,4 +1,4 @@
-package social.coracle.dip
+package social.coracle.dipity
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -16,7 +16,7 @@ import uniffi.dip_ffi.Announcement
  * stacking. `docs/storage.md#notifications`.
  */
 object Alerts {
-    private const val CHANNEL = "social.coracle.dip.alerts"
+    private const val CHANNEL = "social.coracle.dipity.alerts"
     private const val PAIRING = 2
     private const val CONTENT = 3
 
@@ -31,12 +31,12 @@ object Alerts {
         val (id, title, text) =
             when (announcement) {
                 is Announcement.Pairing ->
-                    Triple(PAIRING, "Somebody nearby wants to pair", "Open Dip to compare shapes with them.")
+                    Triple(PAIRING, "Somebody nearby wants to pair", "Open Dipity to compare shapes with them.")
                 is Announcement.Content -> {
                     val count = announcement.count.toInt()
                     val title = if (count == 1) "Something new on the board" else "$count new things on the board"
 
-                    Triple(CONTENT, title, "Open Dip to read them.")
+                    Triple(CONTENT, title, "Open Dipity to read them.")
                 }
             }
 

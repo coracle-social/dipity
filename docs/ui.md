@@ -1,4 +1,4 @@
-# Dip — UI
+# Dipity — UI
 
 The view layer: component framework, design tokens, and the conventions a linter can hold us to. Everything here lives above [the plugin boundary](./overview.md#architecture) and none of it runs at encounter time.
 

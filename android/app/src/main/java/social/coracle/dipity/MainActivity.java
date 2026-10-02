@@ -1,4 +1,4 @@
-package social.coracle.dip;
+package social.coracle.dipity;
 
 import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;

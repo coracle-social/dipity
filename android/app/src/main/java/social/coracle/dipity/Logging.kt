@@ -1,4 +1,4 @@
-package social.coracle.dip
+package social.coracle.dipity
 
 import android.content.Context
 import android.content.pm.ApplicationInfo

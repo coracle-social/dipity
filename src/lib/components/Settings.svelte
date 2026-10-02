@@ -196,7 +196,7 @@
 
 {#if $permission === "denied"}
   <p class="mt-3 text-xs text-pretty text-destructive">
-    Your phone does not let Dip notify you. Allow it in your phone's settings, then switch these
+    Your phone does not let Dipity notify you. Allow it in your phone's settings, then switch these
     back on.
   </p>
 {/if}
