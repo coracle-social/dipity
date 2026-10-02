@@ -78,6 +78,14 @@ mv "$staging/dip_ffiFFI.modulemap" "$staging/module.modulemap"
 mkdir -p "$generated"
 rm -f "$generated/dip_ffiFFI.modulemap"
 
+# An xcframework build once copied the library and its module into the
+# products directory, which clang and the linker search ahead of Generated, so
+# a copy left there redefines the module or links a stale core.
+if [ -n "${BUILT_PRODUCTS_DIR:-}" ]; then
+    rm -f "$BUILT_PRODUCTS_DIR/libdip_ffi.a" \
+        "$BUILT_PRODUCTS_DIR/include/module.modulemap" "$BUILT_PRODUCTS_DIR/include/dip_ffiFFI.h"
+fi
+
 # Only what changed is replaced, so an unchanged core does not send Xcode back to recompile.
 for file in libdip_ffi.a dip_ffi.swift dip_ffiFFI.h module.modulemap; do
     cmp -s "$staging/$file" "$generated/$file" || mv -f "$staging/$file" "$generated/$file"
