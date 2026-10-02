@@ -13,6 +13,7 @@ import {derived, get, type Readable} from "svelte/store"
 import {spec} from "@welshman/lib"
 import type {ConfiguredKind, MuteListQuery, MuteListReader, MuteListWriter} from "@welshman/domain"
 import {MUTES, type EventTemplate, type HashedEvent} from "@welshman/util"
+import {links} from "$lib/data/links"
 import {answering, eventsOf, storedEvents} from "$lib/data/query"
 import {publish} from "$lib/data/publish"
 import {session} from "$lib/data/session"
@@ -135,20 +136,49 @@ export const muted: Readable<Set<string>> = derived(
     new Set([...people.values()].filter(contact => contact.muted).map(({pubkey}) => pubkey)),
 )
 
-/** The people list, the ones the user named first. The user is not among them. */
-export const contacts: Readable<Contact[]> = derived([social, session], ([{people}, $session]) =>
-  [...people.values()]
-    .filter(contact => contact.pubkey !== $session.identity)
-    .sort((a, b) => {
-      const named = Number(Boolean(b.petname)) - Number(Boolean(a.petname))
+/** Somebody on the people list, and whether a link to them is up right now. */
+export type Listed = Contact & {connected: boolean}
 
-      return (
-        named ||
-        (a.petname ?? a.aliases[0]?.petname ?? a.pubkey).localeCompare(
-          b.petname ?? b.aliases[0]?.petname ?? b.pubkey,
-        )
+/**
+ * The people list: whoever is connected right now first, then the ones the user
+ * named. A connected peer the device knows nothing else about is listed too,
+ * since being in the room is reason enough. The user is not among them.
+ */
+export const contacts: Readable<Listed[]> = derived(
+  [social, session, links],
+  ([{people}, $session, $links]) => {
+    const here = new Set($links.map(({pubkey}) => pubkey))
+    const listed = new Map<string, Listed>()
+
+    for (const contact of people.values()) {
+      listed.set(contact.pubkey, {...contact, connected: here.has(contact.pubkey)})
+    }
+
+    for (const pubkey of here) {
+      if (!listed.has(pubkey)) {
+        listed.set(pubkey, {
+          pubkey,
+          aliases: [],
+          trusted: false,
+          muted: false,
+          blocked: false,
+          connected: true,
+        })
+      }
+    }
+
+    const label = (contact: Listed) =>
+      contact.petname ?? contact.aliases[0]?.petname ?? contact.pubkey
+
+    return [...listed.values()]
+      .filter(contact => contact.pubkey !== $session.identity)
+      .sort(
+        (a, b) =>
+          Number(b.connected) - Number(a.connected) ||
+          Number(Boolean(b.petname)) - Number(Boolean(a.petname)) ||
+          label(a).localeCompare(label(b)),
       )
-    }),
+  },
 )
 
 /** One name other people know the user by, however each of them spelled it, and who gave it. */

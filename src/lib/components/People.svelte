@@ -37,9 +37,14 @@
                transition-shadow hover:shadow-md"
             onclick={() => go({at: "contact", pubkey: contact.pubkey})}>
             <div class="min-w-0 flex-1">
-              <p class="truncate font-semibold">{named.name}</p>
+              <p class="flex items-center gap-2 truncate font-semibold">
+                {#if contact.connected}
+                  <span class="size-2 flex-none rounded-full bg-secondary-accent"></span>
+                {/if}
+                {named.name}
+              </p>
               <p class="truncate text-xs text-muted-foreground">
-                {contact.petname
+                {contact.connected ? "here now · " : ""}{contact.petname
                   ? `named by you · ${short(contact.pubkey)}`
                   : named.according
                     ? `known through ${named.according}`
