@@ -40,3 +40,10 @@ pub fn record_disclosure(tx: &Tx<'_>, at: i64) -> Result<()> {
 
     Ok(())
 }
+
+/// Remove every pair secret and every spent disclosure. Part of
+/// [`wipe`](crate::db::command::wipe).
+pub fn clear(tx: &Tx<'_>) -> Result<()> {
+    tx.execute_batch("DELETE FROM pair_secret; DELETE FROM disclosure;")
+        .context("clearing the pairing tables")
+}

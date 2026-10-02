@@ -311,6 +311,12 @@ impl Store {
         Ok(command::clear_preference(&self.db, &key)?)
     }
 
+    /// Forget everything the store holds, which is what adopting a transferred
+    /// identity does with what the first-run one gathered.
+    pub fn wipe(&self) -> Result<(), StoreError> {
+        Ok(command::wipe(&self.db)?)
+    }
+
     // ------------------------------------------------------------ Liveness
 
     /// Hear about writes as they commit.

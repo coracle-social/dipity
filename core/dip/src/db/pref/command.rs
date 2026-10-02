@@ -61,6 +61,13 @@ pub fn remove(tx: &Tx<'_>, key: &str) -> Result<bool> {
     Ok(true)
 }
 
+/// Remove every preference, so every default applies again. Part of
+/// [`wipe`](crate::db::command::wipe).
+pub fn clear(tx: &Tx<'_>) -> Result<()> {
+    tx.execute_batch("DELETE FROM pref;")
+        .context("clearing the preferences")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

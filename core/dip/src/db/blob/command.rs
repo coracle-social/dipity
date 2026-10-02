@@ -152,6 +152,13 @@ pub fn remove_for_event(tx: &Tx<'_>, event_id: &EventId) -> Result<()> {
     Ok(())
 }
 
+/// Remove every blob record. The bytes go with the sweep the node runs at open.
+/// Part of [`wipe`](crate::db::command::wipe).
+pub fn clear(tx: &Tx<'_>) -> Result<()> {
+    tx.execute_batch("DELETE FROM blob_reference; DELETE FROM blob;")
+        .context("clearing the blob tables")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

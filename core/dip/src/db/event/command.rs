@@ -355,6 +355,13 @@ fn apply_deletion(tx: &Tx<'_>, event: &HashedEvent) -> Result<()> {
     Ok(())
 }
 
+/// Remove every event, and everything hanging off one, along with the
+/// refusals. Part of [`wipe`](crate::db::command::wipe).
+pub fn clear(tx: &Tx<'_>) -> Result<()> {
+    tx.execute_batch("DELETE FROM event; DELETE FROM event_fts; DELETE FROM event_refused;")
+        .context("clearing the event tables")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

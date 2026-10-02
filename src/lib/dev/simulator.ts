@@ -588,7 +588,10 @@ export class Simulator extends WebPlugin implements DipCore {
 
     this.identity = this.delivered.pubkey
     this.delivered = undefined
-    log(`adopted the identity offered on link ${link}`)
+    this.store = new Store()
+    this.notifyListeners("storeChanged", {group: "events"})
+    this.notifyListeners("storeChanged", {group: "preferences"})
+    log(`adopted the identity offered on link ${link}, and forgot what the first one gathered`)
 
     return {identity: this.identity}
   }

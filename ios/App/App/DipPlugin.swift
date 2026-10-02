@@ -281,8 +281,9 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// Adopt the identity an `identityTransfer` of `received` announced.
     ///
     /// The key is handed out once and does not cross the bridge: it is written
-    /// to the Keychain here, the same custody path a generated one takes, and
-    /// the node is reopened under it. Answers what `start` answers, so the view
+    /// to the Keychain here, the same custody path a generated one takes, the
+    /// store is emptied of the first-run identity's data, and the node is
+    /// reopened under it. Answers what `start` answers, so the view
     /// reads the new identity off the same field.
     @objc func takeTransferredIdentity(_ call: CAPPluginCall) {
         onMain { self.adoptTransferred(into: call) }
@@ -301,8 +302,15 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
             defer { secret.resetBytes(in: 0..<secret.count) }
 
             try Keychain.write(secret)
+
+            // What the first-run identity gathered was its own, and goes with it.
+            try core.store.wipe()
             close()
             open(into: call)
+
+            for group in [Change.events, .blobs, .preferences] {
+                notifyListeners("storeChanged", data: ["group": App.changeName(group: group)])
+            }
         } catch {
             call.reject("the transferred identity could not be adopted", nil, error)
         }

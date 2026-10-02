@@ -276,6 +276,9 @@ class DipPlugin : Plugin(), Radio.Delegate {
 
         try {
             keystore.write(secret)
+
+            // What the first-run identity gathered was its own, and goes with it.
+            core.store.wipe()
         } catch (error: Exception) {
             return call.reject("the transferred identity could not be stored", error)
         } finally {
@@ -284,6 +287,10 @@ class DipPlugin : Plugin(), Radio.Delegate {
 
         close()
         open(call)
+
+        for (group in listOf(Change.EVENTS, Change.BLOBS, Change.PREFERENCES)) {
+            notifyListeners("storeChanged", JSObject().put("group", changeName(group)))
+        }
     }
 
     /**

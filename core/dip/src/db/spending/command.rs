@@ -26,3 +26,9 @@ pub fn record(tx: &Tx<'_>, charge: &Charge, cutoff: i64) -> Result<()> {
 
     Ok(())
 }
+
+/// Remove every charge. Part of [`wipe`](crate::db::command::wipe).
+pub fn clear(tx: &Tx<'_>) -> Result<()> {
+    tx.execute_batch("DELETE FROM spending;")
+        .context("clearing the quota ledger")
+}

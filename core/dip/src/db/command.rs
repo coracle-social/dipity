@@ -186,6 +186,22 @@ pub fn forget_events_unseen_since(db: &Db, identity: &PublicKey, cutoff: i64) ->
     db.write(|tx| event::forget_unseen_since(tx, identity, cutoff))
 }
 
+/// Forget everything the store holds.
+///
+/// What a device does with what it gathered under the identity it made at
+/// first run, once it has adopted one transferred from the user's other phone:
+/// the events, preferences, pairings and spending were all that identity's.
+/// `docs/keys.md#login-with-device`.
+pub fn wipe(db: &Db) -> Result<()> {
+    db.write(|tx| {
+        event::clear(tx)?;
+        blob::clear(tx)?;
+        pref::clear(tx)?;
+        pairing::clear(tx)?;
+        spending::clear(tx)
+    })
+}
+
 /// Forget one event outright. Returns whether it was there.
 ///
 /// The local half of removing something: the row goes with its sightings, its
@@ -244,6 +260,39 @@ mod tests {
     use coracle_lib::tags::Tags;
 
     use crate::fixtures::{author, blob_hash, note, peer};
+
+    #[test]
+    fn a_wipe_leaves_every_table_empty() {
+        let db = Db::open_in_memory().unwrap();
+        let event = note(
+            author(1),
+            100,
+            "gathered under the first-run identity",
+            Tags::new().add("imeta", [format!("x {}", blob_hash(1))]),
+        );
+
+        receive_event(&db, &event, &[peer()], 10).unwrap();
+        set_preference(&db, "policy.retention_days", "7", 10).unwrap();
+        pair_with(&db, &[author(2)], &[1u8; 32], 10).unwrap();
+        record_disclosure(&db, 10).unwrap();
+
+        wipe(&db).unwrap();
+
+        let rows: i64 = db
+            .read(|tx| {
+                Ok(tx.query_row(
+                    "SELECT (SELECT COUNT(*) FROM event) + (SELECT COUNT(*) FROM event_fts)
+                          + (SELECT COUNT(*) FROM event_seen) + (SELECT COUNT(*) FROM blob)
+                          + (SELECT COUNT(*) FROM blob_reference) + (SELECT COUNT(*) FROM pref)
+                          + (SELECT COUNT(*) FROM pair_secret) + (SELECT COUNT(*) FROM disclosure)",
+                    [],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+
+        assert_eq!(rows, 0);
+    }
 
     #[test]
     fn an_events_media_is_recorded_in_the_role_each_tag_claims() {
