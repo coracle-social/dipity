@@ -1,10 +1,8 @@
 <script lang="ts">
   import Filter from "@lucide/svelte/icons/list-filter"
-  import Search from "@lucide/svelte/icons/search"
-  import X from "@lucide/svelte/icons/x"
   import {Button} from "$lib/components/ui/button"
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu"
-  import * as InputGroup from "$lib/components/ui/input-group"
+  import SearchBox from "$lib/components/SearchBox.svelte"
   import {search, setOrder, toggleCategory, type View} from "$lib/data/feed"
   import {categories} from "$lib/kinds"
 
@@ -57,23 +55,4 @@
   </DropdownMenu.Root>
 </div>
 
-<InputGroup.Root class="mt-3">
-  <InputGroup.Addon>
-    <Search />
-  </InputGroup.Addon>
-  <InputGroup.Input
-    type="search"
-    placeholder="Search the board"
-    aria-label="Search the board"
-    bind:value={$search} />
-  {#if $search}
-    <InputGroup.Addon align="inline-end">
-      <InputGroup.Button
-        size="icon-xs"
-        aria-label="Clear the search"
-        onclick={() => search.set("")}>
-        <X />
-      </InputGroup.Button>
-    </InputGroup.Addon>
-  {/if}
-</InputGroup.Root>
+<SearchBox class="mt-3" label="Search the board" bind:value={$search} />

@@ -5,8 +5,24 @@
   import {Badge} from "$lib/components/ui/badge"
   import * as Tabs from "$lib/components/ui/tabs"
   import EmptyState from "$lib/components/EmptyState.svelte"
+  import SearchBox from "$lib/components/SearchBox.svelte"
   import {aliases, contacts, nameOf, short, social} from "$lib/data/contacts"
   import {go} from "$lib/data/nav"
+  import {matches, nameMatches, wordsOf} from "$lib/data/search"
+
+  let query = $state("")
+
+  const words = $derived(wordsOf(query))
+
+  const shown = $derived(
+    words.length ? $contacts.filter(({pubkey}) => nameMatches($social, pubkey, words)) : $contacts,
+  )
+
+  const given = $derived(
+    words.length
+      ? $aliases.filter(({spellings}) => spellings.some(spelling => matches(words, spelling)))
+      : $aliases,
+  )
 
   /** Who gave a name, by the name the user knows them by. */
   const givers = (by: string[]) => by.map(pubkey => nameOf($social, pubkey).name).join(", ")
@@ -15,6 +31,8 @@
 <header class="pt-4 pb-3">
   <h1 class="text-2xl font-semibold">People</h1>
 </header>
+
+<SearchBox class="mb-3" label="Search people" bind:value={query} />
 
 <Tabs.Root value="contacts">
   <Tabs.List>
@@ -28,7 +46,7 @@
     </p>
 
     <ul class="mt-4 space-y-2">
-      {#each $contacts as contact (contact.pubkey)}
+      {#each shown as contact (contact.pubkey)}
         {@const named = nameOf($social, contact.pubkey)}
         <li>
           <button
@@ -67,7 +85,9 @@
       {/each}
     </ul>
 
-    {#if $contacts.length === 0}
+    {#if words.length && shown.length === 0}
+      <EmptyState icon={Users}>Nobody you know goes by that.</EmptyState>
+    {:else if $contacts.length === 0}
       <EmptyState icon={Users}>
         Nobody yet. Pair with somebody in the room with you and they turn up here under the name you
         gave them.
@@ -82,7 +102,7 @@
     </p>
 
     <ul class="mt-4 space-y-2">
-      {#each $aliases as alias (alias.slug)}
+      {#each given as alias (alias.slug)}
         <li class="rounded-lg bg-card px-4 py-3 shadow-sm">
           <p class="font-semibold">{alias.spellings.join(" · ")}</p>
           <p class="mt-0.5 text-xs text-pretty text-muted-foreground">
@@ -92,7 +112,9 @@
       {/each}
     </ul>
 
-    {#if $aliases.length === 0}
+    {#if words.length && given.length === 0}
+      <EmptyState icon={Tag}>Nobody calls you that.</EmptyState>
+    {:else if $aliases.length === 0}
       <EmptyState icon={Tag}>
         Nobody has named you yet. When somebody pairs with you, the name they give you shows up
         here.

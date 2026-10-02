@@ -45,7 +45,7 @@ Four facts about the transport decide most of the interface, and every story bel
 22. The user looks at everything they bookmarked, whatever the board's filter is set to. — `Bookmarks`
 23. The user writes a poll, a calendar event or an article rather than a note, and the form changes to suit. — `Composer`
 24. The user opens a thing and sees how far it has travelled: how many people handed it to this device, and how many this device has handed it to. — `ItemDetail`
-25. The user looks for something they half remember, and the board narrows to what says it as they type. — `FeedControls`
+25. The user looks for something they half remember, and the board narrows as they type to what says it and to what was written by somebody called it; their people and their bookmarks search the same way. — `SearchBox`, in `FeedControls`, `People` and `Bookmarks`
 
 ## Pairing
 

@@ -11,7 +11,8 @@ import {randomId, uniq} from "@welshman/lib"
 import {COMMENT, DELETE, POLL_RESPONSE, REACTION} from "@welshman/util"
 import type {HashedEvent} from "@welshman/util"
 import {Dip, type EventDetail, type Order} from "$lib/core"
-import {muted} from "$lib/data/contacts"
+import {muted, social} from "$lib/data/contacts"
+import {peopleNamed, wordsOf} from "$lib/data/search"
 import {answering, detailsOf, eventsOf, remembered, storedEvents} from "$lib/data/query"
 import {publish} from "$lib/data/publish"
 import {session, type Session} from "$lib/data/session"
@@ -198,24 +199,41 @@ export const responses: Readable<Responses> = derived([responding, muted], ([fou
  */
 export const search = writable("")
 
-/** A page of sixty: a phone scrolls, and nothing here pages. */
-const page = ([asked, words]: [View, string]): Promise<Item[]> =>
-  detailsOf({
-    order: asked.order,
-    filter: JSON.stringify({
-      kinds: shownKinds(asked),
-      limit: 60,
-      ...(words ? {search: words} : {}),
-    }),
-  })
-    .then(found => found.map(toItem))
-    .then(grounded)
+/** What the board asks the store for: the view, the search, and who the search names. */
+type Asked = {view: View; search: string; named: string[]}
+
+/** The page's order, by the field the store orders by. */
+const before = (order: Order) => (a: Item, b: Item) =>
+  order === "seenAt" ? b.seenAt - a.seenAt : b.event.created_at - a.event.created_at
+
+/**
+ * A page of sixty: a phone scrolls, and nothing here pages.
+ *
+ * A search matches what people wrote, and also who wrote it: a note by
+ * somebody whose name matches comes back whatever it says. Names live in cards
+ * rather than in the store's text index, so that half is a second query by
+ * author, and the two pages merge.
+ */
+const page = async ({view: asked, search: words, named}: Asked): Promise<Item[]> => {
+  const kinds = shownKinds(asked)
+  const queries: Record<string, unknown>[] = [{kinds, limit: 60, ...(words ? {search: words} : {})}]
+
+  if (named.length > 0) queries.push({kinds, limit: 60, authors: named})
+
+  const found = await Promise.all(
+    queries.map(filter => detailsOf({order: asked.order, filter: JSON.stringify(filter)})),
+  )
+  const byId = new Map(found.flat().map(detail => [detail.event.id, toItem(detail)]))
+
+  return grounded([...byId.values()].sort(before(asked.order)).slice(0, 60))
+}
 
 const arrived = answering(
-  derived([view, search, storedEvents], ([$view, $search]): [View, string] => [
-    $view,
-    $search.trim(),
-  ]),
+  derived([view, search, social, storedEvents], ([$view, $search, $social]): Asked => {
+    const words = $search.trim()
+
+    return {view: $view, search: words, named: words ? peopleNamed($social, wordsOf(words)) : []}
+  }),
   page,
   [] as Item[],
 )
