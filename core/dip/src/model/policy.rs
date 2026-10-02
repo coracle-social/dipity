@@ -26,7 +26,7 @@ use serde::Serialize;
 use crate::model::{Authors, Graph, Scope, Standing, Visibility};
 use crate::util::Window;
 
-/// The window the disclosure budget counts new pubkeys over, in seconds.
+/// The window the disclosure budget counts `AUTH` responses over, in seconds.
 ///
 /// A rolling day, conservative against the doc's "per discoverable window":
 /// resetting at each window boundary would admit more strangers, not fewer.
@@ -47,8 +47,8 @@ pub struct Policy {
     pub cool_off_minutes: i64,
     /// When the user is willing to be passively discoverable.
     pub discoverable_times: Vec<Window>,
-    /// How many new pubkeys the device will disclose to per discoverable
-    /// window.
+    /// How many `AUTH` responses the device will send unrecognized peers per
+    /// window. Peers the user approved by hand do not spend it.
     pub disclosure_budget: u32,
     /// Who can see what the user publishes.
     pub visibility: Visibility,

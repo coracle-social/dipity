@@ -18,7 +18,8 @@
 //!
 //! Forwarding proves knowledge of A's signature scalar, which B already holds,
 //! so it never opens secure storage and cannot be steered into signing as B.
-//! The only key B reads in an encounter is for its own auth event.
+//! B reads its key in an encounter only to sign as an author: its auth event,
+//! and the signatures over its own events.
 //!
 //! [`AuthorshipProof::simulate`] is the fifth call and is on no path: it is how
 //! C fabricates a transcript indistinguishable from one B produced, which is

@@ -79,7 +79,7 @@ pub enum Action {
     /// is acknowledged, which releases the next.
     Send(LinkId, Vec<u8>),
     /// Ask the user whether an unadmitted stranger may connect. Answer with
-    /// [`Node::approve`]; the link is held up to the drain cap meanwhile.
+    /// [`Node::approve`]; the link is held up to the gate hold meanwhile.
     ///
     /// The value is what the two users compare, and the gate authenticates
     /// nobody without it. `docs/discovery.md#the-consent-gate`.

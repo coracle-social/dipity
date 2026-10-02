@@ -9,7 +9,8 @@ use coracle_lib::keys::PublicKey;
 pub enum Register {
     /// Authored by this device.
     Own,
-    /// Authored by someone else.
+    /// Authored by someone else, and signed by its author to this device, so
+    /// it may travel one more hop under a proof.
     Forwardable,
     /// Neither.
     Held,

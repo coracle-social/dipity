@@ -1,8 +1,9 @@
-//! Writes over `event`, `event_tag`, `event_fts`, `event_seen` and
-//! `event_shared`.
+//! Writes over `event`, `event_tag`, `event_fts`, `event_seen`,
+//! `event_shared` and `event_refused`.
 //!
 //! [`save`] is the whole of ingest below the policy layer: it enforces what the
-//! tables mean to each other
+//! tables mean to each other, so an event, its indexes, its sightings and the
+//! refusals that keep a deleted or superseded one out change together.
 
 use anyhow::{Context, Result};
 use coracle_kinds::delete::{self, DeleteReader};
