@@ -120,22 +120,29 @@ android-lib: android-bindings
 
 # ------------------------------------------------------------------ native app
 
-# Run this rather than `cap sync`: ordering is the whole point, and skipping the
-# first two steps leaves the Android shell linked against whatever was there
-# before. The iOS half is Xcode's own first build phase, so nothing here stages
-# it and working on iOS needs neither the NDK nor this recipe.
+# Run these rather than `cap sync`: ordering is the whole point, and skipping the
+# core's steps leaves the Android shell linked against whatever was there
+# before. iOS builds the core and the web assets in Xcode's own first build
+# phase, so syncing it only needs Capacitor's config and plugins copied over,
+# and needs no NDK.
+
+# Both platforms.
+sync: sync-android sync-ios
 
 # Core, then bindings, then Android's library, then web assets, then Capacitor.
-sync: android-lib build
-    pnpm exec cap sync
+sync-android: android-lib build
+    pnpm exec cap sync android
 
-# Open the iOS project. Opening ios/App/App.xcodeproj by hand is the same thing.
-ios:
+# Web assets, then Capacitor's config and plugins. Xcode builds the core.
+sync-ios: build
+    pnpm exec cap sync ios
+
+# Sync the iOS half and open Xcode.
+ios: sync-ios
     pnpm exec cap open ios
 
-# Build the Android half and open Android Studio.
-android: android-lib build
-    pnpm exec cap sync android
+# Sync the Android half and open Android Studio.
+android: sync-android
     pnpm exec cap open android
 
 # Render the app icon from resources/ into both shells. Needs rsvg-convert.

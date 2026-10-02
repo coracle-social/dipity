@@ -30,7 +30,7 @@ just qa            # what CI runs
 
 Generated output stages under `core/target/ffi/`, which is gitignored and rebuilt from scratch. Nothing generated is committed.
 
-`just sync` chains core → bindings → web → `cap sync` for Android. iOS needs none of it: the Xcode project builds its own half, in order, every time.
+`just sync-android` chains core → bindings → web → `cap sync android`. `just sync-ios` only builds the web assets and runs `cap sync ios`, for Capacitor's config and plugins: the Xcode project builds the core itself, in order, every time. `just sync` runs both.
 
 ## Wiring into the native projects
 
@@ -58,7 +58,7 @@ A build phase inherits none of a login shell's PATH, so the script puts `~/.carg
 
 Xcode 16's synchronized folder groups would make the file list automatic, and are not worth the conversion here: `ios/App/App/` also holds `public/`, the built web assets, which the bundle needs as one folder reference rather than as several hundred loose resources.
 
-`just ios` opens the project; so does double-clicking it.
+`just ios` syncs the iOS half and opens the project. Double-clicking it opens it without the sync, which is enough unless Capacitor's config or plugins changed.
 
 ## Adding a dependency
 
