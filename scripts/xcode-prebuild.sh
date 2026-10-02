@@ -59,16 +59,29 @@ for target in "${targets[@]}"; do
     libraries+=("$root/core/target/$target/release/libdip_ffi.a")
 done
 
-mkdir -p "$generated"
-lipo -create "${libraries[@]}" -output "$generated/libdip_ffi.a"
+# Everything is generated beside Generated and moved in finished. Xcode's
+# indexer runs this phase alongside the build, and a second module map left in
+# Generated for even a moment is a redefinition of the module to the compiler.
+staging=$(mktemp -d)
+trap 'rm -rf "$staging"' EXIT
+
+lipo -create "${libraries[@]}" -output "$staging/libdip_ffi.a"
 
 # uniffi reads the compiled library rather than the source, so the bindings
 # cannot describe anything but what was just built.
 (cd "$root/core" && cargo run -q --bin uniffi-bindgen -- generate \
-    --library "${libraries[0]}" --language swift --out-dir "$generated" --no-format)
+    --library "${libraries[0]}" --language swift --out-dir "$staging" --no-format)
 
 # Swift finds a clang module by searching a directory for this one name.
-mv "$generated/dip_ffiFFI.modulemap" "$generated/module.modulemap"
+mv "$staging/dip_ffiFFI.modulemap" "$staging/module.modulemap"
+
+mkdir -p "$generated"
+rm -f "$generated/dip_ffiFFI.modulemap"
+
+# Only what changed is replaced, so an unchanged core does not send Xcode back to recompile.
+for file in libdip_ffi.a dip_ffi.swift dip_ffiFFI.h module.modulemap; do
+    cmp -s "$staging/$file" "$generated/$file" || mv -f "$staging/$file" "$generated/$file"
+done
 
 cd "$root"
 pnpm exec vite build
