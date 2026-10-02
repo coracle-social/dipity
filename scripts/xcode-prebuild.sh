@@ -14,9 +14,15 @@ set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 generated="$root/ios/App/App/Generated"
 
-# A build phase inherits none of a login shell's PATH, so cargo and node are
-# both missing from it.
-export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+# A build phase inherits none of a login shell's PATH, and node and pnpm live
+# wherever nvm, Volta, mise or pnpm's own installer put them, which only the
+# user's shell knows. So the shell is asked, and the usual places follow it.
+login_path=$("${SHELL:-/bin/zsh}" -lic 'printf "\n__PATH__%s\n" "$PATH"' </dev/null 2>/dev/null |
+    sed -n 's/^__PATH__//p' | tail -n 1) || true
+newest_nvm=$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -n 1) || true
+pnpm_home=${PNPM_HOME:-$HOME/Library/pnpm}
+
+export PATH="${login_path:+$login_path:}$HOME/.cargo/bin:$pnpm_home:$pnpm_home/bin:${newest_nvm:+$newest_nvm:}$HOME/.volta/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 fail() {
     echo "error: $*" >&2
