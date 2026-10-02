@@ -12,7 +12,7 @@
 <Drawer.Root open={$offering} onOpenChange={changed}>
   <Drawer.Content>
     <Drawer.Header>
-      <Drawer.Title>Hear about it when you are away?</Drawer.Title>
+      <Drawer.Title>Turn on notifications?</Drawer.Title>
       <Drawer.Description>
         Your phone keeps trading with the people around you while it is in your pocket. It can tell
         you when somebody nearby wants to pair, and when new things reach the board.
