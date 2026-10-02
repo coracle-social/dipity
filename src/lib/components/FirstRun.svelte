@@ -30,9 +30,9 @@
 
 <div class="flex min-h-svh flex-col justify-center px-6 pt-safe-t pb-safe-b">
   <div class="mx-auto w-full max-w-sm">
-    <KeyRound class="size-8 text-primary" />
+    <KeyRound class="mx-auto size-16 text-primary" />
     {#if $session.state === "backup"}
-      <h1 class="mt-4 text-2xl font-semibold text-balance">Save a copy of your key</h1>
+      <h1 class="mt-6 text-2xl font-semibold text-balance">Save a copy of your key</h1>
       <p class="mt-2 text-sm text-pretty text-muted-foreground">
         The key is the only proof that your things are yours, and it is only on this phone. Lose the
         phone without a copy and you start again as somebody new.
@@ -44,7 +44,7 @@
         Continue
       </Button>
     {:else}
-      <h1 class="mt-4 text-2xl font-semibold text-balance">This phone needs a key</h1>
+      <h1 class="mt-6 text-2xl font-semibold text-balance">This phone needs a key</h1>
       <p class="mt-2 text-sm text-pretty text-muted-foreground">
         It is how the people you pair with know it is you the next time. It stays on this phone.
       </p>
