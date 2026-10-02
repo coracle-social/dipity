@@ -47,6 +47,9 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "listDetails", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getEvent", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "forgetEvent", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setTrashed", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "trashed", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "emptyTrash", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "wantedBlobs", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getBlob", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "eventsReferencingBlob", returnType: CAPPluginReturnPromise),
@@ -302,6 +305,23 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         guard let id = call.getString("id") else { return call.reject("forgetEvent needs an id") }
 
         answer(call, "existed") { try $0.forgetEvent(id: id) }
+    }
+
+    /// Put an event in the trash, or take it back out.
+    @objc func setTrashed(_ call: CAPPluginCall) {
+        guard let id = call.getString("id") else { return call.reject("setTrashed needs an id") }
+        let trashed = call.getBool("trashed", true)
+
+        answer(call, "moved") { try $0.setTrashed(id: id, trashed: trashed) }
+    }
+
+    @objc func trashed(_ call: CAPPluginCall) {
+        answer(call, "trashed") { try $0.trashed() }
+    }
+
+    /// Delete everything in the trash, which retracts the user's own events.
+    @objc func emptyTrash(_ call: CAPPluginCall) {
+        perform(call, "the trash could not be emptied") { try $0.node.emptyTrash() }
     }
 
     @objc func wantedBlobs(_ call: CAPPluginCall) {

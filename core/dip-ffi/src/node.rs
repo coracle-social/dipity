@@ -448,6 +448,14 @@ impl Node {
             .map_err(|error| NodeError::core(&error))?)
     }
 
+    /// Delete everything in the trash: the user's own events are retracted,
+    /// and anybody else's dropped from this device.
+    pub fn empty_trash(&self) -> Result<Vec<Action>, NodeError> {
+        drive!(self, |node| node
+            .empty_trash()
+            .map_err(|error| NodeError::core(&error))?)
+    }
+
     /// Store and offer an event this device authored, with the media it
     /// attaches.
     ///

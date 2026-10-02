@@ -36,6 +36,9 @@ pub enum EventChange {
     /// An event was removed — superseded, deleted by its author, or forgotten.
     /// Carries its id, as lowercase hex.
     Deleted(String),
+    /// An event went into the trash or came back out. Carries its id, as
+    /// lowercase hex.
+    Trashed(String),
 }
 
 /// This group's channel, one per store.

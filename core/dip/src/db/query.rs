@@ -120,6 +120,11 @@ pub fn get_event(db: &Db, id: &EventId) -> Result<Option<HashedEvent>> {
     db.read(|tx| event::get(tx, id))
 }
 
+/// What is in the trash, newest first, with when each went in.
+pub fn trashed(db: &Db) -> Result<Vec<(EventId, i64)>> {
+    db.read(event::trashed)
+}
+
 /// The user's own events handed to any of `to` without the recipient signature.
 pub fn unsigned_shares(db: &Db, identity: &PublicKey, to: &[PublicKey]) -> Result<Vec<EventId>> {
     db.read(|tx| event::unsigned_shares(tx, identity, to))

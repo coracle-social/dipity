@@ -11,6 +11,7 @@ Where events live, who can answer a query, and what happens while the app is asl
 | `event_tag` | One row per tag, so NIP-01 tag filters are an index lookup. |
 | `event_seen` | `event_id`, `seen_at`, `pubkey`. Unique on (`event_id`, `pubkey`). |
 | `event_refused` | `id`, `created_at`, `by_policy`, `refused_at`. One row per event this device was offered and would not store, which [reconciliation](./sync.md#event-sync) counts as held. Names no peer. A refusal the Accept scope made goes when the policy is recompiled, and the rest go with the [retention sweep](#retention). |
+| `event_trashed` | `event_id`, `trashed_at`. One row per event the user put in the [trash](#the-trash). Local, and goes with its event by cascade. |
 | `spending` | `pubkey`, `meter`, `pooled`, `spent_at`, `bytes`. The [quota](./sync.md#quotas) ledger: what each peer wrote to this device inside the rolling 24 hours, so the window survives a relaunch. Rows older than the window go as new ones are written. It names who handed this device something and when, so like `event_seen` it is never served. |
 | `event_shared` | `event_id`, `pubkey`, `shared_at`, `signed`. Unique on (`event_id`, `pubkey`). One row per peer this device has handed an event to, written where the event is served. Provenance in the other direction from `event_seen`, so it is never served either, and a later handoff to the same peer is ignored — a row says this device carried something to somebody rather than how often it answered for it. `signed` says the user's recipient signature went with it, and one that did not is [sent once forwarding is allowed](./sync.md#resyncing). |
 | `recipient_signature` | `event_id`, `author_pubkey`, `recipient_pubkey`, `sig`. Unique on (`event_id`, `recipient_pubkey`). The author's signature naming a recipient, held by the peer it names. It is the witness an [authorship proof](./proofs.md#authorship-proofs) is built from, never the proof itself, and it is never served to a peer. The author is carried rather than joined, since a signature without the key it is by neither verifies nor proves; a composite foreign key onto `event (id, pubkey)` is what keeps the copy honest. |
@@ -67,6 +68,10 @@ It runs when the core opens and at most hourly after that. Opening is the moment
 
 The sweep is the device deciding; dropping is the user deciding. Either removes the event, its sightings, the record of who it was handed to, the author's signature over it and the media it references, and both go through the same delete.
 
-Dropping is local and tells nobody. A device holds somebody else's writing at their author's sufferance and can stop holding it at any time, but it cannot ask the neighbourhood to do the same — only the author can, by publishing a kind 5, which travels the way the event did and is a request rather than an instruction. So the two are separate operations and the screen says which one it is offering.
+Dropping is local and tells nobody. A device holds somebody else's writing at their author's sufferance and can stop holding it at any time, but it cannot ask the neighbourhood to do the same — only the author can, by publishing a kind 5, which travels the way the event did and is a request rather than an instruction. So the two are separate operations.
 
 Nothing stops a dropped event arriving again from somebody who still has it. Dropping is not a block, and refusing a person's events is [policy](./policy.md#accept-and-gossip).
+
+### The trash
+
+The user drops and retracts through the trash. Throwing something out marks it in `event_trashed`, which hides it from the board and from the saved bookmarks and tells nobody. It can be put back until the trash is emptied, by hand or by the hourly sweep once it has been there a week. Emptying retracts the user's own events with a kind 5 that the core writes itself, so a retraction goes out while the view is suspended, and drops everything else.

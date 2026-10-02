@@ -187,6 +187,27 @@ pub fn record_shared(
     Ok(true)
 }
 
+/// Put an event in the trash, or take it back out. Returns whether that moved anything.
+pub fn set_trashed(tx: &Tx<'_>, id: &EventId, trashed: bool, at: i64) -> Result<bool> {
+    let moved = if trashed {
+        tx.prepare_cached(
+            "INSERT OR IGNORE INTO event_trashed (event_id, trashed_at)
+             SELECT id, ?2 FROM event WHERE id = ?1",
+        )?
+        .execute(params![id.to_hex(), at])
+    } else {
+        tx.prepare_cached("DELETE FROM event_trashed WHERE event_id = ?1")?
+            .execute(params![id.to_hex()])
+    }
+    .with_context(|| format!("moving {id} in or out of the trash"))?;
+
+    if moved > 0 {
+        channel::notify(tx, EventChange::Trashed(id.to_hex()));
+    }
+
+    Ok(moved > 0)
+}
+
 /// Remove an event and everything hanging off it. Returns whether it was there.
 ///
 /// The tag, provenance, signature and blob rows go by cascade; the full-text row is

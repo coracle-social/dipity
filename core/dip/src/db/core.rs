@@ -311,6 +311,7 @@ mod tests {
                 "event_seen",
                 "event_shared",
                 "event_tag",
+                "event_trashed",
                 "pair_secret",
                 "pref",
                 "recipient_signature",

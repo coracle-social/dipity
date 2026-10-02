@@ -1,6 +1,7 @@
 <script lang="ts">
   import Bookmark from "@lucide/svelte/icons/bookmark"
   import Repeat from "@lucide/svelte/icons/repeat-2"
+  import Undo from "@lucide/svelte/icons/undo-2"
   import Smile from "@lucide/svelte/icons/smile"
   import Trash from "@lucide/svelte/icons/trash-2"
   import {Button} from "$lib/components/ui/button"
@@ -11,17 +12,10 @@
   import Reactions from "$lib/components/Reactions.svelte"
   import {toggleBookmark} from "$lib/data/bookmarks"
   import {nameOf, type Social} from "$lib/data/contacts"
-  import {
-    drop,
-    opensId,
-    react,
-    retract,
-    type Item,
-    type Standing,
-    type Warmth,
-  } from "$lib/data/feed"
+  import {opensId, react, type Item, type Standing, type Warmth} from "$lib/data/feed"
   import {go} from "$lib/data/nav"
   import type {Session} from "$lib/data/session"
+  import {restore, trash} from "$lib/data/trash"
   import {categoryOf} from "$lib/kinds"
 
   let {
@@ -32,6 +26,7 @@
     sweptAt,
     session,
     bookmarked,
+    trashed = false,
     onBoost,
     detailed = false,
   }: {
@@ -43,6 +38,8 @@
     session: Session
     /** Whether the user bookmarked this, which also spares it from the sweep. */
     bookmarked: boolean
+    /** Whether this is in the trash, where the button puts it back rather than throwing it out. */
+    trashed?: boolean
     onBoost: (item: Item) => void
     /** Whether this is the card the detail page is about, which opens nothing. */
     detailed?: boolean
@@ -167,13 +164,19 @@
         onclick={() => toggleBookmark(item)}>
         <Bookmark />
       </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label={mine ? "Ask for this to be forgotten" : "Drop this from this phone"}
-        onclick={() => (mine ? retract(item) : drop(item))}>
-        <Trash />
-      </Button>
+      {#if trashed}
+        <Button variant="ghost" size="icon-sm" aria-label="Put back" onclick={() => restore(item)}>
+          <Undo />
+        </Button>
+      {:else}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Move to trash"
+          onclick={() => trash(item)}>
+          <Trash />
+        </Button>
+      {/if}
     </div>
   </footer>
 </article>

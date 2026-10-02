@@ -36,8 +36,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
-use coracle_lib::events::HashedEvent;
+use coracle_kinds::delete;
+use coracle_lib::addresses::Address;
+use coracle_lib::events::{EventContent, HashedEvent};
 use coracle_lib::keys::{PublicKey, SecretKey};
+use coracle_lib::tags::Tags;
 use tokio::sync::broadcast::{self, error::TryRecvError};
 
 use crate::backup;
@@ -64,6 +67,10 @@ use scheduler::Scheduler;
 
 /// Minimum gap between retention sweeps, against a window measured in days.
 const SWEEP_INTERVAL_SECONDS: i64 = 60 * 60;
+
+/// How long something stays in the trash before the sweep empties it.
+/// `docs/storage.md#the-trash`.
+pub const TRASH_SECONDS: i64 = 7 * 86_400;
 
 /// Something the shell does on the core's behalf.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1089,6 +1096,40 @@ impl Node {
         Ok(())
     }
 
+    /// Delete everything in the trash: retract what the user wrote, and drop
+    /// what somebody else did from this device. `docs/storage.md#the-trash`.
+    pub fn empty_trash(&mut self) -> Result<Vec<Action>> {
+        self.delete_trashed(i64::MAX)?;
+
+        Ok(self.collect())
+    }
+
+    /// Delete what went into the trash before `before`.
+    fn delete_trashed(&mut self, before: i64) -> Result<usize> {
+        let mut deleted = 0;
+
+        for (id, trashed_at) in query::trashed(&self.db)? {
+            if trashed_at >= before {
+                continue;
+            }
+
+            let Some(event) = query::get_event(&self.db, &id)? else {
+                continue;
+            };
+
+            if event.pubkey == self.identity {
+                let now = clock::now();
+                db_command::publish_event(&self.db, &retraction(&event, now), &self.identity, now)?;
+            } else {
+                db_command::forget_event(&self.db, &id)?;
+            }
+
+            deleted += 1;
+        }
+
+        Ok(deleted)
+    }
+
     /// Forget what stopped circulating, at most once an interval.
     fn sweep_events(&mut self) {
         let now = clock::now();
@@ -1105,8 +1146,32 @@ impl Node {
                 Ok(forgotten) => log::debug!("the retention sweep forgot {forgotten} events"),
                 Err(error) => log::error!("the retention sweep failed: {error:#}"),
             }
+
+            match self.delete_trashed(now - TRASH_SECONDS) {
+                Ok(deleted) => log::debug!("the trash sweep deleted {deleted} events"),
+                Err(error) => log::error!("the trash sweep failed: {error:#}"),
+            }
         }
     }
+}
+
+/// A NIP-09 request that the user's `event` be forgotten, naming its id, its
+/// kind, and its address when it has one.
+fn retraction(event: &HashedEvent, at: i64) -> HashedEvent {
+    let mut tags = Tags::new()
+        .add("e", [event.id.to_hex()])
+        .add("k", [event.kind.to_string()]);
+
+    if let Some(address) = Address::from_event(event) {
+        tags = tags.add("a", [address.to_string()]);
+    }
+
+    EventContent::new()
+        .with_tags(tags)
+        .with_kind(delete::KIND)
+        .with_created_at(at)
+        .with_pubkey(event.pubkey)
+        .with_id()
 }
 
 /// Everything one session has ready to write, on each of its [`Pipe`]s.
@@ -1748,6 +1813,74 @@ mod tests {
         node.tick();
 
         assert_eq!(node.policy().retention_days, 7);
+    }
+
+    fn trash_node(db: &Arc<Db>) -> Node {
+        Node::new(
+            Arc::clone(db),
+            custody(secret(1)),
+            Arc::new(crate::blobs::MemoryBlobStore::default()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn emptying_the_trash_retracts_the_users_own_and_drops_the_rest() {
+        let db = db();
+        let mut node = trash_node(&db);
+        let mine = note(author(1), 100, "mine", Tags::new());
+        let theirs = note(author(3), 100, "theirs", Tags::new());
+        let kept = note(author(3), 100, "not trashed", Tags::new());
+
+        db_command::publish_event(&db, &mine, &author(1), 100).unwrap();
+        db_command::receive_event(&db, &theirs, &[author(3)], 100).unwrap();
+        db_command::receive_event(&db, &kept, &[author(3)], 100).unwrap();
+        db_command::set_trashed(&db, &mine.id, true, 200).unwrap();
+        db_command::set_trashed(&db, &theirs.id, true, 200).unwrap();
+
+        node.empty_trash().unwrap();
+
+        assert!(query::get_event(&db, &mine.id).unwrap().is_none());
+        assert!(query::get_event(&db, &theirs.id).unwrap().is_none());
+        assert!(query::get_event(&db, &kept.id).unwrap().is_some());
+        assert!(query::trashed(&db).unwrap().is_empty());
+
+        let retractions = query::list_events(
+            &db,
+            &Query::new().with_filter(Filter::new().add_kinds([delete::KIND])),
+        )
+        .unwrap();
+        assert_eq!(retractions.len(), 1);
+        assert_eq!(retractions[0].pubkey, author(1));
+    }
+
+    #[test]
+    fn the_sweep_empties_only_what_has_been_in_the_trash_a_week() {
+        let db = db();
+        let mut node = clock::at(1_000, || trash_node(&db));
+        let old = note(author(3), 100, "a week in", Tags::new());
+        let fresh = note(author(3), 100, "just trashed", Tags::new());
+
+        db_command::receive_event(&db, &old, &[author(3)], 1_000).unwrap();
+        db_command::receive_event(&db, &fresh, &[author(3)], 1_000).unwrap();
+        db_command::set_trashed(&db, &old.id, true, 1_000).unwrap();
+        db_command::set_trashed(&db, &fresh.id, true, 1_000 + TRASH_SECONDS).unwrap();
+
+        clock::at(1_000 + TRASH_SECONDS + 1, || node.sweep_events());
+
+        assert!(query::get_event(&db, &old.id).unwrap().is_none());
+        assert!(query::get_event(&db, &fresh.id).unwrap().is_some());
+    }
+
+    #[test]
+    fn restoring_takes_a_thing_back_out_of_the_trash() {
+        let db = db();
+        let theirs = note(author(3), 100, "changed my mind", Tags::new());
+
+        db_command::receive_event(&db, &theirs, &[author(3)], 100).unwrap();
+        assert!(db_command::set_trashed(&db, &theirs.id, true, 200).unwrap());
+        assert!(db_command::set_trashed(&db, &theirs.id, false, 300).unwrap());
+        assert!(query::trashed(&db).unwrap().is_empty());
     }
 
     #[test]

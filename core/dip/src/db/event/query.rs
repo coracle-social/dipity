@@ -241,6 +241,19 @@ pub fn unsigned_shares(
         .context("finding own events handed over unsigned")
 }
 
+/// What is in the trash, newest first, with when each went in.
+pub fn trashed(tx: &Tx<'_>) -> Result<Vec<(EventId, i64)>> {
+    tx.prepare_cached("SELECT event_id, trashed_at FROM event_trashed ORDER BY trashed_at DESC")?
+        .query_map([], |row| {
+            Ok((
+                event_id_from_sql(&row.get::<_, String>(0)?, 0)?,
+                row.get::<_, i64>(1)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("reading the trash")
+}
+
 /// Every author the store holds an event from, other than the user.
 pub fn authors(tx: &Tx<'_>, identity: &PublicKey) -> Result<Vec<PublicKey>> {
     tx.prepare_cached("SELECT DISTINCT pubkey FROM event WHERE pubkey <> ?1")?

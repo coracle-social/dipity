@@ -39,10 +39,10 @@ Four facts about the transport decide most of the interface, and every story bel
 16. The user opens one thing on its own and reads what people are saying about it. — `ItemDetail`
 17. The user reads a comment on a comment and can climb to whatever that one answered. — `ItemDetail`, `Quoted`
 18. The user goes back, with the phone's own button or the one on the screen, and lands on what they came from as far down it as they had read. — `nav`
-19. The user deletes something they published, and the request travels the same way the thing did. — `ItemCard`
-20. The user drops somebody else's thing off their own device, which tells nobody and asks nothing. — `ItemCard`
+19. The user throws something out, and it waits in the trash for a week, where they can put it back. — `ItemCard`, `Bookmarks` under Trash
+20. The trash empties, by hand or after the week, retracting what the user published, by a request that travels the way the thing did, and dropping somebody else's thing off this phone, which tells nobody. — `Bookmarks` under Trash
 21. The user bookmarks something, so the retention sweep leaves it alone however long it stops circulating. — `ItemCard`
-22. The user looks at everything they bookmarked, whatever the board's filter is set to. — `Bookmarks`
+22. The user looks at everything they bookmarked, whatever the board's filter is set to. — `Bookmarks`, under Saved
 23. The user writes a poll, a calendar event or an article rather than a note, and the form changes to suit. — `Composer`
 24. The user opens a thing and sees how far it has travelled: how many people handed it to this device, and how many this device has handed it to. — `ItemDetail`
 25. The user looks for something they half remember, and the board narrows as they type to what says it and to what was written by somebody called it; their people and their bookmarks search the same way. — `SearchBox`, in `FeedControls`, `People` and `Bookmarks`

@@ -225,6 +225,11 @@ pub fn forget_event(db: &Db, id: &EventId) -> Result<bool> {
     db.write(|tx| event::delete(tx, id))
 }
 
+/// Put an event in the trash, or take it back out. `docs/storage.md#the-trash`.
+pub fn set_trashed(db: &Db, id: &EventId, trashed: bool, at: i64) -> Result<bool> {
+    db.write(|tx| event::set_trashed(tx, id, trashed, at))
+}
+
 /// Evict held originals, until the cache is under `ceiling_bytes`.
 /// Returns the hashes evicted.
 pub fn evict_originals(db: &Db, ceiling_bytes: i64) -> Result<Vec<BlobHash>> {

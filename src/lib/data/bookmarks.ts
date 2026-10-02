@@ -15,6 +15,7 @@ import {publish} from "$lib/data/publish"
 import {session} from "$lib/data/session"
 import {bookmarks as list} from "$lib/kinds"
 import {itemsByIds, type Item} from "$lib/data/feed"
+import {trashed} from "$lib/data/trash"
 
 /** The event ids the user bookmarked, newest addition last. */
 const held = async (identity?: string): Promise<string[]> => {
@@ -73,10 +74,24 @@ export const toggleBookmark = async (item: Item) => {
  * come back, which is what a bookmark of something dropped by hand looks like.
  */
 export const bookmarkedItems: Readable<Item[]> = answering(
-  derived([bookmarked, storedEvents], ([$bookmarked, revision]) => ({
-    ids: [...$bookmarked],
+  derived([bookmarked, trashed, storedEvents], ([$bookmarked, $trashed, revision]) => ({
+    ids: [...$bookmarked].filter(id => !$trashed.has(id)),
     revision,
   })),
   ({ids}) => itemsByIds(ids),
   [] as Item[],
 )
+
+/** What the trash screen draws, most recently trashed first. */
+export const trashedItems: Readable<Item[]> = answering(
+  derived([trashed, storedEvents], ([$trashed, revision]) => ({
+    ids: [...$trashed.keys()],
+    revision,
+  })),
+  ({ids}) => itemsByIds(ids).then(items => sortBy(ids, items)),
+  [] as Item[],
+)
+
+/** Items in the order `ids` names them. */
+const sortBy = (ids: string[], items: Item[]) =>
+  [...items].sort((a, b) => ids.indexOf(a.event.id) - ids.indexOf(b.event.id))

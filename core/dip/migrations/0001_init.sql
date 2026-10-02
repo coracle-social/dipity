@@ -105,6 +105,14 @@ CREATE TABLE event_shared (
     PRIMARY KEY (event_id, pubkey)
 ) STRICT;
 
+-- What the user put in the trash, and when. Local, like a bookmark kept on
+-- this phone: nothing here is served. Emptying the trash, by hand or once a row
+-- is a week old, deletes the event, and a row goes with its event by cascade.
+CREATE TABLE event_trashed (
+    event_id   TEXT    PRIMARY KEY REFERENCES event (id) ON DELETE CASCADE,
+    trashed_at INTEGER NOT NULL
+) STRICT;
+
 -- Ids this device was offered and declined to store, for a reason that holds
 -- on the next encounter too: the author deleted the event, a newer version
 -- holds its address, or the user's Accept scope leaves its author out.

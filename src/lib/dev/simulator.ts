@@ -123,6 +123,9 @@ type Transfer = {
 export class Simulator extends WebPlugin implements DipCore {
   private store = new Store()
   private identity = identity
+
+  /** What the user put in the trash, by id, with when it went in. */
+  private trash = new Map<string, number>()
   private paired = new Set<string>()
   private refused = new Map<string, number>()
   private gates = new Map<number, Person>()
@@ -494,6 +497,65 @@ export class Simulator extends WebPlugin implements DipCore {
     }
 
     return {existed}
+  }
+
+  async setTrashed({id, trashed}: {id: string; trashed: boolean}) {
+    const moved = trashed
+      ? Boolean(this.store.get(id)) && !this.trash.has(id) && Boolean(this.trash.set(id, now()))
+      : this.trash.delete(id)
+
+    if (moved) this.notifyListeners("storeChanged", {group: "events"})
+
+    return {moved}
+  }
+
+  async trashed() {
+    // The core's sweep empties what has been in the trash a week; here reading it does.
+    this.deleteTrashed(now() - 7 * 86_400)
+
+    const held = [...this.trash].filter(([id]) => this.store.get(id))
+
+    return {
+      trashed: held
+        .sort(([, a], [, b]) => b - a)
+        .map(([id, at]) => JSON.stringify({id, trashed_at: at})),
+    }
+  }
+
+  async emptyTrash() {
+    this.deleteTrashed(Infinity)
+  }
+
+  /** Retract the user's own trashed events and drop the rest, as the core does. */
+  private deleteTrashed(before: number) {
+    let moved = false
+
+    for (const [id, at] of this.trash) {
+      if (at >= before) continue
+
+      const event = this.store.get(id)?.event
+
+      this.trash.delete(id)
+      moved = true
+
+      if (event?.pubkey === this.identity) {
+        const created_at = now()
+        const tags = [
+          ["e", id],
+          ["k", String(event.kind)],
+        ]
+
+        this.store.record(
+          hash({kind: 5, tags, content: "", created_at, pubkey: this.identity}),
+          this.identity,
+          created_at,
+        )
+      } else {
+        this.store.forget(id)
+      }
+    }
+
+    if (moved) this.notifyListeners("storeChanged", {group: "events"})
   }
 
   async wantedBlobs(options?: {limit?: number}) {

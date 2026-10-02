@@ -12,6 +12,7 @@ import {COMMENT, DELETE, POLL_RESPONSE, REACTION} from "@welshman/util"
 import type {HashedEvent} from "@welshman/util"
 import {Dip, type EventDetail, type Order} from "$lib/core"
 import {muted, social} from "$lib/data/contacts"
+import {trashed} from "$lib/data/trash"
 import {peopleNamed, wordsOf} from "$lib/data/search"
 import {answering, detailsOf, eventsOf, remembered, storedEvents} from "$lib/data/query"
 import {publish} from "$lib/data/publish"
@@ -27,7 +28,6 @@ import {
   poll,
   pollResponse,
   reaction,
-  removal,
   responseKinds,
   timeEvent,
 } from "$lib/kinds"
@@ -238,9 +238,11 @@ const arrived = answering(
   [] as Item[],
 )
 
-/** What the board draws, with nothing by anybody the user muted. */
-export const board: Readable<Item[]> = derived([arrived, muted], ([$arrived, $muted]) =>
-  $arrived.filter(({event}) => !$muted.has(event.pubkey)),
+/** What the board draws, with nothing by anybody the user muted and nothing in the trash. */
+export const board: Readable<Item[]> = derived(
+  [arrived, muted, trashed],
+  ([$arrived, $muted, $trashed]) =>
+    $arrived.filter(({event}) => !$muted.has(event.pubkey) && !$trashed.has(event.id)),
 )
 
 /** Stored items by id, for a screen that knows which ones it wants. */
@@ -418,22 +420,7 @@ export const answer = async (item: Item, selections: string[]) => {
   return publish(await writer.renderTemplate())
 }
 
-/** Ask for something the user published to be forgotten, wherever it has reached. */
-export const retract = async (item: Item) =>
-  publish(await removal.writer().addEvent(item.event).renderTemplate())
-
-/**
- * Drop something off this device, and say nothing to anybody.
- *
- * What the user can do about somebody else's writing: only its author can ask
- * the network to forget it, so this is local. The sightings, the authorship
- * proof and the media go with it.
- */
-export const drop = async (item: Item) => {
-  await Dip.forgetEvent({id: item.event.id})
-}
-
-/** Whether an item is the user's own, which is the only thing they may retract. */
+/** Whether an item is the user's own. */
 export const isMine = (item: Item, session: Session) => item.event.pubkey === session.identity
 
 /** One stored event by id, or null for a thing this device does not have. */

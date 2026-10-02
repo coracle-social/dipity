@@ -233,6 +233,15 @@ export type DipCore = {
    */
   forgetEvent(options: {id: string}): Promise<{existed: boolean}>
 
+  /** Put an event in the trash, or take it back out. */
+  setTrashed(options: {id: string; trashed: boolean}): Promise<{moved: boolean}>
+
+  /** What is in the trash, newest first, each as `{id, trashed_at}` JSON. */
+  trashed(): Promise<{trashed: string[]}>
+
+  /** Delete everything in the trash: the user's own events are retracted, the rest dropped. */
+  emptyTrash(): Promise<void>
+
   /** Blobs a stored event references and this device does not hold. */
   wantedBlobs(options?: {limit?: number}): Promise<{blobs: string[]}>
 

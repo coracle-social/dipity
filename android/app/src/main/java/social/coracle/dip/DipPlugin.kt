@@ -399,6 +399,24 @@ class DipPlugin : Plugin(), Encounters.View {
         answer(call, "existed") { it.forgetEvent(id) }
     }
 
+    /** Put an event in the trash, or take it back out. */
+    @PluginMethod
+    fun setTrashed(call: PluginCall) {
+        val id = call.getString("id") ?: return call.reject("setTrashed needs an id")
+        val trashed = call.getBoolean("trashed", true) == true
+
+        answer(call, "moved") { it.setTrashed(id, trashed) }
+    }
+
+    @PluginMethod fun trashed(call: PluginCall) = answer(call, "trashed") {
+        JSArray(it.trashed())
+    }
+
+    /** Delete everything in the trash, which retracts the user's own events. */
+    @PluginMethod
+    fun emptyTrash(call: PluginCall) =
+        perform(call, "the trash could not be emptied") { it.node.emptyTrash() }
+
     @PluginMethod fun wantedBlobs(call: PluginCall) = answer(call, "blobs") {
         JSArray(it.wantedBlobs((call.getInt("limit") ?: 32).toUInt()))
     }
