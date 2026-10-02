@@ -18,9 +18,20 @@ import {session} from "$lib/data/session"
 
 /**
  * Somebody waiting on an answer. `pubkey` is set when the gate already let them
- * through, which is a request to name them rather than to admit them.
+ * through, which is a request to name them rather than to admit them. `formerly`
+ * holds the links it moved off, so a screen opened on one still finds it.
  */
-export type Request = {link: number; code: number; asked: number; pubkey?: string}
+export type Request = {
+  link: number
+  code: number
+  asked: number
+  pubkey?: string
+  formerly?: number[]
+}
+
+/** The request a screen opened on `link` is about, wherever it has moved since. */
+export const requestOn = (waiting: Request[], link: number) =>
+  waiting.find(request => request.link === link || request.formerly?.includes(link))
 
 const pending = writable<Request[]>([])
 
@@ -73,9 +84,14 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
     ),
   )
 
+  // Every identified link, so a request can move to another link to the same person when its own one closes.
+  const identified = new Map<number, {pubkey: string; code: number}>()
+
   // One request per link and per person: a device may prove several pubkeys, and two phones may briefly hold two links.
   hold(
     Dip.addListener("peerIdentified", ({link, pubkey, code}) => {
+      identified.set(link, {pubkey, code})
+
       if (promised.has(link) || !unnamed(known, pubkey)) return
 
       pending.update(waiting =>
@@ -86,7 +102,31 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
     }),
   )
 
-  hold(Dip.addListener("linkClosed", ({link}) => drop(link)))
+  hold(
+    Dip.addListener("linkClosed", ({link}) => {
+      identified.delete(link)
+
+      pending.update(waiting =>
+        waiting.flatMap(request => {
+          if (request.link !== link) return [request]
+
+          // The person is still here over another link: the request stays, under that link's shapes.
+          const still = [...identified].find(([, peer]) => peer.pubkey === request.pubkey)
+
+          return still && request.pubkey
+            ? [
+                {
+                  ...request,
+                  link: still[0],
+                  code: still[1].code,
+                  formerly: [...(request.formerly ?? []), link],
+                },
+              ]
+            : []
+        }),
+      )
+    }),
+  )
 
   return () => {
     live = false
@@ -97,11 +137,11 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
   }
 })
 
-const requestOn = (link: number) => get(pending).find(request => request.link === link)
+const waitingOn = (link: number) => requestOn(get(pending), link)
 
 /** Pair with whoever is on a link, under the name the user gave them. */
 export const accept = async (link: number, petname: string) => {
-  const pubkey = requestOn(link)?.pubkey
+  const pubkey = waitingOn(link)?.pubkey
 
   drop(link)
 
@@ -118,7 +158,7 @@ export const accept = async (link: number, petname: string) => {
  * asked about at the next meeting.
  */
 export const decline = async (link: number) => {
-  const pubkey = requestOn(link)?.pubkey
+  const pubkey = waitingOn(link)?.pubkey
 
   drop(link)
 

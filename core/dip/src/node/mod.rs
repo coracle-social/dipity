@@ -191,6 +191,9 @@ pub struct Node {
     /// Links closed because another link to the same person carries the
     /// session, so their peripheral is not redialed while it does.
     duplicates: std::collections::BTreeSet<LinkId>,
+    /// Who each peripheral this device dialed turned out to be, so a person
+    /// already connected over a link they dialed is not dialed a second time.
+    dialed_as: BTreeMap<PeripheralId, PublicKey>,
 }
 
 impl Node {
@@ -228,6 +231,7 @@ impl Node {
             radio_started: false,
             transferred: BTreeMap::new(),
             duplicates: std::collections::BTreeSet::new(),
+            dialed_as: BTreeMap::new(),
         };
 
         // Whatever was removed while no node was listening is still on disk.
@@ -277,7 +281,7 @@ impl Node {
     pub fn peripheral_seen(&mut self, peripheral: &PeripheralId, rssi: i16) -> Vec<Action> {
         self.scheduler.seen(peripheral.clone(), rssi);
 
-        match self.scheduler.next_dial(self.central_links()) {
+        match self.scheduler.next_dial(self.central_links(), &self.busy()) {
             Some(peripheral) => vec![Action::Connect(peripheral)],
             None => Vec::new(),
         }
@@ -486,6 +490,11 @@ impl Node {
 
         self.sweep_events();
 
+        // A peripheral id rotates, so who one turned out to be is kept only while it is still heard.
+        let scheduler = &self.scheduler;
+        self.dialed_as
+            .retain(|peripheral, _| scheduler.knows(peripheral));
+
         let mut actions = Vec::new();
 
         if !self.radio_started {
@@ -494,7 +503,7 @@ impl Node {
         }
 
         // A queued candidate may now be past its rate limit, its backoff, or the link cap.
-        if let Some(peripheral) = self.scheduler.next_dial(self.central_links()) {
+        if let Some(peripheral) = self.scheduler.next_dial(self.central_links(), &self.busy()) {
             actions.push(Action::Connect(peripheral));
         }
 
@@ -750,6 +759,23 @@ impl Node {
         self.link_peripheral.len()
     }
 
+    /// Peripherals whose person is connected already, over any link, which a
+    /// second dial would only duplicate.
+    fn busy(&self) -> std::collections::BTreeSet<PeripheralId> {
+        let connected: std::collections::BTreeSet<PublicKey> = self
+            .sessions
+            .values()
+            .filter_map(|session| session.peer.as_ref())
+            .flat_map(|peer| peer.pubkeys.iter().copied())
+            .collect();
+
+        self.dialed_as
+            .iter()
+            .filter(|(_, pubkey)| connected.contains(pubkey))
+            .map(|(peripheral, _)| peripheral.clone())
+            .collect()
+    }
+
     /// Sweep every session for work: fragments to write, links to tear down,
     /// and the earliest deadline worth waking for.
     ///
@@ -790,8 +816,16 @@ impl Node {
 
             // Who the link turned out to be, so a name typed at the gate lands, or one can be given now.
             let code = session.pairing_code();
+            let identified = session.take_identified();
 
-            for pubkey in session.take_identified() {
+            if let (Some(peripheral), Some(pubkey)) = (
+                self.link_peripheral.get(&session.link),
+                identified.iter().min(),
+            ) {
+                self.dialed_as.insert(peripheral.clone(), *pubkey);
+            }
+
+            for pubkey in identified {
                 if let Some(code) = code {
                     actions.push(Action::PeerIdentified(session.link, pubkey, code));
                 }
@@ -1457,7 +1491,10 @@ mod tests {
 
         // The second walked away while the third walked up.
         clock::at(1_001, || {
-            assert_eq!(node.scheduler.next_dial(0), Some(peripheral(3)));
+            assert_eq!(
+                node.scheduler.next_dial(0, &Default::default()),
+                Some(peripheral(3))
+            );
         });
     }
 
@@ -1473,7 +1510,7 @@ mod tests {
 
         // Long after its id rotated, dialing it would dial a ghost.
         clock::at(1_000 + scheduler::CANDIDATE_TTL_SECONDS, || {
-            assert!(node.scheduler.next_dial(0).is_none());
+            assert!(node.scheduler.next_dial(0, &Default::default()).is_none());
         });
     }
 
@@ -1562,6 +1599,43 @@ mod tests {
 
         assert_eq!(kept(&one).len(), 1, "one link to the same person");
         assert_eq!(kept(&one), kept(&two), "both ends kept the same link");
+    }
+
+    #[test]
+    fn a_person_connected_over_their_own_dial_is_not_dialed_again() {
+        let mut one = node();
+        let mut two = node();
+
+        one.notify_foregrounded();
+        two.notify_foregrounded();
+
+        // One dialed two once, so it knows whose that peripheral is.
+        clock::at(1_000, || {
+            one.peripheral_seen(&peripheral(1), -60);
+            two.link_up(LinkId(1), None, Role::Receiver, 4096).unwrap();
+            let opening = one
+                .link_up(LinkId(1), Some(peripheral(1)), Role::Dialer, 4096)
+                .unwrap();
+            settle(&mut one, &mut two, opening);
+            one.link_down(LinkId(1));
+            two.link_down(LinkId(1));
+        });
+
+        // Now two dials one, and the session is up the other way round.
+        clock::at(1_010, || {
+            one.link_up(LinkId(2), None, Role::Receiver, 4096).unwrap();
+            let opening = two
+                .link_up(LinkId(2), Some(peripheral(2)), Role::Dialer, 4096)
+                .unwrap();
+            settle(&mut two, &mut one, opening);
+        });
+
+        // Two's advertisement keeps arriving, but dialing it would only make a duplicate.
+        let actions = clock::at(1_000 + scheduler::WALKED_AWAY_BACKOFF_SECONDS + 5, || {
+            one.peripheral_seen(&peripheral(1), -60)
+        });
+
+        assert!(!actions.contains(&Action::Connect(peripheral(1))));
     }
 
     #[test]

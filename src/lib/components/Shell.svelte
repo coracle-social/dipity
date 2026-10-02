@@ -16,7 +16,7 @@
   import type {Item} from "$lib/data/feed"
   import {watchLinks} from "$lib/data/links"
   import {go, place} from "$lib/data/nav"
-  import {requests, watchPairings} from "$lib/data/pairing"
+  import {requestOn, requests, watchPairings} from "$lib/data/pairing"
   import {step, watchTransfers} from "$lib/data/transfer"
 
   let composing = $state(false)
@@ -59,7 +59,7 @@
   const asked = $derived.by(() => {
     const here = $place
 
-    return here.at === "pairing" ? $requests.find(request => request.link === here.link) : undefined
+    return here.at === "pairing" ? requestOn($requests, here.link) : undefined
   })
 </script>
 

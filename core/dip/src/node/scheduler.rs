@@ -134,6 +134,16 @@ impl Scheduler {
             .sort_by_key(|candidate| std::cmp::Reverse(candidate.rssi));
     }
 
+    /// Whether a peripheral is still queued, for forgetting what is kept about
+    /// one the radio has stopped hearing.
+    #[must_use]
+    pub fn knows(&self, peripheral: &PeripheralId) -> bool {
+        self.candidates
+            .iter()
+            .any(|candidate| &candidate.peripheral == peripheral)
+            || self.linked.contains(peripheral)
+    }
+
     /// A dial came up, so it no longer holds a slot as a pending one.
     pub fn connected(&mut self, peripheral: &PeripheralId) {
         self.dialing.remove(peripheral);
@@ -172,8 +182,13 @@ impl Scheduler {
 
     /// The strongest admissible candidate, if the floor, the link cap, the
     /// rate limit and its backoff all allow a dial. `open_links` counts the
-    /// central links already up; dials still on their way count too.
-    pub fn next_dial(&mut self, open_links: usize) -> Option<PeripheralId> {
+    /// central links already up; dials still on their way count too. `busy`
+    /// are peripherals whose person is already connected over another link.
+    pub fn next_dial(
+        &mut self,
+        open_links: usize,
+        busy: &BTreeSet<PeripheralId>,
+    ) -> Option<PeripheralId> {
         let now = clock::now();
 
         self.forget_stale(now);
@@ -199,6 +214,7 @@ impl Scheduler {
             if rssi < RSSI_FLOOR
                 || self.linked.contains(&peripheral)
                 || self.dialing.contains_key(&peripheral)
+                || busy.contains(&peripheral)
             {
                 continue;
             }
