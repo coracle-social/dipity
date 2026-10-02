@@ -36,7 +36,7 @@ A browser has no shell, so `just dev` runs against `src/lib/dev/` — the plugin
 
 Seven screens under `src/lib/components/`, switched by a `place` store rather than a router: `Board` (the feed, its two orderings and its category filter), `ItemDetail`, `Bookmarks`, `People`, `ContactDetail`, `Settings` and `Pairing`, with `Composer` over the board and `PairingTray` above the bar. `docs/stories.md` says what each one answers.
 
-**A boost or a comment opens what it is about**, rather than its own page. `opensId` in `src/lib/data/feed.ts` is the one rule and `Quoted` draws the embedded line, off `summaryOf` in `src/lib/kinds/` — an article and a calendar event title themselves in a tag rather than in their content. Reacting and boosting are offered on everything, since the user's own event travels whatever this device may do with what it names.
+**A boost or a comment opens what it is about**, rather than its own page. `opensId` in `src/lib/data/feed.ts` is the one rule and `Quoted` draws what it embeds as a compact preview of its kind — a poll's question and options, an event's time and place, an article's title and summary — with nothing to press but the way through to it. Reacting and boosting are offered on everything, since the user's own event travels whatever this device may do with what it names.
 
 **The board draws nothing whose subject this device does not hold.** A boost names what it passes on rather than carrying it, so one can arrive on its own and draw blank. `grounded` in `src/lib/data/feed.ts` drops a page entry whose subject is missing. A comment whose parent is missing is dropped the same way. A reaction and a vote need no filter, being drawn only on the card of the thing they are about.
 
