@@ -205,7 +205,8 @@ object Encounters : Radio.Delegate {
                         "peerIdentified",
                         JSObject()
                             .put("link", action.link.value.toLong())
-                            .put("pubkey", action.pubkey),
+                            .put("pubkey", action.pubkey)
+                            .put("code", action.code.toLong()),
                     )
                 is Action.ConfirmIdentityTransfer ->
                     notify(

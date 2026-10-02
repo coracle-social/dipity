@@ -84,12 +84,15 @@ pub enum Action {
     /// The value is what the two users compare, and the gate authenticates
     /// nobody without it. `docs/discovery.md#the-consent-gate`.
     RequestApproval(LinkId, u32),
-    /// Who the peer on a link proved to be, once per pubkey it proves.
+    /// Who the peer on a link proved to be, once per pubkey it proves, and the
+    /// value the two users compare to be sure of it.
     ///
     /// The gate runs before either side names a pubkey, so a pet name the user
     /// typed there is for a person rather than for a key. This is what says
-    /// which key that person turned out to hold.
-    PeerIdentified(LinkId, PublicKey),
+    /// which key that person turned out to hold. The value is the one a held
+    /// gate shows, so a peer the gate let through can be named over the same
+    /// comparison. `docs/discovery.md#meeting-somebody`.
+    PeerIdentified(LinkId, PublicKey, u32),
     /// Present the share sheet over a key backup the core has written.
     ///
     /// The path is the shell's, not the view's: the view starts the export and
@@ -764,9 +767,13 @@ impl Node {
                 actions.push(Action::RequestApproval(session.link, code));
             }
 
-            // Who the link turned out to be, so a name typed at the gate lands.
+            // Who the link turned out to be, so a name typed at the gate lands, or one can be given now.
+            let code = session.pairing_code();
+
             for pubkey in session.take_identified() {
-                actions.push(Action::PeerIdentified(session.link, pubkey));
+                if let Some(code) = code {
+                    actions.push(Action::PeerIdentified(session.link, pubkey, code));
+                }
             }
 
             // An identity transfer asks each user once, and says how it ended.

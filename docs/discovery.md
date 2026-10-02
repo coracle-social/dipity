@@ -115,6 +115,12 @@ If neither party drops the connection, the dialer identifies itself first via [N
 
 If the receiver wishes to continue, it then identifies itself to the dialer, which can choose to drop the connection as well based on the disclosed nostr identity. If neither peer drops, they enter SYNCING state.
 
+### Meeting somebody
+
+The gate decides whether a link proceeds; it does not decide whether the person on it becomes a contact. A stranger the cool-off or a discoverable time admits passes without a prompt, and syncs, but has no name on this device, and every [policy](./policy.md) the user can set about a person starts from naming them.
+
+So once a peer the user has not named identifies itself, the device asks to pair anyway, the same way a held gate does: the same five shapes over the same transcript, and a name for whoever is standing there. Nothing waits on the answer. Naming them writes the user's [contact card](./policy.md#social-graph) for the pubkey the session proved; not now leaves them unnamed, to be asked about again at the next meeting.
+
 ## Heartbeat and teardown
 
 The heartbeat is **liveness, not authorization**. Proximity is already guaranteed by transport configuration (see [`transport.md`](./transport.md)), so the heartbeat's only job is cleanup, and it can afford to be lenient.

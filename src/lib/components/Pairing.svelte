@@ -51,7 +51,9 @@
     <Button size="lg" disabled={!petname.trim()} onclick={() => answer(true)}>
       The shapes match
     </Button>
-    <Button variant="ghost" size="lg" onclick={() => answer(false)}>Not this person</Button>
+    <Button variant="ghost" size="lg" onclick={() => answer(false)}>
+      {request.pubkey ? "Not now" : "Not this person"}
+    </Button>
   </div>
 {:else}
   <EmptyState icon={UserX}>That request is gone. They walked away, or it timed out.</EmptyState>

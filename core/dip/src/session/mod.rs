@@ -355,7 +355,7 @@ impl Session {
             return None;
         }
 
-        let handshake_hash = self.wire.noise.handshake_hash().ok()?;
+        let code = self.pairing_code()?;
 
         if let State::GatePending {
             approval_requested, ..
@@ -363,6 +363,15 @@ impl Session {
         {
             *approval_requested = true;
         }
+
+        Some(code)
+    }
+
+    /// The five shapes both users compare, derived from this session's
+    /// transcript, or `None` before the handshake has finished.
+    #[must_use]
+    pub fn pairing_code(&self) -> Option<u32> {
+        let handshake_hash = self.wire.noise.handshake_hash().ok()?;
 
         Some(sas::sas(
             sas::PAIRING_LABEL,
@@ -2019,6 +2028,26 @@ mod tests {
         let mut dialer = pair(4096, Role::Dialer, 1);
         let mut receiver = pair(4096, Role::Receiver, 2);
         exchange_apart(&mut dialer, &mut receiver, &dialer_db, &receiver_db);
+    }
+
+    #[test]
+    fn both_ends_of_a_session_show_the_same_shapes() {
+        let db = Db::open_in_memory().unwrap();
+        let mut dialer = pair(4096, Role::Dialer, 1);
+        let mut receiver = pair(4096, Role::Receiver, 2);
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
+
+        assert_eq!(
+            dialer.pairing_code(),
+            None,
+            "nothing to compare before the handshake"
+        );
+
+        full_exchange(&mut dialer, &mut receiver, &db);
+
+        assert!(dialer.pairing_code().is_some());
+        assert_eq!(dialer.pairing_code(), receiver.pairing_code());
     }
 
     #[test]

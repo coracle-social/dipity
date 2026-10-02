@@ -48,7 +48,7 @@ Seven screens under `src/lib/components/`, switched by a `place` store rather th
 
 **Trust, block and mute are published events; everything else is a preference.** `src/lib/data/contacts.ts` writes kinds 16017, 16018 and 10000 as plain `p` tag lists, which is what `db/pref/query.rs::graph` reads; `src/lib/data/policy.ts` writes the `policy.*` keys and reads none of them. `Node::policy` answers the compiled `Policy` as JSON with the defaults in it, which is why editing visibility can rewrite the whole document safely. The defaults are `Policy::new` and `Visibility::default` and nothing above them, so a setting added there reaches the view with nothing else naming it.
 
-**The gate runs before anybody is named**, so the pet name typed while pairing is held against the link and written when the peer identifies itself. The core answers both halves: `Approval.code` is `session::sas` over the handshake transcript at `PAIRING_SPACE`, which is 24^5 and is why `Shapes` draws five, and `peerIdentified` names the peer once it has proved a pubkey.
+**The gate runs before anybody is named**, so the pet name typed while pairing is held against the link and written when the peer identifies itself. The core answers both halves: `Approval.code` is `session::sas` over the handshake transcript at `PAIRING_SPACE`, which is 24^5 and is why `Shapes` draws five, and `peerIdentified` names the peer once it has proved a pubkey and carries the same code, so a stranger the gate let through is asked to pair as well.
 
 The first version carries text. Nothing above the bridge attaches a file, and the simulator emits none.
 
