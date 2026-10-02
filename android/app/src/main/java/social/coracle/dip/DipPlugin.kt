@@ -337,6 +337,14 @@ class DipPlugin : Plugin(), Encounters.View {
         backup = null
     }
 
+    // ------------------------------------------------------------ Bluetooth
+
+    /** Whether Bluetooth can be used now. Changes arrive as `bluetooth` events. */
+    @PluginMethod
+    fun bluetooth(call: PluginCall) {
+        call.resolve(JSObject().put("state", Encounters.power(context)))
+    }
+
     // ----------------------------------------------------------------- Back
 
     /**

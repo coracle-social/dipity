@@ -1,6 +1,7 @@
 <script lang="ts">
   import Plus from "@lucide/svelte/icons/plus"
   import {Button} from "$lib/components/ui/button"
+  import BluetoothBanner from "$lib/components/BluetoothBanner.svelte"
   import Board from "$lib/components/Board.svelte"
   import Bookmarks from "$lib/components/Bookmarks.svelte"
   import BottomNav from "$lib/components/BottomNav.svelte"
@@ -64,6 +65,8 @@
 
 <div class="flex min-h-svh flex-col bg-background pb-36">
   <div class="mx-auto flex w-full max-w-2xl flex-1 flex-col px-5 pt-safe-t">
+    <BluetoothBanner />
+
     {#if $place.at === "board"}
       <Board onBoost={compose} />
     {:else if $place.at === "bookmarks"}

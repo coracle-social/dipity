@@ -1,6 +1,8 @@
 package social.coracle.dip
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -20,13 +22,18 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.os.ParcelUuid
 import java.io.Closeable
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
+import androidx.core.content.ContextCompat
 import kotlin.concurrent.thread
 import uniffi.dip_ffi.characteristicUuid
 import uniffi.dip_ffi.serviceUuid
@@ -82,6 +89,8 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         fun bulkReceived(link: ULong, bytes: ByteArray)
 
         fun bulkWrote(link: ULong)
+
+        fun power(state: String)
     }
 
     private val service = UUID.fromString(serviceUuid())
@@ -123,6 +132,54 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
     private var nextLink = 1UL
 
+    /** What the core last asked of the radio, applied again whenever Bluetooth comes back on. */
+    private var wantsScan = false
+    private var wantsAdvertise = false
+
+    /**
+     * Bluetooth being switched off or on, which ends every link and stops every
+     * scan and advertisement, and on the way back means starting them again.
+     */
+    private val switched =
+        object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) = confined {
+                when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)) {
+                    BluetoothAdapter.STATE_ON -> {
+                        scan(wantsScan)
+                        advertise(wantsAdvertise)
+                    }
+                    BluetoothAdapter.STATE_OFF -> {
+                        server?.close()
+                        server = null
+                    }
+                }
+
+                delegate.power(power())
+            }
+        }
+
+    init {
+        ContextCompat.registerReceiver(
+            context,
+            switched,
+            IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+    }
+
+    /**
+     * Whether Bluetooth can be used, as the view words it: `on`, `off`, `denied`
+     * when the permission is missing, or `unsupported`.
+     */
+    fun power(): String =
+        when {
+            adapter == null -> "unsupported"
+            context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) !=
+                PackageManager.PERMISSION_GRANTED -> "denied"
+            adapter.isEnabled -> "on"
+            else -> "off"
+        }
+
     /** One connection, from either side. */
     private sealed interface Link {
         /** This device dialed, so it holds the client and its characteristic. */
@@ -147,6 +204,8 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     // --------------------------------------------------------------- Actions
 
     fun scan(on: Boolean) = confined {
+        wantsScan = on
+
         val scanner = adapter?.bluetoothLeScanner ?: return@confined
 
         if (on) {
@@ -166,6 +225,8 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     }
 
     fun advertise(on: Boolean) = confined {
+        wantsAdvertise = on
+
         val advertiser = adapter?.bluetoothLeAdvertiser ?: return@confined
 
         if (on) {

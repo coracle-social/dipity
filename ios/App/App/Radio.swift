@@ -170,6 +170,18 @@ final class Radio: NSObject {
     ///
     /// The GATT service stays registered, unlike Android's, because it is added
     /// from `peripheralManagerDidUpdateState` and that fires once at power-on.
+    /// Whether Bluetooth can be used, as the view words it: `on`, `off`, `denied`,
+    /// `unsupported`, or `unknown` while the system has not said yet.
+    var power: String {
+        switch central.state {
+        case .poweredOn: return "on"
+        case .poweredOff: return "off"
+        case .unauthorized: return "denied"
+        case .unsupported: return "unsupported"
+        default: return "unknown"
+        }
+    }
+
     func stop() {
         scan(false)
         advertise(false)
@@ -270,6 +282,7 @@ protocol RadioDelegate: AnyObject {
     func radio(_ radio: Radio, bulkDownOn link: UInt64)
     func radio(_ radio: Radio, receivedBulk bytes: Data, on link: UInt64)
     func radio(_ radio: Radio, wroteBulkOn link: UInt64)
+    func radio(_ radio: Radio, power: String)
 }
 
 // ------------------------------------------------------------------- Central
@@ -279,6 +292,8 @@ extension Radio: CBCentralManagerDelegate {
         // The core asked to scan before the radio was ready, or the user turned
         // Bluetooth back on. Either way the standing request is still standing.
         if manager.state == .poweredOn { scan(scanning) }
+
+        delegate?.radio(self, power: power)
     }
 
     func centralManager(_ manager: CBCentralManager, willRestoreState state: [String: Any]) {

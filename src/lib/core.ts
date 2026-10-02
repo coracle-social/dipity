@@ -31,6 +31,12 @@ export type PeerIdentity = {link: number; pubkey: string}
 /** A link that is no longer there, so nothing can be offered over it. */
 export type LinkClosed = {link: number}
 
+/**
+ * Whether Bluetooth can be used: on, switched off, not permitted, missing from
+ * the phone, or not yet reported by the system.
+ */
+export type Bluetooth = "on" | "off" | "denied" | "unsupported" | "unknown"
+
 /** The six digits both devices show during a login-with-device. */
 export type TransferPrompt = {link: number; code: number}
 
@@ -295,6 +301,9 @@ export type DipCore = {
    */
   setCanGoBack(options: {can: boolean}): Promise<void>
 
+  /** Whether Bluetooth can be used now. Changes arrive as `bluetooth` events. */
+  bluetooth(): Promise<{state: Bluetooth}>
+
   /**
    * The user pressed the phone's own back button.
    *
@@ -302,6 +311,11 @@ export type DipCore = {
    * the view leaves the top thing rather than deciding whether to.
    */
   addListener(event: "backPressed", handler: () => void): Promise<PluginListenerHandle>
+  /** Bluetooth was switched on or off, or its permission changed. */
+  addListener(
+    event: "bluetooth",
+    handler: (power: {state: Bluetooth}) => void,
+  ): Promise<PluginListenerHandle>
   addListener(
     event: "requestApproval",
     handler: (approval: Approval) => void,

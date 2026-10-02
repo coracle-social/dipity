@@ -181,6 +181,9 @@ final class Encounters {
         }
     }
 
+    /// Whether Bluetooth can be used, which the radio knows from launch on.
+    var power: String { radio.power }
+
     /// Hand a notification to the view, if there is one to hear it.
     func notify(_ event: String, _ data: [String: Any]) {
         view?.notify(event, data)
@@ -274,5 +277,10 @@ extension Encounters: RadioDelegate {
 
     func radio(_ radio: Radio, wroteBulkOn link: UInt64) {
         drive { try $0.bulkWriteComplete(link: LinkId(value: link)) }
+    }
+
+    // Nothing to tell the core: it asks to scan regardless, and the radio keeps the request standing.
+    func radio(_ radio: Radio, power: String) {
+        notify("bluetooth", ["state": power])
     }
 }

@@ -56,6 +56,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "setPreference", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "clearPreference", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setCanGoBack", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "bluetooth", returnType: CAPPluginReturnPromise),
     ]
 
     /// The `exportKey` call waiting on the sheet it opened.
@@ -264,6 +265,13 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         } catch {
             call.reject("the transferred identity could not be adopted", nil, error)
         }
+    }
+
+    // ------------------------------------------------------------- Bluetooth
+
+    /// Whether Bluetooth can be used now. Changes arrive as `bluetooth` events.
+    @objc func bluetooth(_ call: CAPPluginCall) {
+        onMain { call.resolve(["state": Encounters.shared.power]) }
     }
 
     // ------------------------------------------------------------------ Back

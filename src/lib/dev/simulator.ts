@@ -25,7 +25,7 @@ import {bytesToHex} from "@noble/hashes/utils.js"
 import {COMMENT, NOTE, REACTION, REPOST, getPubkey, hash, makeSecret} from "@welshman/util"
 import type {HashedEvent} from "@welshman/util"
 import {nip19} from "nostr-tools"
-import type {Blob, DipCore, Pref, Query} from "$lib/core"
+import type {Blob, Bluetooth, DipCore, Pref, Query} from "$lib/core"
 import {boost, card, comment, genericBoost, reaction} from "$lib/dev/kinds"
 import {compiled} from "$lib/dev/policy"
 import {
@@ -603,6 +603,18 @@ export class Simulator extends WebPlugin implements DipCore {
    * driven here, the same way a pairing request is.
    */
   async setCanGoBack() {}
+
+  private power: Bluetooth = "on"
+
+  async bluetooth() {
+    return {state: this.power}
+  }
+
+  /** Switch the pretend radio, which is how the banner is seen here: `dip.setBluetooth("off")`. */
+  setBluetooth(state: Bluetooth) {
+    this.power = state
+    this.notifyListeners("bluetooth", {state})
+  }
 
   /** Put the same six digits in front of both users. */
   private invite(link: number, source: boolean) {

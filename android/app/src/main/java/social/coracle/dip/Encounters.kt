@@ -314,4 +314,14 @@ object Encounters : Radio.Delegate {
     }
 
     override fun bulkWrote(link: ULong) = drive { it.bulkWriteComplete(LinkId(link)) }
+
+    // Nothing to tell the core: it asks to scan regardless, and the radio keeps the request standing.
+    override fun power(state: String) = notify("bluetooth", JSObject().put("state", state))
+
+    /** Whether Bluetooth can be used now, open core or not. */
+    fun power(context: Context): String {
+        bind(context)
+
+        return radio.power()
+    }
 }
