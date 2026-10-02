@@ -135,19 +135,57 @@ export const muted: Readable<Set<string>> = derived(
     new Set([...people.values()].filter(contact => contact.muted).map(({pubkey}) => pubkey)),
 )
 
-/** The people list, the ones the user named first. */
-export const contacts: Readable<Contact[]> = derived(social, ({people}) =>
-  [...people.values()].sort((a, b) => {
-    const named = Number(Boolean(b.petname)) - Number(Boolean(a.petname))
+/** The people list, the ones the user named first. The user is not among them. */
+export const contacts: Readable<Contact[]> = derived([social, session], ([{people}, $session]) =>
+  [...people.values()]
+    .filter(contact => contact.pubkey !== $session.identity)
+    .sort((a, b) => {
+      const named = Number(Boolean(b.petname)) - Number(Boolean(a.petname))
 
-    return (
-      named ||
-      (a.petname ?? a.aliases[0]?.petname ?? a.pubkey).localeCompare(
-        b.petname ?? b.aliases[0]?.petname ?? b.pubkey,
+      return (
+        named ||
+        (a.petname ?? a.aliases[0]?.petname ?? a.pubkey).localeCompare(
+          b.petname ?? b.aliases[0]?.petname ?? b.pubkey,
+        )
       )
-    )
-  }),
+    }),
 )
+
+/** One name other people know the user by, however each of them spelled it, and who gave it. */
+export type Alias = {slug: string; spellings: string[]; by: string[]}
+
+/** A name reduced to what two people typing it the same way would agree on. */
+export const slugify = (name: string) =>
+  name
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "") || name.trim().toLowerCase()
+
+/**
+ * The names other people have given the user, one entry per name however it
+ * was spelled, most given first. Each comes from a card somebody published
+ * about the user, so each has a claimant.
+ */
+export const aliases: Readable<Alias[]> = derived([social, session], ([{people}, $session]) => {
+  const given = $session.identity ? (people.get($session.identity)?.aliases ?? []) : []
+  const bySlug = new Map<string, Alias>()
+
+  for (const {by, petname} of given) {
+    const slug = slugify(petname)
+    const alias = bySlug.get(slug) ?? {slug, spellings: [], by: []}
+
+    if (!alias.spellings.includes(petname)) alias.spellings.push(petname)
+    if (!alias.by.includes(by)) alias.by.push(by)
+
+    bySlug.set(slug, alias)
+  }
+
+  return [...bySlug.values()].sort(
+    (a, b) => b.by.length - a.by.length || a.slug.localeCompare(b.slug),
+  )
+})
 
 /** What to call somebody, and whose name it is when it is not the user's. */
 export type Named = {name: string; according?: string}
