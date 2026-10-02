@@ -25,11 +25,16 @@
 {:else if $session.state === "absent"}
   <FirstRun />
 {:else}
-  <div class="flex min-h-svh items-center justify-center bg-background px-8">
+  <div class="flex min-h-svh flex-col items-center justify-center bg-background px-8">
     <p class="text-center text-sm text-pretty text-muted-foreground">
       {$session.state === "opening"
         ? "Opening…"
         : "The core is not running. This screen needs the app shell around it."}
     </p>
+    {#if $session.why}
+      <p class="mt-2 text-center font-mono text-xs break-words text-muted-foreground">
+        {$session.why}
+      </p>
+    {/if}
   </div>
 {/if}

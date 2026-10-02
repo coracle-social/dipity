@@ -16,6 +16,8 @@ export type Session = {
   state: SessionState
   /** The identity the core started under, once it has. */
   identity?: string
+  /** What the shell said when the core could not be reached. */
+  why?: string
 }
 
 const store = writable<Session>({state: "opening"})
@@ -43,8 +45,9 @@ export const open = async () => {
     } else {
       store.set({state: "absent"})
     }
-  } catch {
-    store.set({state: "unavailable"})
+  } catch (error) {
+    console.error("the core could not be opened", error)
+    store.set({state: "unavailable", why: error instanceof Error ? error.message : String(error)})
   }
 }
 
