@@ -39,6 +39,7 @@ use anyhow::{Context, Result, bail};
 use coracle_lib::events::HashedEvent;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::PublicKey;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::blobs::BlobStore;
 use crate::clock;
@@ -801,11 +802,15 @@ impl Session {
     }
 
     /// Send whatever step the exchange answered with, if it answered with one.
+    ///
+    /// One of those steps carries the identity key, so the payload is wiped
+    /// once it is queued; the wire seals its own copy as it leaves.
     fn send_transfer(&mut self, payload: Option<Vec<u8>>) -> Result<()> {
-        match payload {
-            Some(payload) => self.send_control(control::TRANSFER, &payload),
-            None => Ok(()),
-        }
+        let Some(payload) = payload.map(Zeroizing::new) else {
+            return Ok(());
+        };
+
+        self.send_control(control::TRANSFER, &payload)
     }
 
     /// Whether this device is in a position to move an identity at all: a
@@ -1171,14 +1176,19 @@ impl Session {
     /// Queue a control frame, encrypted, with its discriminant ahead of the
     /// payload.
     fn send_control(&mut self, discriminant: u8, payload: &[u8]) -> Result<()> {
-        let mut framed = Vec::with_capacity(payload.len() + 1);
-        framed.push(discriminant);
-        framed.extend_from_slice(payload);
-
-        self.send(&Frame {
+        let mut frame = Frame {
             channel: Channel::Control,
-            payload: framed,
-        })
+            payload: Vec::with_capacity(payload.len() + 1),
+        };
+        frame.payload.push(discriminant);
+        frame.payload.extend_from_slice(payload);
+
+        let sent = self.send(&frame);
+
+        // A control frame can carry the identity key, so the copy here goes with the call.
+        frame.payload.zeroize();
+
+        sent
     }
 
     /// Queue a sync message as a frame on the sync channel.

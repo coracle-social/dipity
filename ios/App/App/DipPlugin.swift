@@ -295,9 +295,10 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         do {
-            guard let secret = try core.node.takeTransferredIdentity(link: link) else {
+            guard var secret = try core.node.takeTransferredIdentity(link: link) else {
                 return call.reject("no identity arrived on that link")
             }
+            defer { secret.resetBytes(in: 0..<secret.count) }
 
             try Keychain.write(secret)
             close()
@@ -644,7 +645,12 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     /// Write an identity and answer the npub, which is all the view is owed.
+    ///
+    /// The bytes are wiped on the way out, whichever way it went.
     private func adopt(_ secret: Data, into call: CAPPluginCall) {
+        var secret = secret
+        defer { secret.resetBytes(in: 0..<secret.count) }
+
         do {
             try Keychain.write(secret)
             call.resolve(["npub": try App.identityNpub(secret: secret)])

@@ -278,6 +278,8 @@ class DipPlugin : Plugin(), Radio.Delegate {
             keystore.write(secret)
         } catch (error: Exception) {
             return call.reject("the transferred identity could not be stored", error)
+        } finally {
+            secret.fill(0)
         }
 
         close()
@@ -745,13 +747,15 @@ class DipPlugin : Plugin(), Radio.Delegate {
         drive { it.keyExportFinished() }
     }
 
-    /** Write an identity and answer the npub, which is all the view is owed. */
+    /** Write an identity and answer the npub, wiping the bytes on the way out either way. */
     private fun adopt(secret: ByteArray, call: PluginCall) {
         try {
             keystore.write(secret)
             call.resolve(JSObject().put("npub", identityNpub(secret)))
         } catch (error: Exception) {
             call.reject("the identity could not be stored", error)
+        } finally {
+            secret.fill(0)
         }
     }
 }

@@ -18,6 +18,7 @@
 
 use anyhow::{Result, anyhow, bail};
 use coracle_lib::keys::SecretKey;
+use zeroize::Zeroizing;
 
 use crate::session::sas::{LOGIN_LABEL, LOGIN_SPACE, sas};
 
@@ -261,8 +262,11 @@ impl IdentityTransfer {
 /// `coracle-lib` opens one door out of a `SecretKey` and it is hex, so the
 /// round trip lives here rather than at the call site.
 fn key_frame(identity: &SecretKey) -> Vec<u8> {
+    let hex = Zeroizing::new(identity.to_hex());
+    let bytes = Zeroizing::new(hex::decode(&*hex).expect("a key is 32 bytes of hex"));
+
     let mut payload = vec![message::KEY];
-    payload.extend_from_slice(&hex::decode(identity.to_hex()).expect("a key is 32 bytes of hex"));
+    payload.extend_from_slice(&bytes);
 
     payload
 }
@@ -276,7 +280,7 @@ fn read_key(payload: &[u8]) -> Result<SecretKey> {
         );
     }
 
-    SecretKey::from_hex(&hex::encode(payload))
+    SecretKey::from_hex(&Zeroizing::new(hex::encode(payload)))
         .map_err(|error| anyhow!("an identity transfer carried an unusable key: {error}"))
 }
 

@@ -14,6 +14,7 @@
 //! ciphertext in an order it cannot open.
 
 use anyhow::{Result, bail};
+use zeroize::Zeroize;
 
 use crate::link::Role;
 
@@ -165,8 +166,12 @@ impl Wire {
             return Ok(None);
         };
 
+        // The plaintext goes once it is sealed: a control frame can carry the identity key.
         if secrecy == Secrecy::Sealed {
-            fragment.payload = self.noise.encrypt(pipe, &fragment.payload)?;
+            let sealed = self.noise.encrypt(pipe, &fragment.payload)?;
+
+            fragment.payload.zeroize();
+            fragment.payload = sealed;
         }
 
         let write = fragment.encode();

@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use coracle_lib::keys::SecretKey;
+use zeroize::Zeroizing;
 
 /// The shortest password the backup will encrypt under.
 ///
@@ -44,13 +45,15 @@ pub fn write(identity: &SecretKey, cache: &Path, password: Option<&str>) -> Resu
                 bail!("a backup password is at least {MINIMUM_PASSWORD_LENGTH} characters");
             }
 
-            let ncryptsec = identity
-                .to_ncryptsec(password, LOG_N, SECURITY_BYTE)
-                .map_err(|error| anyhow::anyhow!("encrypting the backup failed: {error}"))?;
+            let ncryptsec = Zeroizing::new(
+                identity
+                    .to_ncryptsec(password, LOG_N, SECURITY_BYTE)
+                    .map_err(|error| anyhow::anyhow!("encrypting the backup failed: {error}"))?,
+            );
 
-            instructions(&ncryptsec, true)
+            Zeroizing::new(instructions(&ncryptsec, true))
         }
-        None => instructions(&identity.to_nsec(), false),
+        None => Zeroizing::new(instructions(&Zeroizing::new(identity.to_nsec()), false)),
     };
 
     fs::create_dir_all(cache)
@@ -58,7 +61,8 @@ pub fn write(identity: &SecretKey, cache: &Path, password: Option<&str>) -> Resu
 
     let path = cache.join(FILE_NAME);
 
-    fs::write(&path, contents).with_context(|| format!("writing the backup {}", path.display()))?;
+    fs::write(&path, contents.as_bytes())
+        .with_context(|| format!("writing the backup {}", path.display()))?;
 
     Ok(path)
 }
