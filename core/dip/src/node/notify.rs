@@ -1,11 +1,6 @@
 //! When to tell the user something arrived, which is the core's to decide
 //! because the view is suspended whenever it would matter.
-//!
-//! A notification goes out only while the app is in the background, and only
-//! for what the user switched on: somebody nearby wanting to pair, or new
-//! writing on the board. Writing is counted rather than announced one event at
-//! a time, so a first sync that brings in a hundred things is one
-//! notification, updated at most once a minute. `docs/storage.md#notifications`.
+//! `docs/storage.md#notifications`.
 
 use std::collections::BTreeSet;
 

@@ -48,9 +48,8 @@ pub struct Gate {
     /// response accepted — happens before it has.
     pub passed: bool,
     /// Whether the peer got in as an unrecognized stranger on the disclosure
-    /// bucket alone, which is what spends from it. A recognized peer passes on
-    /// standing and never consulted the bucket; a stranger the user approved
-    /// by hand was looked at by the person the bucket stands in for.
+    /// bucket alone, which is what spends from it. A recognized peer and a
+    /// stranger the user approved by hand spend nothing.
     pub spends_budget: bool,
     /// Where the app is, or `None` if the shell has not said this run.
     pub presence: Option<Presence>,

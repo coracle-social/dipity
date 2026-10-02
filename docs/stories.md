@@ -75,13 +75,13 @@ Four facts about the transport decide most of the interface, and every story bel
 43. The user writes the key down somewhere safe, locked with a password if they choose, whenever they get round to it. — `KeyBackup`, in `Settings`
 44. The user puts their key on a second phone, so both phones are them. — `DeviceLogin`
 45. The user takes the key off their other phone, and this one stops being the identity it made at first run. — `DeviceLogin`
-46. With the phone in their pocket, the user hears that somebody nearby wants to pair, or that new things reached the board, if they switched that on in Settings or when the app offered it after their second post. — `NotificationOffer`, `Settings`
+46. With the phone in their pocket, the user hears that somebody nearby wants to pair or that new things reached the board, once they switch that on in Settings or when the app offers it after their second post. — `NotificationOffer`, `Settings`
 
 ## No screen yet
 
 Each of these is a story the transport or the docs already support and the view does not answer.
 
 - **A notification while the app is closed.** Story 16 in the pocket. The core emits `WakeAt` and the shells own local notifications; nothing posts one.
-- **Quiet times.** `policy.quiet_times` is a list of windows and wants a time picker rather than a switch. Settings edits the number of strangers a day and leaves it alone.
+- **Quiet times.** `policy.quiet_times` is a list of windows and needs a time picker rather than a switch. Settings edits the number of strangers a day and leaves it alone.
 - **Per-contact gossip.** [`policy.md`](./policy.md#accept-and-gossip) expresses gossip as a tier over the whole trust graph, so "do not pass this person's things on" is only sayable as a block. `ContactDetail` offers trust, mute and block.
 - **Media.** The first version carries text. `imeta`, previews and blob transfer are built below the bridge and nothing above it attaches a file.

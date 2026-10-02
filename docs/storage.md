@@ -19,7 +19,7 @@ Where events live, who can answer a query, and what happens while the app is asl
 | `blob` | A mapping of blob sha256 to the metadata in the `imeta` tag of the first event seen to reference it, plus how much of the file is on disk. |
 | `blob_reference` | `sha256`, `event_id`. One row per event that references a hash. The record and its bytes live as long as any of them, and a peer is served the bytes only when it may be served all of them. |
 | `pair_secret` | `pubkey`, `secret`, `updated_at`. One row per peer this device has paired with, derived from that session's handshake hash. What a later encounter is [recognized](./discovery.md#recognition) from before either side names a pubkey. Provenance, so it is never served. |
-| `disclosure_bucket` | `tokens`, `updated_at`. One row: the level of the [disclosure bucket](./policy.md#discoverability) when it was last spent from, absent while full. No recipient and no history: the dialer discloses before the peer has named itself, and a log of strangers met would record where the user has been. |
+| `disclosure_bucket` | `tokens`, `updated_at`. One row holding the level of the [disclosure bucket](./policy.md#discoverability) when it was last spent from, and absent while full. It names no recipient, because the dialer discloses before the peer has named itself, and keeps no history, because a log of strangers met would record where the user has been. |
 
 An event with an address — replaceable or addressable — keeps one row for it, and the later `created_at` wins. Two versions carrying the same second are settled by the lower id, NIP-01's own rule, so the loser is refused outright rather than stored beside the winner. A write is therefore not proof that what it wrote is what a read answers, and anything rewriting a list it already holds stamps past the version it replaces.
 
@@ -78,8 +78,8 @@ The user drops and retracts through the trash. Throwing something out marks it i
 
 ## Notifications
 
-Notifications are local. Nothing here talks to a server, so there is no push service to send one, and the core decides when to raise one because the view is suspended whenever it would matter. It raises them only while the app is in the background, and only for what the user switched on in `notifications.pairing` and `notifications.content`, both off until they do.
+Notifications are local, because nothing here talks to a server. The core raises them, because the view is suspended whenever one would matter, and only while the app is in the background. It raises only what the user switched on in `notifications.pairing` and `notifications.content`, which are both off until the user switches them on.
 
-A pairing notification goes out once for each person the user has not named, or once per held link while the gate does not yet know who is on it. New writing is counted rather than announced one event at a time: notes, comments, polls, calendar entries and articles from anybody the user has not muted, and not reactions, boosts, deletions, lists or contact cards. The count runs from the last time the app was open, so a first sync that brings in a hundred things is one notification, and it is updated at most once a minute. Opening the app clears both.
+A pairing notification goes out once for each person the user has not named, or once per held link while the gate does not yet know who is on it. New writing is counted rather than announced one event at a time. It covers notes, comments, polls, calendar entries and articles from anybody the user has not muted, and not reactions, boosts, deletions, lists or contact cards. The count runs from the last time the app was open and the notification updates at most once a minute, so a first sync that brings in a hundred things is one notification. Opening the app clears both.
 
 The view offers notifications once, after the user has published writing twice, and asks the phone for permission only when the user switches one on.

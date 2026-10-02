@@ -1,10 +1,7 @@
 // Which notifications the user wants, and asking them once.
 //
-// The core decides when to notify, because the view is suspended whenever a
-// notification would matter, and reads these preferences to know what the
-// user switched on. Both start off. Switching one on asks the phone for
-// permission first, and nobody is asked anything until they have published
-// twice. `docs/storage.md#notifications`.
+// The core reads these preferences to decide when to notify. Switching one on
+// asks the phone for permission first. `docs/storage.md#notifications`.
 
 import {get, writable} from "svelte/store"
 import {Dip, type NotificationPermission} from "$lib/core"

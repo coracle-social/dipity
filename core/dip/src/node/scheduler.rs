@@ -56,8 +56,8 @@ pub(crate) const DIAL_FAILED_JITTER_SECONDS: i64 = 4;
 pub(crate) const DUPLICATE_BACKOFF_SECONDS: i64 = 5 * 60;
 
 /// How long a peripheral that took a disclosure and left before syncing is
-/// left alone: until its address rotates, so a harvester cannot drain the
-/// disclosure bucket by being dialed again and again. `docs/policy.md#discoverability`.
+/// left alone, which is until its address rotates.
+/// `docs/discovery.md#connection-scheduling`.
 pub(crate) const HARVESTED_BACKOFF_SECONDS: i64 = CANDIDATE_TTL_SECONDS;
 
 /// How long a sighting stays a candidate. A peripheral id rotates about every

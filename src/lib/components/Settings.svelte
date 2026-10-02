@@ -148,8 +148,8 @@
         onchange={event => setStrangersPerDay(event.currentTarget.value)} />
       <p class="text-xs text-pretty text-muted-foreground">
         Meeting somebody new means telling them who you are, even with your phone in your pocket.
-        Each time places you somewhere, so your phone spreads these out across the day, a few at a
-        time. People you have paired with or trust do not count.
+        Each time tells them where you were, so your phone spreads these out across the day, a few
+        at a time. People you have paired with or trust do not count.
       </p>
     </div>
 
@@ -179,7 +179,7 @@
 <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Notifications</h2>
 
 <p class="mt-2 text-sm text-pretty text-muted-foreground">
-  Only while the app is closed. Notifications are made on this phone and sent nowhere.
+  Your phone notifies you only while the app is closed, and makes the notifications itself.
 </p>
 
 <ul class="mt-4 space-y-4">

@@ -1,8 +1,8 @@
 import Foundation
 import UserNotifications
 
-/// Local notifications, which are the only kind there are: nothing here talks
-/// to a server, so the core decides what to say and the shell posts it.
+/// Local notifications. The core decides what to say and when, and the shell
+/// posts it.
 ///
 /// Each announcement has one identifier, so a newer count replaces the last
 /// rather than stacking. `docs/storage.md#notifications`.
