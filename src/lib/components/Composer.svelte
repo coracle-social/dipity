@@ -231,10 +231,15 @@
           That did not go out, and what you wrote is still here. Try again.
         </p>
       {/if}
-      <Button size="lg" disabled={!ready || sending} onclick={send}>
-        {about && !remark.trim() ? "Send it on as it is" : "Send it out"}
-      </Button>
-      <Button variant="ghost" size="lg" onclick={() => (open = false)}>Nevermind</Button>
+      <!-- One row, dismiss on the left: the keyboard leaves little enough room as it is. -->
+      <div class="flex gap-2">
+        <Button variant="ghost" size="lg" class="flex-1" onclick={() => (open = false)}>
+          Nevermind
+        </Button>
+        <Button size="lg" class="flex-1" disabled={!ready || sending} onclick={send}>
+          {about && !remark.trim() ? "Send it on as it is" : "Send it out"}
+        </Button>
+      </div>
     </Drawer.Footer>
   </Drawer.Content>
 </Drawer.Root>
