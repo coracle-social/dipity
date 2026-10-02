@@ -98,7 +98,7 @@ pair_secret = SHA256("dip/pair-secret" ‖ h)      # h at pairing time
 tag         = HMAC-SHA256(pair_secret, h)        # h at this encounter
 ```
 
-Domain-separated, so the secret cannot collide with any other use of the handshake hash. A session that recognized the peer leaves the secret alone. One that authenticated the peer without recognizing it replaces the secret on both sides, so a pairing one device missed the end of is repaired the next time the two meet.
+Domain-separated, so the secret cannot collide with any other use of the handshake hash. A session that recognized the peer leaves the secret alone. One that authenticated the peer without recognizing it replaces the secret on both sides, so a pairing that one device did not finish is repaired the next time the two meet.
 
 ### The consent gate
 
@@ -120,9 +120,9 @@ If the receiver wishes to continue, it then identifies itself to the dialer, whi
 
 ### Meeting somebody
 
-The gate decides whether a link proceeds; it does not decide whether the person on it becomes a contact. A stranger the cool-off or a discoverable time admits passes without a prompt, and syncs, but has no name on this device, and every [policy](./policy.md) the user can set about a person starts from naming them.
+The gate decides whether a link proceeds, and naming decides whether the person on it becomes a contact. A stranger admitted by the cool-off or a discoverable time passes without a prompt and syncs, but has no name on this device. Every [policy](./policy.md) the user can set about a person starts from naming them.
 
-So once a peer the user has not named identifies itself, the device asks to pair anyway, the same way a held gate does: the same five shapes over the same transcript, and a name for whoever is standing there. Nothing waits on the answer. Naming them writes the user's [contact card](./policy.md#social-graph) for the pubkey the session proved; not now leaves them unnamed, to be asked about again at the next meeting.
+So once a peer the user has not named identifies itself, the device asks to pair the same way a held gate does: the same five shapes over the same transcript, and a name for whoever is standing there. Nothing waits on the answer. Naming them writes the user's [contact card](./policy.md#social-graph) for the pubkey the session proved. Declining leaves them unnamed, and they are asked about again at the next meeting.
 
 ## Heartbeat and teardown
 

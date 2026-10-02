@@ -40,7 +40,7 @@ Requirements, because this is deliberate key exfiltration:
 
 - **Explicit on both ends.** Initiated by user action on the source and confirmed by user action on the target. Never automatic, never a background capability — this is the one flow the core will not run during a background wake, whatever the session state says.
 - **Short authentication string.** Both devices display a comparison value derived from the transcript, which the user checks by eye before the key moves. Nothing else authenticates this flow: the Noise handshake authenticates nobody ([`transport.md`](./transport.md#the-static-key-is-generated-per-session)), and NIP-42 cannot help, because the target authenticates as the identity it made at first run, which says nothing about whether it is the user's own phone. Same mechanism as Bluetooth numeric comparison or Signal safety numbers. The value is six decimal digits, the first four bytes of `SHA-256("dip/login-with-device/sas" ‖ handshake_hash)`, read big-endian and taken modulo a million. Both users are asked the same question — does the other device show this number — and either may answer first; the key moves once both have said yes.
-- **The first-run identity goes.** The target adopts the transferred key in place of the one it made at first run, and empties its store: the events, preferences and pairings it gathered belonged to an identity nobody will use again.
+- **The first-run identity goes.** The target adopts the transferred key in place of the one it made at first run, and empties its store, since the events, preferences and pairings it gathered belong to an identity nobody uses again.
 
 ## Backup
 

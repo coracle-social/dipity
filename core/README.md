@@ -30,7 +30,7 @@ just qa            # what CI runs
 
 Generated output stages under `core/target/ffi/`, which is gitignored and rebuilt from scratch. Nothing generated is committed.
 
-`just sync-android` chains core → bindings → web → `cap sync android`. `just sync-ios` only builds the web assets and runs `cap sync ios`, for Capacitor's config and plugins: the Xcode project builds the core itself, in order, every time. `just sync` runs both.
+`just sync-android` chains core → bindings → web → `cap sync android`. `just sync-ios` builds the web assets and runs `cap sync ios`, which copies Capacitor's config and plugins. The Xcode project builds the core itself, in order, every time. `just sync` runs both.
 
 ## Wiring into the native projects
 

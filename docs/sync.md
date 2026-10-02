@@ -16,7 +16,7 @@ Ingest applies this once, in the core. An event is accepted from the peer that a
 
 Once a connection reached `SYNCING` status, each side can initiate synchronization by requesting data it is missing. Event syncing uses the nostr client/relay protocol without modification. Each peer acts as both a client and a relay.
 
-Sync begins with a NIP 77 NEGENTROPY sync. The filter it opens with names no authors, because a filter is something the peer reads and the trust graph is not, so the dialing side's set is everything it holds plus every id it has refused: a deleted event, a version a newer one superseded, or an author outside its Accept scope. Counting a refusal as held is what stops the peer delivering it again on every encounter. Peers may respond with fewer than the requested events depending on their visibility and gossip policies, and every event is checked against the receiver's accept policy.
+Sync begins with a NIP 77 NEGENTROPY sync. The opening filter names no authors, because the peer reads the filter and a list of authors would hand it the trust graph. The dialing side's set is everything it holds plus every id it has refused — a deleted event, a superseded version, or an author outside its Accept scope — so the peer does not deliver a refused event again on every encounter. Peers may respond with fewer than the requested events depending on their visibility and gossip policies, and every event is checked against the receiver's accept policy.
 
 Once the negentropy reconciliation is complete, a regular `REQ` is used to retrieve the desired events. Syncing is paginated in reverse chronological order by `created_at` timestamp with dynamic since/until windows.
 
@@ -59,7 +59,7 @@ Accepting gossiped events is an unbounded write from whoever is standing nearby.
 
 The ceiling is the one that has to hold, because the per-peer budget below it does not bind a stranger. Content events carry no signature, so an identity costs an attacker a keypair: metering per pubkey assumes identity is expensive, and here it is free. The ceiling is keyed on nothing at all, so there is nothing for a burner to reset.
 
-The window lives in the store as well as in memory, so a background relaunch, which both platforms do routinely, refills nothing either. Only what was stored is charged: a duplicate, or an event whose proof did not verify, costs the peer nothing.
+The window is kept in the store as well as in memory, so a background relaunch refills nothing. Only what was stored is charged: a duplicate, or an event whose proof did not verify, costs the peer nothing.
 
 ## Blob sync
 
@@ -91,5 +91,5 @@ A peer is served the bytes when it may be served every event that references the
 
 Blob quotas are separate from and much tighter than event quotas:
 
-- Per-peer bytes per rolling 24 h, in each direction, which a session starts from rather than resetting.
+- Per-peer bytes per rolling 24 h in each direction, counted across sessions.
 - A `original` cache ceiling in bytes, evicted LRU. Previews are kept as long as their events are. Serving a blob's bytes to a peer is what marks it used, and is the only read of them the core has.
