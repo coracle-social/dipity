@@ -7,6 +7,7 @@
 // JSON of the Rust types. `docs/storage.md#the-schema`.
 
 import {
+  DELETE,
   getIdOrAddress,
   isEphemeral,
   isReplaceable,
@@ -15,6 +16,7 @@ import {
   type HashedEvent,
 } from "@welshman/util"
 import type {Blob, EventDetail, Query} from "$lib/core"
+import {removal} from "$lib/dev/kinds"
 
 const parse = (filter?: string): Filter => (filter ? (JSON.parse(filter) as Filter) : {})
 
@@ -60,11 +62,12 @@ export class Store {
   /**
    * Store an event and a sighting of it, answering whether the event itself was new.
    *
-   * Refused the same three ways the core refuses: an ephemeral kind is never
-   * stored, and a replaceable one only when it beats whatever holds its address
-   * — later, or equal and lower id. A simulator that keeps every version is more
-   * forgiving than the core, and an edit the core silently drops then looks like
-   * it landed. `core/dip/src/db/event/command.rs`.
+   * Refused the same ways the core refuses: an ephemeral kind is never stored,
+   * nor one its author has deleted, and a replaceable one only when it beats
+   * whatever holds its address — later, or equal and lower id. A deletion takes
+   * what its author wrote and it names. A simulator that keeps every version is
+   * more forgiving than the core, and an edit the core silently drops then looks
+   * like it landed. `core/dip/src/db/event/command.rs`.
    */
   record(event: HashedEvent, from: string, at: number, blobs: Blob[] = []) {
     const sighting = {event_id: event.id, pubkey: from, seen_at: at}
@@ -77,7 +80,7 @@ export class Store {
       return false
     }
 
-    if (isEphemeral(event)) return false
+    if (isEphemeral(event) || this.isDeleted(event)) return false
 
     const current = isReplaceable(event) ? this.atAddress(event) : undefined
 
@@ -91,7 +94,29 @@ export class Store {
 
     this.details.set(event.id, {event, blobs, sightings: [sighting], shares: []})
 
+    if (event.kind === DELETE) {
+      for (const detail of [...this.details.values()]) {
+        if (this.isDeleted(detail.event)) this.forget(detail.event.id)
+      }
+    }
+
     return true
+  }
+
+  /** Whether a stored deletion by the event's own author names it. */
+  private isDeleted(event: HashedEvent) {
+    const address = getIdOrAddress(event)
+
+    return [...this.details.values()].some(({event: deletion}) => {
+      if (deletion.kind !== DELETE || deletion.pubkey !== event.pubkey) return false
+
+      const named = removal.reader(deletion).parse()
+
+      return (
+        named.ids().includes(event.id) ||
+        (named.addresses().includes(address) && event.created_at <= deletion.created_at)
+      )
+    })
   }
 
   /**

@@ -13,6 +13,7 @@ import {
   Article,
   Comment,
   DateEvent,
+  Delete,
   GenericRepost,
   Note,
   Poll,
@@ -36,6 +37,8 @@ export const dateEvent = DateEvent.configure(context)
 export const timeEvent = TimeEvent.configure(context)
 
 export const comment = Comment.configure(context)
+
+export const removal = Delete.configure(context)
 
 export const reaction = Reaction.configure(context)
 

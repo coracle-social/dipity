@@ -128,6 +128,9 @@ export class Simulator extends WebPlugin implements DipCore {
   private gates = new Map<number, Person>()
   private live = new Map<number, Person>()
   private transfer: Transfer | undefined
+  /** The link a transfer last delivered a key over, and whose key it was. */
+  private delivered: {link: number; pubkey: string} | undefined
+  private started = false
   private nextLink = 1
   private clock: ReturnType<typeof setTimeout> | undefined
 
@@ -286,12 +289,12 @@ export class Simulator extends WebPlugin implements DipCore {
     const person = faker.helpers.arrayElement(people)
     const link = this.nextLink++
 
+    // A stranger exchanges nothing until the gate is answered, which is when `approve` gossips.
     if (this.paired.has(person.pubkey)) {
       this.open(link, person)
       await this.gossip(person, faker.number.int({min: 1, max: person.talkative}))
     } else {
       this.gate(person, link)
-      await this.gossip(person, 1)
     }
 
     this.tick()
@@ -413,9 +416,13 @@ export class Simulator extends WebPlugin implements DipCore {
   }
 
   async start() {
-    await this.backlog()
-    log(`started as ${short(this.identity)}, ${people.length} people in range`)
-    this.tick()
+    // A reloaded view starts again over the same core, which seeds its backlog once.
+    if (!this.started) {
+      this.started = true
+      await this.backlog()
+      log(`started as ${short(this.identity)}, ${people.length} people in range`)
+      this.tick()
+    }
 
     return {identity: this.identity}
   }
@@ -577,6 +584,10 @@ export class Simulator extends WebPlugin implements DipCore {
   }
 
   async takeTransferredIdentity({link}: {link: number}) {
+    if (this.delivered?.link !== link) throw new Error("no identity arrived on that link")
+
+    this.identity = this.delivered.pubkey
+    this.delivered = undefined
     log(`adopted the identity offered on link ${link}`)
 
     return {identity: this.identity}
@@ -612,7 +623,10 @@ export class Simulator extends WebPlugin implements DipCore {
 
   /** How it ended, told once, the way the core tells whoever was waiting. */
   private finish(link: number, outcome: "received" | "sent" | "refused") {
+    const person = this.live.get(link)
+
     this.transfer = undefined
+    if (outcome === "received" && person) this.delivered = {link, pubkey: person.pubkey}
     this.notifyListeners("identityTransfer", {link, outcome})
     log(`identity transfer on link ${link} was ${outcome}`)
   }
