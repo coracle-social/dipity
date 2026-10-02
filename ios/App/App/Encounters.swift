@@ -236,6 +236,10 @@ extension Encounters: RadioDelegate {
         drive { try $0.peripheralSeen(peripheral: PeripheralId(value: peripheral), rssi: rssi) }
     }
 
+    func radio(_ radio: Radio, dialFailed peripheral: String) {
+        drive { try $0.dialFailed(peripheral: PeripheralId(value: peripheral)) }
+    }
+
     func radio(_ radio: Radio, upOn link: UInt64, peripheral: String?, dialer: Bool, mtu: UInt32) {
         drive {
             try $0.linkUp(

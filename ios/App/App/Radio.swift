@@ -47,8 +47,12 @@ final class Radio: NSObject {
     /// Every live link, both roles, keyed the way the core names them.
     private var links: [UInt64: Link] = [:]
 
-    /// Peripherals seen but not yet dialed, so a `Connect` can name one.
+    /// Peripherals seen, so a `Connect` can name one, including a redial.
     private var seen: [String: CBPeripheral] = [:]
+
+    /// When each peripheral was last reported, so one advertising many times a
+    /// second is reported once a second.
+    private var reported: [String: Date] = [:]
 
     /// The open L2CAP channel on each link, for as long as one is.
     private var bulk: [UInt64: BulkChannel] = [:]
@@ -98,11 +102,10 @@ final class Radio: NSObject {
         guard central.state == .poweredOn else { return }
 
         if on {
-            // Duplicates off: a sighting is worth reporting once, and the
-            // scheduler is what decides when to look again.
+            // Duplicates on, which iOS honours only in the foreground: a peer the scheduler queued keeps being seen.
             central.scanForPeripherals(
                 withServices: [service],
-                options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+                options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
         } else {
             central.stopScan()
         }
@@ -122,7 +125,11 @@ final class Radio: NSObject {
     }
 
     func connect(_ peripheralId: String) {
-        guard let target = seen[peripheralId] else { return }
+        let known = UUID(uuidString: peripheralId).flatMap {
+            central.retrievePeripherals(withIdentifiers: [$0]).first
+        }
+
+        guard let target = seen[peripheralId] ?? known else { return }
 
         central.connect(target, options: nil)
     }
@@ -273,6 +280,7 @@ final class Radio: NSObject {
 /// What the radio reports. Every one of these is a core entry point.
 protocol RadioDelegate: AnyObject {
     func radio(_ radio: Radio, saw peripheral: String, rssi: Int16)
+    func radio(_ radio: Radio, dialFailed peripheral: String)
     func radio(_ radio: Radio, upOn link: UInt64, peripheral: String?, dialer: Bool, mtu: UInt32)
     func radio(_ radio: Radio, downOn link: UInt64)
     func radio(_ radio: Radio, received bytes: Data, on link: UInt64)
@@ -312,9 +320,15 @@ extension Radio: CBCentralManagerDelegate {
         advertisementData: [String: Any],
         rssi: NSNumber
     ) {
-        seen[target.identifier.uuidString] = target
+        let id = target.identifier.uuidString
+        let now = Date()
 
-        delegate?.radio(self, saw: target.identifier.uuidString, rssi: Int16(truncating: rssi))
+        seen[id] = target
+
+        if let last = reported[id], now.timeIntervalSince(last) < 1 { return }
+
+        reported[id] = now
+        delegate?.radio(self, saw: id, rssi: Int16(truncating: rssi))
     }
 
     func centralManager(_ manager: CBCentralManager, didConnect target: CBPeripheral) {
@@ -327,9 +341,8 @@ extension Radio: CBCentralManagerDelegate {
         didFailToConnect target: CBPeripheral,
         error: Error?
     ) {
-        // Never reported up: a dial that did not complete is not a link, and
-        // the scheduler grades it by never hearing about one.
-        seen[target.identifier.uuidString] = nil
+        // Not a link, but the scheduler retries a failed dial shortly rather than after a never-answered minute.
+        delegate?.radio(self, dialFailed: target.identifier.uuidString)
     }
 
     func centralManager(
@@ -337,7 +350,11 @@ extension Radio: CBCentralManagerDelegate {
         didDisconnectPeripheral target: CBPeripheral,
         error: Error?
     ) {
-        guard let link = link(for: target) else { return }
+        // A dial that connected but never became a link, its service missing or its subscription refused.
+        guard let link = link(for: target) else {
+            delegate?.radio(self, dialFailed: target.identifier.uuidString)
+            return
+        }
 
         forget(link)
         delegate?.radio(self, downOn: link)

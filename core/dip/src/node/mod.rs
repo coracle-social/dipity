@@ -188,6 +188,9 @@ pub struct Node {
     /// Keys an identity transfer delivered, kept here rather than on the
     /// session so a link dropping before the shell takes one does not lose it.
     transferred: BTreeMap<LinkId, SecretKey>,
+    /// Links closed because another link to the same person carries the
+    /// session, so their peripheral is not redialed while it does.
+    duplicates: std::collections::BTreeSet<LinkId>,
 }
 
 impl Node {
@@ -224,6 +227,7 @@ impl Node {
             key_backup: None,
             radio_started: false,
             transferred: BTreeMap::new(),
+            duplicates: std::collections::BTreeSet::new(),
         };
 
         // Whatever was removed while no node was listening is still on disk.
@@ -277,6 +281,14 @@ impl Node {
             Some(peripheral) => vec![Action::Connect(peripheral)],
             None => Vec::new(),
         }
+    }
+
+    /// A dial the shell started failed before a link came up: the peer is
+    /// gone, or both phones dialed each other at once. It is retried shortly.
+    pub fn dial_failed(&mut self, peripheral: &PeripheralId) -> Vec<Action> {
+        self.scheduler.dial_failed(peripheral);
+
+        self.collect()
     }
 
     /// A GATT connection came up, with the MTU the link negotiated.
@@ -744,6 +756,8 @@ impl Node {
     /// The one place actions are produced, so an entry point cannot forget to
     /// flush a session it advanced.
     fn collect(&mut self) -> Vec<Action> {
+        self.close_duplicates();
+
         let preferences_moved = self.drain_preferences();
         let graph_moved = self.offer_saved_events();
 
@@ -825,8 +839,11 @@ impl Node {
         for (link, ending) in closed {
             self.sessions.remove(&link);
 
+            let duplicate = self.duplicates.remove(&link);
+
             if let Some(peripheral) = self.link_peripheral.remove(&link) {
                 match ending {
+                    _ if duplicate => self.scheduler.duplicate(&peripheral),
                     Ending::WalkedAway => self.scheduler.walked_away(&peripheral),
                     Ending::Refused => self.scheduler.refused(&peripheral),
                 }
@@ -840,6 +857,59 @@ impl Node {
         }
 
         actions
+    }
+
+    /// Close all but one of several syncing links to the same person, which is
+    /// what two phones dialing each other at once leaves behind.
+    ///
+    /// Both ends keep the link the lower of the two pubkeys dialed, so both
+    /// close the same one without a word passing between them. Two links dialed
+    /// by the same side cannot be told apart that way, so both stay.
+    fn close_duplicates(&mut self) {
+        let identity = self.identity;
+        let mut kept: BTreeMap<PublicKey, (PublicKey, LinkId)> = BTreeMap::new();
+        let mut closing = Vec::new();
+
+        for (link, session) in &self.sessions {
+            if session.state != State::Syncing {
+                continue;
+            }
+
+            let Some(person) = session
+                .peer
+                .as_ref()
+                .and_then(|peer| peer.pubkeys.iter().min().copied())
+            else {
+                continue;
+            };
+            let dialer = if session.role == Role::Dialer {
+                identity
+            } else {
+                person
+            };
+
+            match kept.get(&person).copied() {
+                None => {
+                    kept.insert(person, (dialer, *link));
+                }
+                Some((their_dialer, their_link)) if their_dialer != dialer => {
+                    if dialer < their_dialer {
+                        closing.push(their_link);
+                        kept.insert(person, (dialer, *link));
+                    } else {
+                        closing.push(*link);
+                    }
+                }
+                Some(_) => {}
+            }
+        }
+
+        for link in closing {
+            if let Some(session) = self.sessions.get_mut(&link) {
+                session.close(Ending::Refused);
+                self.duplicates.insert(link);
+            }
+        }
     }
 
     /// Offer events the store just saved to every connected peer.
@@ -1405,6 +1475,93 @@ mod tests {
         clock::at(1_000 + scheduler::CANDIDATE_TTL_SECONDS, || {
             assert!(node.scheduler.next_dial(0).is_none());
         });
+    }
+
+    #[test]
+    fn a_failed_dial_is_retried_within_seconds() {
+        let mut node = node();
+
+        clock::at(1_000, || {
+            assert_eq!(
+                node.peripheral_seen(&peripheral(1), -60),
+                vec![Action::Connect(peripheral(1))]
+            );
+            node.dial_failed(&peripheral(1));
+        });
+
+        // Not a never-answered minute: the retry comes inside the jittered window.
+        let retried = clock::at(
+            1_000 + scheduler::DIAL_FAILED_BACKOFF_SECONDS + scheduler::DIAL_FAILED_JITTER_SECONDS,
+            || node.tick(),
+        );
+
+        assert!(retried.contains(&Action::Connect(peripheral(1))));
+    }
+
+    #[test]
+    fn a_linked_peripheral_is_not_dialed_again_while_its_link_is_up() {
+        let mut node = node();
+
+        clock::at(1_000, || {
+            node.peripheral_seen(&peripheral(1), -60);
+            node.link_up(LinkId(1), Some(peripheral(1)), Role::Dialer, 4096)
+                .unwrap();
+        });
+
+        // Still advertising, and still in range, but already linked.
+        clock::at(1_100, || {
+            assert!(
+                !node
+                    .peripheral_seen(&peripheral(1), -60)
+                    .contains(&Action::Connect(peripheral(1)))
+            );
+        });
+    }
+
+    #[test]
+    fn a_peer_whose_link_dropped_is_redialed_without_being_seen_again() {
+        let mut node = node();
+
+        clock::at(1_000, || {
+            node.peripheral_seen(&peripheral(1), -60);
+            node.link_up(LinkId(1), Some(peripheral(1)), Role::Dialer, 4096)
+                .unwrap();
+            node.link_down(LinkId(1));
+        });
+
+        // A radio reporting each device once never reports this one again, so the queue has to remember it.
+        let redialed = clock::at(1_000 + scheduler::WALKED_AWAY_BACKOFF_SECONDS, || {
+            node.tick()
+        });
+
+        assert!(redialed.contains(&Action::Connect(peripheral(1))));
+    }
+
+    #[test]
+    fn two_phones_that_dialed_each_other_keep_the_same_one_link() {
+        let mut one = node();
+        let mut two = node();
+
+        one.notify_foregrounded();
+        two.notify_foregrounded();
+
+        // One dials two on link 1, and two dials one on link 2.
+        two.link_up(LinkId(1), None, Role::Receiver, 4096).unwrap();
+        let opening = one
+            .link_up(LinkId(1), Some(peripheral(1)), Role::Dialer, 4096)
+            .unwrap();
+        settle(&mut one, &mut two, opening);
+
+        one.link_up(LinkId(2), None, Role::Receiver, 4096).unwrap();
+        let opening = two
+            .link_up(LinkId(2), Some(peripheral(2)), Role::Dialer, 4096)
+            .unwrap();
+        settle(&mut two, &mut one, opening);
+
+        let kept = |node: &Node| node.sessions.keys().copied().collect::<Vec<_>>();
+
+        assert_eq!(kept(&one).len(), 1, "one link to the same person");
+        assert_eq!(kept(&one), kept(&two), "both ends kept the same link");
     }
 
     #[test]

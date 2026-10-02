@@ -115,6 +115,7 @@ object Encounters : Radio.Delegate {
         this.lifecycle = lifecycle
         lifecycle.start()
 
+        radio.foreground(foreground)
         apply(if (foreground) node.notifyForegrounded() else node.notifyBackgrounded())
 
         // Nothing is scanning or advertising until the core says so, and it says so on the first tick.
@@ -280,6 +281,16 @@ object Encounters : Radio.Delegate {
 
     override fun saw(peripheral: String, rssi: Short) = drive {
         it.peripheralSeen(PeripheralId(peripheral), rssi)
+    }
+
+    override fun dialFailed(peripheral: String) = drive { it.dialFailed(PeripheralId(peripheral)) }
+
+    /** The app came to the front or left it, which the radio's modes and the gate both follow. */
+    fun foreground(on: Boolean) {
+        if (!::context.isInitialized) return
+
+        radio.foreground(on)
+        drive { if (on) it.notifyForegrounded() else it.notifyBackgrounded() }
     }
 
     override fun linkUp(link: ULong, peripheral: String?, dialer: Boolean, mtu: UInt) = drive {

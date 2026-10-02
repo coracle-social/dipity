@@ -26,6 +26,9 @@ Attempts are rate-limited, candidates are ordered by RSSI so the nearest strange
 - Concurrent central links capped at 6.
 - Connect rate limiting, one attempt per second globally.
 - Distinct backoff for "never answered a connect" versus "was connected and walked away." The second recovers fast, because those peers usually come back.
+- A dial that fails before a link comes up is retried within a few seconds, jittered, because the usual cause is two phones dialing each other at the same moment.
+- A peer stays queued after it is dialed, so a dropped link is redialed when its backoff lapses without waiting for the radio to report the peer again.
+- Two phones that dial each other end up with two links to one person. Both keep the one the lower pubkey dialed and close the other, which needs no message between them.
 - A teardown this device decided is not a walk-away and does not recover fast. Policy blocking the peer, a consent gate lapsing, a frame the wire cannot carry: redialing in fifteen seconds only reaches the same refusal, so it waits a minute. A gate the user refused outright waits longer still.
 
 bitchat's `BLEConnectionScheduler.swift` is the reference for this.

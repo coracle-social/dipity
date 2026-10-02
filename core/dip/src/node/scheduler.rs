@@ -7,7 +7,7 @@
 //! `BLEConnectionScheduler` is the reference.
 //! `docs/discovery.md#connection-scheduling`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::clock;
 use crate::link::PeripheralId;
@@ -41,6 +41,20 @@ pub(crate) const REFUSED_BACKOFF_SECONDS: i64 = 60;
 /// user just said no.
 pub(crate) const DECLINED_BACKOFF_SECONDS: i64 = 5 * 60;
 
+/// The shortest wait before redialing a peripheral whose dial failed outright.
+///
+/// Two phones that dial each other at the same moment both fail, so the retry
+/// is jittered by up to [`DIAL_FAILED_JITTER_SECONDS`] more, which is what stops
+/// them colliding the same way again.
+pub(crate) const DIAL_FAILED_BACKOFF_SECONDS: i64 = 2;
+
+/// The most a failed dial's retry is pushed back by, at random.
+pub(crate) const DIAL_FAILED_JITTER_SECONDS: i64 = 4;
+
+/// How long a link that duplicated another to the same person is left alone,
+/// since the link it duplicated is still up.
+pub(crate) const DUPLICATE_BACKOFF_SECONDS: i64 = 5 * 60;
+
 /// How long a sighting stays a candidate. A peripheral id rotates about every
 /// fifteen minutes, so one older than that names a device nobody can reach.
 pub(crate) const CANDIDATE_TTL_SECONDS: i64 = 15 * 60;
@@ -57,6 +71,9 @@ pub struct Scheduler {
     /// spends a link slot until it connects or its never-answered backoff
     /// lapses, so a crowd cannot bring up more links than the cap.
     dialing: BTreeMap<PeripheralId, i64>,
+    /// Peripherals with a dialed link up, which stay candidates but are not
+    /// dialed again while it lasts.
+    linked: BTreeSet<PeripheralId>,
     /// When the last connect attempt went out, for the global rate limit.
     last_attempt: Option<i64>,
 }
@@ -120,6 +137,37 @@ impl Scheduler {
     /// A dial came up, so it no longer holds a slot as a pending one.
     pub fn connected(&mut self, peripheral: &PeripheralId) {
         self.dialing.remove(peripheral);
+        self.linked.insert(peripheral.clone());
+    }
+
+    /// A dial failed outright, which the radio reports, so it is retried in a
+    /// few seconds rather than after a never-answered minute. A worse outcome
+    /// already recorded stands.
+    pub fn dial_failed(&mut self, peripheral: &PeripheralId) {
+        self.dialing.remove(peripheral);
+
+        if self
+            .backoff
+            .get(peripheral)
+            .is_some_and(|backoff| backoff.tier > Tier::NeverAnswered)
+        {
+            return;
+        }
+
+        self.backoff.insert(
+            peripheral.clone(),
+            Backoff {
+                until: clock::now() + DIAL_FAILED_BACKOFF_SECONDS + jitter(),
+                tier: Tier::NeverAnswered,
+            },
+        );
+    }
+
+    /// A link that duplicated another to the same person closed, so its
+    /// peripheral is left alone while the other carries the session.
+    pub fn duplicate(&mut self, peripheral: &PeripheralId) {
+        self.linked.remove(peripheral);
+        self.record(peripheral, Tier::Refused, DUPLICATE_BACKOFF_SECONDS);
     }
 
     /// The strongest admissible candidate, if the floor, the link cap, the
@@ -147,7 +195,11 @@ impl Scheduler {
                 peripheral, rssi, ..
             } = self.candidates[index].clone();
 
-            if rssi < RSSI_FLOOR {
+            // Already linked, or a dial is on its way: the candidate waits for it to end.
+            if rssi < RSSI_FLOOR
+                || self.linked.contains(&peripheral)
+                || self.dialing.contains_key(&peripheral)
+            {
                 continue;
             }
 
@@ -156,8 +208,8 @@ impl Scheduler {
                 None => true,
             };
 
+            // The candidate stays: if this link drops while they are still around, they are redialed.
             if admissible {
-                self.candidates.remove(index);
                 self.dialing.insert(peripheral.clone(), now);
                 self.last_attempt = Some(now);
                 // No answer re-advertises before this lapses; a connect supersedes it.
@@ -190,12 +242,14 @@ impl Scheduler {
     /// A peer was connected and left: redial soon, since they usually come
     /// back.
     pub fn walked_away(&mut self, peripheral: &PeripheralId) {
+        self.linked.remove(peripheral);
         self.record(peripheral, Tier::WalkedAway, WALKED_AWAY_BACKOFF_SECONDS);
     }
 
     /// A peer this device dropped rather than lost: hold off longer than a
     /// walk-away, so the redial does not undo the decision.
     pub fn refused(&mut self, peripheral: &PeripheralId) {
+        self.linked.remove(peripheral);
         self.record(peripheral, Tier::Refused, REFUSED_BACKOFF_SECONDS);
     }
 
@@ -235,5 +289,16 @@ impl Scheduler {
                 backoff.tier = tier;
             }
         }
+    }
+}
+
+/// Up to [`DIAL_FAILED_JITTER_SECONDS`] at random, or none if the entropy
+/// source is not answering, which only costs a collision.
+fn jitter() -> i64 {
+    let mut byte = [0u8; 1];
+
+    match getrandom::getrandom(&mut byte) {
+        Ok(()) => i64::from(byte[0]) % (DIAL_FAILED_JITTER_SECONDS + 1),
+        Err(_) => 0,
     }
 }

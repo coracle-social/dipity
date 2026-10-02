@@ -72,6 +72,8 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     interface Delegate {
         fun saw(peripheral: String, rssi: Short)
 
+        fun dialFailed(peripheral: String)
+
         fun linkUp(link: ULong, peripheral: String?, dialer: Boolean, mtu: UInt)
 
         fun linkDown(link: ULong)
@@ -135,6 +137,12 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     /** What the core last asked of the radio, applied again whenever Bluetooth comes back on. */
     private var wantsScan = false
     private var wantsAdvertise = false
+
+    /** Whether the app is in front, which buys the fast scan and advertising modes. */
+    private var foreground = false
+
+    /** When each device was last reported, so a peer advertising ten times a second is reported once. */
+    private val reported = mutableMapOf<String, Long>()
 
     /**
      * Bluetooth being switched off or on, which ends every link and stops every
@@ -208,20 +216,37 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
         val scanner = adapter?.bluetoothLeScanner ?: return@confined
 
+        // Restarting is how the mode changes, and starting twice is an error the callback would swallow.
+        scanner.stopScan(scanning)
+
         if (on) {
             scanner.startScan(
                 listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(service)).build()),
                 ScanSettings.Builder()
-                    .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
-                    // One sighting per device: the scheduler decides when to
-                    // look again, not the radio.
-                    .setCallbackType(ScanSettings.CALLBACK_TYPE_FIRST_MATCH)
+                    .setScanMode(
+                        if (foreground) ScanSettings.SCAN_MODE_LOW_LATENCY
+                        else ScanSettings.SCAN_MODE_BALANCED
+                    )
+                    // Every advertisement, not the first: a peer the scheduler queued keeps being seen while it is there.
+                    .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
                     .build(),
                 scanning,
             )
-        } else {
-            scanner.stopScan(scanning)
         }
+    }
+
+    /**
+     * The app came to the front or left it. In front, scanning and advertising
+     * run in their fastest modes, so a peer is found in a second or two; behind,
+     * in balanced ones, so the pocket does not pay for it.
+     */
+    fun foreground(on: Boolean) = confined {
+        if (foreground == on) return@confined
+
+        foreground = on
+
+        if (wantsScan) scan(true)
+        if (wantsAdvertise) advertise(true)
     }
 
     fun advertise(on: Boolean) = confined {
@@ -229,11 +254,16 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
         val advertiser = adapter?.bluetoothLeAdvertiser ?: return@confined
 
+        advertiser.stopAdvertising(advertising)
+
         if (on) {
             openServer()
             advertiser.startAdvertising(
                 AdvertiseSettings.Builder()
-                    .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_POWER)
+                    .setAdvertiseMode(
+                        if (foreground) AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY
+                        else AdvertiseSettings.ADVERTISE_MODE_BALANCED
+                    )
                     .setConnectable(true)
                     .build(),
                 // The service UUID and nothing else — `docs/discovery.md`.
@@ -472,8 +502,19 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     private val scanning =
         object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) = confined {
-                seen[result.device.address] = result.device
-                delegate.saw(result.device.address, result.rssi.toShort())
+                val address = result.device.address
+                val now = System.currentTimeMillis()
+
+                seen[address] = result.device
+
+                if (now - (reported[address] ?: 0L) < REPORT_INTERVAL) return@confined
+
+                reported[address] = now
+                delegate.saw(address, result.rssi.toShort())
+            }
+
+            override fun onScanFailed(errorCode: Int) {
+                android.util.Log.e("dip", "scanning failed to start: $errorCode")
             }
         }
 
@@ -496,10 +537,16 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                         // the fragment size the core is told is the one it gets.
                         gatt.requestMtu(MTU)
                     } else {
-                        linkFor(gatt)?.let {
-                            forget(it)
-                            delegate.linkDown(it)
+                        val link = linkFor(gatt)
+
+                        // No link means the dial never came up, which the scheduler retries shortly.
+                        if (link == null) {
+                            delegate.dialFailed(gatt.device.address)
+                        } else {
+                            forget(link)
+                            delegate.linkDown(link)
                         }
+
                         gatt.close()
                     }
                 }
@@ -626,6 +673,9 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
         /** What the MTU is negotiated up to, which is the BLE maximum. */
         const val MTU = 517
+
+        /** The least time between two reports of one device, in milliseconds. */
+        const val REPORT_INTERVAL = 1_000L
 
         /** The ATT header a write carries, off the negotiated MTU. */
         const val ATT_OVERHEAD = 3

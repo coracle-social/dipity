@@ -73,13 +73,13 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
     ),
   )
 
-  // A device proving several pubkeys is one person, so a link is asked about once.
+  // One request per link and per person: a device may prove several pubkeys, and two phones may briefly hold two links.
   hold(
     Dip.addListener("peerIdentified", ({link, pubkey, code}) => {
       if (promised.has(link) || !unnamed(known, pubkey)) return
 
       pending.update(waiting =>
-        waiting.some(request => request.link === link)
+        waiting.some(request => request.link === link || request.pubkey === pubkey)
           ? waiting
           : [...waiting, {link, code, pubkey, asked: Date.now()}],
       )

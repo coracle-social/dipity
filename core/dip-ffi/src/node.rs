@@ -319,6 +319,11 @@ impl Node {
         drive!(self, |node| node.peripheral_seen(&peripheral.into(), rssi))
     }
 
+    /// A dial failed before a link came up. The core retries it shortly.
+    pub fn dial_failed(&self, peripheral: PeripheralId) -> Result<Vec<Action>, NodeError> {
+        drive!(self, |node| node.dial_failed(&peripheral.into()))
+    }
+
     /// A GATT connection came up, with the MTU the link negotiated.
     ///
     /// `peripheral` is the one this device dialed; a link the peer dialed has

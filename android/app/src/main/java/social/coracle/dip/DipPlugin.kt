@@ -142,7 +142,7 @@ class DipPlugin : Plugin(), Encounters.View {
     fun start(call: PluginCall) {
         // The service may have opened it already, and a reloaded webview starts again over it.
         core?.let {
-            Encounters.drive { node -> node.notifyForegrounded() }
+            Encounters.foreground(true)
             return call.resolve(JSObject().put("identity", it.node.identity()))
         }
 
@@ -324,9 +324,9 @@ class DipPlugin : Plugin(), Encounters.View {
         call.resolve()
     }
 
-    override fun handleOnResume() = Encounters.drive { it.notifyForegrounded() }
+    override fun handleOnResume() = Encounters.foreground(true)
 
-    override fun handleOnPause() = Encounters.drive { it.notifyBackgrounded() }
+    override fun handleOnPause() = Encounters.foreground(false)
 
     /** The activity is going, and the core stays: gossip carries on without a screen. */
     override fun handleOnDestroy() {
