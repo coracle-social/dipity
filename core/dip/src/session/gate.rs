@@ -3,11 +3,11 @@
 //! What the gate protects is the disclosure of a nostr pubkey, which names a
 //! long-term identity and, on a proximity transport, places it somewhere at a
 //! given time. A peer the recognition exchange resolved passes or is blocked
-//! on standing alone; a stranger is admitted by the cool-off window or a
-//! discoverable time, and only while the disclosure budget has headroom.
+//! on standing alone; a stranger is admitted while the disclosure bucket has
+//! room and it is not a quiet time, whether the app is open or in a pocket.
 //! `docs/discovery.md#the-consent-gate`.
 //!
-//! The gate reads the budget; the session spends it, when it answers the
+//! The gate reads the bucket; the session spends from it, when it answers the
 //! peer's challenge. Charging on admission instead would let a stranger that
 //! connects and drops without ever asking for an identity close the device to
 //! everyone else.
@@ -17,7 +17,7 @@ use coracle_lib::keys::PublicKey;
 
 use crate::clock;
 use crate::db::Db;
-use crate::model::{DISCLOSURE_WINDOW_SECONDS, Policy, Standing};
+use crate::model::{Policy, Standing};
 
 /// What the gate decided about a peer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,23 +30,14 @@ pub enum Verdict {
     Pending,
 }
 
-/// Where the app is, which is what the cool-off window is measured against.
-///
-/// `policy.md`: foregrounding the app starts it accepting connections, and the
-/// cool-off is how long it keeps accepting them **after** it is backgrounded.
-/// Timing the window from the moment of foregrounding instead would spend it
-/// while the user was still looking at the screen — at the default, a user who
-/// reads for ten minutes and pockets the phone would get no cool-off at all,
-/// which is the one case the doc works through.
+/// Where the app is. Strangers are admitted the same either way; what needs
+/// somebody in front of the screen is moving an identity between phones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Presence {
-    /// The user has the app open. Unknown peers are accepted.
+    /// The user has the app open.
     Foreground,
-    /// Backgrounded at this instant, and the cool-off runs from it.
-    Background {
-        /// When the app went to the background.
-        since: i64,
-    },
+    /// The app is in the background.
+    Background,
 }
 
 /// One session's consent gate.
@@ -56,13 +47,12 @@ pub struct Gate {
     /// Nothing that names an identity — a challenge answered, an `AUTH`
     /// response accepted — happens before it has.
     pub passed: bool,
-    /// Whether the peer got in as an unrecognized stranger on discoverability
-    /// alone, which is what spends the disclosure budget. A recognized peer
-    /// passes on standing and never consulted the budget; a stranger the user
-    /// approved by hand was looked at by the person the budget stands in for.
+    /// Whether the peer got in as an unrecognized stranger on the disclosure
+    /// bucket alone, which is what spends from it. A recognized peer passes on
+    /// standing and never consulted the bucket; a stranger the user approved
+    /// by hand was looked at by the person the bucket stands in for.
     pub spends_budget: bool,
-    /// Where the app is, or `None` if it has not been in the foreground this
-    /// run — in which case there is no cool-off to spend.
+    /// Where the app is, or `None` if the shell has not said this run.
     pub presence: Option<Presence>,
 }
 
@@ -75,7 +65,7 @@ impl Gate {
         resolved: &[PublicKey],
     ) -> Result<Verdict> {
         let verdict = if resolved.is_empty() {
-            // A stranger is admitted by discoverability and the budget, or waits on the user.
+            // A stranger is admitted by the bucket, or waits on the user.
             if self.admits_stranger(db, policy)? {
                 self.spends_budget = true;
                 Verdict::Pass
@@ -100,25 +90,17 @@ impl Gate {
         Ok(verdict)
     }
 
-    /// Whether an unrecognized peer may proceed without a prompt: the cool-off
-    /// window or a discoverable time admits it, and the disclosure budget has
-    /// headroom.
+    /// Whether an unrecognized peer may proceed without a prompt: it is not a
+    /// quiet time, and the disclosure bucket has room.
     fn admits_stranger(&self, db: &Db, policy: &Policy) -> Result<bool> {
-        let now = clock::now();
-        let discoverable = policy.is_discoverable_at(clock::minute_of_day());
-        let cool_off = match self.presence {
-            Some(Presence::Foreground) => true,
-            Some(Presence::Background { since }) => now - since < policy.cool_off_minutes * 60,
-            None => false,
-        };
-
-        if !(discoverable || cool_off) {
+        if policy.is_quiet_at(clock::minute_of_day()) {
             return Ok(false);
         }
 
-        let spent = crate::db::query::disclosures_since(db, now - DISCLOSURE_WINDOW_SECONDS)?;
+        let now = clock::now();
+        let bucket = crate::db::query::disclosure_bucket(db, now)?;
 
-        Ok(spent < policy.disclosure_budget)
+        Ok(bucket.has_room(policy.strangers_per_day, now))
     }
 }
 
@@ -179,72 +161,46 @@ mod tests {
     }
 
     #[test]
-    fn the_gate_admits_a_stranger_during_the_cool_off() {
+    fn the_gate_admits_a_stranger_in_the_background_while_the_bucket_has_room() {
         let db = Db::open_in_memory().unwrap();
         let mut gate = Gate {
-            presence: Some(Presence::Foreground),
+            presence: Some(Presence::Background),
             ..Default::default()
         };
 
-        assert_eq!(gate.evaluate(&db, &policy(), &[]).unwrap(), Verdict::Pass);
+        assert_eq!(
+            clock::at(86_400, || gate.evaluate(&db, &policy(), &[])).unwrap(),
+            Verdict::Pass
+        );
     }
 
     #[test]
-    fn the_cool_off_runs_from_backgrounding_not_foregrounding() {
-        // The doc's worked example: read on a bus past the cool-off, then pocket the phone.
+    fn the_gate_holds_a_stranger_once_the_bucket_is_empty() {
         let db = Db::open_in_memory().unwrap();
         let policy = policy();
-        let window = policy.cool_off_minutes * 60;
-        let mut gate = Gate {
-            presence: Some(Presence::Foreground),
-            ..Default::default()
-        };
-
-        // Open on the screen, well past the window: still accepting.
-        assert_eq!(
-            clock::at(10_000 + window * 2, || gate.evaluate(&db, &policy, &[])).unwrap(),
-            Verdict::Pass
-        );
-
-        // Pocketed at 20_000: the window starts there.
-        gate.presence = Some(Presence::Background { since: 20_000 });
-        assert_eq!(
-            clock::at(20_000 + window - 1, || gate.evaluate(&db, &policy, &[])).unwrap(),
-            Verdict::Pass
-        );
-        assert_eq!(
-            clock::at(20_000 + window, || gate.evaluate(&db, &policy, &[])).unwrap(),
-            Verdict::Pending
-        );
-    }
-
-    #[test]
-    fn the_gate_holds_a_stranger_without_admission() {
-        let db = Db::open_in_memory().unwrap();
         let mut gate = Gate::default();
 
-        assert_eq!(
-            gate.evaluate(&db, &policy(), &[]).unwrap(),
-            Verdict::Pending
-        );
+        for _ in 0..3 {
+            crate::db::command::spend_disclosure(&db, policy.strangers_per_day, clock::now())
+                .unwrap();
+        }
+
+        assert_eq!(gate.evaluate(&db, &policy, &[]).unwrap(), Verdict::Pending);
         assert!(!gate.passed);
+        assert!(!gate.spends_budget);
     }
 
     #[test]
-    fn the_gate_honors_the_disclosure_budget() {
+    fn the_gate_holds_a_stranger_in_a_quiet_time() {
         let db = Db::open_in_memory().unwrap();
         let mut policy = policy();
-        policy.disclosure_budget = 1;
-        let mut gate = Gate {
-            presence: Some(Presence::Foreground),
-            ..Default::default()
-        };
-
-        // One disclosure already made spends the budget of one.
-        crate::db::command::record_disclosure(&db, clock::now()).unwrap();
+        policy.quiet_times.push(crate::util::Window {
+            start: 0,
+            end: 1_439,
+        });
+        let mut gate = Gate::default();
 
         assert_eq!(gate.evaluate(&db, &policy, &[]).unwrap(), Verdict::Pending);
-        assert!(!gate.spends_budget);
     }
 
     #[test]

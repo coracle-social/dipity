@@ -86,9 +86,8 @@ pub fn all(tx: &Tx<'_>) -> Result<Vec<Pref>> {
 pub fn policy(tx: &Tx<'_>, identity: &PublicKey) -> Result<Policy> {
     let mut policy = Policy::new(*identity);
 
-    override_with(tx, keys::COOL_OFF_MINUTES, &mut policy.cool_off_minutes)?;
-    override_with(tx, keys::DISCOVERABLE_TIMES, &mut policy.discoverable_times)?;
-    override_with(tx, keys::DISCLOSURE_BUDGET, &mut policy.disclosure_budget)?;
+    override_with(tx, keys::QUIET_TIMES, &mut policy.quiet_times)?;
+    override_with(tx, keys::STRANGERS_PER_DAY, &mut policy.strangers_per_day)?;
     override_with(tx, keys::VISIBILITY, &mut policy.visibility)?;
     override_with(tx, keys::ACCEPT, &mut policy.accept)?;
     override_with(tx, keys::GOSSIP, &mut policy.gossip)?;
@@ -188,12 +187,12 @@ mod tests {
         let tx = db.begin_write().unwrap();
 
         pref_command::set_as(&tx, keys::GOSSIP, &Scope::Trusted, 10).unwrap();
-        pref_command::set_as(&tx, keys::COOL_OFF_MINUTES, &0_i64, 10).unwrap();
+        pref_command::set_as(&tx, keys::STRANGERS_PER_DAY, &0_i64, 10).unwrap();
 
         let policy = policy(&tx, &author(1)).unwrap();
 
         assert_eq!(policy.gossip, Scope::Trusted);
-        assert_eq!(policy.cool_off_minutes, 0);
+        assert_eq!(policy.strangers_per_day, 0);
         assert_eq!(policy.accept, Scope::Lenient);
     }
 

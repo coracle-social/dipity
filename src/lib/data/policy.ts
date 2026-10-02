@@ -15,8 +15,7 @@ const keys = {
   forward: "policy.forward",
   visibility: "policy.visibility",
   retentionDays: "policy.retention_days",
-  coolOffMinutes: "policy.cool_off_minutes",
-  disclosureBudget: "policy.disclosure_budget",
+  strangersPerDay: "policy.strangers_per_day",
 } as const
 
 const read = (): Promise<Policy | undefined> =>
@@ -69,9 +68,7 @@ const writeCount = (key: string, typed: string, least: number) => {
 
 export const setRetentionDays = (typed: string) => writeCount(keys.retentionDays, typed, 1)
 
-export const setCoolOffMinutes = (typed: string) => writeCount(keys.coolOffMinutes, typed, 0)
-
-export const setDisclosureBudget = (typed: string) => writeCount(keys.disclosureBudget, typed, 0)
+export const setStrangersPerDay = (typed: string) => writeCount(keys.strangersPerDay, typed, 0)
 
 /**
  * Widen or narrow who sees an event no rule covers, leaving the rules alone.

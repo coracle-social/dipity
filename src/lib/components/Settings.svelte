@@ -12,8 +12,7 @@
   import {
     policy,
     setAccept,
-    setCoolOffMinutes,
-    setDisclosureBudget,
+    setStrangersPerDay,
     setForward,
     setGossip,
     setRetentionDays,
@@ -107,37 +106,22 @@
   <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Being found</h2>
 
   <p class="mt-2 text-sm text-pretty text-muted-foreground">
-    Your phone trades things only with phones near it. These settings control when strangers' phones
-    can find yours.
+    Your phone trades things only with phones near it, including while it is in your pocket.
   </p>
 
   <div class="mt-4 space-y-5">
     <div class="space-y-1.5">
-      <Label for="cool-off">Minutes you stay findable after closing the app</Label>
+      <Label for="strangers">How many strangers a day your phone tells who you are</Label>
       <Input
-        id="cool-off"
+        id="strangers"
         type="number"
         min="0"
-        value={$policy.cool_off_minutes}
-        onchange={event => setCoolOffMinutes(event.currentTarget.value)} />
+        value={$policy.strangers_per_day}
+        onchange={event => setStrangersPerDay(event.currentTarget.value)} />
       <p class="text-xs text-pretty text-muted-foreground">
-        How long after you put your phone away it keeps letting strangers find it. Lower is more
-        private, and higher meets more people.
-      </p>
-    </div>
-
-    <div class="space-y-1.5">
-      <Label for="budget">How many strangers a day your phone tells who you are</Label>
-      <Input
-        id="budget"
-        type="number"
-        min="0"
-        value={$policy.disclosure_budget}
-        onchange={event => setDisclosureBudget(event.currentTarget.value)} />
-      <p class="text-xs text-pretty text-muted-foreground">
-        Meeting somebody new means telling them who you are, but somebody who kept asking could
-        track you. Your phone stops answering strangers after this many in a day. People you pair
-        with by hand do not count.
+        Meeting somebody new means telling them who you are, even with your phone in your pocket.
+        Each time places you somewhere, so your phone spreads these out across the day, a few at a
+        time. People you have paired with or trust do not count.
       </p>
     </div>
 

@@ -23,9 +23,8 @@ const defaults: Policy = {
     default: "lenient",
   },
   retention_days: 30,
-  cool_off_minutes: 10,
-  disclosure_budget: 10,
-  discoverable_times: [],
+  quiet_times: [],
+  strangers_per_day: 12,
 }
 
 /** One preference's document, or the default where it has never been written. */
@@ -44,7 +43,6 @@ export const compiled = (store: Store): Policy => ({
   forward: at<Scope>(store, "policy.forward", defaults.forward),
   visibility: at<Visibility>(store, "policy.visibility", defaults.visibility),
   retention_days: at(store, "policy.retention_days", defaults.retention_days),
-  cool_off_minutes: at(store, "policy.cool_off_minutes", defaults.cool_off_minutes),
-  disclosure_budget: at(store, "policy.disclosure_budget", defaults.disclosure_budget),
-  discoverable_times: at<Window[]>(store, "policy.discoverable_times", defaults.discoverable_times),
+  quiet_times: at<Window[]>(store, "policy.quiet_times", defaults.quiet_times),
+  strangers_per_day: at(store, "policy.strangers_per_day", defaults.strangers_per_day),
 })

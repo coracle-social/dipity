@@ -11,7 +11,7 @@
 //! | --- | --- |
 //! | [`Wire`] | The encrypted pipe: Noise, fragmentation, write scheduling |
 //! | [`Heartbeat`] | Liveness: what was last heard, when to beat next |
-//! | [`Gate`] | Consent: admission, the cool-off, the disclosure budget |
+//! | [`Gate`] | Consent: admission, quiet times, the disclosure bucket |
 //! | [`AuthExchange`] | Mutual NIP-42, and the pubkeys the peer proved |
 //! | [`Relay`] | The relay half: the peer's open subscriptions |
 //! | [`Client`] | The client half: negotiations, fetches, pending proofs |
@@ -212,6 +212,8 @@ pub struct Session {
     /// How many reconciliations each side has opened, so one the peer opens
     /// past the count here is answered with one back. `docs/sync.md#resyncing`.
     negotiations: Negotiations,
+    /// Whether the session ever reached `Syncing`.
+    synced: bool,
 }
 
 /// Reconciliations opened over one session, counted per side.
@@ -255,6 +257,7 @@ impl Session {
             upgrade: Upgrade::new(role),
             transfer: IdentityTransfer::default(),
             negotiations: Negotiations::default(),
+            synced: false,
         })
     }
 
@@ -648,6 +651,13 @@ impl Session {
         Ok(())
     }
 
+    /// Whether a stranger was told who this device is and left before the two
+    /// synced, which is what a harvester does.
+    #[must_use]
+    pub fn was_harvested(&self) -> bool {
+        self.gate.spends_budget && self.auth.disclosed && !self.synced
+    }
+
     /// Reconcile again under a policy that has just changed, and send the
     /// signatures it now owes, so the peer re-pulls by answering in kind.
     pub fn resync(&mut self, db: &Db) -> Result<()> {
@@ -708,6 +718,7 @@ impl Session {
         }
 
         self.state = State::Syncing;
+        self.synced = true;
 
         if let Some(peer) = &self.peer {
             self.blobs.carry_fetched(self.spending.blob_spent(peer));
@@ -1212,10 +1223,12 @@ impl Session {
     /// Answer the peer's challenge, disclosing this device's identity — if one
     /// is waiting and this device has not disclosed already.
     ///
-    /// This is where the disclosure budget is spent, because it is where the
-    /// identity leaves the device. The dialer discloses first and cannot name
-    /// the recipient yet, so a peer that collects the auth event and walks away
-    /// costs a unit all the same. `docs/policy.md#discoverability`.
+    /// This is where the disclosure bucket is spent from, because it is where
+    /// the identity leaves the device. The dialer discloses first and cannot
+    /// name the recipient yet, so a peer that collects the auth event and walks
+    /// away costs a disclosure all the same. A receiver has seen the dialer's
+    /// pubkeys by now, and one the user trusts costs nothing.
+    /// `docs/policy.md#discoverability`.
     fn answer_peer_challenge(&mut self, db: &Db) -> Result<bool> {
         let remote = self
             .wire
@@ -1229,8 +1242,18 @@ impl Session {
 
                 self.send_control(control::AUTH, &message.encode())?;
 
-                if self.gate.spends_budget {
-                    crate::db::command::record_disclosure(db, clock::now())?;
+                let trusted = self
+                    .auth
+                    .proved
+                    .iter()
+                    .any(|pubkey| self.policy.graph.standing(pubkey) == Standing::Trusted);
+
+                if self.gate.spends_budget && !trusted {
+                    crate::db::command::spend_disclosure(
+                        db,
+                        self.policy.strangers_per_day,
+                        clock::now(),
+                    )?;
                 }
 
                 Ok(true)
@@ -2001,7 +2024,7 @@ mod tests {
         let mut dialer = pair(4096, Role::Dialer, 1);
         let mut receiver = pair(4096, Role::Receiver, 2);
 
-        // The cool-off admits the strangers, or the gate holds the pair.
+        // The disclosure bucket admits the strangers, or the gate holds the pair.
         dialer.gate.presence = Some(Presence::Foreground);
         receiver.gate.presence = Some(Presence::Foreground);
 
@@ -2138,14 +2161,14 @@ mod tests {
     fn a_paired_peer_is_recognized_on_the_next_encounter() {
         let db = Db::open_in_memory().unwrap();
 
-        // First encounter pairs them, admitted by the cool-off.
+        // First encounter pairs them, admitted by the disclosure bucket.
         let mut dialer = pair(4096, Role::Dialer, 1);
         let mut receiver = pair(4096, Role::Receiver, 2);
         dialer.gate.presence = Some(Presence::Foreground);
         receiver.gate.presence = Some(Presence::Foreground);
         full_exchange(&mut dialer, &mut receiver, &db);
 
-        // Second encounter: no cool-off, but the tags resolve, so the gate passes silently.
+        // Second encounter: the tags resolve, so the gate passes silently and spends nothing.
         let mut dialer = pair(4096, Role::Dialer, 1);
         let mut receiver = pair(4096, Role::Receiver, 2);
         full_exchange(&mut dialer, &mut receiver, &db);
@@ -2157,8 +2180,8 @@ mod tests {
         let mut dialer = pair(4096, Role::Dialer, 1);
         let mut receiver = pair(4096, Role::Receiver, 2);
 
-        // Only the dialer's cool-off runs, so the receiver holds the dialer for the user.
-        dialer.gate.presence = Some(Presence::Foreground);
+        // The receiver is in a quiet time, so it holds the dialer for the user.
+        receiver.set_policy(Arc::new(quiet()));
 
         dialer.initiate().unwrap();
         pump(&mut dialer, &mut receiver, &db); // msg1
@@ -2183,8 +2206,8 @@ mod tests {
         assert_eq!(dialer.state, State::Syncing);
         assert_eq!(receiver.state, State::Syncing);
 
-        // The dialer's cool-off admitted a stranger, so its disclosure is the budget's.
-        assert_eq!(crate::db::query::disclosures_since(&db, 0).unwrap(), 1);
+        // The dialer's bucket admitted a stranger, so its disclosure is the bucket's.
+        assert_eq!(disclosed(&db), 1);
     }
 
     #[test]
@@ -2193,7 +2216,7 @@ mod tests {
         let mut dialer = clock::at(1_000, || pair(4096, Role::Dialer, 1));
         let mut receiver = clock::at(1_000, || pair(4096, Role::Receiver, 2));
 
-        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.set_policy(Arc::new(quiet()));
 
         clock::at(1_000, || {
             dialer.initiate().unwrap();
@@ -2273,7 +2296,29 @@ mod tests {
         pump(&mut receiver, &mut dialer, &db); // receiver challenge: dialer answers
 
         assert_eq!(dialer.state, State::DialerIdentified);
-        assert_eq!(crate::db::query::disclosures_since(&db, 0).unwrap(), 1);
+        assert_eq!(disclosed(&db), 1);
+
+        // Gone before syncing, which is what the scheduler holds against the peripheral.
+        dialer.close(Ending::WalkedAway);
+        assert!(dialer.was_harvested());
+    }
+
+    #[test]
+    fn a_stranger_who_proves_to_be_trusted_costs_the_receiver_nothing() {
+        let dialer_db = Db::open_in_memory().unwrap();
+        let receiver_db = Db::open_in_memory().unwrap();
+        let mut dialer = pair(4096, Role::Dialer, 1);
+        let mut receiver = pair(4096, Role::Receiver, 2);
+
+        // Trusted, but never paired, so recognition cannot say so before the dialer discloses.
+        let mut trusting = policy();
+        trusting.graph.trusted.insert(author(1));
+        receiver.set_policy(Arc::new(trusting));
+
+        exchange_apart(&mut dialer, &mut receiver, &dialer_db, &receiver_db);
+
+        assert_eq!(disclosed(&dialer_db), 1);
+        assert_eq!(disclosed(&receiver_db), 0);
     }
 
     #[test]
@@ -2287,13 +2332,17 @@ mod tests {
         full_exchange(&mut dialer, &mut receiver, &db);
 
         // Both sides were strangers and both disclosed.
-        assert_eq!(crate::db::query::disclosures_since(&db, 0).unwrap(), 2);
+        assert_eq!(disclosed(&db), 2);
+        assert!(
+            !dialer.was_harvested(),
+            "a stranger who synced was met, not harvested"
+        );
 
         let mut dialer = pair(4096, Role::Dialer, 1);
         let mut receiver = pair(4096, Role::Receiver, 2);
         full_exchange(&mut dialer, &mut receiver, &db);
 
-        assert_eq!(crate::db::query::disclosures_since(&db, 0).unwrap(), 2);
+        assert_eq!(disclosed(&db), 2);
     }
 
     #[test]
@@ -2385,6 +2434,24 @@ mod tests {
         full_exchange(&mut dialer, &mut receiver, db);
 
         (dialer, receiver)
+    }
+
+    /// A policy whose whole day is quiet, so every stranger is held for the user.
+    fn quiet() -> Policy {
+        let mut quiet = policy();
+        quiet.quiet_times.push(crate::util::Window {
+            start: 0,
+            end: 1_439,
+        });
+
+        quiet
+    }
+
+    /// How many disclosures have been spent from the bucket the test's sessions share.
+    fn disclosed(db: &Db) -> u32 {
+        let bucket = crate::db::query::disclosure_bucket(db, clock::now()).unwrap();
+
+        (crate::model::disclosure::BURST - bucket.tokens).round() as u32
     }
 
     /// Route a frame by its channel, the way the node does.
@@ -2591,7 +2658,7 @@ mod tests {
         let (mut source, mut target) = attended_pair(&db);
 
         source.offer_identity().unwrap();
-        target.gate.presence = Some(Presence::Background { since: 0 });
+        target.gate.presence = Some(Presence::Background);
         pump(&mut source, &mut target, &db);
 
         // Nobody is looking at the target's screen, so it declines rather than holding.
@@ -2604,7 +2671,7 @@ mod tests {
             Some(transfer::Outcome::Refused)
         );
 
-        source.gate.presence = Some(Presence::Background { since: 0 });
+        source.gate.presence = Some(Presence::Background);
         assert!(source.offer_identity().is_err());
     }
 }

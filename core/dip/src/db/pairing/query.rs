@@ -1,11 +1,12 @@
-//! Reads over `pair_secret` and `disclosure`.
+//! Reads over `pair_secret` and `disclosure_bucket`.
 
 use anyhow::{Context, Result};
 use coracle_lib::keys::PublicKey;
-use rusqlite::params;
+use rusqlite::OptionalExtension;
 
 use crate::db::Tx;
 use crate::db::sql::{bytes_from_sql, pubkey_from_sql};
+use crate::model::DisclosureBucket;
 
 /// Every stored pair secret, as `(pubkey, secret)` pairs.
 pub fn secrets(tx: &Tx<'_>) -> Result<Vec<(PublicKey, [u8; 32])>> {
@@ -25,15 +26,20 @@ pub fn secrets(tx: &Tx<'_>) -> Result<Vec<(PublicKey, [u8; 32])>> {
     Ok(secrets)
 }
 
-/// How many times this device disclosed its identity at or after `cutoff`. The
-/// disclosure budget asks this of the current window.
-pub fn disclosures_since(tx: &Tx<'_>, cutoff: i64) -> Result<u32> {
-    let count = tx
-        .prepare_cached("SELECT COUNT(*) FROM disclosure WHERE disclosed_at >= ?1")?
-        .query_row(params![cutoff], |row| row.get::<_, u32>(0))
-        .context("counting disclosures")?;
+/// The disclosure bucket as last written, or full at `now` if nothing has been spent.
+pub fn bucket(tx: &Tx<'_>, now: i64) -> Result<DisclosureBucket> {
+    let stored = tx
+        .prepare_cached("SELECT tokens, updated_at FROM disclosure_bucket WHERE id = 1")?
+        .query_row([], |row| {
+            Ok(DisclosureBucket {
+                tokens: row.get(0)?,
+                at: row.get(1)?,
+            })
+        })
+        .optional()
+        .context("reading the disclosure bucket")?;
 
-    Ok(count)
+    Ok(stored.unwrap_or_else(|| DisclosureBucket::full(now)))
 }
 
 #[cfg(test)]
@@ -43,7 +49,6 @@ mod tests {
     use crate::db::Db;
     use crate::db::pairing::command;
     use crate::fixtures::author;
-    use crate::model::DISCLOSURE_WINDOW_SECONDS;
 
     #[test]
     fn a_pubkey_holds_one_pair_secret_and_a_new_one_replaces_it() {
@@ -57,30 +62,15 @@ mod tests {
     }
 
     #[test]
-    fn every_disclosure_in_the_window_counts() {
+    fn the_bucket_is_full_until_something_is_spent_and_then_holds_what_was_written() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
-        let base = DISCLOSURE_WINDOW_SECONDS;
 
-        command::record_disclosure(&tx, base + 100).unwrap();
-        command::record_disclosure(&tx, base + 200).unwrap();
-        // A second disclosure to the same peer is a second AUTH event handed over.
-        command::record_disclosure(&tx, base + 300).unwrap();
+        assert_eq!(bucket(&tx, 100).unwrap(), DisclosureBucket::full(100));
 
-        assert_eq!(disclosures_since(&tx, 0).unwrap(), 3);
-        assert_eq!(disclosures_since(&tx, base + 150).unwrap(), 2);
-    }
+        let spent = DisclosureBucket::full(100).spend(12, 100);
+        command::save_bucket(&tx, spent).unwrap();
 
-    #[test]
-    fn a_disclosure_older_than_the_window_is_pruned() {
-        let mut db = Db::open_in_memory().unwrap();
-        let tx = db.begin_write().unwrap();
-        let base = 2 * DISCLOSURE_WINDOW_SECONDS;
-
-        command::record_disclosure(&tx, base - DISCLOSURE_WINDOW_SECONDS - 1).unwrap();
-        assert_eq!(disclosures_since(&tx, 0).unwrap(), 1);
-
-        command::record_disclosure(&tx, base).unwrap();
-        assert_eq!(disclosures_since(&tx, 0).unwrap(), 1);
+        assert_eq!(bucket(&tx, 200).unwrap(), spent);
     }
 }

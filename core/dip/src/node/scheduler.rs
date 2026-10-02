@@ -55,6 +55,11 @@ pub(crate) const DIAL_FAILED_JITTER_SECONDS: i64 = 4;
 /// since the link it duplicated is still up.
 pub(crate) const DUPLICATE_BACKOFF_SECONDS: i64 = 5 * 60;
 
+/// How long a peripheral that took a disclosure and left before syncing is
+/// left alone: until its address rotates, so a harvester cannot drain the
+/// disclosure bucket by being dialed again and again. `docs/policy.md#discoverability`.
+pub(crate) const HARVESTED_BACKOFF_SECONDS: i64 = CANDIDATE_TTL_SECONDS;
+
 /// How long a sighting stays a candidate. A peripheral id rotates about every
 /// fifteen minutes, so one older than that names a device nobody can reach.
 pub(crate) const CANDIDATE_TTL_SECONDS: i64 = 15 * 60;
@@ -267,6 +272,13 @@ impl Scheduler {
     pub fn refused(&mut self, peripheral: &PeripheralId) {
         self.linked.remove(peripheral);
         self.record(peripheral, Tier::Refused, REFUSED_BACKOFF_SECONDS);
+    }
+
+    /// A peer that was told who this device is and left before syncing: leave
+    /// it alone until its address rotates.
+    pub fn harvested(&mut self, peripheral: &PeripheralId) {
+        self.linked.remove(peripheral);
+        self.record(peripheral, Tier::Declined, HARVESTED_BACKOFF_SECONDS);
     }
 
     /// A peer whose gate was refused: leave them alone.

@@ -236,8 +236,8 @@ fn the_store_serves_its_use_cases() {
     let policy = query::policy(&db, &us()).unwrap();
     assert_eq!(policy.accept, Scope::Lenient);
     assert_eq!(policy.gossip, Scope::Network);
-    assert_eq!(policy.cool_off_minutes, 10);
-    assert!(policy.discoverable_times.is_empty());
+    assert_eq!(policy.strangers_per_day, 12);
+    assert!(policy.quiet_times.is_empty());
     assert!(!policy.for_pubkey(peer()).is_blocked());
 
     command::set_preference(&db, keys::GOSSIP, r#""nothing""#, 500).unwrap();

@@ -144,9 +144,8 @@ export type Policy = {
   forward: Scope
   visibility: Visibility
   retention_days: number
-  cool_off_minutes: number
-  disclosure_budget: number
-  discoverable_times: Window[]
+  quiet_times: Window[]
+  strangers_per_day: number
 }
 
 /**

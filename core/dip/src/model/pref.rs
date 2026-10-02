@@ -19,14 +19,11 @@ pub struct Pref {
 
 /// The keys defined for user preferences.
 pub mod keys {
-    /// How long the device keeps accepting unknown peers after the app is backgrounded.
-    pub const COOL_OFF_MINUTES: &str = "policy.cool_off_minutes";
+    /// Times of day, in the device's local timezone, when no stranger is told who the user is.
+    pub const QUIET_TIMES: &str = "policy.quiet_times";
 
-    /// Times of day, in the device's local timezone, when the user is passively discoverable.
-    pub const DISCOVERABLE_TIMES: &str = "policy.discoverable_times";
-
-    /// How many new pubkeys the device will disclose to per discoverable window.
-    pub const DISCLOSURE_BUDGET: &str = "policy.disclosure_budget";
+    /// How many strangers a day, on average, the device tells who the user is.
+    pub const STRANGERS_PER_DAY: &str = "policy.strangers_per_day";
 
     /// Who can see what the user publishes, as ordered rules and a default.
     pub const VISIBILITY: &str = "policy.visibility";

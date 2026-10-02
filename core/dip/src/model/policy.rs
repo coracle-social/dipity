@@ -26,12 +26,6 @@ use serde::Serialize;
 use crate::model::{Authors, Graph, Scope, Standing, Visibility};
 use crate::util::Window;
 
-/// The window the disclosure budget counts `AUTH` responses over, in seconds.
-///
-/// A rolling day, conservative against the doc's "per discoverable window":
-/// resetting at each window boundary would admit more strangers, not fewer.
-pub const DISCLOSURE_WINDOW_SECONDS: i64 = 24 * 60 * 60;
-
 /// Everything the user has said about who gets what, ready to apply.
 ///
 /// Its serde form is the half a preference carries, which is what the view
@@ -43,13 +37,12 @@ pub struct Policy {
     /// This device's pubkey.
     #[serde(skip)]
     pub identity: PublicKey,
-    /// How long the device keeps accepting unknown peers after backgrounding.
-    pub cool_off_minutes: i64,
-    /// When the user is willing to be passively discoverable.
-    pub discoverable_times: Vec<Window>,
-    /// How many `AUTH` responses the device will send unrecognized peers per
-    /// window. Peers the user approved by hand do not spend it.
-    pub disclosure_budget: u32,
+    /// Times of day when no stranger is told who the user is without asking.
+    pub quiet_times: Vec<Window>,
+    /// How many strangers a day, on average, the device tells who the user is,
+    /// through the [`DisclosureBucket`](crate::model::DisclosureBucket). Peers
+    /// recognized, trusted or approved by hand do not count.
+    pub strangers_per_day: u32,
     /// Who can see what the user publishes.
     pub visibility: Visibility,
     /// Whose events the device stores from a peer.
@@ -71,9 +64,8 @@ impl Policy {
     pub fn new(identity: PublicKey) -> Self {
         Self {
             identity,
-            cool_off_minutes: 10,
-            discoverable_times: Vec::new(),
-            disclosure_budget: 10,
+            quiet_times: Vec::new(),
+            strangers_per_day: 12,
             visibility: Visibility::default(),
             accept: Scope::Lenient,
             gossip: Scope::Network,
@@ -83,11 +75,10 @@ impl Policy {
         }
     }
 
-    /// Whether the device is passively discoverable at `minute` of the local
-    /// day, ignoring the cool-off window and the disclosure budget.
+    /// Whether `minute` of the local day falls in one of the quiet times.
     #[must_use]
-    pub fn is_discoverable_at(&self, minute: u16) -> bool {
-        self.discoverable_times
+    pub fn is_quiet_at(&self, minute: u16) -> bool {
+        self.quiet_times
             .iter()
             .any(|window| window.contains(minute))
     }
@@ -255,12 +246,11 @@ mod tests {
             named,
             [
                 "accept",
-                "cool_off_minutes",
-                "disclosure_budget",
-                "discoverable_times",
                 "forward",
                 "gossip",
+                "quiet_times",
                 "retention_days",
+                "strangers_per_day",
                 "visibility",
             ]
             .into()
@@ -274,24 +264,24 @@ mod tests {
     }
 
     #[test]
-    fn discoverability_is_the_union_of_the_windows_set() {
+    fn quiet_is_the_union_of_the_windows_set() {
         let mut policy = Policy::new(us());
 
-        // Empty by default, which is nowhere rather than everywhere.
-        assert!(!policy.is_discoverable_at(600));
+        // Empty by default, which is never rather than always.
+        assert!(!policy.is_quiet_at(600));
 
-        policy.discoverable_times.push(Window {
+        policy.quiet_times.push(Window {
             start: 480,
             end: 1080,
         });
-        policy.discoverable_times.push(Window {
+        policy.quiet_times.push(Window {
             start: 1_380,
             end: 360,
         });
 
-        assert!(policy.is_discoverable_at(600));
-        assert!(policy.is_discoverable_at(10));
-        assert!(!policy.is_discoverable_at(1_200));
+        assert!(policy.is_quiet_at(600));
+        assert!(policy.is_quiet_at(10));
+        assert!(!policy.is_quiet_at(1_200));
     }
 
     #[test]

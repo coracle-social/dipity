@@ -25,7 +25,8 @@ use crate::db::pref::query as pref;
 use crate::db::recipient_signature::query as signature;
 use crate::db::spending::query as spending;
 use crate::model::{
-    Blob, BlobHash, BlobRole, Charge, Policy, Pref, Provenance, Query, RecipientSignature, Share,
+    Blob, BlobHash, BlobRole, Charge, DisclosureBucket, Policy, Pref, Provenance, Query,
+    RecipientSignature, Share,
 };
 
 // ----------------------------------------------------- Policy and preferences
@@ -53,9 +54,9 @@ pub fn pair_secrets(db: &Db) -> Result<Vec<(PublicKey, [u8; 32])>> {
     db.read(pairing::secrets)
 }
 
-/// How many times this device disclosed its identity at or after `cutoff`.
-pub fn disclosures_since(db: &Db, cutoff: i64) -> Result<u32> {
-    db.read(|tx| pairing::disclosures_since(tx, cutoff))
+/// The disclosure bucket, full at `now` if nothing has been spent from it.
+pub fn disclosure_bucket(db: &Db, now: i64) -> Result<DisclosureBucket> {
+    db.read(|tx| pairing::bucket(tx, now))
 }
 
 // --------------------------------------------------------------------- Events

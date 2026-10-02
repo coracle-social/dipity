@@ -81,6 +81,6 @@ Four facts about the transport decide most of the interface, and every story bel
 Each of these is a story the transport or the docs already support and the view does not answer.
 
 - **A notification while the app is closed.** Story 16 in the pocket. The core emits `WakeAt` and the shells own local notifications; nothing posts one.
-- **Discoverable times.** `policy.discoverable_times` is a list of windows and wants a time picker rather than a switch. Settings edits the other three discoverability preferences and leaves it alone.
+- **Quiet times.** `policy.quiet_times` is a list of windows and wants a time picker rather than a switch. Settings edits the number of strangers a day and leaves it alone.
 - **Per-contact gossip.** [`policy.md`](./policy.md#accept-and-gossip) expresses gossip as a tier over the whole trust graph, so "do not pass this person's things on" is only sayable as a block. `ContactDetail` offers trust, mute and block.
 - **Media.** The first version carries text. `imeta`, previews and blob transfer are built below the bridge and nothing above it attaches a file.

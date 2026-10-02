@@ -113,7 +113,7 @@ Read more at [`sync.md`](./sync.md) and [`policy.md`](./policy.md).
 
 ## Privacy
 
-A passive radio observer learns only that some device running this app is nearby. An active one can always complete a handshake, so nothing that handshake discloses outlives the session, and outside a discoverable window no pubkey moves at all. A peer who completes a session learns the user's pubkey, that they were physically present at a time and place, and whatever the gossip scope serves — which is why the consent gate sits before authentication.
+A passive radio observer learns only that some device running this app is nearby. An active one can always complete a handshake, so nothing that handshake discloses outlives the session, and the user's pubkey goes to a stranger only as often as the [disclosure bucket](./policy.md#discoverability) allows. A peer who completes a session learns the user's pubkey, that they were physically present at a time and place, and whatever the gossip scope serves — which is why the consent gate sits before authentication.
 
 `seen_at` and provenance are records of the user's movements, so they never leave the device. An authorship proof convinces its recipient and nobody else, so a second-hop recipient knows where an event came from and cannot prove it — though the peer the author handed it to holds a signature that does, which is where that guarantee stops.
 

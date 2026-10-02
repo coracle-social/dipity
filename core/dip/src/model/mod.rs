@@ -22,6 +22,7 @@ mod authors;
 mod authorship_proof;
 mod blob;
 mod charge;
+pub(crate) mod disclosure;
 mod graph;
 mod identity;
 mod kinds;
@@ -39,6 +40,7 @@ pub use authors::Authors;
 pub use authorship_proof::{AuthorshipClaim, AuthorshipProof};
 pub use blob::{Blob, BlobDigest, BlobHash, BlobRole};
 pub use charge::{Charge, Meter};
+pub use disclosure::DisclosureBucket;
 pub use graph::{Graph, Standing};
 pub use identity::Identity;
 pub use kinds::{
@@ -46,7 +48,7 @@ pub use kinds::{
     MuteListWriter, PeopleListReader, PeopleListWriter, TRUST, TrustListReader, TrustListWriter,
 };
 pub use order::Order;
-pub use policy::{DISCLOSURE_WINDOW_SECONDS, PeerPolicy, Policy};
+pub use policy::{PeerPolicy, Policy};
 pub use pref::{Pref, keys};
 pub use provenance::{Provenance, ProvenanceFilter, Share};
 pub use query::Query;

@@ -304,7 +304,7 @@ mod tests {
             [
                 "blob",
                 "blob_reference",
-                "disclosure",
+                "disclosure_bucket",
                 "event",
                 "event_fts",
                 "event_refused",

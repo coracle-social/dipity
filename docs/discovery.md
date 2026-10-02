@@ -29,6 +29,7 @@ Attempts are rate-limited, candidates are ordered by RSSI so the nearest strange
 - A dial that fails before a link comes up is retried within a few seconds, jittered, because the usual cause is two phones dialing each other at the same moment.
 - A peer stays queued after it is dialed, so a dropped link is redialed when its backoff lapses without waiting for the radio to report the peer again.
 - Two phones that dial each other end up with two links to one person. Both keep the one the lower pubkey dialed and close the other, which needs no message between them.
+- A peripheral that was told who this device is and left before syncing is not redialed until its address rotates, which is what keeps a harvester from draining the [disclosure bucket](./policy.md#discoverability).
 - A teardown this device decided is not a walk-away and does not recover fast. Policy blocking the peer, a consent gate lapsing, a frame the wire cannot carry: redialing in fifteen seconds only reaches the same refusal, so it waits a minute. A gate the user refused outright waits longer still.
 
 bitchat's `BLEConnectionScheduler.swift` is the reference for this.
@@ -69,7 +70,7 @@ bitchat's `BLEConnectionScheduler.swift` is the reference for this.
                 └─────────┘
 ```
 
-One state sits off this line. **GATE_PENDING** is where an unadmitted stranger waits while the user is asked, entered from SECURED when the tags resolve to nobody and the discoverability preferences do not admit them; approving returns the link to SECURED and the exchange resumes, refusing or the five-minute hold lapsing closes it.
+One state sits off this line. **GATE_PENDING** is where an unadmitted stranger waits while the user is asked, entered from SECURED when the tags resolve to nobody and the [disclosure bucket](./policy.md#discoverability) does not admit them; approving returns the link to SECURED and the exchange resumes, refusing or the five-minute hold lapsing closes it.
 
 [Login with device](./keys.md#login-with-device) sits off it in the other direction: it is an exchange on the control channel rather than a state, available only from SYNCING and only while the app is in the foreground, and the session goes on syncing throughout. A refusal at either end ends the exchange and leaves the link alone.
 
@@ -79,7 +80,7 @@ Every state above IDENTIFIED has a deadline of its own as well, independent of t
 
 The first frames on the secured channel are a recognition exchange, and the consent gate reads its result. At pairing, both sides derive a **pair secret** from the authenticated session and store it against the peer. On a later encounter, each proves it holds one without naming it, by sending a tag that is an HMAC over the session's handshake hash, keyed on the pair secret. The sender emits one tag per pair secret it holds; the receiver trial-MACs its own secrets against the list. A match identifies the relationship.
 
-The dialer sends first, and the peer answers only if a tag resolves or it is inside a discoverable window. A harvester that dials gets a list of random-looking bytes. A peer who would rather not be recognized omits their tag and arrives as a stranger.
+The dialer sends first, and the peer answers only if a tag resolves or its disclosure bucket admits a stranger. A harvester that dials gets a list of random-looking bytes. A peer who would rather not be recognized omits their tag and arrives as a stranger.
 
 The list is padded to a fixed count, so its length does not disclose how many peers the device has paired with, and a long history does not put more on the wire. Resolution stays cheap against the full set.
 
@@ -120,7 +121,7 @@ If the receiver wishes to continue, it then identifies itself to the dialer, whi
 
 ### Meeting somebody
 
-The gate decides whether a link proceeds, and naming decides whether the person on it becomes a contact. A stranger admitted by the cool-off or a discoverable time passes without a prompt and syncs, but has no name on this device. Every [policy](./policy.md) the user can set about a person starts from naming them.
+The gate decides whether a link proceeds, and naming decides whether the person on it becomes a contact. A stranger the disclosure bucket admits passes without a prompt and syncs, but has no name on this device. Every [policy](./policy.md) the user can set about a person starts from naming them.
 
 So once a peer the user has not named identifies itself, the device asks to pair the same way a held gate does: the same five shapes over the same transcript, and a name for whoever is standing there. Nothing waits on the answer. Naming them writes the user's [contact card](./policy.md#social-graph) for the pubkey the session proved. Declining leaves them unnamed, and they are asked about again at the next meeting.
 

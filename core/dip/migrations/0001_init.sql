@@ -224,13 +224,15 @@ CREATE TABLE pair_secret (
     updated_at INTEGER NOT NULL
 ) STRICT;
 
--- The disclosure budget: one row per AUTH response this device handed to an
--- unrecognized peer, with when. No pubkey — the dialer discloses before the
--- peer has named itself, and a harvester that never answers would otherwise
--- cost nothing. Rows outside the current window are pruned on write.
-CREATE TABLE disclosure (
-    id           INTEGER PRIMARY KEY,
-    disclosed_at INTEGER NOT NULL
+-- The disclosure bucket: how many AUTH responses this device may still hand
+-- to strangers, as of when it was last spent from. One row, and no pubkey —
+-- the dialer discloses before the peer has named itself, and a log of the
+-- strangers met is what `docs/privacy.md` keeps off the device. Absent means
+-- full.
+CREATE TABLE disclosure_bucket (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    tokens     REAL    NOT NULL,
+    updated_at INTEGER NOT NULL
 ) STRICT;
 
 -- The quota ledger: what each peer wrote to this device in the last 24 hours,

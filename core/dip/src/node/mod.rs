@@ -173,7 +173,7 @@ pub struct Node {
     scheduler: Scheduler,
     /// The shared rolling spending ledger, metered across sessions.
     spending: Arc<crate::sync::spending::SpendingLedger>,
-    /// Where the app is, for the cool-off admission window. `None` until the
+    /// Where the app is, which an identity transfer needs. `None` until the
     /// shell first reports it.
     presence: Option<Presence>,
     /// This store's event channel, so a stored own event is offered to every
@@ -541,15 +541,9 @@ impl Node {
         self.set_presence(Presence::Foreground)
     }
 
-    /// The app went to the background, which starts the cool-off window.
-    ///
-    /// The window runs from here rather than from foregrounding, so a user who
-    /// reads for a while and pockets the phone still gets the full cool-off.
-    /// `docs/policy.md#discoverability`.
+    /// The app went to the background.
     pub fn notify_backgrounded(&mut self) -> Vec<Action> {
-        self.set_presence(Presence::Background {
-            since: clock::now(),
-        })
+        self.set_presence(Presence::Background)
     }
 
     /// Record where the app is and rebind it on every live session.
@@ -892,15 +886,15 @@ impl Node {
             actions.extend(writes(session));
         }
 
-        let closed: Vec<(LinkId, Ending)> = self
+        let closed: Vec<(LinkId, Ending, bool)> = self
             .sessions
             .iter()
             .filter(|(_, session)| session.state == State::Closed)
-            .map(|(link, session)| (*link, session.ending))
+            .map(|(link, session)| (*link, session.ending, session.was_harvested()))
             .collect();
 
         // Every teardown passes through here, so grading is one decision.
-        for (link, ending) in closed {
+        for (link, ending, harvested) in closed {
             self.sessions.remove(&link);
 
             let duplicate = self.duplicates.remove(&link);
@@ -908,6 +902,7 @@ impl Node {
             if let Some(peripheral) = self.link_peripheral.remove(&link) {
                 match ending {
                     _ if duplicate => self.scheduler.duplicate(&peripheral),
+                    _ if harvested => self.scheduler.harvested(&peripheral),
                     Ending::WalkedAway => self.scheduler.walked_away(&peripheral),
                     Ending::Refused => self.scheduler.refused(&peripheral),
                 }
@@ -1621,6 +1616,26 @@ mod tests {
         );
 
         assert!(retried.contains(&Action::Connect(peripheral(1))));
+    }
+
+    #[test]
+    fn a_harvester_is_not_redialed_until_its_address_rotates() {
+        let mut node = node();
+
+        clock::at(1_000, || {
+            node.peripheral_seen(&peripheral(1), -60);
+            node.scheduler.harvested(&peripheral(1));
+        });
+
+        let soon = clock::at(1_000 + scheduler::WALKED_AWAY_BACKOFF_SECONDS + 1, || {
+            node.tick()
+        });
+        assert!(!soon.contains(&Action::Connect(peripheral(1))));
+
+        let rotated = clock::at(1_000 + scheduler::HARVESTED_BACKOFF_SECONDS, || {
+            node.peripheral_seen(&peripheral(1), -60)
+        });
+        assert!(rotated.contains(&Action::Connect(peripheral(1))));
     }
 
     #[test]

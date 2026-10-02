@@ -15,6 +15,7 @@ use crate::db::blob::query as blob_query;
 use crate::db::event::command as event;
 use crate::db::event::query as event_query;
 use crate::db::pairing::command as pairing;
+use crate::db::pairing::query as pairing_query;
 use crate::db::pref::command as pref;
 use crate::db::recipient_signature::command as signature;
 use crate::db::spending::command as spending;
@@ -97,10 +98,14 @@ pub fn pair_with(db: &Db, pubkeys: &[PublicKey], secret: &[u8; 32], at: i64) -> 
     })
 }
 
-/// Spend one unit of the disclosure budget, for an identity this device has
-/// just handed to an unrecognized peer.
-pub fn record_disclosure(db: &Db, at: i64) -> Result<()> {
-    db.write(|tx| pairing::record_disclosure(tx, at))
+/// Spend one disclosure from the bucket, refilled at `per_day`, at `at`.
+/// `docs/policy.md#discoverability`.
+pub fn spend_disclosure(db: &Db, per_day: u32, at: i64) -> Result<()> {
+    db.write(|tx| {
+        let bucket = pairing_query::bucket(tx, at)?;
+
+        pairing::save_bucket(tx, bucket.spend(per_day, at))
+    })
 }
 
 /// Store the author's signature over an event this device already holds.
@@ -292,7 +297,7 @@ mod tests {
         receive_event(&db, &event, &[peer()], 10).unwrap();
         set_preference(&db, "policy.retention_days", "7", 10).unwrap();
         pair_with(&db, &[author(2)], &[1u8; 32], 10).unwrap();
-        record_disclosure(&db, 10).unwrap();
+        spend_disclosure(&db, 12, 10).unwrap();
 
         wipe(&db).unwrap();
 
@@ -302,7 +307,7 @@ mod tests {
                     "SELECT (SELECT COUNT(*) FROM event) + (SELECT COUNT(*) FROM event_fts)
                           + (SELECT COUNT(*) FROM event_seen) + (SELECT COUNT(*) FROM blob)
                           + (SELECT COUNT(*) FROM blob_reference) + (SELECT COUNT(*) FROM pref)
-                          + (SELECT COUNT(*) FROM pair_secret) + (SELECT COUNT(*) FROM disclosure)",
+                          + (SELECT COUNT(*) FROM pair_secret) + (SELECT COUNT(*) FROM disclosure_bucket)",
                     [],
                     |row| row.get(0),
                 )?)

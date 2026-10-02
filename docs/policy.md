@@ -12,17 +12,13 @@ Any peer that authenticates learns the user's nostr identity, and on a proximity
 
 Peers that have already been paired are stored against a **pair secret** derived from the authenticated session, and pass silently. They are [recognized](./discovery.md#recognition) without either side disclosing anything durable — not a pubkey, which is unavailable before authentication, and not a Noise static key, which does not survive between sessions.
 
-Otherwise, the user has a few preferences they can set for controlling background connections:
+Otherwise, a stranger is admitted without a prompt, whether the app is open or in a pocket, while the **disclosure bucket** has room. Gossip in the background is what the app is for, so being found does not depend on having opened it recently.
 
-- Cool-off window - when the app is foregrounded, it begins accepting connections. This cool-off period determines how long the app will continue accepting unknown connections after the app is backgrounded. 10 minutes by default.
-- Discoverable times - times of day, in the device's local timezone, when the user is willing to be passively discoverable. Empty by default.
-- Disclosure budget - the number of times the device will hand its identity to an unrecognized peer per discoverable window. 10 by default. Bounds what a harvester camped in a busy place collects, without needing to know who anyone is; nothing else can, since a burner pubkey defeats any per-identity limit. See [the consent gate](./discovery.md#the-consent-gate).
+Each disclosure hands a stranger the user's pubkey at a place and a time, and nothing else the protocol discloses outlives a session, so the rate of disclosures is what tracking the user costs. The bucket bounds that rate whoever and however many the strangers are, since it is one bucket rather than a limit per identity, which a burner pubkey defeats. It holds three disclosures and refills at the user's number per day, 12 by default, so an observer gets a burst of three at most and then one new sighting every two hours on average. The bucket bounds how often a sighting can happen. It does not make the user untrackable.
 
-A unit is spent when the device sends its `AUTH` response, not when the exchange completes. The dialer identifies first and does not learn the peer's pubkey until afterwards, so a budget counting recipients could not charge the harvester the gate exists to bound: it would collect an auth event, decline to name itself, and cost nothing. Counting the act instead means a peer the user has not paired with costs a unit on every attempt, including a retry after a dropped link. Peers the user has approved by hand do not spend it — the budget stands in for a decision nobody was there to make.
+A disclosure is spent when the device sends its `AUTH` response, not when the exchange completes. The dialer identifies first and does not learn the peer's pubkey until afterwards, so a harvester that collects an auth event and walks away costs a disclosure all the same. A receiver has seen the dialer's pubkey by the time it answers, and a dialer the user trusts costs nothing. Neither does a peer the user has paired with, which is recognized before anyone discloses, nor one the user approved by hand. A peripheral that took a disclosure and left before syncing is not dialed again until its address rotates, so a harvester cannot drain the bucket by being redialed.
 
-An unknown peer is admitted if either of the first two preferences allows it and the budget has not been spent.
-
-The cool-off window carries most of the gate: at its default, checking the app on a bus leaves the device open to that bus for ten minutes.
+When the bucket is empty, a stranger is held for the user to approve. **Quiet times** are times of day, in the device's local timezone, when every stranger is held that way. Empty by default.
 
 ## Social graph
 
