@@ -103,7 +103,7 @@ What the gate protects is the disclosure of a nostr pubkey, which names a long-t
 
 Before either party identifies itself, a recognition tag may resolve allowing the peer to be mapped to a pubkey. This allows policy to be used to decide whether to connect. Blocked peers retain their tags so we can keep dropping their connections.
 
-If a peer isn't recognized, the app may refuse to connect depending on the user's [discoverability policy settings](./policy.md#discoverability). If this happens, the user should be notified so they can manually approve the connection. If the user doesn't respond, hang on to the connection for up to 5 minutes. The next time the peer connects (and it should retry for this reason), the user's decision gates the connection.
+If a peer isn't recognized, the app may refuse to connect depending on the user's [discoverability policy settings](./policy.md#discoverability). If this happens, the user should be notified so they can manually approve the connection. If the user doesn't respond, hang on to the connection for up to 5 minutes.
 
 The prompt carries a comparison value, derived from the session's handshake hash under its own domain label the way [login with device](./keys.md#login-with-device) derives its six digits. Noise XX authenticates nobody, and the gate runs before either side has named a pubkey, so this is the only thing the two users have to check: a device in the middle completes two handshakes and the two screens then disagree. A gate that cannot derive one asks nothing and stays held.
 
