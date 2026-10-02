@@ -49,6 +49,14 @@ A peer's `REQ` therefore contributes only its filter. The registers and the scop
 
 Reconciliation is bounded from both ends by the same rule, with one asymmetry. Answering a peer's negotiation uses exactly the query a `REQ` would, so a device never advertises holding something it would refuse to serve. Opening one uses everything this device **holds**, because the question is what it is missing: an event that is already stored has to be in the set even when it is offerable to nobody, or it is reported missing on every encounter and fetched forever.
 
+### Resyncing
+
+A change to trust, block, or any of the Accept, gossip, forwarding and visibility settings applies to what is already stored and to every live session. What the new Accept scope no longer admits is evicted, unless the user bookmarked it, and is remembered as refused so reconciliation does not offer it again. The old settings' refusals are forgotten, so what the new ones admit is fetched.
+
+Each live session then reconciles again. A device that receives a `NEG-OPEN` beyond the number it has opened itself answers with one of its own, so a change on either side makes both sides pull, and the counts stop the exchange at one round each.
+
+A recipient signature withheld because the peer was not trusted to forward is owed, not lost. `event_shared` records whether one went with each handoff, and the user's own events handed over unsigned get their signatures once forwarding is allowed: on the resync, or when the two next meet.
+
 ### Quotas
 
 Accepting gossiped events is an unbounded write from whoever is standing nearby. Independent of scope:

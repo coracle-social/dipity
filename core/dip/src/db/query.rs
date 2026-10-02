@@ -120,6 +120,11 @@ pub fn get_event(db: &Db, id: &EventId) -> Result<Option<HashedEvent>> {
     db.read(|tx| event::get(tx, id))
 }
 
+/// The user's own events handed to any of `to` without the recipient signature.
+pub fn unsigned_shares(db: &Db, identity: &PublicKey, to: &[PublicKey]) -> Result<Vec<EventId>> {
+    db.read(|tx| event::unsigned_shares(tx, identity, to))
+}
+
 /// The author's signature over an event naming `recipient`, if this device
 /// holds it.
 pub fn get_signature(

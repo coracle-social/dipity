@@ -637,14 +637,31 @@ impl Node {
 
     /// Recompile the policy from the store and bind it on every live session.
     ///
-    /// What the old policy refused, the new one may accept, so those refusals
-    /// are forgotten and the next reconciliation offers them again.
+    /// A change to what moves between peers forgets the old policy's refusals,
+    /// evicts what the new Accept scope no longer admits, and reconciles every
+    /// live session again. `docs/sync.md#resyncing`.
     fn rebind_policy(&mut self) -> Result<()> {
+        let before = Arc::clone(&self.policy);
         self.policy = Arc::new(query::policy(&self.db, &self.identity)?);
-        db_command::forget_policy_refusals(&self.db)?;
 
         for session in self.sessions.values_mut() {
             session.set_policy(Arc::clone(&self.policy));
+        }
+
+        if !self.policy.moves_sync(&before) {
+            return Ok(());
+        }
+
+        db_command::forget_policy_refusals(&self.db)?;
+
+        if self.policy.changes_accept(&before) {
+            db_command::evict_out_of_scope(&self.db, &self.policy, clock::now())?;
+        }
+
+        for session in self.sessions.values_mut() {
+            if let Err(error) = session.resync(&self.db) {
+                log::error!("resyncing link {:?} failed: {error:#}", session.link);
+            }
         }
 
         Ok(())
@@ -1731,6 +1748,34 @@ mod tests {
         node.tick();
 
         assert_eq!(node.policy().retention_days, 7);
+    }
+
+    #[test]
+    fn blocking_somebody_evicts_what_they_wrote() {
+        let db = db();
+        let mut node = Node::new(
+            Arc::clone(&db),
+            custody(secret(1)),
+            Arc::new(crate::blobs::MemoryBlobStore::default()),
+        )
+        .unwrap();
+        let theirs = note(author(3), 100, "not welcome", Tags::new());
+        db_command::receive_event(&db, &theirs, &[author(3)], 100).unwrap();
+
+        let blocks = crate::fixtures::event(
+            author(1),
+            crate::model::BLOCK,
+            200,
+            "",
+            Tags::new().add("p", [author(3).to_hex()]),
+        );
+        node.publish(&blocks, &[]).unwrap();
+
+        assert!(
+            crate::db::query::get_event(&db, &theirs.id)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

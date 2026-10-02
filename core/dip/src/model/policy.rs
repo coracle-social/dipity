@@ -92,6 +92,21 @@ impl Policy {
             .any(|window| window.contains(minute))
     }
 
+    /// Whether moving from `before` to this changes what this device stores.
+    #[must_use]
+    pub fn changes_accept(&self, before: &Self) -> bool {
+        self.accept != before.accept || self.graph != before.graph
+    }
+
+    /// Whether moving from `before` to this changes what moves between peers.
+    #[must_use]
+    pub fn moves_sync(&self, before: &Self) -> bool {
+        self.changes_accept(before)
+            || self.gossip != before.gossip
+            || self.forward != before.forward
+            || self.visibility != before.visibility
+    }
+
     /// Bind this policy to a pubkey the peer proved.
     #[must_use]
     pub fn for_pubkey(self, pubkey: PublicKey) -> PeerPolicy {

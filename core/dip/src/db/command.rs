@@ -18,7 +18,7 @@ use crate::db::pairing::command as pairing;
 use crate::db::pref::command as pref;
 use crate::db::recipient_signature::command as signature;
 use crate::db::spending::command as spending;
-use crate::model::{Blob, BlobHash, BlobRole, Charge, RecipientSignature};
+use crate::model::{Blob, BlobHash, BlobRole, Charge, Policy, RecipientSignature};
 
 /// Take in an event from a peer, with the media it references.
 ///
@@ -69,15 +69,15 @@ pub fn publish_event(db: &Db, event: &HashedEvent, identity: &PublicKey, at: i64
 /// One transaction for the page: a subscription is answered a few hundred events
 /// at a time, and a write each would put the cost of serving a peer into
 /// SQLite's commit rather than into the radio.
-pub fn record_shares(db: &Db, ids: &[EventId], to: &[PublicKey], at: i64) -> Result<()> {
-    if ids.is_empty() || to.is_empty() {
+pub fn record_shares(db: &Db, shares: &[(EventId, bool)], to: &[PublicKey], at: i64) -> Result<()> {
+    if shares.is_empty() || to.is_empty() {
         return Ok(());
     }
 
     db.write(|tx| {
-        for id in ids {
+        for (id, signed) in shares {
             for pubkey in to {
-                event::record_shared(tx, id, pubkey, at)?;
+                event::record_shared(tx, id, pubkey, at, *signed)?;
             }
         }
 
@@ -178,6 +178,19 @@ pub fn refuse_by_policy(db: &Db, event: &HashedEvent, at: i64) -> Result<()> {
 /// Forget the refusals the user's settings made, once those settings change.
 pub fn forget_policy_refusals(db: &Db) -> Result<usize> {
     db.write(event::forget_policy_refusals)
+}
+
+/// Forget what every author outside the user's Accept scope wrote, after the
+/// policy has narrowed. Returns how many events went.
+pub fn evict_out_of_scope(db: &Db, policy: &Policy, at: i64) -> Result<usize> {
+    db.write(|tx| {
+        let outside: Vec<PublicKey> = event_query::authors(tx, &policy.identity)?
+            .into_iter()
+            .filter(|author| !policy.accept.admits(policy.graph.standing(author)))
+            .collect();
+
+        event::evict_authors(tx, &policy.identity, &outside, at)
+    })
 }
 
 /// Forget events whose latest sighting is before `cutoff`, and refusals made

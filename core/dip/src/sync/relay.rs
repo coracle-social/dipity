@@ -247,9 +247,18 @@ pub fn serve(
 /// `EVENT`.
 pub fn record_shares(db: &Db, peer: &Peer, events: &[HashedEvent]) -> Result<()> {
     let to: Vec<PublicKey> = peer.pubkeys.iter().copied().collect();
-    let ids: Vec<EventId> = events.iter().map(|event| event.id).collect();
+    let forwards = peer.policy.may_forward();
+    let shares: Vec<(EventId, bool)> = events
+        .iter()
+        .map(|event| {
+            (
+                event.id,
+                forwards && event.pubkey == peer.policy.policy.identity,
+            )
+        })
+        .collect();
 
-    db_command::record_shares(db, &ids, &to, clock::now())
+    db_command::record_shares(db, &shares, &to, clock::now())
 }
 
 /// Attach what lets an event travel its next hop, following the `EVENT`.

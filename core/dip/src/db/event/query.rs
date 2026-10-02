@@ -212,6 +212,45 @@ pub fn shares_for(tx: &Tx<'_>, ids: &[EventId]) -> Result<HashMap<EventId, Vec<S
     Ok(shares)
 }
 
+/// The user's own events handed to any of `to` without the recipient signature.
+pub fn unsigned_shares(
+    tx: &Tx<'_>,
+    identity: &PublicKey,
+    to: &[PublicKey],
+) -> Result<Vec<EventId>> {
+    if to.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = placeholders(2, to.len());
+    let mut prepared = tx.prepare(&format!(
+        "SELECT DISTINCT event_shared.event_id FROM event_shared
+         JOIN event ON event.id = event_shared.event_id
+         WHERE event.pubkey = ?1 AND event_shared.signed = 0
+           AND event_shared.pubkey IN ({placeholders})"
+    ))?;
+
+    let mut values = vec![identity.to_hex()];
+    values.extend(to.iter().map(PublicKey::to_hex));
+
+    prepared
+        .query_map(params_from_iter(values), |row| {
+            event_id_from_sql(&row.get::<_, String>(0)?, 0)
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("finding own events handed over unsigned")
+}
+
+/// Every author the store holds an event from, other than the user.
+pub fn authors(tx: &Tx<'_>, identity: &PublicKey) -> Result<Vec<PublicKey>> {
+    tx.prepare_cached("SELECT DISTINCT pubkey FROM event WHERE pubkey <> ?1")?
+        .query_map(params![identity.to_hex()], |row| {
+            pubkey_from_sql(&row.get::<_, String>(0)?, 0)
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("listing the authors held")
+}
+
 /// Which peers an event has been seen from.
 pub fn seen_from(tx: &Tx<'_>, id: &EventId) -> Result<Vec<PublicKey>> {
     Ok(provenance(tx, id)?

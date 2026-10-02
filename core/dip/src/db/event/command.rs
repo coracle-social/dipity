@@ -155,16 +155,30 @@ pub fn record_shared(
     event_id: &EventId,
     pubkey: &PublicKey,
     shared_at: i64,
+    signed: bool,
 ) -> Result<bool> {
     let written = tx
         .prepare_cached(
-            "INSERT OR IGNORE INTO event_shared (event_id, pubkey, shared_at)
-             VALUES (?1, ?2, ?3)",
+            "INSERT OR IGNORE INTO event_shared (event_id, pubkey, shared_at, signed)
+             VALUES (?1, ?2, ?3, ?4)",
         )?
-        .execute(params![event_id.to_hex(), pubkey.to_hex(), shared_at])
+        .execute(params![
+            event_id.to_hex(),
+            pubkey.to_hex(),
+            shared_at,
+            signed
+        ])
         .with_context(|| format!("recording {event_id} handed to {pubkey}"))?;
 
     if written == 0 {
+        if signed {
+            tx.prepare_cached(
+                "UPDATE event_shared SET signed = 1 WHERE event_id = ?1 AND pubkey = ?2",
+            )?
+            .execute(params![event_id.to_hex(), pubkey.to_hex()])
+            .with_context(|| format!("recording {event_id} signed for {pubkey}"))?;
+        }
+
         return Ok(false);
     }
 
@@ -242,6 +256,58 @@ pub fn forget_unseen_since(tx: &Tx<'_>, identity: &PublicKey, cutoff: i64) -> Re
     }
 
     Ok(forgotten)
+}
+
+/// Forget everything written by `authors` that the user has not bookmarked,
+/// remembering each as refused by policy so reconciliation does not offer it
+/// again. Returns how many events went.
+pub fn evict_authors(
+    tx: &Tx<'_>,
+    identity: &PublicKey,
+    authors: &[PublicKey],
+    at: i64,
+) -> Result<usize> {
+    let mut evicted = 0;
+
+    for author in authors {
+        let held = tx
+            .prepare_cached(
+                "SELECT id, created_at FROM event
+                 WHERE pubkey = ?1
+                   AND id NOT IN (
+                       SELECT bookmark.value FROM event_tag bookmark
+                       JOIN event list ON list.id = bookmark.event_id
+                       WHERE list.kind = ?3 AND list.pubkey = ?2 AND bookmark.name = 'e'
+                   )",
+            )?
+            .query_map(
+                params![author.to_hex(), identity.to_hex(), BOOKMARKS],
+                |row| {
+                    Ok((
+                        event_id_from_sql(&row.get::<_, String>(0)?, 0)?,
+                        row.get::<_, i64>(1)?,
+                    ))
+                },
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .with_context(|| format!("finding what {author} wrote"))?;
+
+        for (id, created_at) in held {
+            if delete(tx, &id)? {
+                evicted += 1;
+            }
+
+            tx.prepare_cached(
+                "INSERT INTO event_refused (id, created_at, by_policy, refused_at)
+                 VALUES (?1, ?2, 1, ?3)
+                 ON CONFLICT (id) DO UPDATE SET by_policy = 1, refused_at = excluded.refused_at",
+            )?
+            .execute(params![id.to_hex(), created_at, at])
+            .with_context(|| format!("remembering that {id} was evicted"))?;
+        }
+    }
+
+    Ok(evicted)
 }
 
 /// Whether a kind is state rather than content, which the sweep keeps however
@@ -671,7 +737,7 @@ mod tests {
         let subject = note(author(1), 100, "note", Tags::new().add("t", ["town"]));
 
         save(&tx, &subject, &[peer()], 10).unwrap();
-        record_shared(&tx, &id(&subject), &author(2), 20).unwrap();
+        record_shared(&tx, &id(&subject), &author(2), 20, false).unwrap();
         assert!(delete(&tx, &id(&subject)).unwrap());
 
         for table in ["event_tag", "event_seen", "event_shared", "event_fts"] {
@@ -694,9 +760,9 @@ mod tests {
 
         save(&tx, &subject, &[peer()], 10).unwrap();
 
-        assert!(record_shared(&tx, &stored, &author(2), 20).unwrap());
-        assert!(!record_shared(&tx, &stored, &author(2), 30).unwrap());
-        assert!(record_shared(&tx, &stored, &author(3), 30).unwrap());
+        assert!(record_shared(&tx, &stored, &author(2), 20, false).unwrap());
+        assert!(!record_shared(&tx, &stored, &author(2), 30, false).unwrap());
+        assert!(record_shared(&tx, &stored, &author(3), 30, false).unwrap());
 
         let shares = query::shares_for(&tx, &[stored]).unwrap();
 
@@ -844,6 +910,62 @@ mod tests {
         assert_eq!(forget_unseen_since(&tx, &us, 500).unwrap(), 1);
         assert!(query::get(&tx, &id(&kept)).unwrap().is_some());
         assert!(query::get(&tx, &id(&unkept)).unwrap().is_none());
+    }
+
+    #[test]
+    fn eviction_drops_an_authors_events_but_the_bookmarked_and_remembers_refusing_them() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        let us = author(9);
+        let kept = note(author(1), 100, "worth keeping", Tags::new());
+        let evicted = note(author(1), 100, "out of scope now", Tags::new());
+        let untouched = note(author(2), 100, "still in scope", Tags::new());
+        let bookmarks = event(
+            us,
+            BOOKMARKS,
+            100,
+            "",
+            Tags::new().add("e", [id(&kept).to_hex()]),
+        );
+
+        for stored in [&kept, &evicted, &untouched] {
+            save(&tx, stored, &[peer()], 100).unwrap();
+        }
+        save(&tx, &bookmarks, &[us], 100).unwrap();
+
+        assert_eq!(evict_authors(&tx, &us, &[author(1)], 200).unwrap(), 1);
+        assert!(query::get(&tx, &id(&kept)).unwrap().is_some());
+        assert!(query::get(&tx, &id(&evicted)).unwrap().is_none());
+        assert!(query::get(&tx, &id(&untouched)).unwrap().is_some());
+        assert!(
+            query::refused(&tx)
+                .unwrap()
+                .iter()
+                .any(|item| item.id == id(&evicted))
+        );
+    }
+
+    #[test]
+    fn a_share_made_unsigned_is_owed_until_one_is_signed() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        let own = note(author(1), 100, "mine", Tags::new());
+        save(&tx, &own, &[author(1)], 10).unwrap();
+
+        record_shared(&tx, &id(&own), &author(2), 20, false).unwrap();
+        assert_eq!(
+            query::unsigned_shares(&tx, &author(1), &[author(2)]).unwrap(),
+            vec![id(&own)]
+        );
+
+        record_shared(&tx, &id(&own), &author(2), 30, true).unwrap();
+        assert!(
+            query::unsigned_shares(&tx, &author(1), &[author(2)])
+                .unwrap()
+                .is_empty()
+        );
     }
 
     /// Somebody else's bookmark list is not an instruction to this device.

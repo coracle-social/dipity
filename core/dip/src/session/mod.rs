@@ -209,6 +209,16 @@ pub struct Session {
     upgrade: Upgrade,
     /// Moving this device's identity to the peer, if a user asked for it.
     pub transfer: IdentityTransfer,
+    /// How many reconciliations each side has opened, so one the peer opens
+    /// past the count here is answered with one back. `docs/sync.md#resyncing`.
+    negotiations: Negotiations,
+}
+
+/// Reconciliations opened over one session, counted per side.
+#[derive(Debug, Default, Clone, Copy)]
+struct Negotiations {
+    opened: u32,
+    answered: u32,
 }
 
 impl Session {
@@ -244,6 +254,7 @@ impl Session {
             spending: SessionSpending::new(spending),
             upgrade: Upgrade::new(role),
             transfer: IdentityTransfer::default(),
+            negotiations: Negotiations::default(),
         })
     }
 
@@ -506,6 +517,7 @@ impl Session {
         }
 
         let quota = self.quota();
+        let reopened = matches!(message, Message::NegOpen(..));
 
         let replies = if self.is_for_relay(&message) {
             self.relay.handle(
@@ -523,6 +535,16 @@ impl Session {
 
         for reply in replies {
             self.send_sync(&reply)?;
+        }
+
+        // A peer reconciling again has a policy that moved, so this side pulls again too.
+        if reopened {
+            self.negotiations.answered += 1;
+
+            if self.state == State::Syncing && self.negotiations.answered > self.negotiations.opened
+            {
+                self.begin_negotiation(db, Filter::new())?;
+            }
         }
 
         Ok(())
@@ -620,9 +642,57 @@ impl Session {
         let (negotiation, opening) = crate::sync::client::Negotiation::begin(db, filter)?;
 
         self.client.open_negotiation(negotiation);
+        self.negotiations.opened += 1;
         self.send_sync(&opening)?;
 
         Ok(())
+    }
+
+    /// Reconcile again under a policy that has just changed, and send the
+    /// signatures it now owes, so the peer re-pulls by answering in kind.
+    pub fn resync(&mut self, db: &Db) -> Result<()> {
+        if self.state != State::Syncing {
+            return Ok(());
+        }
+
+        self.send_owed_signatures(db)?;
+        self.begin_negotiation(db, Filter::new())
+    }
+
+    /// Sign the user's events this peer already holds but was handed while it
+    /// was not trusted to forward them. `docs/sync.md#resyncing`.
+    fn send_owed_signatures(&mut self, db: &Db) -> Result<()> {
+        let Some(peer) = self.peer.as_ref().cloned() else {
+            return Ok(());
+        };
+
+        if !peer.policy.may_forward() {
+            return Ok(());
+        }
+
+        let to: Vec<PublicKey> = peer.pubkeys.iter().copied().collect();
+        let owed = crate::db::query::unsigned_shares(db, &self.identity, &to)?;
+
+        if owed.is_empty() {
+            return Ok(());
+        }
+
+        let asked = relay::query_for(&peer, &self.local(), Filter::new().add_ids(owed));
+        let events = crate::db::query::list_events(db, &asked)?;
+        let custody = Arc::clone(&self.custody);
+        let signer = Batch::new(self.identity, &*custody);
+        let subscription = crate::sync::SubscriptionId("signatures".into());
+        let mut messages = Vec::new();
+
+        for event in &events {
+            relay::attach(db, &peer, &signer, &subscription, event, &mut messages)?;
+        }
+
+        for message in messages {
+            self.send_sync(&message)?;
+        }
+
+        relay::record_shares(db, &peer, &events)
     }
 
     /// Once both identities are bound, store the pair secret and open the
@@ -645,6 +715,7 @@ impl Session {
         }
 
         self.pair(db)?;
+        self.send_owed_signatures(db)?;
         self.begin_negotiation(db, Filter::new())?;
         self.maybe_fetch_blob(db)
     }
@@ -2356,6 +2427,43 @@ mod tests {
                 return into_b;
             }
         }
+    }
+
+    #[test]
+    fn trusting_a_peer_mid_session_sends_the_withheld_signatures_and_both_sides_reconcile_again() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) = attended_pair(&db);
+        quiesce(&mut dialer, &mut receiver, &db);
+
+        // Handed over while the peer could not forward it, so no signature went with it.
+        let own = note(author(1), 100, "mine", NostrTags::new());
+        crate::db::command::publish_event(&db, &own, &author(1), 100).unwrap();
+        crate::db::command::record_shares(&db, &[(own.id, false)], &[author(2)], 100).unwrap();
+
+        let mut forwarding = policy();
+        forwarding.forward = crate::model::Scope::Lenient;
+        dialer.set_policy(Arc::new(forwarding));
+        dialer.resync(&db).unwrap();
+
+        let sent: Vec<Message> = quiesce(&mut dialer, &mut receiver, &db)
+            .into_iter()
+            .filter(|frame| frame.channel == Channel::Sync)
+            .map(|frame| Message::decode(&frame.payload).unwrap())
+            .collect();
+
+        assert!(sent.iter().any(
+            |message| matches!(message, Message::RecipientSignature(_, id, _) if *id == own.id)
+        ));
+        assert!(
+            crate::db::query::unsigned_shares(&db, &author(1), &[author(2)])
+                .unwrap()
+                .is_empty()
+        );
+
+        // The peer answers the second reconciliation with one of its own, and nobody answers that.
+        assert_eq!(receiver.negotiations.opened, 2);
+        assert_eq!(dialer.negotiations.opened, 2);
+        assert_eq!(dialer.negotiations.answered, 2);
     }
 
     #[test]

@@ -94,11 +94,14 @@ CREATE INDEX event_seen_pubkey ON event_seen (pubkey, seen_at DESC);
 --
 -- The first handoff is kept and a later one to the same peer is ignored: a row
 -- says the device carried something to somebody, and re-serving what a peer
--- already has is a reconciliation detail rather than another share.
+-- already has is a reconciliation detail rather than another share. `signed`
+-- says the user's recipient signature went with it, so one withheld while the
+-- peer was not trusted to forward is sent once they are.
 CREATE TABLE event_shared (
     event_id  TEXT    NOT NULL REFERENCES event (id) ON DELETE CASCADE,
     pubkey    TEXT    NOT NULL,
     shared_at INTEGER NOT NULL,
+    signed    INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (event_id, pubkey)
 ) STRICT;
 
