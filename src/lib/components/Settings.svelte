@@ -59,7 +59,7 @@
 
   const words: Record<Scope, string> = {
     nothing: "Nobody",
-    trusted: "People you paired with",
+    trusted: "People you trust",
     network: "People any of your contacts trust",
     lenient: "Anyone not blocked",
     public: "Anyone at all",
@@ -127,7 +127,7 @@
     </div>
 
     <div class="space-y-1.5">
-      <Label for="budget">How many people a day you can pair with</Label>
+      <Label for="budget">How many strangers a day your phone tells who you are</Label>
       <Input
         id="budget"
         type="number"
@@ -136,12 +136,14 @@
         onchange={event => setDisclosureBudget(event.currentTarget.value)} />
       <p class="text-xs text-pretty text-muted-foreground">
         Meeting somebody new means telling them who you are, but somebody who kept asking could
-        track you. Your phone stops answering strangers after this many requests.
+        track you. Your phone stops answering strangers after this many in a day. People you pair
+        with by hand do not count.
       </p>
     </div>
 
     <div class="space-y-1.5">
-      <Label for="retention">How long you keep notes before dropping them</Label>
+      <Label for="retention"
+        >How long you keep other people's things once they stop going around</Label>
       <InputGroup.Root>
         <InputGroup.Input
           id="retention"
@@ -154,7 +156,8 @@
         </InputGroup.Addon>
       </InputGroup.Root>
       <p class="text-xs text-pretty text-muted-foreground">
-        How long your phone keeps something before it gets deleted. Bookmarks are never dropped.
+        Counted from the last time anybody handed it to you, so something people keep passing on
+        stays. Your own things and your bookmarks are never dropped.
       </p>
     </div>
   </div>

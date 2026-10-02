@@ -27,7 +27,7 @@
           <p class="truncate font-semibold">{named.name}</p>
           <p class="truncate text-xs text-muted-foreground">
             {contact.petname
-              ? `paired · ${short(contact.pubkey)}`
+              ? `named by you · ${short(contact.pubkey)}`
               : named.according
                 ? `known through ${named.according}`
                 : short(contact.pubkey)}
