@@ -109,6 +109,12 @@ pub fn charges_since(db: &Db, cutoff: i64) -> Result<Vec<Charge>> {
     db.read(|tx| spending::since(tx, cutoff))
 }
 
+/// Every pubkey an event has been seen from, which is local provenance and
+/// never served.
+pub fn seen_from(db: &Db, id: &EventId) -> Result<Vec<PublicKey>> {
+    db.read(|tx| event::seen_from(tx, id))
+}
+
 /// One event, by id, or `None` if it is not stored.
 pub fn get_event(db: &Db, id: &EventId) -> Result<Option<HashedEvent>> {
     db.read(|tx| event::get(tx, id))

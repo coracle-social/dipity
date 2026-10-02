@@ -843,9 +843,9 @@ impl Session {
     /// Offer a just-stored event to every subscription the peer has open, if the
     /// event would have been served on a fresh `REQ`.
     ///
-    /// Driven by the store's event channel, so anything that stores an own event —
-    /// a publish, or an own event coming home through an ingest — reaches every
-    /// connected peer without the writer knowing.
+    /// Driven by the store's channels, so anything that stores an event or the
+    /// signature that makes one forwardable reaches every connected peer as it
+    /// happens rather than at the next reconnection.
     pub fn offer_event(&mut self, db: &Db, event: &HashedEvent) -> Result<()> {
         if !self.state.is_open() {
             return Ok(());
@@ -854,6 +854,19 @@ impl Session {
         let Some(peer) = self.peer.as_ref().cloned() else {
             return Ok(());
         };
+
+        // Somebody else's event goes where a fresh REQ would serve it, and never back to whoever handed it over.
+        if event.pubkey != self.identity {
+            let asked = relay::query_for(&peer, &self.local(), Filter::new().add_ids([event.id]));
+            let servable = !crate::db::query::list_events(db, &asked)?.is_empty();
+            let handed_over = crate::db::query::seen_from(db, &event.id)?
+                .iter()
+                .any(|pubkey| peer.pubkeys.contains(pubkey));
+
+            if !servable || handed_over {
+                return Ok(());
+            }
+        }
 
         // The same two tests the relay half applies: the filters, and what the peer may see.
         if !peer.policy.should_gossip(event) {
@@ -2301,6 +2314,124 @@ mod tests {
         full_exchange(&mut dialer, &mut receiver, db);
 
         (dialer, receiver)
+    }
+
+    /// Route a frame by its channel, the way the node does.
+    fn dispatch(session: &mut Session, db: &Db, frame: &Frame) {
+        match frame.channel {
+            Channel::Control => session.advance(db, frame),
+            Channel::Sync => session.handle_sync(db, frame),
+            Channel::Blob => session.handle_blob(db, frame),
+        }
+        .unwrap();
+    }
+
+    /// Hand every queued fragment across, both ways, until neither side has anything to say.
+    fn quiesce(a: &mut Session, b: &mut Session, db: &Db) -> Vec<Frame> {
+        let mut into_b = Vec::new();
+
+        loop {
+            let mut moved = false;
+
+            while let Some(write) = a.next_write(Pipe::Gatt).unwrap() {
+                a.acknowledge_write(Pipe::Gatt);
+                moved = true;
+
+                if let Some(frame) = b.receive(&write).unwrap() {
+                    dispatch(b, db, &frame);
+                    into_b.push(frame);
+                }
+            }
+
+            while let Some(write) = b.next_write(Pipe::Gatt).unwrap() {
+                b.acknowledge_write(Pipe::Gatt);
+                moved = true;
+
+                if let Some(frame) = a.receive(&write).unwrap() {
+                    dispatch(a, db, &frame);
+                }
+            }
+
+            if !moved {
+                return into_b;
+            }
+        }
+    }
+
+    #[test]
+    fn a_relayed_event_goes_out_live_with_its_proof_once_it_is_forwardable() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut relay, mut peer) = attended_pair(&db);
+
+        // This device passes on anybody's writing, so the third author's note may travel.
+        let mut lenient = policy();
+        lenient.gossip = crate::model::Scope::Lenient;
+        relay.set_policy(Arc::new(lenient));
+
+        quiesce(&mut relay, &mut peer, &db);
+        peer.send_sync(&Message::Req(
+            crate::sync::SubscriptionId("live".into()),
+            vec![Filter::new().add_kinds([1])],
+        ))
+        .unwrap();
+        quiesce(&mut peer, &mut relay, &db);
+
+        // A third person's note arrives from somebody else, with its author's signature naming this device.
+        let note = note(
+            author(3),
+            100,
+            "from the next street over",
+            NostrTags::new(),
+        );
+        crate::db::command::receive_event(&db, &note, &[author(9)], 100).unwrap();
+        let signature = crate::model::RecipientSignature::sign(&secret(3), note.id, author(1));
+        crate::db::command::receive_signature(&db, &note.id, &signature.sig, &author(1)).unwrap();
+
+        relay.offer_event(&db, &note).unwrap();
+
+        let sent: Vec<Message> = quiesce(&mut relay, &mut peer, &db)
+            .into_iter()
+            .filter(|frame| frame.channel == Channel::Sync)
+            .map(|frame| Message::decode(&frame.payload).unwrap())
+            .collect();
+
+        assert!(
+            sent.iter()
+                .any(|message| matches!(message, Message::Event(_, event) if event.id == note.id))
+        );
+        assert!(sent.iter().any(
+            |message| matches!(message, Message::AuthorshipProof(_, id, _) if *id == note.id)
+        ));
+    }
+
+    #[test]
+    fn a_relayed_event_is_not_offered_back_to_whoever_handed_it_over() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut relay, mut peer) = attended_pair(&db);
+
+        let mut lenient = policy();
+        lenient.gossip = crate::model::Scope::Lenient;
+        relay.set_policy(Arc::new(lenient));
+
+        quiesce(&mut relay, &mut peer, &db);
+        peer.send_sync(&Message::Req(
+            crate::sync::SubscriptionId("live".into()),
+            vec![Filter::new().add_kinds([1])],
+        ))
+        .unwrap();
+        quiesce(&mut peer, &mut relay, &db);
+
+        // The peer on this link is the one who handed it over.
+        let note = note(author(3), 100, "already theirs", NostrTags::new());
+        crate::db::command::receive_event(&db, &note, &[author(2)], 100).unwrap();
+        let signature = crate::model::RecipientSignature::sign(&secret(3), note.id, author(1));
+        crate::db::command::receive_signature(&db, &note.id, &signature.sig, &author(1)).unwrap();
+
+        relay.offer_event(&db, &note).unwrap();
+
+        let sent = quiesce(&mut relay, &mut peer, &db);
+
+        assert!(sent.iter().all(|frame| frame.channel != Channel::Sync));
     }
 
     #[test]

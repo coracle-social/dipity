@@ -48,6 +48,9 @@ use crate::db::blob::channel::BlobChange;
 use crate::db::command as db_command;
 use crate::db::event::channel::{self, EventChange};
 use crate::db::pref::channel::{self as pref_channel, PrefChange};
+use crate::db::recipient_signature::channel::{
+    self as signature_channel, RecipientSignatureChange,
+};
 use crate::db::{Db, query};
 use crate::keys::KeyCustody;
 use crate::link::{LinkId, PeripheralId, Role};
@@ -171,6 +174,9 @@ pub struct Node {
     /// This store's preference channel, so a written preference rebinds every
     /// live session without the writer knowing a node exists.
     pref_changes: broadcast::Receiver<PrefChange>,
+    /// This store's signature channel, so an event becomes forwardable to every
+    /// connected peer the moment its author's signature lands.
+    signature_changes: broadcast::Receiver<RecipientSignatureChange>,
     /// When the retention sweep last ran, so ticking often sweeps rarely.
     events_swept_at: Option<i64>,
     /// The backup file waiting on a share sheet, so the core can delete it
@@ -202,6 +208,7 @@ impl Node {
             events: channel::subscribe(&db),
             blob_changes: blob_channel::subscribe(&db),
             pref_changes: pref_channel::subscribe(&db),
+            signature_changes: signature_channel::subscribe(&db),
             db,
             custody,
             identity,
@@ -838,34 +845,22 @@ impl Node {
     /// Offer events the store just saved to every connected peer.
     ///
     /// Drains the store's event channel, which anything that stores an event
-    /// announces on — a publish, or an own event coming home through an ingest
-    /// — so the writer never has to know a peer is attached. Only events
-    /// authored by this device travel this way; everything else waits for the
-    /// next reconciliation, where the registers are checked.
+    /// announces on — a publish, or an ingest — so the writer never has to know a
+    /// peer is attached. Each session decides what it may be offered, by the
+    /// same query a fresh `REQ` would run, so an event held for this device alone
+    /// goes nowhere.
     ///
     /// Answers whether a trust, block or mute list arrived, which the policy is
     /// compiled from, or whether changes were missed and one might have.
     fn offer_saved_events(&mut self) -> bool {
-        let identity = self.identity;
         let mut graph_moved = false;
+        let mut saved = Vec::new();
 
         loop {
             match self.events.try_recv() {
                 Ok(EventChange::Stored(event)) => {
                     graph_moved |= [TRUST, BLOCK, MUTE].contains(&event.kind);
-
-                    if event.pubkey != identity {
-                        continue;
-                    }
-
-                    for session in self.sessions.values_mut() {
-                        if let Err(error) = session.offer_event(&self.db, &event) {
-                            log::error!(
-                                "offering a saved event on link {:?} failed: {error:#}",
-                                session.link
-                            );
-                        }
-                    }
+                    saved.push(*event);
                 }
                 // Seen events are not newly stored, and Deleted are gone. Both are the view's.
                 Ok(_) => {}
@@ -875,7 +870,40 @@ impl Node {
             }
         }
 
+        // An event someone else wrote becomes forwardable when its signature to this device lands.
+        loop {
+            match self.signature_changes.try_recv() {
+                Ok(RecipientSignatureChange::Stored(signature))
+                    if signature.recipient_pubkey == self.identity =>
+                {
+                    match query::get_event(&self.db, &signature.event_id) {
+                        Ok(Some(event)) => saved.push(event),
+                        Ok(None) => {}
+                        Err(error) => log::error!("reading a newly signed event failed: {error:#}"),
+                    }
+                }
+                Ok(_) | Err(TryRecvError::Lagged(_)) => {}
+                Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+            }
+        }
+
+        for event in &saved {
+            self.offer(event);
+        }
+
         graph_moved
+    }
+
+    /// Offer one event to every connected peer that may have it.
+    fn offer(&mut self, event: &HashedEvent) {
+        for session in self.sessions.values_mut() {
+            if let Err(error) = session.offer_event(&self.db, event) {
+                log::error!(
+                    "offering a saved event on link {:?} failed: {error:#}",
+                    session.link
+                );
+            }
+        }
     }
 
     /// Drain the store's preference channel, answering whether anything moved.
@@ -1487,7 +1515,7 @@ mod tests {
             Role::Receiver,
             4096,
             policy,
-            custody(secret(2)),
+            custody(secret(1)),
             Arc::new(crate::blobs::MemoryBlobStore::default()),
             spending(),
         )
