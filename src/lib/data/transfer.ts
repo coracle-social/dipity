@@ -68,8 +68,17 @@ export const compare = async (confirmed: boolean) => {
   }
 }
 
-/** Put the screen away, which is only ever after the flow has ended. */
-export const clear = () => store.set({at: "idle"})
+/**
+ * Put the screen away once the flow has ended, however the screen was left.
+ *
+ * A flow still running keeps its step, so leaving mid-comparison does not take
+ * the question away from a user who has yet to answer it.
+ */
+export const clear = () => {
+  if (["sent", "arrived", "refused", "failed"].includes(get(store).at)) {
+    store.set({at: "idle"})
+  }
+}
 
 /**
  * Watch the flow, from the shell, because two of its three endings are not

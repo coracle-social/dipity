@@ -10,10 +10,8 @@
   import {npubOf, session} from "$lib/data/session"
   import {clear, compare, offer, step} from "$lib/data/transfer"
 
-  const leave = () => {
-    clear()
-    back()
-  }
+  // The phone's own back button leaves without passing through here, so the ending goes on the way out.
+  $effect(() => clear)
 
   /** Six digits, grouped the way a person reads a number off another screen. */
   const digits = (code: number) => {
@@ -24,7 +22,7 @@
 </script>
 
 <header class="flex items-center gap-1 pt-4 pb-3">
-  <Button variant="ghost" size="icon-sm" aria-label="Back" onclick={leave}>
+  <Button variant="ghost" size="icon-sm" aria-label="Back" onclick={back}>
     <ArrowLeft />
   </Button>
   <h1 class="text-2xl font-semibold">Another phone</h1>
@@ -100,7 +98,7 @@
 {:else if $step.at === "sent"}
   <p class="py-10 text-sm text-pretty">That phone is you as well now.</p>
 
-  <Button size="lg" onclick={leave}>Done</Button>
+  <Button size="lg" onclick={back}>Done</Button>
 {:else if $step.at === "arrived"}
   <p class="pt-10 text-sm text-pretty">This phone is you now.</p>
 
@@ -110,15 +108,15 @@
     </p>
   {/if}
 
-  <Button class="mt-8" size="lg" onclick={leave}>Done</Button>
+  <Button class="mt-8" size="lg" onclick={back}>Done</Button>
 {:else if $step.at === "refused"}
   <p class="py-10 text-sm text-pretty text-muted-foreground">
     Nothing moved. One of the two phones said no, or it went out of range.
   </p>
 
-  <Button size="lg" onclick={leave}>Done</Button>
+  <Button size="lg" onclick={back}>Done</Button>
 {:else}
   <p class="py-10 text-sm text-pretty text-destructive">{$step.why}</p>
 
-  <Button size="lg" onclick={leave}>Done</Button>
+  <Button size="lg" onclick={back}>Done</Button>
 {/if}
