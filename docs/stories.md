@@ -50,7 +50,7 @@ Four facts about the transport decide most of the interface, and every story bel
 ## Pairing
 
 26. Somebody the user has not named comes into range and asks to pair, whether or not the gate let them through, and the user finds out without leaving what they were doing. — `PairingTray`
-27. Several are asking at once, so the tray says how many and opens on the oldest. — `PairingTray`
+27. Several are asking at once, so the tray says how many and opens on the oldest, the pairing screen steps between them, and answering one moves on to the next. — `PairingTray`, `Pairing`
 28. The user opens a request and compares five shapes against the other person's screen, so they know the two phones are talking to each other and not to something in between. — `Pairing`
 29. The user names the person in front of them while pairing with them, because there is no profile to read. — `Pairing`
 30. The name lands on whoever the link turns out to be, which the core says after the gate has passed. — `pairing.ts`

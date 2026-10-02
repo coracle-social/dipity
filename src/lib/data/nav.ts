@@ -87,6 +87,16 @@ export const go = (to: Place) => {
 }
 
 /**
+ * Move to a sibling of where the user is, such as the next of several pairing
+ * requests, without making it a step back has to retrace.
+ */
+export const swap = (to: Place) => {
+  place.set(to)
+
+  void tick().then(() => window.scrollTo(0, 0))
+}
+
+/**
  * Leave the top thing: whatever is open over the screen, then the screen.
  *
  * Answers whether there was anything to leave, so a caller at the root can tell.
