@@ -1,0 +1,10 @@
+name: Dipity
+description: A community board that trades posts with phones nearby over Bluetooth, built on nostr.
+tags:
+  - nostr
+  - bluetooth
+  - offline
+  - community
+repository: https://gitea.coracle.social/coracle/dip
+release_source: ./android/app/build/outputs/apk/release/app-release-signed.apk
+release_notes: ./CHANGELOG.md

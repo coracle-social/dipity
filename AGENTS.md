@@ -82,6 +82,7 @@ just sync-android # core → bindings → Android's library → web → cap sync
 just sync-ios     # web → cap sync ios; Xcode builds the core itself
 just ios          # sync-ios, then open Xcode
 just android      # sync-android, then open Android Studio
+just release      # build, sign and publish a release: docs/release.md
 ```
 
 [`.gitea/workflows/ci.yml`](./.gitea/workflows/ci.yml) runs one step per `qa` recipe on every push to `master`, in two jobs split by toolchain. `android-check` is the exception: provisioning the SDK costs the shared runner more than the compile does, so the Kotlin is compiled by `just qa` and by nothing after the push. Pull requests are not built, so `just qa` locally is the gate before opening one. The Swift is compiled by nothing anywhere — that needs a macOS runner. What CI can read is the project file and the names: `just xcode` fails if a file under `ios/App/App/` is not in the App target, which is the failure that produces a stock app rather than a build error, and `just swift` fails if the shell names an enum case the generated bindings do not have. See [`core/README.md`](./core/README.md#the-xcode-project).
@@ -125,6 +126,7 @@ The packages in use are listed explicitly in `package.json` rather than resolved
 | [`privacy.md`](./docs/privacy.md) | Threat model, what leaks, what users wrongly assume |
 | [`ui.md`](./docs/ui.md) | Component framework, design tokens, the conventions the linter enforces |
 | [`stories.md`](./docs/stories.md) | What a person does with the app, the screen that answers each, and what has no screen yet |
+| [`release.md`](./docs/release.md) | Cutting a release, the pipeline's steps, and the credentials each needs |
 | [`nips/p2p-auth.md`](./docs/nips/p2p-auth.md) | Peer authentication — the NIP-42 additions covering transports without URLs |
 | [`nips/imeta-blake3.md`](./docs/nips/imeta-blake3.md) | The `imeta` addition carrying a BLAKE3 root, for verified streaming of blobs |
 | [`nips/imeta-preview.md`](./docs/nips/imeta-preview.md) | The `imeta` addition naming the original a preview stands in for |

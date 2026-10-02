@@ -40,3 +40,6 @@ core/target
 *.njsproj
 *.sln
 *.sw?
+
+# Signing keys and store credentials for scripts/release
+.env.local

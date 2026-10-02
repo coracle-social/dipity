@@ -156,6 +156,16 @@ icons:
         rsvg-convert -w $adaptive -h $adaptive resources/icon-foreground.svg -o $out/ic_launcher_foreground.png; \
     done
 
+# -------------------------------------------------------------------- release
+
+# Set the version everywhere: just bump <major|minor|patch|x.y.z>. See docs/release.md.
+bump version:
+    node scripts/release/bump.mjs {{version}}
+
+# Build, sign and publish a release, or only the named steps: just release [--check] [step...]
+release *args:
+    node scripts/release/release.mjs {{args}}
+
 # -------------------------------------------------------------------------- qa
 
 # Types across the webview.
