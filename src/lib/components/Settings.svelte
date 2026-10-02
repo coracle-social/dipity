@@ -25,7 +25,7 @@
     {
       id: "accept",
       label: "What you accept",
-      detail: "This controls whose notes you accept from nearby devices.",
+      detail: "Whose notes your phone takes in from phones nearby.",
       scopes: ["trusted", "network", "lenient"] as Scope[],
       on: $policy?.accept,
       set: setAccept,
@@ -33,7 +33,7 @@
     {
       id: "gossip",
       label: "What you pass along",
-      detail: "This controls whose notes you pass along to nearby devices.",
+      detail: "Whose notes your phone passes on to phones nearby.",
       scopes: ["nothing", "trusted", "network", "lenient"] as Scope[],
       on: $policy?.gossip,
       set: setGossip,
@@ -41,7 +41,7 @@
     {
       id: "forward",
       label: "What others are allowed to pass along",
-      detail: "This controls who is allowed to pass your notes along to others.",
+      detail: "Who may pass your notes on to the people they meet.",
       scopes: ["nothing", "trusted", "network"] as Scope[],
       on: $policy?.forward,
       set: setForward,
@@ -50,7 +50,7 @@
       id: "visibility",
       label: "What others are allowed to see",
       detail:
-        "This controls who is allowed to see your notes, and the names you give people. Your trust list goes only to people you trust, who can pass it on once if you let them, and your bookmarks stay on this phone.",
+        "Who may see your notes and the names you give people. Your trust list goes only to people you trust, who can pass it on once if you let them. Your bookmarks stay on this phone.",
       scopes: ["trusted", "network", "lenient", "public"] as Scope[],
       on: $policy?.visibility.default,
       set: setVisibility,
@@ -107,8 +107,8 @@
   <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Being found</h2>
 
   <p class="mt-2 text-sm text-pretty text-muted-foreground">
-    Your phone only trades things with a nearby device. These settings control your visibility to
-    nearby devices and how much you share with them.
+    Your phone trades things only with phones near it. These settings control when strangers' phones
+    can find yours.
   </p>
 
   <div class="mt-4 space-y-5">
@@ -121,8 +121,8 @@
         value={$policy.cool_off_minutes}
         onchange={event => setCoolOffMinutes(event.currentTarget.value)} />
       <p class="text-xs text-pretty text-muted-foreground">
-        How long after you put your phone in your pocket it keeps talking to other devices. Lower is
-        more private, higher is more robust.
+        How long after you put your phone away it keeps letting strangers find it. Lower is more
+        private, and higher meets more people.
       </p>
     </div>
 

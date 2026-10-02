@@ -62,7 +62,7 @@
     {hidden
       ? "Nothing is switched on in the filter."
       : searching
-        ? "Nothing on this phone says that. Only what has reached this device can be searched."
-        : "Nothing has reached this device yet. Things arrive when you are near other people."}
+        ? "Nothing on this phone matches that. Search covers only what has reached it."
+        : "Nothing has reached this phone yet. Things arrive when you are near other people."}
   </EmptyState>
 {/if}

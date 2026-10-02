@@ -170,7 +170,7 @@
       <Button
         variant="ghost"
         size="icon-sm"
-        aria-label={mine ? "Ask for this to be forgotten" : "Drop this from this device"}
+        aria-label={mine ? "Ask for this to be forgotten" : "Drop this from this phone"}
         onclick={() => (mine ? retract(item) : drop(item))}>
         <Trash />
       </Button>

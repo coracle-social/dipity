@@ -58,7 +58,7 @@
 {#if event.kind === REPOST || event.kind === GENERIC_REPOST}
   {@const id = boostedBy(event)}
   {#if id}
-    <Quoted {id} {social} absent="This device does not have what was passed on." />
+    <Quoted {id} {social} absent="This phone does not have what was passed on." />
   {/if}
 {:else if about}
   <!-- A comment reaches people who never got its subject, so its own words come first. -->
@@ -66,7 +66,7 @@
     <p class="text-sm text-pretty {index ? 'mt-1.5' : ''}">{line}</p>
   {/each}
   <div class="mt-2">
-    <Quoted id={about} {social} absent="This device does not have what this is about." />
+    <Quoted id={about} {social} absent="This phone does not have what this is about." />
   </div>
 {:else if occasion}
   <div class="rounded-md border border-secondary-accent/40 px-3 py-2">

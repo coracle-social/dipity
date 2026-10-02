@@ -33,7 +33,7 @@
 <header class="pt-4 pb-3">
   <h1 class="text-2xl font-semibold">Bookmarks</h1>
   <p class="mt-1 text-sm text-muted-foreground">
-    What you bookmark is never cleared from this device, however long ago it stopped going around.
+    What you bookmark stays on this phone, however long ago it stopped going around.
   </p>
 </header>
 

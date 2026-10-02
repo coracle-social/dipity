@@ -60,10 +60,7 @@
       Commenting on
     </h2>
     <div class="mt-3 mb-4 rounded-lg bg-card px-4 py-3 shadow-sm">
-      <Quoted
-        id={answers}
-        social={$social}
-        absent="This device does not have what this is about." />
+      <Quoted id={answers} social={$social} absent="This phone does not have what this is about." />
     </div>
   {/if}
 
@@ -111,6 +108,7 @@
   {/if}
 {:else}
   <EmptyState icon={SearchX}>
-    This device does not have that. Things go once they stop going around, unless you bookmark them.
+    This phone does not have that. Things are dropped once they stop going around, unless you
+    bookmark them.
   </EmptyState>
 {/if}

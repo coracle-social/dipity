@@ -62,7 +62,7 @@
 
   const reach = $derived(
     !$policy || $policy.forward === "nothing"
-      ? "Only people you personally come into contact with will see this."
+      ? "Only people you meet in person will see this."
       : passers[$policy.forward],
   )
 
@@ -130,7 +130,7 @@
       <Drawer.Description>
         {about
           ? "Say something about it, or send it on as it is."
-          : `Post a note that only gets sent to people physically near you. ${reach}`}
+          : `Your note goes to the people physically near you. ${reach}`}
       </Drawer.Description>
     </Drawer.Header>
 

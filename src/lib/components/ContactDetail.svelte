@@ -33,7 +33,7 @@
     {
       id: "trusted",
       label: "Trusted",
-      detail: "They may share your things forward, so what you write reaches their people too.",
+      detail: "They can pass your things on, so what you write reaches the people they meet too.",
       on: Boolean(contact?.trusted),
       set: (on: boolean) => setTrusted(pubkey, on),
     },

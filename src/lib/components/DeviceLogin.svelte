@@ -82,8 +82,8 @@
     </p>
   {:else}
     <p class="max-w-prose text-sm text-pretty text-destructive">
-      Say yes and this phone takes on the other phone's key. Everything it published under its own
-      key, including the names you gave people and your bookmarks, stays here but stops being yours.
+      Say yes and this phone takes on the other phone's key. Everything this phone gathered under
+      its own key, including the names you gave people and your bookmarks, is erased.
     </p>
   {/if}
 
