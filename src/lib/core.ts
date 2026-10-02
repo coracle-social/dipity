@@ -29,7 +29,7 @@ export type Approval = {link: number; code: number}
  * Who the peer on a link turned out to be, once both sides have authenticated,
  * and the five shapes both users compare before naming them.
  */
-export type PeerIdentity = {link: number; pubkey: string; code: number}
+export type PeerIdentity = {link: number; pubkey: string; code: number; dialed: boolean}
 
 /** A link that is no longer there, so nothing can be offered over it. */
 export type LinkClosed = {link: number}

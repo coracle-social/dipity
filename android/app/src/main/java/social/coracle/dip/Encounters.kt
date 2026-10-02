@@ -207,7 +207,8 @@ object Encounters : Radio.Delegate {
                         JSObject()
                             .put("link", action.link.value.toLong())
                             .put("pubkey", action.pubkey)
-                            .put("code", action.code.toLong()),
+                            .put("code", action.code.toLong())
+                            .put("dialed", action.dialed),
                     )
                 is Action.ConfirmIdentityTransfer ->
                     notify(

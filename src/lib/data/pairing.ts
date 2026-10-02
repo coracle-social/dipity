@@ -85,20 +85,42 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
   )
 
   // Every identified link, so a request can move to another link to the same person when its own one closes.
-  const identified = new Map<number, {pubkey: string; code: number}>()
+  const identified = new Map<number, {pubkey: string; code: number; dialed: boolean}>()
+
+  // Two links to one person resolve to the one the lower pubkey dialed; both phones pick it, so both show its shapes.
+  const dialer = (link: number) => {
+    const peer = identified.get(link)
+
+    return peer && (peer.dialed ? (get(session).identity ?? "") : peer.pubkey)
+  }
+
+  const prefer = (request: Request, link: number, code: number): Request => {
+    const ours = dialer(link)
+    const theirs = dialer(request.link)
+
+    return ours !== undefined && theirs !== undefined && ours < theirs
+      ? {...request, link, code, formerly: [...(request.formerly ?? []), request.link]}
+      : request
+  }
 
   // One request per link and per person: a device may prove several pubkeys, and two phones may briefly hold two links.
   hold(
-    Dip.addListener("peerIdentified", ({link, pubkey, code}) => {
-      identified.set(link, {pubkey, code})
+    Dip.addListener("peerIdentified", ({link, pubkey, code, dialed}) => {
+      identified.set(link, {pubkey, code, dialed})
 
       if (promised.has(link) || !unnamed(known, pubkey)) return
 
-      pending.update(waiting =>
-        waiting.some(request => request.link === link || request.pubkey === pubkey)
-          ? waiting
-          : [...waiting, {link, code, pubkey, asked: Date.now()}],
-      )
+      pending.update(waiting => {
+        if (waiting.some(request => request.link === link)) return waiting
+
+        if (waiting.some(request => request.pubkey === pubkey)) {
+          return waiting.map(request =>
+            request.pubkey === pubkey ? prefer(request, link, code) : request,
+          )
+        }
+
+        return [...waiting, {link, code, pubkey, asked: Date.now()}]
+      })
     }),
   )
 

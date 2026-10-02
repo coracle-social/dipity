@@ -95,7 +95,11 @@ pub enum Action {
     /// which key that person turned out to hold. The value is the one a held
     /// gate shows, so a peer the gate let through can be named over the same
     /// comparison. `docs/discovery.md#meeting-somebody`.
-    PeerIdentified(LinkId, PublicKey, u32),
+    ///
+    /// The last field is whether this device dialed the link. Two links to one
+    /// person resolve to the one the lower pubkey dialed, so a view showing one
+    /// of them before that happens can pick the same one the core will keep.
+    PeerIdentified(LinkId, PublicKey, u32, bool),
     /// Present the share sheet over a key backup the core has written.
     ///
     /// The path is the shell's, not the view's: the view starts the export and
@@ -827,7 +831,9 @@ impl Node {
 
             for pubkey in identified {
                 if let Some(code) = code {
-                    actions.push(Action::PeerIdentified(session.link, pubkey, code));
+                    let dialed = session.role == Role::Dialer;
+
+                    actions.push(Action::PeerIdentified(session.link, pubkey, code, dialed));
                 }
             }
 

@@ -310,7 +310,12 @@ export class Simulator extends WebPlugin implements DipCore {
    */
   private open(link: number, person: Person) {
     this.live.set(link, person)
-    this.notifyListeners("peerIdentified", {link, pubkey: person.pubkey, code: pairingCode()})
+    this.notifyListeners("peerIdentified", {
+      link,
+      pubkey: person.pubkey,
+      code: pairingCode(),
+      dialed: false,
+    })
     log(
       `link ${link} is up with ${short(person.pubkey)} — dip.receiveOffer(${link}) to be offered their key`,
     )

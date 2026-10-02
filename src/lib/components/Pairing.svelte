@@ -8,8 +8,10 @@
   import {Label} from "$lib/components/ui/label"
   import EmptyState from "$lib/components/EmptyState.svelte"
   import Shapes from "$lib/components/Shapes.svelte"
+  import {short} from "$lib/data/contacts"
   import {back, swap} from "$lib/data/nav"
   import {accept, decline, requests, type Request} from "$lib/data/pairing"
+  import {session} from "$lib/data/session"
 
   let {request}: {request?: Request} = $props()
 
@@ -63,6 +65,14 @@
     <Shapes code={request.code} />
   </div>
 
+  {#if request.pubkey && $session.identity}
+    <!-- Each pair of phones has its own shapes, so the two people check they are on each other's request. -->
+    <p class="-mt-4 mb-8 text-center text-xs text-muted-foreground">
+      Their phone <span class="font-mono text-foreground">{short(request.pubkey)}</span>
+      · Your phone <span class="font-mono text-foreground">{short($session.identity)}</span>
+    </p>
+  {/if}
+
   <div class="space-y-2">
     <Label for="petname">What do you call them?</Label>
     <Input id="petname" bind:value={petname} placeholder="Ben" autocomplete="off" />
@@ -81,7 +91,11 @@
   </div>
 
   {#if $requests.length > 1}
-    <nav class="mt-8 flex items-center justify-between" aria-label="Other pairing requests">
+    <p class="mt-8 text-xs text-pretty text-muted-foreground">
+      More than one phone is asking. Each pair of phones has its own shapes, so if these do not
+      match, the other person may be looking at a different request.
+    </p>
+    <nav class="mt-2 flex items-center justify-between" aria-label="Other pairing requests">
       <Button variant="ghost" size="sm" disabled={at <= 0} onclick={() => open(at - 1)}>
         <ChevronLeft />
         Previous
