@@ -43,7 +43,6 @@
     "@welshman/domain": "^0.12.1",
     "@welshman/lib": "^0.12.1",
     "@welshman/signer": "^0.12.1",
-    "@welshman/store": "^0.12.1",
     "@welshman/util": "^0.12.1",
     "bits-ui": "^2.18.1",
     "clsx": "^2.1.1",

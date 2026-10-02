@@ -54,7 +54,7 @@ shadcn-svelte over bits-ui and Tailwind 4. Read [`ui.md`](./docs/ui.md) before t
 - **`src/app.css` is the only place a design value lives.** Color, elevation, motion and radius are Tailwind tokens. Restyle by changing a token, never by adding a value to a component.
 - **No arbitrary values outside `src/lib/components/`** — `bg-[#3a2f28]`, `w-[13px]`. Feature code composes components; components own the pixels. Arbitrary *variants* (`supports-[…]:`, `[&_svg]:`) are fine. [`ui.md`](./docs/ui.md#the-composition-rule).
 - **Semantic tokens only** — `bg-card`, not `bg-white`. A palette color is correct in exactly one theme.
-- **Runes only in `.svelte` files.** `$state`, `$derived`, `$effect`, `$props` are compiler syntax; in a plain `.ts` module they are an undefined global that fails at runtime. Shared reactive state goes in a welshman store. [`ui.md`](./docs/ui.md#runes-stay-in-components).
+- **Runes only in `.svelte` files.** `$state`, `$derived`, `$effect`, `$props` are compiler syntax; in a plain `.ts` module they are an undefined global that fails at runtime. Shared reactive state goes in a `svelte/store` store. [`ui.md`](./docs/ui.md#runes-stay-in-components).
 - **No `<style>` blocks in components.** A scoped rule cannot participate in the token system.
 - **`src/lib/components/ui/` is generated** by `just ui <name>`. Prettier ignores it and lint is relaxed there; hand-edit only deliberately, because the next `add` overwrites it. Our components go in `src/lib/components/`.
 - **Never `{@html}` nostr content.** It is attacker-controlled, and this is the one remotely exploitable mistake available in the view.
@@ -101,7 +101,7 @@ The packages in use are listed explicitly in `package.json` rather than resolved
 
 ### What welshman is and is not used for
 
-**Used for:** `@welshman/util` (event types, kinds, tags, filters), `@welshman/lib` (standalone helpers), and `@welshman/domain` (typed reader/writer pairs per kind). This is nostr knowledge, consumed unmodified. `@welshman/store` carries the shared reactive state runes cannot hold outside a component. [`ui.md`](./docs/ui.md#runes-stay-in-components).
+**Used for:** `@welshman/util` (event types, kinds, tags, filters), `@welshman/lib` (standalone helpers), and `@welshman/domain` (typed reader/writer pairs per kind). This is nostr knowledge, consumed unmodified.
 
 **`@welshman/app` is not a dependency.** It assumes an in-memory event store, and there is none. [`ui.md`](./docs/ui.md#organizing-against-welshman).
 
