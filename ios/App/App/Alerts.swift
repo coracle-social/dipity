@@ -17,10 +17,10 @@ enum Alerts {
             identifier = "pairing"
             content.title = "Somebody nearby wants to pair"
             content.body = "Open Dipity to compare shapes with them."
-        case .content(let count):
+        case .content(let count, let author, let excerpt):
             identifier = "content"
-            content.title = count == 1 ? "New post on the board" : "\(count) new posts on the board"
-            content.body = "Open Dipity to read."
+            content.title = count == 1 ? (author ?? "New post") : "\(count) new posts"
+            content.body = count == 1 ? excerpt : author.map { "\($0): \(excerpt)" } ?? excerpt
         }
 
         content.sound = .default

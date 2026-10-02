@@ -17,13 +17,43 @@ pub const CONTENT_KINDS: [u16; 6] = [1, 1_111, 1_068, 31_922, 31_923, 30_023];
 /// The shortest gap between two updates of the new-writing notification.
 pub const CONTENT_INTERVAL_SECONDS: i64 = 60;
 
+/// The longest excerpt of a post a notification carries, in characters.
+pub const EXCERPT_CHARS: usize = 140;
+
 /// Something worth interrupting the user for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Notification {
     /// Somebody the user has not named is in range and can be paired with.
     Pairing,
-    /// This much new writing has arrived since the user last opened the app.
-    Content(u32),
+    /// New writing has arrived since the user last opened the app.
+    Content {
+        /// How many posts.
+        count: u32,
+        /// The user's name for whoever wrote the latest, if they named them.
+        author: Option<String>,
+        /// The start of the latest post, or its title.
+        excerpt: String,
+    },
+}
+
+/// The start of a post, or its title for a kind that has one, on one line.
+#[must_use]
+pub fn excerpt(event: &HashedEvent) -> String {
+    let titled = matches!(event.kind, 30_023 | 31_922 | 31_923);
+    let text = if titled {
+        event.tags.value("title").unwrap_or(&event.content)
+    } else {
+        &event.content
+    };
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    if line.chars().count() <= EXCERPT_CHARS {
+        return line;
+    }
+
+    let cut: String = line.chars().take(EXCERPT_CHARS - 1).collect();
+
+    format!("{}…", cut.trim_end())
 }
 
 /// Who a pairing notification was about.
@@ -44,6 +74,8 @@ pub struct Notifier {
     announced: u32,
     /// When the new-writing notification last went out.
     announced_at: Option<i64>,
+    /// The latest post counted, which the notification quotes.
+    latest: Option<HashedEvent>,
     /// People, or held links naming nobody yet, already announced as wanting to pair.
     asked: BTreeSet<Asker>,
 }
@@ -54,6 +86,7 @@ impl Notifier {
         self.unseen = 0;
         self.announced = 0;
         self.announced_at = None;
+        self.latest = None;
         self.asked.clear();
     }
 
@@ -70,6 +103,7 @@ impl Notifier {
             && !muted.contains(&event.pubkey)
         {
             self.unseen = self.unseen.saturating_add(1);
+            self.latest = Some(event.clone());
         }
     }
 
@@ -87,9 +121,9 @@ impl Notifier {
             .then_some(Notification::Pairing)
     }
 
-    /// The new-writing notification, if there is more to announce and the
-    /// last one is at least an interval old.
-    pub fn content(&mut self, now: i64, background: bool) -> Option<Notification> {
+    /// How many posts to announce and the latest of them, if there is more to
+    /// announce and the last announcement is at least an interval old.
+    pub fn content(&mut self, now: i64, background: bool) -> Option<(u32, HashedEvent)> {
         let due = self
             .announced_at
             .is_none_or(|at| now - at >= CONTENT_INTERVAL_SECONDS);
@@ -101,7 +135,7 @@ impl Notifier {
         self.announced = self.unseen;
         self.announced_at = Some(now);
 
-        Some(Notification::Content(self.unseen))
+        self.latest.clone().map(|latest| (self.unseen, latest))
     }
 }
 
@@ -144,7 +178,7 @@ mod tests {
             &muted,
         );
 
-        assert_eq!(notifier.content(100, true), Some(Notification::Content(1)));
+        assert_eq!(notifier.content(100, true).map(|(count, _)| count), Some(1));
     }
 
     #[test]
@@ -153,13 +187,15 @@ mod tests {
         let stored = note(author(2), 1, "hello", Tags::new());
 
         notifier.stored(&stored, &author(1), &BTreeSet::new());
-        assert_eq!(notifier.content(100, true), Some(Notification::Content(1)));
+        assert_eq!(notifier.content(100, true).map(|(count, _)| count), Some(1));
 
         notifier.stored(&stored, &author(1), &BTreeSet::new());
         assert_eq!(notifier.content(130, true), None);
         assert_eq!(
-            notifier.content(100 + CONTENT_INTERVAL_SECONDS, true),
-            Some(Notification::Content(2))
+            notifier
+                .content(100 + CONTENT_INTERVAL_SECONDS, true)
+                .map(|(count, _)| count),
+            Some(2)
         );
     }
 
@@ -199,6 +235,32 @@ mod tests {
         assert_eq!(
             notifier.pairing(LinkId(4), Some(author(2)), true),
             Some(Notification::Pairing)
+        );
+    }
+
+    #[test]
+    fn an_excerpt_is_one_line_cut_at_the_limit_and_a_title_where_there_is_one() {
+        let long = "word ".repeat(60);
+
+        assert_eq!(
+            excerpt(&note(author(2), 1, "two\n\nlines", Tags::new())),
+            "two lines"
+        );
+        assert_eq!(
+            excerpt(&note(author(2), 1, &long, Tags::new()))
+                .chars()
+                .count(),
+            EXCERPT_CHARS
+        );
+        assert_eq!(
+            excerpt(&event(
+                author(2),
+                30_023,
+                1,
+                "the body",
+                Tags::new().add("title", ["The title"])
+            )),
+            "The title"
         );
     }
 }

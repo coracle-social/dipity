@@ -51,6 +51,18 @@ pub fn notification_prefs(db: &Db) -> Result<NotificationPrefs> {
     })
 }
 
+/// The user's name for `pubkey`, which is the content of their contact card addressed to it.
+pub fn name_for(db: &Db, identity: &PublicKey, pubkey: &PublicKey) -> Result<Option<String>> {
+    let address =
+        coracle_lib::addresses::Address::new(crate::model::CONTACT, *identity, pubkey.to_hex());
+
+    db.read(|tx| {
+        Ok(event::by_address(tx, &address)?
+            .map(|card| card.content.trim().to_owned())
+            .filter(|name| !name.is_empty()))
+    })
+}
+
 /// Whether the user has named `pubkey`, which is a contact card of theirs addressed to it.
 pub fn has_named(db: &Db, identity: &PublicKey, pubkey: &PublicKey) -> Result<bool> {
     let address =

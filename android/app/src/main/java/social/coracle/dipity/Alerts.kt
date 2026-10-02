@@ -34,9 +34,12 @@ object Alerts {
                     Triple(PAIRING, "Somebody nearby wants to pair", "Open Dipity to compare shapes with them.")
                 is Announcement.Content -> {
                     val count = announcement.count.toInt()
-                    val title = if (count == 1) "New post on the board" else "$count new posts on the board"
+                    val author = announcement.author
+                    val excerpt = announcement.excerpt
+                    val title = if (count == 1) author ?: "New post" else "$count new posts"
+                    val text = if (count == 1 || author == null) excerpt else "$author: $excerpt"
 
-                    Triple(CONTENT, title, "Open Dipity to read.")
+                    Triple(CONTENT, title, text)
                 }
             }
 
@@ -51,6 +54,7 @@ object Alerts {
                 .setSmallIcon(R.drawable.ic_stat_dip)
                 .setContentTitle(title)
                 .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
                 .setContentIntent(open)
                 .setAutoCancel(true)
                 .build()

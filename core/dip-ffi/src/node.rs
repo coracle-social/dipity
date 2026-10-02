@@ -208,14 +208,18 @@ pub enum Action {
 }
 
 /// Something worth interrupting a user who is not looking at the app.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum Announcement {
     /// Somebody the user has not named is in range and can be paired with.
     Pairing,
-    /// This much new writing has arrived since the user last opened the app.
+    /// New writing has arrived since the user last opened the app.
     Content {
-        /// How many things.
+        /// How many posts.
         count: u32,
+        /// The user's name for whoever wrote the latest, if they named them.
+        author: Option<String>,
+        /// The start of the latest post, or its title.
+        excerpt: String,
     },
 }
 
@@ -223,7 +227,15 @@ impl From<CoreNotification> for Announcement {
     fn from(notification: CoreNotification) -> Self {
         match notification {
             CoreNotification::Pairing => Self::Pairing,
-            CoreNotification::Content(count) => Self::Content { count },
+            CoreNotification::Content {
+                count,
+                author,
+                excerpt,
+            } => Self::Content {
+                count,
+                author,
+                excerpt,
+            },
         }
     }
 }

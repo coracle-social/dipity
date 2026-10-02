@@ -1143,11 +1143,19 @@ impl Node {
             }
         }
 
-        notifications.extend(
-            self.notifier
-                .content(clock::now(), background)
-                .map(Action::Notify),
-        );
+        if let Some((count, latest)) = self.notifier.content(clock::now(), background) {
+            let author =
+                query::name_for(&self.db, &self.identity, &latest.pubkey).unwrap_or_else(|error| {
+                    log::error!("reading a name for a notification failed: {error:#}");
+                    None
+                });
+
+            notifications.push(Action::Notify(Notification::Content {
+                count,
+                author,
+                excerpt: notify::excerpt(&latest),
+            }));
+        }
 
         notifications
     }
@@ -1966,6 +1974,14 @@ mod tests {
         let arrived = |n: u8| note(author(3), 100 + i64::from(n), "on the board", Tags::new());
 
         db_command::set_preference(&db, keys::NOTIFY_CONTENT, "true", 10).unwrap();
+        let card = crate::fixtures::event(
+            author(1),
+            crate::model::CONTACT,
+            50,
+            "Ben",
+            Tags::new().add("d", [author(3).to_hex()]),
+        );
+        db_command::publish_event(&db, &card, &author(1), 50).unwrap();
         node.notify_foregrounded();
 
         db_command::receive_event(&db, &arrived(1), &[author(3)], 100).unwrap();
@@ -1981,7 +1997,11 @@ mod tests {
         let pocketed = node.tick();
 
         // Counted since the user last looked, which was before the second arrived.
-        assert!(pocketed.contains(&Action::Notify(Notification::Content(1))));
+        assert!(pocketed.contains(&Action::Notify(Notification::Content {
+            count: 1,
+            author: Some("Ben".into()),
+            excerpt: "on the board".into(),
+        })));
     }
 
     #[test]
