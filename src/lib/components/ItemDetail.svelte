@@ -108,7 +108,6 @@
   {/if}
 {:else}
   <EmptyState icon={SearchX}>
-    This phone does not have that. Things are dropped once they stop going around, unless you
-    bookmark them.
+    We couldn't find that. Things are dropped after a while unless you bookmark them.
   </EmptyState>
 {/if}

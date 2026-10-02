@@ -142,8 +142,7 @@
     </div>
 
     <div class="space-y-1.5">
-      <Label for="retention"
-        >How long you keep other people's things once they stop going around</Label>
+      <Label for="retention">How long you keep other people's things</Label>
       <InputGroup.Root>
         <InputGroup.Input
           id="retention"
