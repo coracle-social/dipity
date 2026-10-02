@@ -1,0 +1,57 @@
+name: Mirror to GitHub
+
+on:
+  push:
+    branches: [master]
+    tags: ["*"]
+  # A release goes public when its APK lands, which is a local run that can come hours after the
+  # tag, so its copy on GitHub is kept up to date by polling
+  schedule:
+    - cron: "0 */3 * * *"
+  workflow_dispatch:
+
+# Serialized rather than cancel-in-progress: aborting a push halfway leaves the mirror behind
+# whatever triggered the run, and nothing would retry it.
+concurrency:
+  group: ${{ github.workflow }}
+
+jobs:
+  push-to-github:
+    runs-on: ubuntu-latest
+    if: github.repository == 'coracle/dip' && github.event_name != 'schedule'
+
+    steps:
+      - name: Push master and tags to GitHub
+        env:
+          GH_MIRROR_TOKEN: ${{ secrets.GH_MIRROR_TOKEN }}
+        run: |
+          git clone --bare "${{ github.server_url }}/${{ github.repository }}.git" repo.git
+          cd repo.git
+
+          # Explicit refspecs rather than --mirror, which would push gitea's refs/pull/* refs and
+          # have GitHub reject the whole push. Force so gitea always wins.
+          git push --force --prune \
+            "https://x-access-token:$GH_MIRROR_TOKEN@github.com/coracle-social/dipity.git" \
+            'refs/heads/master:refs/heads/master' \
+            'refs/tags/*:refs/tags/*'
+
+  # Obtainium reads releases from whichever url a user added, and many add the GitHub one
+  copy-release-to-github:
+    runs-on: ubuntu-latest
+    needs: push-to-github
+    if: ${{ !cancelled() && github.repository == 'coracle/dip' && needs.push-to-github.result != 'failure' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Copy gitea's latest release to GitHub
+        env:
+          GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_MIRROR_TOKEN: ${{ secrets.GH_MIRROR_TOKEN }}
+        run: node scripts/release/github.mjs

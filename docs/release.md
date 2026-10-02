@@ -11,7 +11,7 @@ A release is built, signed and published from one Mac by `just release`, so no s
 | `gitea` | Publishes the gitea release for the tag, with the APK attached |
 | `zapstore` | Publishes the APK to zapstore |
 
-Obtainium reads the gitea release, so it needs no step of its own. Play and the App Store finish in their consoles: the run ends by listing the review and rollout left to do by hand.
+Obtainium reads the gitea release, so it needs no step of its own. `.gitea/workflows/mirror.yml` pushes `master` and the tags to [GitHub](https://github.com/coracle-social/dipity) and copies the latest published release there, for Obtainium users who add the app by its GitHub url. It needs a `GH_MIRROR_TOKEN` secret on the gitea repo. Play and the App Store finish in their consoles: the run ends by listing the review and rollout left to do by hand.
 
 ## Cutting one
 
