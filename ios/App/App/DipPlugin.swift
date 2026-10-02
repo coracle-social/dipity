@@ -5,22 +5,18 @@ import UIKit
 
 /// The webview's end of the core.
 ///
-/// One plugin, holding the store, the node and the radio, with a method per
-/// call the view makes. Everything below the bridge is `dip_ffi`; nothing here
-/// decides anything about gossip, the radio schedule or policy.
-///
-/// # The loop
-///
-/// Every core entry point answers a list of `Action`, and `apply` is the one
-/// place they are carried out. The core calls nothing back, so this is never
-/// re-entered from inside a call — an action that produces more actions
-/// produces them on the next entry point, not underneath this one.
+/// A method per call the view makes, over the core `Encounters` holds for as
+/// long as the process lives. The app delegate creates that at every launch,
+/// including one into the background to deliver a Bluetooth event, so the
+/// plugin opens nothing it would have to close: it attaches as the view.
+/// Everything below the bridge is `dip_ffi`; nothing here decides anything
+/// about gossip, the radio schedule or policy.
 ///
 /// # The three call shapes
 ///
 /// A store read answers what it read, through `answer`. A node call answers
 /// only the actions it asked for, through `perform`. A radio event has nobody
-/// waiting on it, through `drive`. Each takes the opened core, runs one entry
+/// waiting on it, through `Encounters.drive`. Each takes the opened core, runs one entry
 /// point and carries out the result; a method that spells any of that out again
 /// is a method doing something the other two are not.
 ///
@@ -62,31 +58,15 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "setCanGoBack", returnType: CAPPluginReturnPromise),
     ]
 
-    /// The store and the node, which are opened together and dropped together.
-    ///
-    /// One field rather than two: every call the view makes needs one or both,
-    /// and a plugin holding half a core is a state no call site should have to
-    /// consider.
-    struct Core {
-        let store: Store
-        let node: Node
-    }
-
-    private let radio = Radio()
-    private var lifecycle: Lifecycle?
-
     /// The `exportKey` call waiting on the sheet it opened.
     private var exporting: CAPPluginCall?
 
-    /// The core, once there is an identity to open it under.
-    private var core: Core?
+    /// The core, whoever opened it.
+    private var core: Encounters.Core? { Encounters.shared.core }
 
-    /// The store registration, live until the plugin drops it.
-    private var watching: Subscription?
-
-    /// Where the core's log goes, installed before anything can log.
+    /// Attach as the view of the core the app delegate already holds.
     public override func load() {
-        OsLog.install()
+        Encounters.shared.attach(self)
     }
 
     // ---------------------------------------------------------------- Identity
@@ -115,61 +95,31 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    /// Forget the identity, closing the core that runs as it.
     @objc func deleteIdentity(_ call: CAPPluginCall) {
-        call.resolve(["existed": Keychain.delete()])
+        onMain {
+            Encounters.shared.close()
+            call.resolve(["existed": Keychain.delete()])
+        }
     }
 
     // ------------------------------------------------------------------- Node
 
-    /// Open the store and the node, and start the radio.
+    /// Open the store and the node, and start the radio, unless the app
+    /// delegate already has.
     ///
     /// The view calls this once it knows there is an identity, which is what
     /// makes first run a screen rather than a failed open.
     @objc func start(_ call: CAPPluginCall) {
         onMain {
-            // A reloaded webview starts again over the same plugin, and is owed the same answer.
-            if let core = self.core {
-                do {
-                    return call.resolve(["identity": try core.node.identity()])
-                } catch {
-                    return call.reject("the core could not say who it is", nil, error)
-                }
-            }
-
             self.open(into: call)
         }
     }
 
+    /// Open the core if nobody has, and answer who it runs as.
     private func open(into call: CAPPluginCall) {
         do {
-            let directory = try support()
-            let store = try Store.open(directory: directory.path)
-            let node = try Node.open(
-                store: store,
-                custody: KeychainCustody(),
-                directory: directory.path)
-
-            core = Core(store: store, node: node)
-
-            // Registered before the first tick, so nothing the core does on the
-            // way up is a change the view never hears about.
-            watching = store.observe(observer: StoreChanges(self))
-
-            radio.delegate = self
-            lifecycle = Lifecycle(
-                foregrounded: { [weak self] in self?.drive { try $0.notifyForegrounded() } },
-                backgrounded: { [weak self] in self?.drive { try $0.notifyBackgrounded() } },
-                battery: { [weak self] level in self?.drive { try $0.battery(level: level) } },
-                tick: { [weak self] in self?.drive { try $0.tick() } })
-
-            // Where the app is and what the battery is at, before anything
-            // decides on either.
-            lifecycle?.report()
-
-            // Nothing is scanning or advertising until the core says so, and it
-            // says so on the first tick.
-            apply(try node.tick())
-            call.resolve(["identity": try node.identity()])
+            call.resolve(["identity": try Encounters.shared.open()])
         } catch {
             call.reject("the core could not be opened", nil, error)
         }
@@ -238,7 +188,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         exporting = call
 
         do {
-            apply(
+            Encounters.shared.apply(
                 try core.node.exportKey(
                     cache: FileManager.default.temporaryDirectory.path,
                     password: call.getString("password")))
@@ -305,7 +255,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
 
             // What the first-run identity gathered was its own, and goes with it.
             try core.store.wipe()
-            close()
+            Encounters.shared.close()
             open(into: call)
 
             for group in [Change.events, .blobs, .preferences] {
@@ -423,7 +373,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
             do {
                 let existed = try core.store.clearPreference(key: key)
 
-                self.apply(try core.node.policyChanged())
+                Encounters.shared.apply(try core.node.policyChanged())
                 call.resolve(["existed": existed])
             } catch {
                 call.reject("that preference could not be cleared", nil, error)
@@ -452,13 +402,13 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// The other half of `answer`: a store read answers with what it read, and
     /// a node call answers with nothing.
     private func perform(
-        _ call: CAPPluginCall, _ failure: String, _ body: @escaping (Core) throws -> [Action]
+        _ call: CAPPluginCall, _ failure: String, _ body: @escaping (Encounters.Core) throws -> [Action]
     ) {
         onMain {
             guard let core = self.core else { return call.reject("that call needs a started core") }
 
             do {
-                self.apply(try body(core))
+                Encounters.shared.apply(try body(core))
                 call.resolve()
             } catch {
                 call.reject(failure, nil, error)
@@ -514,122 +464,6 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
             order: call.getString("order") == "seenAt" ? .seenAt : .createdAt)
     }
 
-    // ---------------------------------------------------------------- Actions
-
-    /// Carry out what the core asked for, in the order it asked.
-    func apply(_ actions: [Action]) {
-        for action in actions {
-            switch action {
-            case .scan(let on):
-                radio.scan(on)
-            case .advertise(let on):
-                radio.advertise(on)
-            case .connect(let peripheral):
-                radio.connect(peripheral.value)
-            case .disconnect(let link):
-                // The view hears about a link the core ended as it does about one the radio lost.
-                radio.disconnect(link.value)
-                notifyListeners("linkClosed", data: ["link": Int(link.value)])
-            case .send(let link, let fragment):
-                radio.send(link.value, fragment)
-            case .requestApproval(let link, let code):
-                notifyListeners(
-                    "requestApproval",
-                    data: ["link": Int(link.value), "code": Int(code)])
-            case .peerIdentified(let link, let pubkey):
-                notifyListeners(
-                    "peerIdentified",
-                    data: ["link": Int(link.value), "pubkey": pubkey])
-            case .confirmIdentityTransfer(let link, let code):
-                notifyListeners(
-                    "confirmIdentityTransfer",
-                    data: ["link": Int(link.value), "code": Int(code)])
-            case .identityTransfer(let link, let outcome):
-                notifyListeners(
-                    "identityTransfer",
-                    data: ["link": Int(link.value), "outcome": App.outcomeName(outcome: outcome)])
-            case .shareKeyBackup(let path):
-                share(URL(fileURLWithPath: path))
-            case .wakeAt(let at):
-                // Advisory: iOS runs no timer for a suspended app, so this
-                // covers the foreground and the next radio callback covers the
-                // rest.
-                lifecycle?.wake(at: at)
-            case .sendBulk(let link, let fragment):
-                radio.sendBulk(link.value, fragment)
-            case .publishL2cap(let link):
-                radio.publishL2cap(link.value)
-            case .openL2cap(let link, let psm):
-                radio.openL2cap(link.value, psm)
-            }
-        }
-    }
-
-    /// Where the store and the blobs live: a directory in Application Support,
-    /// which is not purged, unlike Caches, and kept out of backups, because
-    /// `event_seen` is a record of who the user was near.
-    /// `docs/storage.md#the-sqlite-store`.
-    private func support() throws -> URL {
-        let base = try FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true)
-        var directory = base.appendingPathComponent("dip", isDirectory: true)
-
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-
-        var excluded = URLResourceValues()
-        excluded.isExcludedFromBackup = true
-        try directory.setResourceValues(excluded)
-
-        return directory
-    }
-
-    /// Put the backup in front of the user, and tell the core when it closes.
-    ///
-    /// The sheet is presented here rather than by the view, which is what keeps
-    /// the path on this side of the bridge. `completed` is the sheet's own
-    /// answer to whether an activity took the file.
-    private func share(_ file: URL) {
-        let call = exporting
-
-        exporting = nil
-
-        DispatchQueue.main.async { [weak self] in
-            guard let controller = self?.bridge?.viewController else {
-                // A backup that cannot be shared is deleted rather than left on disk.
-                self?.drive { try $0.keyExportFinished() }
-                call?.reject("there is nowhere to present the backup")
-                return
-            }
-
-            let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil)
-
-            sheet.completionWithItemsHandler = { [weak self] _, completed, _, _ in
-                self?.notifyListeners("keyBackupShared", data: ["shared": completed])
-                self?.drive { try $0.keyExportFinished() }
-                call?.resolve()
-            }
-
-            controller.present(sheet, animated: true)
-        }
-    }
-
-    /// Drop the node and everything driving it, so `open` can run again.
-    ///
-    /// The store observer and the lifecycle go with their references; the radio
-    /// keeps its GATT service, which is registered once at power-on and would
-    /// not come back on its own.
-    private func close() {
-        exporting?.reject("the core closed before the backup was shared")
-        exporting = nil
-        watching = nil
-        lifecycle = nil
-        radio.stop()
-        core = nil
-    }
-
     /// Write an identity and answer the npub, which is all the view is owed.
     ///
     /// The bytes are wiped on the way out, whichever way it went.
@@ -646,94 +480,38 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 }
 
-// --------------------------------------------------------------------- Store
+// ---------------------------------------------------------------------- View
 
-/// Tells the view which group of tables moved, so it re-reads what it is
-/// showing.
-///
-/// Held by the core for as long as the subscription lives, so the plugin is a
-/// weak reference: the registration outliving the plugin is a leak, not a
-/// crash.
-private class StoreChanges: StoreObserver {
-    private weak var plugin: DipPlugin?
-
-    init(_ plugin: DipPlugin) {
-        self.plugin = plugin
+extension DipPlugin: EncountersView {
+    func notify(_ event: String, _ data: [String: Any]) {
+        notifyListeners(event, data: data)
     }
 
-    func changed(group: Change) {
-        plugin?.notifyListeners("storeChanged", data: ["group": App.changeName(group: group)])
-    }
-}
-
-// --------------------------------------------------------------------- Radio
-
-extension DipPlugin: RadioDelegate {
-    func radio(_ radio: Radio, saw peripheral: String, rssi: Int16) {
-        drive { try $0.peripheralSeen(peripheral: PeripheralId(value: peripheral), rssi: rssi) }
-    }
-
-    func radio(_ radio: Radio, upOn link: UInt64, peripheral: String?, dialer: Bool, mtu: UInt32) {
-        drive {
-            try $0.linkUp(
-                link: LinkId(value: link),
-                peripheral: peripheral.map { PeripheralId(value: $0) },
-                role: dialer ? .dialer : .receiver,
-                mtu: mtu)
-        }
-    }
-
-    // The view is told too: a screen naming a link cannot offer over a dead one.
-    func radio(_ radio: Radio, downOn link: UInt64) {
-        notifyListeners("linkClosed", data: ["link": Int(link)])
-
-        drive { try $0.linkDown(link: LinkId(value: link)) }
-    }
-
-    func radio(_ radio: Radio, received bytes: Data, on link: UInt64) {
-        drive { try $0.bytesReceived(link: LinkId(value: link), write: bytes) }
-    }
-
-    func radio(_ radio: Radio, wroteOn link: UInt64) {
-        drive { try $0.writeComplete(link: LinkId(value: link)) }
-    }
-
-    func radio(_ radio: Radio, publishedOn link: UInt64, psm: UInt16) {
-        drive { try $0.l2capPublished(link: LinkId(value: link), psm: psm) }
-    }
-
-    func radio(_ radio: Radio, bulkUpOn link: UInt64, mtu: UInt32) {
-        drive { try $0.l2capOpened(link: LinkId(value: link), mtu: mtu) }
-    }
-
-    func radio(_ radio: Radio, bulkDownOn link: UInt64) {
-        drive { try $0.l2capUnavailable(link: LinkId(value: link)) }
-    }
-
-    func radio(_ radio: Radio, receivedBulk bytes: Data, on link: UInt64) {
-        drive { try $0.bulkReceived(link: LinkId(value: link), read: bytes) }
-    }
-
-    func radio(_ radio: Radio, wroteBulkOn link: UInt64) {
-        drive { try $0.bulkWriteComplete(link: LinkId(value: link)) }
-    }
-
-    /// Run one core entry point nobody is waiting on, and carry out what it
-    /// answered.
+    /// Put the backup in front of the user, and tell the core when it closes.
     ///
-    /// A `NodeError.Link` is the core refusing to carry on with that link, so
-    /// it goes; anything else is logged and the loop continues.
-    private func drive(_ call: (Node) throws -> [Action]) {
-        guard let node = core?.node else { return }
+    /// The sheet is presented here rather than by the view, which is what keeps
+    /// the path on this side of the bridge. `completed` is the sheet's own
+    /// answer to whether an activity took the file.
+    func share(_ file: URL) -> Bool {
+        guard let call = exporting else { return false }
 
-        do {
-            apply(try call(node))
-        } catch let error as NodeError {
-            if case .Link(let link, _) = error { radio.disconnect(link.value) }
+        exporting = nil
 
-            CAPLog.print("dip: \(error)")
-        } catch {
-            CAPLog.print("dip: \(error)")
+        guard let controller = bridge?.viewController else {
+            call.reject("there is nowhere to present the backup")
+            return false
         }
+
+        let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil)
+
+        sheet.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+            self?.notifyListeners("keyBackupShared", data: ["shared": completed])
+            Encounters.shared.drive { try $0.keyExportFinished() }
+            call.resolve()
+        }
+
+        controller.present(sheet, animated: true)
+
+        return true
     }
 }

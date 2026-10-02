@@ -18,9 +18,9 @@ import android.os.IBinder
  * thing here that is not a mirror of the iOS side, where the equivalent is two
  * background modes and state restoration.
  *
- * It holds no state and drives nothing. The radio and the node live in the
- * plugin, which outlives the activity for the same reason; this is the
- * foreground declaration that lets them keep working.
+ * It holds no state and drives nothing. The radio and the node live in
+ * [Encounters], which outlives the activity; this is the foreground declaration
+ * that lets them keep working, and what reopens them when the system restarts it.
  */
 class EncounterService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
@@ -39,6 +39,9 @@ class EncounterService : Service() {
             notification,
             ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
         )
+
+        // A restart after the system killed the process has nothing open, and nobody else will open it.
+        Encounters.revive(this)
 
         // Restarted without its intent if the system kills it: there is nothing
         // in the intent, and stopping means never meeting anyone again.

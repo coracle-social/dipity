@@ -19,22 +19,15 @@ import org.json.JSONObject
 import uniffi.dip_ffi.Action
 import uniffi.dip_ffi.Change
 import uniffi.dip_ffi.LinkId
-import uniffi.dip_ffi.Node
-import uniffi.dip_ffi.NodeException
 import uniffi.dip_ffi.Order
-import uniffi.dip_ffi.PeripheralId
 import uniffi.dip_ffi.Query
-import uniffi.dip_ffi.Role
 import uniffi.dip_ffi.Store
-import uniffi.dip_ffi.StoreObserver
-import uniffi.dip_ffi.Subscription
 import uniffi.dip_ffi.changeName
 import uniffi.dip_ffi.coreVersion as loadedCoreVersion
 import uniffi.dip_ffi.generateIdentity
 import uniffi.dip_ffi.identityFromNsec
 import uniffi.dip_ffi.identityNpub
 import uniffi.dip_ffi.mediaTags as coreMediaTags
-import uniffi.dip_ffi.outcomeName
 
 /** The three permissions the radio needs on 31+, asked for together. */
 private const val RADIO_PERMISSIONS = "radio"
@@ -45,22 +38,18 @@ private const val SHARE_GRACE = 5 * 60 * 1000L
 /**
  * The webview's end of the core.
  *
- * One plugin, holding the store, the node and the radio, with a method per call
- * the view makes. Everything below the bridge is `dip_ffi`; nothing here decides
- * anything about gossip, the radio schedule or policy.
- *
- * ## The loop
- *
- * Every core entry point answers a list of `Action`, and [apply] is the one
- * place they are carried out. The core calls nothing back, so this is never
- * re-entered from inside a call — an action that produces more actions produces
- * them on the next entry point, not underneath this one.
+ * A method per call the view makes, over the core [Encounters] holds for as long
+ * as the process lives. The plugin lives only as long as its activity, so it
+ * opens nothing it would have to close: it attaches to [Encounters] as the view,
+ * and detaches when the activity goes. Everything below the bridge is
+ * `dip_ffi`; nothing here decides anything about gossip, the radio schedule or
+ * policy.
  *
  * ## The three call shapes
  *
  * A store read answers what it read, through [answer]. A node call answers only
  * the actions it asked for, through [perform]. A radio event has nobody waiting
- * on it, through [drive]. Each takes the opened core, runs one entry point and
+ * on it, through [Encounters.drive]. Each takes the opened core, runs one entry point and
  * carries out the result; a method that spells any of that out again is a method
  * doing something the other two are not.
  *
@@ -85,34 +74,23 @@ private const val SHARE_GRACE = 5 * 60 * 1000L
             )
         ],
 )
-class DipPlugin : Plugin(), Radio.Delegate {
-    /**
-     * The store and the node, which are opened together and dropped together.
-     *
-     * One field rather than two: every call the view makes needs one or both,
-     * and a plugin holding half a core is a state no call site should have to
-     * consider.
-     */
-    private data class Core(val store: Store, val node: Node)
-
+class DipPlugin : Plugin(), Encounters.View {
     private val keystore by lazy { Keystore(context) }
-    private val radio by lazy { Radio(context, this) }
 
-    /** The core, once there is an identity to open it under. */
-    private var core: Core? = null
-
-    private var lifecycle: Lifecycle? = null
+    /** The chooser a backup is offered through, which needs the activity. */
     private var backup: Backup? = null
-
-    /** The store registration, live until the plugin drops it. */
-    private var watching: Subscription? = null
 
     /** The `exportKey` call waiting on the chooser it opened. */
     private var exporting: PluginCall? = null
 
-    /** The log, before anything can log, and the back button, before anything draws. */
+    /** The core, whoever opened it. */
+    private val core: Encounters.Core?
+        get() = Encounters.core
+
+    /** Attach as the view, and claim the back button before anything draws. */
     override fun load() {
-        Logcat.install(context)
+        backup = Backup(context)
+        Encounters.attach(this)
         activity.onBackPressedDispatcher.addCallback(activity, back)
     }
 
@@ -144,23 +122,29 @@ class DipPlugin : Plugin(), Radio.Delegate {
         }
     }
 
+    /** Forget the identity, closing the core that runs as it. */
     @PluginMethod
     fun deleteIdentity(call: PluginCall) {
+        Encounters.close()
         call.resolve(JSObject().put("existed", keystore.delete()))
     }
 
     // ----------------------------------------------------------------- Node
 
     /**
-     * Open the store and the node, and start the radio.
+     * Open the store and the node, and start the radio, unless the service
+     * already has.
      *
      * The view calls this once it knows there is an identity, which is what
      * makes first run a screen rather than a failed open.
      */
     @PluginMethod
     fun start(call: PluginCall) {
-        // A reloaded webview starts again over the same plugin, and is owed the same answer.
-        core?.let { return call.resolve(JSObject().put("identity", it.node.identity())) }
+        // The service may have opened it already, and a reloaded webview starts again over it.
+        core?.let {
+            Encounters.drive { node -> node.notifyForegrounded() }
+            return call.resolve(JSObject().put("identity", it.node.identity()))
+        }
 
         if (getPermissionState(RADIO_PERMISSIONS) != com.getcapacitor.PermissionState.GRANTED) {
             return requestPermissionForAlias(RADIO_PERMISSIONS, call, "radioGranted")
@@ -285,11 +269,11 @@ class DipPlugin : Plugin(), Radio.Delegate {
             secret.fill(0)
         }
 
-        close()
+        Encounters.close()
         open(call)
 
         for (group in listOf(Change.EVENTS, Change.BLOBS, Change.PREFERENCES)) {
-            notifyListeners("storeChanged", JSObject().put("group", changeName(group)))
+            notify("storeChanged", JSObject().put("group", changeName(group)))
         }
     }
 
@@ -313,7 +297,9 @@ class DipPlugin : Plugin(), Radio.Delegate {
         exporting = call
 
         try {
-            apply(core.node.exportKey(context.cacheDir.absolutePath, call.getString("password")))
+            Encounters.apply(
+                core.node.exportKey(context.cacheDir.absolutePath, call.getString("password"))
+            )
         } catch (error: Exception) {
             exporting = null
             call.reject("the backup could not be written", error)
@@ -333,15 +319,23 @@ class DipPlugin : Plugin(), Radio.Delegate {
         notifyListeners("keyBackupShared", JSObject().put("shared", backup?.taken == true))
 
         // The chooser returns once an app is picked, which may read the file after; it goes later.
-        Handler(Looper.getMainLooper()).postDelayed({ drive { it.keyExportFinished() } }, SHARE_GRACE)
+        Handler(Looper.getMainLooper())
+            .postDelayed({ Encounters.drive { it.keyExportFinished() } }, SHARE_GRACE)
         call.resolve()
     }
 
-    override fun handleOnResume() = drive { it.notifyForegrounded() }
+    override fun handleOnResume() = Encounters.drive { it.notifyForegrounded() }
 
-    override fun handleOnPause() = drive { it.notifyBackgrounded() }
+    override fun handleOnPause() = Encounters.drive { it.notifyBackgrounded() }
 
-    override fun handleOnDestroy() = close()
+    /** The activity is going, and the core stays: gossip carries on without a screen. */
+    override fun handleOnDestroy() {
+        Encounters.detach(this)
+        exporting?.reject("the screen closed before the backup was shared")
+        exporting = null
+        backup?.stop()
+        backup = null
+    }
 
     // ----------------------------------------------------------------- Back
 
@@ -469,7 +463,7 @@ class DipPlugin : Plugin(), Radio.Delegate {
         try {
             val existed = core.store.clearPreference(key)
 
-            apply(core.node.policyChanged())
+            Encounters.apply(core.node.policyChanged())
             call.resolve(JSObject().put("existed", existed))
         } catch (error: Exception) {
             call.reject("that preference could not be cleared", error)
@@ -494,11 +488,15 @@ class DipPlugin : Plugin(), Radio.Delegate {
      * The other half of [answer]: a store read answers with what it read, and a
      * node call answers with nothing.
      */
-    private fun perform(call: PluginCall, failure: String, body: (Core) -> List<Action>) {
+    private fun perform(
+        call: PluginCall,
+        failure: String,
+        body: (Encounters.Core) -> List<Action>,
+    ) {
         val core = this.core ?: return call.reject("that call needs a started core")
 
         try {
-            apply(body(core))
+            Encounters.apply(body(core))
             call.resolve()
         } catch (error: Exception) {
             call.reject(failure, error)
@@ -529,179 +527,9 @@ class DipPlugin : Plugin(), Radio.Delegate {
             order = if (call.getString("order") == "seenAt") Order.SEEN_AT else Order.CREATED_AT,
         )
 
-    /** Tells the view which group of tables moved, so it re-reads what it shows. */
-    private inner class StoreChanges : StoreObserver {
-        override fun changed(group: Change) {
-            notifyListeners("storeChanged", JSObject().put("group", changeName(group)))
-        }
-    }
+    // ----------------------------------------------------------------- View
 
-    // -------------------------------------------------------------- Actions
-
-    /** Carry out what the core asked for, in the order it asked. */
-    private fun apply(actions: List<Action>) {
-        for (action in actions) {
-            when (action) {
-                is Action.Scan -> radio.scan(action.on)
-                is Action.Advertise -> radio.advertise(action.on)
-                is Action.Connect -> radio.connect(action.peripheral.value)
-                is Action.Disconnect -> {
-                    // The view hears about a link the core ended as it does about one the radio lost.
-                    radio.disconnect(action.link.value)
-                    notifyListeners("linkClosed", JSObject().put("link", action.link.value.toLong()))
-                }
-                is Action.Send -> radio.send(action.link.value, action.fragment)
-                is Action.RequestApproval ->
-                    notifyListeners(
-                        "requestApproval",
-                        JSObject()
-                            .put("link", action.link.value.toLong())
-                            .put("code", action.code.toLong()),
-                    )
-                is Action.PeerIdentified ->
-                    notifyListeners(
-                        "peerIdentified",
-                        JSObject()
-                            .put("link", action.link.value.toLong())
-                            .put("pubkey", action.pubkey),
-                    )
-                is Action.ConfirmIdentityTransfer ->
-                    notifyListeners(
-                        "confirmIdentityTransfer",
-                        JSObject()
-                            .put("link", action.link.value.toLong())
-                            .put("code", action.code.toLong()),
-                    )
-                is Action.IdentityTransfer ->
-                    notifyListeners(
-                        "identityTransfer",
-                        JSObject()
-                            .put("link", action.link.value.toLong())
-                            .put("outcome", outcomeName(action.outcome)),
-                    )
-                is Action.ShareKeyBackup -> share(File(action.path))
-                is Action.WakeAt -> lifecycle?.wake(action.at)
-                is Action.SendBulk -> radio.sendBulk(action.link.value, action.fragment)
-                is Action.PublishL2cap -> radio.publishL2cap(action.link.value)
-                is Action.OpenL2cap -> radio.openL2cap(action.link.value, action.psm)
-            }
-        }
-    }
-
-    // ---------------------------------------------------------------- Radio
-
-    override fun saw(peripheral: String, rssi: Short) = drive {
-        it.peripheralSeen(PeripheralId(peripheral), rssi)
-    }
-
-    override fun linkUp(link: ULong, peripheral: String?, dialer: Boolean, mtu: UInt) = drive {
-        it.linkUp(
-            LinkId(link),
-            peripheral?.let(::PeripheralId),
-            if (dialer) Role.DIALER else Role.RECEIVER,
-            mtu,
-        )
-    }
-
-    // The view is told too: a screen naming a link cannot offer over a dead one.
-    override fun linkDown(link: ULong) {
-        notifyListeners("linkClosed", JSObject().put("link", link.toLong()))
-
-        drive { it.linkDown(LinkId(link)) }
-    }
-
-    override fun received(link: ULong, bytes: ByteArray) = drive {
-        it.bytesReceived(LinkId(link), bytes)
-    }
-
-    override fun wrote(link: ULong) = drive { it.writeComplete(LinkId(link)) }
-
-    override fun published(link: ULong, psm: UShort) = drive { it.l2capPublished(LinkId(link), psm) }
-
-    override fun bulkUp(link: ULong, mtu: UInt) = drive { it.l2capOpened(LinkId(link), mtu) }
-
-    override fun bulkDown(link: ULong) = drive { it.l2capUnavailable(LinkId(link)) }
-
-    override fun bulkReceived(link: ULong, bytes: ByteArray) = drive {
-        it.bulkReceived(LinkId(link), bytes)
-    }
-
-    override fun bulkWrote(link: ULong) = drive { it.bulkWriteComplete(LinkId(link)) }
-
-    /**
-     * Run one core entry point nobody is waiting on, and carry out what it
-     * answered.
-     *
-     * A [NodeException.Link] is the core refusing to carry on with that link, so
-     * it goes; anything else is logged and the loop continues.
-     */
-    private fun drive(call: (Node) -> List<Action>) {
-        val node = core?.node ?: return
-
-        try {
-            apply(call(node))
-        } catch (error: NodeException.Link) {
-            radio.disconnect(error.link.value)
-        } catch (error: Exception) {
-            android.util.Log.e("dip", "the core refused a radio event", error)
-        }
-    }
-
-    // ---------------------------------------------------------- Bookkeeping
-
-    /**
-     * Where the store and the blobs live, which nothing backs up or transfers:
-     * `event_seen` is a record of who the user was near.
-     * `docs/storage.md#the-sqlite-store`.
-     */
-    private fun storeDirectory(): File {
-        val directory = File(context.noBackupFilesDir, "dip")
-
-        directory.mkdirs()
-
-        return directory
-    }
-
-    private fun open(call: PluginCall) {
-        try {
-            val directory = storeDirectory()
-            val store = Store.open(directory.absolutePath)
-            val node = Node.open(store, KeystoreCustody(keystore), directory.absolutePath)
-
-            core = Core(store, node)
-
-            // Registered before the first tick, so nothing the core does on the
-            // way up is a change the view never hears about.
-            watching = store.observe(StoreChanges())
-
-            EncounterService.start(context)
-
-            val lifecycle =
-                Lifecycle(
-                    context,
-                    battery = { level -> drive { it.battery(level) } },
-                    tick = { drive { it.tick() } },
-                )
-
-            // Assigned before it is started: the first battery report is an
-            // entry point like any other, and what it answers may be a `WakeAt`.
-            this.lifecycle = lifecycle
-            lifecycle.start()
-
-            backup = Backup(context)
-
-            // The view is what calls `start`, and the view runs in front, so
-            // this is where presence is first reported rather than guessed.
-            apply(node.notifyForegrounded())
-
-            // Nothing is scanning or advertising until the core says so, and it
-            // says so on the first tick.
-            apply(node.tick())
-            call.resolve(JSObject().put("identity", node.identity()))
-        } catch (error: Exception) {
-            call.reject("the core could not be opened", error)
-        }
-    }
+    override fun notify(event: String, data: JSObject) = notifyListeners(event, data)
 
     /**
      * Put the backup in front of the user, and tell the core when it comes back.
@@ -709,42 +537,31 @@ class DipPlugin : Plugin(), Radio.Delegate {
      * The chooser is started here rather than by the view, which is what keeps
      * the path on this side of the bridge.
      */
-    private fun share(file: File) {
-        val call = exporting ?: return abandonShare(null, "nobody is waiting on the backup")
+    override fun share(file: File): Boolean {
+        val call = exporting ?: return false
         val backup = this.backup
 
         exporting = null
 
-        if (backup == null) return abandonShare(call, "there is nowhere to offer the backup")
+        if (backup == null) {
+            call.reject("there is nowhere to offer the backup")
+            return false
+        }
 
         startActivityForResult(call, backup.chooser(file), "keyBackupClosed")
+
+        return true
     }
 
-    /**
-     * Drop the node and everything driving it, so [open] can run again.
-     *
-     * Every field [open] set is cleared, so closing twice is closing once and
-     * the receivers are unregistered exactly as often as they were registered.
-     */
-    private fun close() {
-        exporting?.reject("the core closed before the backup was shared")
-        watching?.stop()
-        lifecycle?.stop()
-        backup?.stop()
-        radio.stop()
-        EncounterService.stop(context)
+    // ---------------------------------------------------------- Bookkeeping
 
-        exporting = null
-        watching = null
-        lifecycle = null
-        backup = null
-        core = null
-    }
-
-    /** A backup that cannot be shared is deleted rather than left on disk, plaintext or not. */
-    private fun abandonShare(call: PluginCall?, reason: String) {
-        call?.reject(reason)
-        drive { it.keyExportFinished() }
+    /** Open the core with the view in front, and answer who it runs as. */
+    private fun open(call: PluginCall) {
+        try {
+            call.resolve(JSObject().put("identity", Encounters.open(context, foreground = true)))
+        } catch (error: Exception) {
+            call.reject("the core could not be opened", error)
+        }
     }
 
     /** Write an identity and answer the npub, wiping the bytes on the way out either way. */

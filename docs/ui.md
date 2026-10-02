@@ -202,7 +202,7 @@ Styling happens in Tailwind utilities, or in the theme. A component-scoped rule 
 - **`cn()` last, always.** `class={cn(variants({size}), className)}` — the caller's class has to be able to win, and `twMerge` is what makes that deterministic.
 - **`tv()` for variants, not conditionals.** If a component has more than two visual states, it gets a variant table.
 - **Semantic HTML before ARIA.** bits-ui handles the wiring for anything interactive; hand-rolled `role` attributes are a sign the wrong primitive was used.
-- **The UI owns no durable state.** The view is suspended in the background, so anything that must survive that lives in the plugin. Where the user is does not survive; a choice they made about what a screen is for does, as a preference under a `ui.` key (`remembered` in `src/lib/data/query.ts`).
+- **The UI owns no durable state.** The view is suspended in the background, so anything that must survive that lives in the core. Where the user is does not survive; a choice they made about what a screen is for does, as a preference under a `ui.` key (`remembered` in `src/lib/data/query.ts`).
 - **Never claim posts only reach nearby people.** Copy may say the phone trades with devices in range, since every link is physical. Copy about who ends up with a post says reach is bounded at two hops, because a second-hop recipient may be anywhere.
 
 ## Organizing against welshman
