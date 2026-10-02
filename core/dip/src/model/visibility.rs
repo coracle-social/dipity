@@ -30,7 +30,7 @@ pub struct Visibility {
 
 impl Default for Visibility {
     /// The social graph to trusted peers, the bookmark list to nobody, and
-    /// everything else public.
+    /// everything else to anyone not blocked.
     ///
     /// The social graph is the sensitive half of what a user publishes: a
     /// trust list names people they have met in person. It is not encrypted,
@@ -51,7 +51,7 @@ impl Default for Visibility {
                     scope: Scope::Nothing,
                 },
             ],
-            default: Scope::Public,
+            default: Scope::Lenient,
         }
     }
 }
@@ -156,9 +156,9 @@ mod tests {
         assert_eq!(visibility.scope_for(&trust), Scope::Trusted);
         assert_eq!(visibility.scope_for(&block), Scope::Trusted);
         assert_eq!(visibility.scope_for(&bookmarks), Scope::Nothing);
-        assert_eq!(visibility.scope_for(&card), Scope::Public);
-        assert_eq!(visibility.scope_for(&profile), Scope::Public);
-        assert_eq!(visibility.scope_for(&note), Scope::Public);
+        assert_eq!(visibility.scope_for(&card), Scope::Lenient);
+        assert_eq!(visibility.scope_for(&profile), Scope::Lenient);
+        assert_eq!(visibility.scope_for(&note), Scope::Lenient);
     }
 
     #[test]
@@ -184,7 +184,7 @@ mod tests {
         };
 
         assert_eq!(visibility.scope_for(&about(hidden)), Scope::Nothing);
-        assert_eq!(visibility.scope_for(&about(author(3))), Scope::Public);
+        assert_eq!(visibility.scope_for(&about(author(3))), Scope::Lenient);
     }
 
     #[test]

@@ -84,7 +84,7 @@ It is therefore its own setting, and a narrow one. At the default a peer outside
 
 ## Visibility
 
-Which peers this device hands the user's own events to. By default the trust, block and mute lists go to `trusted` peers, the bookmark list goes to nobody, and everything else is `public`.
+Which peers this device hands the user's own events to. By default the trust, block and mute lists go to `trusted` peers, the bookmark list goes to nobody, and everything else is `lenient`.
 
 Visibility governs the first hop only. A peer holding the author's signature over an event can forward it to anyone its own gossip setting allows, so the signature decides whether an event travels further, and [Forward](#forwarding) decides who receives one. At the defaults a trusted peer receives the trust list with a signature and may pass it on.
 

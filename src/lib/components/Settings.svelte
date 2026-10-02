@@ -51,7 +51,7 @@
       label: "What others are allowed to see",
       detail:
         "Who may see your notes and the names you give people. Your trust list goes only to people you trust, who can pass it on once if you let them. Your bookmarks stay on this phone.",
-      scopes: ["trusted", "network", "lenient", "public"] as Scope[],
+      scopes: ["trusted", "network", "lenient"] as Scope[],
       on: $policy?.visibility.default,
       set: setVisibility,
     },

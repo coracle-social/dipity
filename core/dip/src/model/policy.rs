@@ -268,7 +268,7 @@ mod tests {
 
         // Including the visibility rules, which an edit writes back whole.
         assert_eq!(crossed["visibility"]["rules"].as_array().unwrap().len(), 2);
-        assert_eq!(crossed["visibility"]["default"], "public");
+        assert_eq!(crossed["visibility"]["default"], "lenient");
         assert_eq!(crossed["accept"], "lenient");
         assert_eq!(crossed["retention_days"], 30);
     }

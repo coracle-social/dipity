@@ -20,7 +20,7 @@ const defaults: Policy = {
       {filter: {kinds: [10_000, 16_017, 16_018]}, scope: "trusted"},
       {filter: {kinds: [10_003]}, scope: "nothing"},
     ],
-    default: "public",
+    default: "lenient",
   },
   retention_days: 30,
   cool_off_minutes: 10,
