@@ -1,8 +1,11 @@
 <script lang="ts">
   import ChevronRight from "@lucide/svelte/icons/chevron-right"
+  import Filter from "@lucide/svelte/icons/list-filter"
   import Tag from "@lucide/svelte/icons/tag"
   import Users from "@lucide/svelte/icons/users"
   import {Badge} from "$lib/components/ui/badge"
+  import {Button} from "$lib/components/ui/button"
+  import * as DropdownMenu from "$lib/components/ui/dropdown-menu"
   import * as Tabs from "$lib/components/ui/tabs"
   import EmptyState from "$lib/components/EmptyState.svelte"
   import SearchBox from "$lib/components/SearchBox.svelte"
@@ -10,19 +13,38 @@
   import {go} from "$lib/data/nav"
   import {matches, nameMatches, wordsOf} from "$lib/data/search"
 
-  let query = $state("")
+  // Each tab searches only itself.
+  let contactQuery = $state("")
+  let aliasQuery = $state("")
 
-  const words = $derived(wordsOf(query))
+  const standings = [
+    {value: "everyone", label: "Everyone"},
+    {value: "trusted", label: "Trusted"},
+    {value: "muted", label: "Muted"},
+    {value: "blocked", label: "Blocked"},
+  ] as const
+
+  let standing = $state<(typeof standings)[number]["value"]>("everyone")
+
+  const contactWords = $derived(wordsOf(contactQuery))
+
+  const aliasWords = $derived(wordsOf(aliasQuery))
 
   const shown = $derived(
-    words.length ? $contacts.filter(({pubkey}) => nameMatches($social, pubkey, words)) : $contacts,
+    $contacts.filter(
+      contact =>
+        (standing === "everyone" || contact[standing]) &&
+        (!contactWords.length || nameMatches($social, contact.pubkey, contactWords)),
+    ),
   )
 
   const given = $derived(
-    words.length
-      ? $aliases.filter(({spellings}) => spellings.some(spelling => matches(words, spelling)))
+    aliasWords.length
+      ? $aliases.filter(({spellings}) => spellings.some(spelling => matches(aliasWords, spelling)))
       : $aliases,
   )
+
+  const narrowed = $derived(standing !== "everyone" || contactWords.length > 0)
 
   /** Who gave a name, by the name the user knows them by. */
   const givers = (by: string[]) => by.map(pubkey => nameOf($social, pubkey).name).join(", ")
@@ -32,8 +54,6 @@
   <h1 class="text-2xl font-semibold">People</h1>
 </header>
 
-<SearchBox class="mb-3" label="Search people" bind:value={query} />
-
 <Tabs.Root value="contacts">
   <Tabs.List>
     <Tabs.Trigger value="contacts">Contacts</Tabs.Trigger>
@@ -41,6 +61,27 @@
   </Tabs.List>
 
   <Tabs.Content value="contacts">
+    <div class="mt-3 flex items-center gap-2">
+      <SearchBox class="min-w-0 flex-1" label="Search contacts" bind:value={contactQuery} />
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger>
+          {#snippet child({props})}
+            <Button {...props} variant={standing === "everyone" ? "ghost" : "secondary"} size="sm">
+              <Filter />
+              {standings.find(({value}) => value === standing)?.label}
+            </Button>
+          {/snippet}
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Content align="end">
+          <DropdownMenu.RadioGroup bind:value={standing}>
+            {#each standings as option (option.value)}
+              <DropdownMenu.RadioItem value={option.value}>{option.label}</DropdownMenu.RadioItem>
+            {/each}
+          </DropdownMenu.RadioGroup>
+        </DropdownMenu.Content>
+      </DropdownMenu.Root>
+    </div>
+
     <p class="mt-3 text-sm text-muted-foreground">
       People you've met in person, or who you've heard about from others.
     </p>
@@ -85,7 +126,7 @@
       {/each}
     </ul>
 
-    {#if words.length && shown.length === 0}
+    {#if narrowed && shown.length === 0 && $contacts.length > 0}
       <EmptyState icon={Users}>No contacts match that.</EmptyState>
     {:else if $contacts.length === 0}
       <EmptyState icon={Users}>
@@ -95,6 +136,8 @@
   </Tabs.Content>
 
   <Tabs.Content value="aliases">
+    <SearchBox class="mt-3" label="Search aliases" bind:value={aliasQuery} />
+
     <p class="mt-3 text-sm text-pretty text-muted-foreground">
       Dipity has no profiles, so everyone you pair with names you. These are the names people know
       you by, and who gave each one.
@@ -111,7 +154,7 @@
       {/each}
     </ul>
 
-    {#if words.length && given.length === 0}
+    {#if aliasWords.length && given.length === 0}
       <EmptyState icon={Tag}>No aliases match that.</EmptyState>
     {:else if $aliases.length === 0}
       <EmptyState icon={Tag}>

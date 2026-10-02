@@ -1,10 +1,7 @@
 <script lang="ts">
-  import Filter from "@lucide/svelte/icons/list-filter"
-  import {Button} from "$lib/components/ui/button"
-  import * as DropdownMenu from "$lib/components/ui/dropdown-menu"
+  import CategoryFilter from "$lib/components/CategoryFilter.svelte"
   import SearchBox from "$lib/components/SearchBox.svelte"
   import {search, setOrder, toggleCategory, type View} from "$lib/data/feed"
-  import {categories} from "$lib/kinds"
 
   let {view}: {view: View} = $props()
 
@@ -13,8 +10,6 @@
     {value: "seenAt", label: "New to you"},
     {value: "createdAt", label: "Recent"},
   ] as const
-
-  const narrowed = $derived(view.showing.length !== categories.length)
 </script>
 
 <div class="flex items-center justify-between gap-2">
@@ -33,26 +28,7 @@
     {/each}
   </div>
 
-  <DropdownMenu.Root>
-    <DropdownMenu.Trigger>
-      {#snippet child({props})}
-        <Button {...props} variant={narrowed ? "secondary" : "ghost"} size="sm">
-          <Filter />
-          {narrowed ? `${view.showing.length} of ${categories.length}` : "Everything"}
-        </Button>
-      {/snippet}
-    </DropdownMenu.Trigger>
-    <DropdownMenu.Content align="end">
-      {#each categories as category (category.id)}
-        <DropdownMenu.CheckboxItem
-          checked={view.showing.includes(category.id)}
-          closeOnSelect={false}
-          onCheckedChange={() => toggleCategory(category.id)}>
-          {category.label}
-        </DropdownMenu.CheckboxItem>
-      {/each}
-    </DropdownMenu.Content>
-  </DropdownMenu.Root>
+  <CategoryFilter showing={view.showing} onToggle={toggleCategory} />
 </div>
 
 <SearchBox class="mt-3" label="Search the board" bind:value={$search} />

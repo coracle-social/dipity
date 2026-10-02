@@ -4,6 +4,7 @@
   import {Button} from "$lib/components/ui/button"
   import * as Tabs from "$lib/components/ui/tabs"
   import EmptyState from "$lib/components/EmptyState.svelte"
+  import CategoryFilter from "$lib/components/CategoryFilter.svelte"
   import SearchBox from "$lib/components/SearchBox.svelte"
   import ItemCard from "$lib/components/ItemCard.svelte"
   import {bookmarked, bookmarkedItems, trashedItems} from "$lib/data/bookmarks"
@@ -12,32 +13,42 @@
   import {matches, nameMatches, wordsOf} from "$lib/data/search"
   import {session} from "$lib/data/session"
   import {emptyTrash} from "$lib/data/trash"
-  import {summaryOf} from "$lib/kinds"
+  import {categories, categoryOf, summaryOf} from "$lib/kinds"
 
   let {onBoost}: {onBoost: (item: Item) => void} = $props()
 
   const now = Date.now() / 1000
 
-  let query = $state("")
+  const everything = categories.map(({id}) => id)
+
+  // Each tab searches and filters only itself.
+  let savedQuery = $state("")
+  let binnedQuery = $state("")
+  let savedShowing = $state<string[]>(everything)
+  let binnedShowing = $state<string[]>(everything)
 
   // Emptying retracts the user's own writing, so it takes a second tap.
   let confirming = $state(false)
 
-  const words = $derived(wordsOf(query))
+  const toggle = (showing: string[], id: string) =>
+    showing.includes(id) ? showing.filter(kept => kept !== id) : [...showing, id]
 
-  // A thing matches by what it says, its title, or who wrote it.
-  const searched = (items: Item[]) =>
-    words.length
-      ? items.filter(
-          ({event}) =>
-            matches(words, `${summaryOf(event)} ${event.content}`) ||
-            nameMatches($social, event.pubkey, words),
-        )
-      : items
+  // A post matches by what it says, its title, or who wrote it, among the categories switched on.
+  const narrowed = (items: Item[], query: string, showing: string[]) => {
+    const words = wordsOf(query)
 
-  const saved = $derived(searched($bookmarkedItems))
+    return items.filter(
+      ({event}) =>
+        showing.includes(categoryOf(event.kind).id) &&
+        (!words.length ||
+          matches(words, `${summaryOf(event)} ${event.content}`) ||
+          nameMatches($social, event.pubkey, words)),
+    )
+  }
 
-  const binned = $derived(searched($trashedItems))
+  const saved = $derived(narrowed($bookmarkedItems, savedQuery, savedShowing))
+
+  const binned = $derived(narrowed($trashedItems, binnedQuery, binnedShowing))
 
   const empty = async () => {
     confirming = false
@@ -49,8 +60,6 @@
   <h1 class="text-2xl font-semibold">Bookmarks</h1>
 </header>
 
-<SearchBox class="mb-3" label="Search bookmarks and trash" bind:value={query} />
-
 <Tabs.Root value="saved">
   <Tabs.List>
     <Tabs.Trigger value="saved">Saved</Tabs.Trigger>
@@ -58,6 +67,13 @@
   </Tabs.List>
 
   <Tabs.Content value="saved">
+    <div class="mt-3 flex items-center gap-2">
+      <SearchBox class="min-w-0 flex-1" label="Search saved" bind:value={savedQuery} />
+      <CategoryFilter
+        showing={savedShowing}
+        onToggle={id => (savedShowing = toggle(savedShowing, id))} />
+    </div>
+
     <p class="mt-2 text-sm text-pretty text-muted-foreground">
       Bookmarked posts stay on this phone until you remove the bookmark.
     </p>
@@ -75,7 +91,7 @@
       {/each}
     </div>
 
-    {#if words.length && saved.length === 0 && $bookmarkedItems.length > 0}
+    {#if saved.length === 0 && $bookmarkedItems.length > 0}
       <EmptyState icon={Bookmark}>No bookmarks match that.</EmptyState>
     {:else if $bookmarkedItems.length === 0}
       <EmptyState icon={Bookmark}
@@ -84,6 +100,13 @@
   </Tabs.Content>
 
   <Tabs.Content value="trash">
+    <div class="mt-3 flex items-center gap-2">
+      <SearchBox class="min-w-0 flex-1" label="Search trash" bind:value={binnedQuery} />
+      <CategoryFilter
+        showing={binnedShowing}
+        onToggle={id => (binnedShowing = toggle(binnedShowing, id))} />
+    </div>
+
     <p class="mt-2 text-sm text-pretty text-muted-foreground">
       Posts in the trash are deleted after 7 days. Deleting your own post asks everyone who has it
       to delete it too.
@@ -118,7 +141,7 @@
       {/each}
     </div>
 
-    {#if words.length && binned.length === 0 && $trashedItems.length > 0}
+    {#if binned.length === 0 && $trashedItems.length > 0}
       <EmptyState icon={Trash}>Nothing in the trash matches that.</EmptyState>
     {:else if $trashedItems.length === 0}
       <EmptyState icon={Trash}>The trash is empty.</EmptyState>
