@@ -138,6 +138,17 @@ android: android-lib build
     pnpm exec cap sync android
     pnpm exec cap open android
 
+# Render the app icon from resources/ into both shells. Needs rsvg-convert.
+icons:
+    rsvg-convert -w 1024 -h 1024 resources/icon.svg -o ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png
+    for pair in mdpi:48:108 hdpi:72:162 xhdpi:96:216 xxhdpi:144:324 xxxhdpi:192:432; do \
+        density=${pair%%:*}; rest=${pair#*:}; legacy=${rest%%:*}; adaptive=${rest#*:}; \
+        out=android/app/src/main/res/mipmap-$density; \
+        rsvg-convert -w $legacy -h $legacy resources/icon.svg -o $out/ic_launcher.png; \
+        rsvg-convert -w $legacy -h $legacy resources/icon-round.svg -o $out/ic_launcher_round.png; \
+        rsvg-convert -w $adaptive -h $adaptive resources/icon-foreground.svg -o $out/ic_launcher_foreground.png; \
+    done
+
 # -------------------------------------------------------------------------- qa
 
 # Types across the webview.

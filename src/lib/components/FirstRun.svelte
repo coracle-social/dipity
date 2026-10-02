@@ -1,6 +1,6 @@
 <script lang="ts">
-  import KeyRound from "@lucide/svelte/icons/key-round"
   import {Button} from "$lib/components/ui/button"
+  import Wordmark from "$lib/components/Wordmark.svelte"
   import {Input} from "$lib/components/ui/input"
   import {Label} from "$lib/components/ui/label"
   import {dismissable} from "$lib/data/nav"
@@ -28,7 +28,7 @@
 
 <div class="flex min-h-svh flex-col justify-center px-6 pt-safe-t pb-safe-b">
   <div class="mx-auto w-full max-w-sm">
-    <KeyRound class="mx-auto size-16 text-primary" />
+    <Wordmark class="mx-auto h-auto w-40" />
     <h1 class="mt-6 text-center text-2xl font-semibold text-balance">Welcome to Dip</h1>
 
     {#if pasting}
