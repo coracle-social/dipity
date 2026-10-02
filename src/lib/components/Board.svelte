@@ -1,6 +1,7 @@
 <script lang="ts">
   import Filter from "@lucide/svelte/icons/list-filter"
   import Radar from "@lucide/svelte/icons/radar"
+  import Search from "@lucide/svelte/icons/search"
   import EmptyState from "$lib/components/EmptyState.svelte"
   import FeedControls from "$lib/components/FeedControls.svelte"
   import ItemCard from "$lib/components/ItemCard.svelte"
@@ -10,6 +11,7 @@
     board,
     responses,
     saying,
+    search,
     standingOf,
     sweptAt,
     view,
@@ -30,6 +32,7 @@
   })
 
   const hidden = $derived($view.showing.length === 0)
+  const searching = $derived($search.trim().length > 0)
 </script>
 
 <header class="pt-4 pb-3">
@@ -55,9 +58,11 @@
 </div>
 
 {#if $board.length === 0}
-  <EmptyState icon={hidden ? Filter : Radar}>
+  <EmptyState icon={hidden ? Filter : searching ? Search : Radar}>
     {hidden
       ? "Nothing is switched on in the filter."
-      : "Nothing has reached this device yet. Things arrive when you are near other people."}
+      : searching
+        ? "Nothing on this phone says that. Only what has reached this device can be searched."
+        : "Nothing has reached this device yet. Things arrive when you are near other people."}
   </EmptyState>
 {/if}

@@ -45,35 +45,36 @@ Four facts about the transport decide most of the interface, and every story bel
 22. The user looks at everything they bookmarked, whatever the board's filter is set to. — `Bookmarks`
 23. The user writes a poll, a calendar event or an article rather than a note, and the form changes to suit. — `Composer`
 24. The user opens a thing and sees how far it has travelled: how many people handed it to this device, and how many this device has handed it to. — `ItemDetail`
+25. The user looks for something they half remember, and the board narrows to what says it as they type. — `FeedControls`
 
 ## Pairing
 
-25. Somebody the user has not named comes into range and asks to pair, whether or not the gate let them through, and the user finds out without leaving what they were doing. — `PairingTray`
-26. Several are asking at once, so the tray says how many and opens on the oldest. — `PairingTray`
-27. The user opens a request and compares five shapes against the other person's screen, so they know the two phones are talking to each other and not to something in between. — `Pairing`
-28. The user names the person in front of them while pairing with them, because there is no profile to read. — `Pairing`
-29. The name lands on whoever the link turns out to be, which the core says after the gate has passed. — `pairing.ts`
-30. The user declines a stranger the gate is holding, and is not asked about that person again for a while; one already through is just left unnamed until they next meet. — `Pairing`
-31. The person walks away before the user answers, so the request leaves the tray on its own. — `PairingTray`
+26. Somebody the user has not named comes into range and asks to pair, whether or not the gate let them through, and the user finds out without leaving what they were doing. — `PairingTray`
+27. Several are asking at once, so the tray says how many and opens on the oldest. — `PairingTray`
+28. The user opens a request and compares five shapes against the other person's screen, so they know the two phones are talking to each other and not to something in between. — `Pairing`
+29. The user names the person in front of them while pairing with them, because there is no profile to read. — `Pairing`
+30. The name lands on whoever the link turns out to be, which the core says after the gate has passed. — `pairing.ts`
+31. The user declines a stranger the gate is holding, and is not asked about that person again for a while; one already through is just left unnamed until they next meet. — `Pairing`
+32. The person walks away before the user answers, so the request leaves the tray on its own. — `PairingTray`
 
 ## People
 
-32. The user looks up everybody the device knows, and the name each one is known by. — `People`
-33. Somebody the user never met is known through a neighbour, so they appear with the neighbour's name for them. — `People`
-34. The user renames somebody. — `ContactDetail`
-35. The user trusts somebody, which is what lets that person carry their content onward. — `ContactDetail`
-36. The user mutes somebody, so their content stops appearing without anything stopping at the wire. — `ContactDetail`
-37. The user blocks somebody, so the device refuses their sessions and drops what they send. — `ContactDetail`
+33. The user looks up everybody the device knows, and the name each one is known by. — `People`
+34. Somebody the user never met is known through a neighbour, so they appear with the neighbour's name for them. — `People`
+35. The user renames somebody. — `ContactDetail`
+36. The user trusts somebody, which is what lets that person carry their content onward. — `ContactDetail`
+37. The user mutes somebody, so their content stops appearing without anything stopping at the wire. — `ContactDetail`
+38. The user blocks somebody, so the device refuses their sessions and drops what they send. — `ContactDetail`
 
 ## Settings
 
-38. The user decides whose content the device stores, carries onward, and may share forward. — `Settings`
-39. The user decides who may see what they publish. — `Settings`
-40. The user decides how long a thing carried for somebody else stays on the device. — `Settings`
-41. The user decides how long the device keeps answering strangers after the app goes into the pocket, and how many strangers it will name itself to. — `Settings`
-42. The user writes the key down somewhere safe, locked with a password if they choose, whenever they get round to it. — `KeyBackup`, in `Settings`
-43. The user puts their key on a second phone, so both phones are them. — `DeviceLogin`
-44. The user takes the key off their other phone, and this one stops being the identity it made at first run. — `DeviceLogin`
+39. The user decides whose content the device stores, carries onward, and may share forward. — `Settings`
+40. The user decides who may see what they publish. — `Settings`
+41. The user decides how long a thing carried for somebody else stays on the device. — `Settings`
+42. The user decides how long the device keeps answering strangers after the app goes into the pocket, and how many strangers it will name itself to. — `Settings`
+43. The user writes the key down somewhere safe, locked with a password if they choose, whenever they get round to it. — `KeyBackup`, in `Settings`
+44. The user puts their key on a second phone, so both phones are them. — `DeviceLogin`
+45. The user takes the key off their other phone, and this one stops being the identity it made at first run. — `DeviceLogin`
 
 ## No screen yet
 

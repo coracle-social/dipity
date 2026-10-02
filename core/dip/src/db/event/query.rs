@@ -548,7 +548,8 @@ fn fts_query(search: &str) -> Option<String> {
     let terms: Vec<String> = SearchQuery::parse(search)
         .terms
         .iter()
-        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+        // Each term matches as a prefix, so a search typed a letter at a time finds as it goes.
+        .map(|term| format!("\"{}\"*", term.replace('"', "\"\"")))
         .collect();
 
     (!terms.is_empty()).then(|| terms.join(" AND "))
@@ -798,6 +799,14 @@ mod tests {
 
         assert_eq!(
             list(&tx, &matching(Filter::new().add_search("neighbor")))
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // A word half typed already finds what it is the start of.
+        assert_eq!(
+            list(&tx, &matching(Filter::new().add_search("neigh")))
                 .unwrap()
                 .len(),
             1

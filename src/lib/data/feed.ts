@@ -6,7 +6,7 @@
 // A deletion needs no reading here: the core applies one its author was entitled
 // to make, and the deleted event is gone from the store.
 
-import {derived, get, type Readable} from "svelte/store"
+import {derived, get, writable, type Readable} from "svelte/store"
 import {randomId, uniq} from "@welshman/lib"
 import {COMMENT, DELETE, POLL_RESPONSE, REACTION} from "@welshman/util"
 import type {HashedEvent} from "@welshman/util"
@@ -190,17 +190,32 @@ export const responses: Readable<Responses> = derived([responding, muted], ([fou
   index(found.filter(({event}) => !$muted.has(event.pubkey))),
 )
 
+/**
+ * What the user is looking for on the board, if anything.
+ *
+ * A passing question rather than a choice about what the board is for, so it
+ * is not remembered as a preference the way the order and the categories are.
+ */
+export const search = writable("")
+
 /** A page of sixty: a phone scrolls, and nothing here pages. */
-const page = (asked: View): Promise<Item[]> =>
+const page = ([asked, words]: [View, string]): Promise<Item[]> =>
   detailsOf({
     order: asked.order,
-    filter: JSON.stringify({kinds: shownKinds(asked), limit: 60}),
+    filter: JSON.stringify({
+      kinds: shownKinds(asked),
+      limit: 60,
+      ...(words ? {search: words} : {}),
+    }),
   })
     .then(found => found.map(toItem))
     .then(grounded)
 
 const arrived = answering(
-  derived([view, storedEvents], ([$view]) => $view),
+  derived([view, search, storedEvents], ([$view, $search]): [View, string] => [
+    $view,
+    $search.trim(),
+  ]),
   page,
   [] as Item[],
 )
