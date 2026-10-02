@@ -109,6 +109,8 @@ Before either party identifies itself, a recognition tag may resolve allowing th
 
 If a peer isn't recognized, the app may refuse to connect depending on the user's [discoverability policy settings](./policy.md#discoverability). If this happens, the user should be notified so they can manually approve the connection. If the user doesn't respond, hang on to the connection for up to 5 minutes.
 
+A receiver that would hold a stranger first lets the exchange run until the dialer has proved its pubkey, which the dialer discloses first. A pubkey the user has named or trusts passes without a prompt and without spending a disclosure, which repairs a pair secret only one of the two phones kept. Anybody else is held, and the prompt names the key they proved.
+
 The prompt carries a comparison value, derived from the session's handshake hash under its own domain label the way [login with device](./keys.md#login-with-device) derives its six digits. Noise XX authenticates nobody, and the gate runs before either side has named a pubkey, so this is the only thing the two users have to check: a device in the middle completes two handshakes and the two screens then disagree. A gate that cannot derive one asks nothing and stays held.
 
 The value the gate shows is five shapes drawn from an alphabet of eight in three tints, which is 24^5 and a little over 23 bits. The screen draws the whole space rather than a prefix of it.

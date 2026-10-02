@@ -86,7 +86,7 @@
       The shapes match
     </Button>
     <Button variant="ghost" size="lg" onclick={() => answer(false)}>
-      {request.pubkey ? "Not now" : "Not this person"}
+      {request.held ? "Not this person" : "Not now"}
     </Button>
   </div>
 

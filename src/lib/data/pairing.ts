@@ -17,14 +17,17 @@ import {name, social, type Social} from "$lib/data/contacts"
 import {session} from "$lib/data/session"
 
 /**
- * Somebody waiting on an answer. `pubkey` is set when the gate already let them
- * through, which is a request to name them rather than to admit them. `formerly`
- * holds the links it moved off, so a screen opened on one still finds it.
+ * Somebody waiting on an answer. `held` is set when the gate is holding them,
+ * which is a request to admit them as well as to name them. `pubkey` is set
+ * once they have said who they are, which a dialer does before the gate holds
+ * them. `formerly` holds the links it moved off, so a screen opened on one
+ * still finds it.
  */
 export type Request = {
   link: number
   code: number
   asked: number
+  held?: boolean
   pubkey?: string
   formerly?: number[]
 }
@@ -73,14 +76,14 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
   const lapse = setInterval(
     () =>
       pending.update(waiting =>
-        waiting.filter(({asked, pubkey}) => pubkey || Date.now() - asked < 5 * 60_000),
+        waiting.filter(({asked, held}) => !held || Date.now() - asked < 5 * 60_000),
       ),
     10_000,
   )
 
   hold(
     Dip.addListener("requestApproval", ({link, code}) =>
-      pending.update(waiting => [...waiting, {link, code, asked: Date.now()}]),
+      pending.update(waiting => [...waiting, {link, code, asked: Date.now(), held: true}]),
     ),
   )
 
@@ -111,6 +114,13 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
       if (promised.has(link) || !unnamed(known, pubkey)) return
 
       pending.update(waiting => {
+        // A held dialer names itself before the hold, so its request learns who it is and stands for them.
+        if (waiting.some(request => request.link === link && request.held)) {
+          return waiting
+            .filter(request => request.held || request.pubkey !== pubkey)
+            .map(request => (request.link === link ? {...request, pubkey} : request))
+        }
+
         if (waiting.some(request => request.link === link)) return waiting
 
         if (waiting.some(request => request.pubkey === pubkey)) {
@@ -139,6 +149,7 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
             ? [
                 {
                   ...request,
+                  held: false,
                   link: still[0],
                   code: still[1].code,
                   formerly: [...(request.formerly ?? []), link],
@@ -163,15 +174,18 @@ const waitingOn = (link: number) => requestOn(get(pending), link)
 
 /** Pair with whoever is on a link, under the name the user gave them. */
 export const accept = async (link: number, petname: string) => {
-  const pubkey = waitingOn(link)?.pubkey
+  const request = waitingOn(link)
 
-  drop(link)
+  drop(request?.link ?? link)
 
-  if (pubkey) return name(pubkey, petname)
+  if (request?.held) {
+    if (request.pubkey) await name(request.pubkey, petname)
+    else promised.set(link, petname)
 
-  promised.set(link, petname)
+    return Dip.approve({link: request.link, approved: true})
+  }
 
-  await Dip.approve({link, approved: true})
+  if (request?.pubkey) return name(request.pubkey, petname)
 }
 
 /**
@@ -180,11 +194,11 @@ export const accept = async (link: number, petname: string) => {
  * asked about at the next meeting.
  */
 export const decline = async (link: number) => {
-  const pubkey = waitingOn(link)?.pubkey
+  const request = waitingOn(link)
 
-  drop(link)
+  drop(request?.link ?? link)
 
-  if (!pubkey) await Dip.approve({link, approved: false})
+  if (request?.held) await Dip.approve({link: request.link, approved: false})
 }
 
 /**

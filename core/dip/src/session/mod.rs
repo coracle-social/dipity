@@ -331,8 +331,22 @@ impl Session {
         }
 
         self.gate.passed = true;
-        self.state = State::Secured;
         self.identify_by = self.identify_by.max(clock::now() + IDENTIFY_CAP_SECONDS);
+
+        // A receiver that deferred has seen the dialer already, so approving is its turn to disclose.
+        if self.gate.deferred {
+            self.gate.deferred = false;
+            self.state = State::Identified;
+            self.answer_peer_challenge(db)?;
+
+            if self.peer.is_some() && self.auth.disclosed {
+                self.enter_syncing(db)?;
+            }
+
+            return Ok(());
+        }
+
+        self.state = State::Secured;
 
         // Resume the deferred turn, if its trigger has already arrived.
         match self.role {
@@ -511,6 +525,11 @@ impl Session {
             bail!("sync traffic before the peer is identified");
         };
 
+        // A peer the gate holds has proved who it is, and is served nothing until the user answers.
+        if matches!(self.state, State::GatePending { .. }) {
+            bail!("sync traffic while the gate holds the peer");
+        }
+
         // Draining finishes what is in flight and starts nothing new.
         if matches!(self.state, State::Draining { .. }) {
             match &message {
@@ -574,6 +593,10 @@ impl Session {
         let Some(peer) = self.peer.as_ref().cloned() else {
             bail!("blob traffic before the peer is identified");
         };
+
+        if matches!(self.state, State::GatePending { .. }) {
+            bail!("blob traffic while the gate holds the peer");
+        }
 
         let quota = self.quota();
 
@@ -1139,15 +1162,34 @@ impl Session {
         match self.gate.evaluate(db, &self.policy, &resolved)? {
             Verdict::Pass => {}
             Verdict::Blocked => self.close(Ending::Refused),
-            Verdict::Pending => {
-                self.state = State::GatePending {
-                    since: clock::now(),
-                    approval_requested: false,
-                };
-            }
+            // The dialer discloses first, so a receiver can wait to see who it is before holding them.
+            Verdict::Pending if self.role == Role::Receiver => self.gate.deferred = true,
+            Verdict::Pending => self.hold(),
         }
 
         Ok(())
+    }
+
+    /// Hold the link for the user to approve.
+    fn hold(&mut self) {
+        self.state = State::GatePending {
+            since: clock::now(),
+            approval_requested: false,
+        };
+    }
+
+    /// Whether the peer proved a pubkey the user has named or trusts, which a
+    /// receiver that deferred its gate lets through without spending anything.
+    fn proved_known(&self, db: &Db) -> Result<bool> {
+        for pubkey in &self.auth.proved {
+            if self.policy.graph.standing(pubkey) == Standing::Trusted
+                || crate::db::query::has_named(db, &self.identity, pubkey)?
+            {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     /// Dispatch one NIP-42 message, which is a challenge from the peer or its
@@ -1166,7 +1208,7 @@ impl Session {
     fn on_challenge(&mut self, db: &Db, challenge: String) -> Result<()> {
         self.auth.receive_challenge(challenge);
 
-        if !self.gate.passed {
+        if !self.gate.passed && !self.gate.deferred {
             return Ok(());
         }
 
@@ -1193,7 +1235,7 @@ impl Session {
     /// Nothing is accepted while the gate holds: a held stranger cannot
     /// identify itself into being served before the user has answered.
     fn on_auth_response(&mut self, db: &Db, event: &coracle_lib::events::Event) -> Result<()> {
-        if !self.gate.passed {
+        if !self.gate.passed && !self.gate.deferred {
             bail!("an AUTH response arrived before the gate passed");
         }
 
@@ -1203,6 +1245,17 @@ impl Session {
 
         if self.state == State::Closed {
             return Ok(());
+        }
+
+        // A deferred gate decides now: somebody named or trusted passes, anybody else waits on the user.
+        if self.gate.deferred && !self.gate.passed {
+            if !self.proved_known(db)? {
+                self.hold();
+                return Ok(());
+            }
+
+            self.gate.deferred = false;
+            self.gate.passed = true;
         }
 
         // The receiver now discloses, having evaluated the dialer's identity.
@@ -2174,6 +2227,49 @@ mod tests {
         full_exchange(&mut dialer, &mut receiver, &db);
     }
 
+    /// Run an exchange up to a receiver that deferred its gate and then held
+    /// the dialer, having seen who it is.
+    fn held_after_the_dialer_names_itself(dialer: &mut Session, receiver: &mut Session, db: &Db) {
+        dialer.initiate().unwrap();
+        pump(dialer, receiver, db); // msg1
+        pump(receiver, dialer, db); // reply
+        pump(dialer, receiver, db); // msg3
+        pump(dialer, receiver, db); // dialer tags: the receiver defers
+        pump(dialer, receiver, db); // dialer challenge: the receiver challenges back
+        pump(receiver, dialer, db); // receiver tags
+        pump(receiver, dialer, db); // receiver challenge: the dialer answers
+        pump(dialer, receiver, db); // dialer response: the receiver holds
+    }
+
+    #[test]
+    fn a_receiver_lets_a_dialer_it_named_through_without_spending_anything() {
+        let db = Db::open_in_memory().unwrap();
+        let mut dialer = pair(4096, Role::Dialer, 1);
+        let mut receiver = pair(4096, Role::Receiver, 2);
+
+        // Named on this phone, but with no pair secret that recognition could find, and nothing left to spend.
+        let card = crate::fixtures::event(
+            author(2),
+            crate::model::CONTACT,
+            50,
+            "Ben",
+            NostrTags::new().add("d", [author(1).to_hex()]),
+        );
+        crate::db::command::publish_event(&db, &card, &author(2), 50).unwrap();
+        let mut empty = quiet();
+        empty.identity = author(2);
+        receiver.set_policy(Arc::new(empty));
+
+        exchange_apart(
+            &mut dialer,
+            &mut receiver,
+            &Db::open_in_memory().unwrap(),
+            &db,
+        );
+
+        assert_eq!(disclosed(&db), 0);
+    }
+
     #[test]
     fn a_stranger_without_admission_is_held_and_can_be_approved() {
         let db = Db::open_in_memory().unwrap();
@@ -2183,12 +2279,7 @@ mod tests {
         // The receiver is in a quiet time, so it holds the dialer for the user.
         receiver.set_policy(Arc::new(quiet()));
 
-        dialer.initiate().unwrap();
-        pump(&mut dialer, &mut receiver, &db); // msg1
-        pump(&mut receiver, &mut dialer, &db); // reply
-        pump(&mut dialer, &mut receiver, &db); // msg3
-        pump(&mut dialer, &mut receiver, &db); // dialer tags: the gate holds
-        pump(&mut dialer, &mut receiver, &db); // dialer challenge: held too
+        held_after_the_dialer_names_itself(&mut dialer, &mut receiver, &db);
 
         assert!(matches!(receiver.state, State::GatePending { .. }));
         assert!(
@@ -2196,11 +2287,8 @@ mod tests {
             "nothing disclosed before approval"
         );
 
-        // The user admits the stranger, and the exchange completes.
+        // The user admits the stranger, and the receiver discloses in turn.
         receiver.approve(&db, true).unwrap();
-        pump(&mut receiver, &mut dialer, &db); // receiver tags: dialer admits
-        pump(&mut receiver, &mut dialer, &db); // receiver challenge: dialer answers
-        pump(&mut dialer, &mut receiver, &db); // dialer response: receiver discloses
         pump(&mut receiver, &mut dialer, &db); // receiver response: dialer identifies
 
         assert_eq!(dialer.state, State::Syncing);
@@ -2219,12 +2307,7 @@ mod tests {
         receiver.set_policy(Arc::new(quiet()));
 
         clock::at(1_000, || {
-            dialer.initiate().unwrap();
-            pump(&mut dialer, &mut receiver, &db); // msg1
-            pump(&mut receiver, &mut dialer, &db); // reply
-            pump(&mut dialer, &mut receiver, &db); // msg3
-            pump(&mut dialer, &mut receiver, &db); // dialer tags: the gate holds
-            pump(&mut dialer, &mut receiver, &db); // dialer challenge: held too
+            held_after_the_dialer_names_itself(&mut dialer, &mut receiver, &db)
         });
 
         assert!(matches!(receiver.state, State::GatePending { .. }));

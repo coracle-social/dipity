@@ -51,6 +51,9 @@ pub struct Gate {
     /// bucket alone, which is what spends from it. A recognized peer and a
     /// stranger the user approved by hand spend nothing.
     pub spends_budget: bool,
+    /// Whether a receiver let the exchange run on to see who the dialer is
+    /// before holding them, which it may because the dialer discloses first.
+    pub deferred: bool,
     /// Where the app is, or `None` if the shell has not said this run.
     pub presence: Option<Presence>,
 }
