@@ -16,7 +16,9 @@ use coracle_lib::tags::Tags;
 
 use dip::db::event::channel::{self, EventChange};
 use dip::db::{Db, command, query};
-use dip::model::{BlobHash, BlobRole, Order, Query, RecipientSignature, Registers, Scope, keys};
+use dip::model::{
+    BlobHash, BlobRole, Order, Query, RecipientSignature, Registers, Scope, Sharing, keys,
+};
 
 /// The blob the event below references.
 ///
@@ -235,14 +237,17 @@ fn the_store_serves_its_use_cases() {
     // Policy is those preferences read back together, with the document's defaults filling in.
     let policy = query::policy(&db, &us()).unwrap();
     assert_eq!(policy.accept, Scope::Lenient);
-    assert_eq!(policy.gossip, Scope::Network);
+    assert_eq!(policy.sharing, Sharing::Anyone);
     assert!(policy.discover_in_background);
     assert!(policy.quiet_times.is_empty());
     assert!(!policy.for_pubkey(peer()).is_blocked());
 
-    command::set_preference(&db, keys::GOSSIP, r#""nothing""#, 500).unwrap();
-    assert_eq!(query::policy(&db, &us()).unwrap().gossip, Scope::Nothing);
-    assert!(command::clear_preference(&db, keys::GOSSIP).unwrap());
+    command::set_preference(&db, keys::SHARING, r#""contacts""#, 500).unwrap();
+    assert_eq!(
+        query::policy(&db, &us()).unwrap().sharing,
+        Sharing::Contacts
+    );
+    assert!(command::clear_preference(&db, keys::SHARING).unwrap());
 
     assert!(command::clear_preference(&db, keys::ACCEPT).unwrap());
     assert!(query::preferences(&db).unwrap().is_empty());

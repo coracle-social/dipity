@@ -30,18 +30,19 @@ There are certain classifications that users may wish to use to tag other users:
 
 Each is a replaceable event whose `p` tags name people, so the current list is one lookup at `<kind>:<pubkey>:` and an edit supersedes what came before. **The first two kinds are ours rather than NIP-51's**, because a trust list here is not a curation of people to read — it decides who is handed the author's signature, which is permanent transferable attribution. A generic list editor in another client must not be able to grant that without knowing it has.
 
-**Neither is encrypted.** NIP-51 keeps private entries as ciphertext in `content`, which would put them beyond the peers who need them — trusted peers read these lists by design. [Visibility](#visibility) decides which peers this device hands them to, and [Forward](#forwarding) decides whether those peers can carry them further.
+**Neither is encrypted.** NIP-51 keeps private entries as ciphertext in `content`, which would put them beyond the peers who need them — trusted peers read these lists by design. [Sharing](#sharing) fixes which peers this device hands them to.
 
 A fourth kind says what the user calls somebody: a contact card, kind 36017, addressed to the person it names at `36017:<author>:<subject>`. Nobody publishes a profile here, so a card is the only way anybody has a name. The name is the card's content.
 
-There is one card per contact rather than one list naming everybody the user has met, so a name travels with that contact's own events, and a [visibility](#visibility) rule matching a single `d` tag withholds one person's card and leaves the rest.
+There is one card per contact rather than one list naming everybody the user has met, so a name travels with that contact's own events.
 
 Every setting below is expressed on the same tiers, applied either to the peer on the other end of a session or to the author of an event:
 
 - **Trusted** - people the user explicitly trusts.
-- **Network** - people the user transitively trusts, two hops out.
+- **Contacts** - people the user paired with and named, and the trusted.
+- **Network** - contacts, and the people the trusted trust.
 - **Lenient** - anyone who connects, except blocked pubkeys.
-- **Public** - anyone; [proofs are generated](./proofs.md) for whatever the setting covers. Visibility settings only.
+- **Public** - anyone. Only the fixed visibility rules use it.
 
 Network is the union of the trust lists published by everyone in Trusted. It is derived rather than stored, from whichever of those lists the device holds, so a trusted person whose list has not arrived yet contributes nobody.
 
@@ -58,34 +59,38 @@ Everything downstream reads that one standing, so a session syncs one superset o
 
 The same holds in the other direction, for a device carrying several of the user's own identities. Presenting two identities over one session tells the peer they are one device — the linkage happens at authentication, not at serving — so keeping two identities apart from a given peer takes separate sessions.
 
-## Accept and gossip
+## Accept
 
-How much of other people's content the device takes in, and how much of it goes on to the next peer:
+What the device stores from a peer, measured against each event's author: `policy.accept`, `lenient` by default. It takes the tiers above except Nothing and Public, and the user's own events are always accepted.
 
-| Setting | Governs | Default |
+## Sharing
+
+Who is handed the user's own activity, and who may carry it a hop further: `policy.sharing`, shown as "Who can see your activity".
+
+| Setting | Handed the user's events | Handed the signature | Reaches |
+| --- | --- | --- | --- |
+| `contacts` | contacts | nobody | contacts |
+| `network` | contacts | contacts | contacts, and their contacts |
+| `anyone` (default) | anyone not blocked | contacts | anyone the user meets, and their contacts' contacts |
+
+A **contact** is somebody the user paired with and named, or trusts. A peer carries an event its second hop by presenting an [authorship proof](./proofs.md#authorship-proofs), which it can only build from the author's signature over the event id and its own pubkey. That signature is verifiable by anyone, so handing it over [ends the author's deniability](./proofs.md#the-authors-signature-stays-with-the-peer-it-names) for that event permanently and for everyone. A signature therefore only ever goes to a contact, and `anyone` widens who sees an event first-hand rather than who can attribute it. A signature handed to a stranger would mint permanent attribution for whoever happens to dial, which on a proximity transport includes a beacon left on a windowsill.
+
+Two of the user's events follow fixed rules whatever the setting. The trust, block and mute lists go only to trusted peers, which is the whole of what keeps a list naming people the user has met from a stranger. The bookmark list goes to nobody, including the user's own second phone, because it cannot be encrypted on a path with no signer.
+
+### Relaying
+
+What the device carries for other people is not a setting. It hands a contact every event it holds for somebody else that it may forward, which is an event it holds the author's signature for, unless the event is in the trash or its author is blocked. A stranger is handed none of it. An event that arrived second-hand, under a proof, is never handed on, so `network` means what it says: a contact passes the user's events to their own contacts, and no further.
+
+### How the screen maps to the core
+
+| Screen | Preference | Core |
 | --- | --- | --- |
-| Accept | what the device stores from a peer | `lenient` |
-| Gossip | what the device relays onward | `network` |
-| Forward | which peers may carry the user's own events one more hop | `trusted` |
+| What you accept | `policy.accept`, a scope | `PeerPolicy::should_accept`, at ingest |
+| Who can see your activity | `policy.sharing` | `Sharing::audience` for who is handed the user's events, `Sharing::signs` for who gets a signature, and `Visibility::for_sharing` for the fixed rules |
+| (none) | relaying | `PeerPolicy::may_share` for somebody else's event, and the same rule in the query answering a peer |
 
-Gossip takes one extra value, **Nothing**, which shares only the user's own content. How all three compile onto the wire is in [`sync.md`](./sync.md#how-policy-reaches-the-wire).
-
-### Forwarding
-
-Gossip decides who may *read* an event. Forward decides who may *attribute* it.
-
-A peer carries an event its second hop by presenting an [authorship proof](./proofs.md#authorship-proofs), which it can only build from the author's signature over the event id and its own pubkey. That signature is verifiable by anyone, so handing it over is irreversible: a peer who leaks it [ends the author's deniability](./proofs.md#the-authors-signature-stays-with-the-peer-it-names) for that event permanently and for everyone.
-
-It is therefore its own setting, and a narrow one. At the default a peer outside the user's trust graph is still served the event — it simply stops with them. The cost is reach; the alternative is minting permanent attribution for whoever happens to dial, which on a proximity transport includes a beacon someone left on a windowsill.
-
-## Visibility
-
-Which peers this device hands the user's own events to. By default the trust, block and mute lists go to `trusted` peers, the bookmark list goes to nobody, and everything else is `lenient`.
-
-Visibility governs the first hop only. A peer holding the author's signature over an event can forward it to anyone its own gossip setting allows, so the signature decides whether an event travels further, and [Forward](#forwarding) decides who receives one. At the defaults a trusted peer receives the trust list with a signature and may pass it on.
-
-Nobody else reads a bookmark list. It cannot be encrypted, because there is no signer on this path, so it is served to no peer, including the user's own second phone.
+How each compiles onto the wire is in [`sync.md`](./sync.md#how-policy-reaches-the-wire).
 
 ## Retention
 
-How long an event carried for someone else stays after it first reaches this device is a preference too: `policy.retention_days`, 30 by default. What the sweep spares, and why it measures arrival rather than age or circulation, is [`storage.md`](./storage.md#retention).
+How long an event carried for someone else stays after it first reaches this device is a preference too: `policy.retention_days`, 90 by default. What the sweep spares, and why it measures arrival rather than age or circulation, is [`storage.md`](./storage.md#retention).

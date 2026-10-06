@@ -68,8 +68,8 @@ Four facts about the transport decide most of the interface, and every story bel
 
 ## Settings
 
-39. The user decides whose content the device stores, carries onward, and may share forward. — `Settings`
-40. The user decides who may see what they publish. — `Settings`
+39. The user decides whose content the device stores. — `Settings`
+40. The user decides who sees what they publish, and who can carry it further. — `Settings`
 41. The user decides how long a thing carried for somebody else stays on the device. — `Settings`
 42. The user decides how many strangers a day their phone names itself to, open or in a pocket. — `Settings`
 43. The user writes the key down somewhere safe, locked with a password if they choose, whenever they get round to it. — `KeyBackup`, in `Settings`
@@ -82,6 +82,6 @@ Four facts about the transport decide most of the interface, and every story bel
 Each of these is a story the transport or the docs already support and the view does not answer.
 
 - **A notification while the app is closed.** Story 16 in the pocket. The core emits `WakeAt` and the shells own local notifications; nothing posts one.
-- **Quiet times.** `policy.quiet_times` is a list of windows and needs a time picker rather than a switch. Settings edits the number of strangers a day and leaves it alone.
-- **Per-contact gossip.** [`policy.md`](./policy.md#accept-and-gossip) expresses gossip as a tier over the whole trust graph, so "do not pass this person's things on" is only sayable as a block. `ContactDetail` offers trust, mute and block.
+- **Quiet times.** `policy.quiet_times` is a list of windows and needs a time picker rather than a switch. Settings leaves it alone.
+- **Per-contact relaying.** [Relaying](./policy.md#relaying) hands every contact everything this device may forward, so "do not pass this person's things on" is only sayable as a block. `ContactDetail` offers trust, mute and block.
 - **Media.** The first version carries text. `imeta`, previews and blob transfer are built below the bridge and nothing above it attaches a file.

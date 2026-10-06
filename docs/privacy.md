@@ -24,7 +24,7 @@ What such an attacker gets:
 
 - Your nostr pubkey.
 - That you were physically present at a time and place.
-- Whatever the gossip scope serves them.
+- Whatever [Sharing](./policy.md#sharing) and [relaying](./policy.md#relaying) serve them.
 
 The consent gate sits before authentication for this reason, so strangers do not get it automatically.
 

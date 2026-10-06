@@ -100,7 +100,7 @@ mod tests {
         let tx = db.begin_write().unwrap();
 
         // Absent rather than defaulted: a default is `Policy::new`'s to say, not this layer's.
-        assert_eq!(query::get(&tx, keys::GOSSIP).unwrap(), None);
+        assert_eq!(query::get(&tx, keys::SHARING).unwrap(), None);
         assert_eq!(
             query::get_as::<i64>(&tx, keys::RETENTION_DAYS).unwrap(),
             None

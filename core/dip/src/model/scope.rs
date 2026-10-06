@@ -13,12 +13,13 @@ use crate::model::{Authors, Graph, Standing};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {
-    /// Nobody. Gossip only, where it means the device shares the user's own
-    /// content and relays nothing.
+    /// Nobody. A visibility rule only, for what is never served.
     Nothing,
     /// People the user explicitly trusts.
     Trusted,
-    /// People the user transitively trusts, two hops out.
+    /// People the user paired with, and the people they trust.
+    Contacts,
+    /// People the user transitively trusts, two hops out, and their contacts.
     Network,
     /// Anyone who connects, except blocked pubkeys.
     Lenient,
@@ -33,6 +34,7 @@ impl Scope {
         match standing {
             Standing::Blocked => false,
             Standing::Trusted => self >= Self::Trusted,
+            Standing::Contact => self >= Self::Contacts,
             Standing::Network => self >= Self::Network,
             Standing::Stranger => self >= Self::Lenient,
         }
@@ -44,10 +46,19 @@ impl Scope {
         match self {
             Self::Nothing => Authors::Only(BTreeSet::new()),
             Self::Trusted => Authors::Only(graph.trusted.clone()),
+            Self::Contacts => Authors::Only(
+                graph
+                    .trusted
+                    .union(&graph.contacts)
+                    .copied()
+                    .collect::<BTreeSet<_>>(),
+            ),
             Self::Network => Authors::Only(
                 graph
                     .trusted
-                    .union(&graph.network)
+                    .iter()
+                    .chain(&graph.contacts)
+                    .chain(&graph.network)
                     .copied()
                     .collect::<BTreeSet<_>>(),
             ),
@@ -66,10 +77,16 @@ mod tests {
 
     #[test]
     fn a_wider_scope_admits_everyone_a_narrower_one_does() {
-        for standing in [Standing::Trusted, Standing::Network, Standing::Stranger] {
+        for standing in [
+            Standing::Trusted,
+            Standing::Contact,
+            Standing::Network,
+            Standing::Stranger,
+        ] {
             let admitted: Vec<bool> = [
                 Scope::Nothing,
                 Scope::Trusted,
+                Scope::Contacts,
                 Scope::Network,
                 Scope::Lenient,
                 Scope::Public,
@@ -87,6 +104,9 @@ mod tests {
         // Block is not a tier, so it is outside even the widest scope.
         assert!(!Scope::Public.admits(Standing::Blocked));
         assert!(Scope::Trusted.admits(Standing::Trusted));
+        assert!(!Scope::Trusted.admits(Standing::Contact));
+        assert!(Scope::Contacts.admits(Standing::Contact));
+        assert!(!Scope::Contacts.admits(Standing::Network));
         assert!(!Scope::Trusted.admits(Standing::Network));
         assert!(Scope::Network.admits(Standing::Network));
         assert!(!Scope::Network.admits(Standing::Stranger));
@@ -120,8 +140,12 @@ mod tests {
             Authors::Only([author(2)].into())
         );
         assert_eq!(
+            Scope::Contacts.authors(&graph),
+            Authors::Only([author(2), author(6)].into())
+        );
+        assert_eq!(
             Scope::Network.authors(&graph),
-            Authors::Only([author(2), author(3)].into())
+            Authors::Only([author(2), author(3), author(6)].into())
         );
         assert_eq!(
             Scope::Lenient.authors(&graph),

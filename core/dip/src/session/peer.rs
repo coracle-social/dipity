@@ -106,7 +106,7 @@ mod tests {
 
         assert!(peer.policy.is_blocked());
         assert_ne!(peer.policy.standing, Standing::Trusted);
-        assert!(!peer.policy.may_forward());
+        assert!(!peer.policy.signs());
     }
 
     #[test]
@@ -121,23 +121,19 @@ mod tests {
         let peer = Peer::bind(LinkId(1), [], &policy());
 
         assert!(peer.policy.is_blocked());
-        assert!(!peer.policy.may_forward());
+        assert!(!peer.policy.signs());
     }
 
     #[test]
-    fn forwarding_follows_the_devices_standing() {
-        // `forward` defaults to Trusted, so one proved trusted key qualifies the device.
+    fn signing_follows_the_devices_standing() {
+        // A contact is signed for, so one proved trusted key qualifies the device.
         let policy = policy();
 
         assert!(
             Peer::bind(LinkId(1), [author(2), author(4)], &policy)
                 .policy
-                .may_forward()
+                .signs()
         );
-        assert!(
-            !Peer::bind(LinkId(1), [author(3)], &policy)
-                .policy
-                .may_forward()
-        );
+        assert!(!Peer::bind(LinkId(1), [author(3)], &policy).policy.signs());
     }
 }

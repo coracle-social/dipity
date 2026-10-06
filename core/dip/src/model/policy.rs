@@ -23,7 +23,7 @@ use coracle_lib::events::{HasCreatedAt, HasId, HasKind, HasPubkey, HasTags};
 use coracle_lib::keys::PublicKey;
 use serde::Serialize;
 
-use crate::model::{Authors, Graph, Scope, Standing, Visibility};
+use crate::model::{Graph, Scope, Sharing, Standing, Visibility};
 use crate::util::Window;
 
 /// Everything the user has said about who gets what, ready to apply.
@@ -43,14 +43,10 @@ pub struct Policy {
     /// front, as often as the [`DisclosureBucket`](crate::model::DisclosureBucket)
     /// allows. Off, every such stranger waits for the user.
     pub discover_in_background: bool,
-    /// Who can see what the user publishes.
-    pub visibility: Visibility,
+    /// Who is handed the user's own activity, and who may carry it further.
+    pub sharing: Sharing,
     /// Whose events the device stores from a peer.
     pub accept: Scope,
-    /// Whose events the device relays onward.
-    pub gossip: Scope,
-    /// Which peers may be handed the author's signature over an own event.
-    pub forward: Scope,
     /// How long a carried event stays after it first reaches this device.
     pub retention_days: u32,
     /// The trust graph the scopes above are measured against.
@@ -66,11 +62,9 @@ impl Policy {
             identity,
             quiet_times: Vec::new(),
             discover_in_background: true,
-            visibility: Visibility::default(),
+            sharing: Sharing::default(),
             accept: Scope::Lenient,
-            gossip: Scope::Network,
-            forward: Scope::Trusted,
-            retention_days: 30,
+            retention_days: 90,
             graph: Graph::default(),
         }
     }
@@ -92,10 +86,14 @@ impl Policy {
     /// Whether moving from `before` to this changes what moves between peers.
     #[must_use]
     pub fn moves_sync(&self, before: &Self) -> bool {
-        self.changes_accept(before)
-            || self.gossip != before.gossip
-            || self.forward != before.forward
-            || self.visibility != before.visibility
+        self.changes_accept(before) || self.sharing != before.sharing
+    }
+
+    /// Which of the user's own events go to whom: fixed rules for their lists,
+    /// and [`sharing`](Self::sharing) for everything else.
+    #[must_use]
+    pub fn visibility(&self) -> Visibility {
+        Visibility::for_sharing(self.sharing)
     }
 
     /// Bind this policy to a pubkey the peer proved.
@@ -133,6 +131,14 @@ impl PeerPolicy {
         self.standing == Standing::Blocked
     }
 
+    /// Whether this pubkey is somebody the user paired with or trusts, which
+    /// is who may be handed what this device carries for others, and who may
+    /// be handed the user's signature.
+    #[must_use]
+    pub fn is_contact(&self) -> bool {
+        matches!(self.standing, Standing::Trusted | Standing::Contact)
+    }
+
     /// Whether this pubkey may see an event of the user's own.
     #[must_use]
     pub fn is_visible<E>(&self, event: &E) -> bool
@@ -142,7 +148,7 @@ impl PeerPolicy {
         !self.is_blocked()
             && self
                 .policy
-                .visibility
+                .visibility()
                 .scope_for(event)
                 .admits(self.standing)
     }
@@ -161,47 +167,26 @@ impl PeerPolicy {
                 .admits(self.policy.graph.standing(event.pubkey()))
     }
 
-    /// Whether an event may be shared with this peer.
+    /// Whether an event may be handed to this peer: the user's own as
+    /// [`sharing`](Policy::sharing) allows, and anybody else's only to a
+    /// contact, which keeps a second hop among people somebody paired with.
     #[must_use]
-    pub fn should_gossip<E>(&self, event: &E) -> bool
+    pub fn may_share<E>(&self, event: &E) -> bool
     where
         E: HasId + HasKind + HasPubkey + HasTags + HasCreatedAt,
     {
-        if self.is_blocked() {
-            return false;
-        }
-
         if event.pubkey() == &self.policy.identity {
             return self.is_visible(event);
         }
 
-        self.policy
-            .gossip
-            .admits(self.policy.graph.standing(event.pubkey()))
-    }
-
-    /// Which authors this peer may be served, before visibility narrows the
-    /// user's own events by category.
-    #[must_use]
-    pub fn gossip_authors(&self) -> Authors {
-        match self.policy.gossip.authors(&self.policy.graph) {
-            Authors::Any => Authors::Any,
-            Authors::Only(mut authors) => {
-                authors.insert(self.policy.identity);
-                Authors::Only(authors)
-            }
-            Authors::Except(mut authors) => {
-                authors.remove(&self.policy.identity);
-                Authors::Except(authors)
-            }
-        }
+        !self.is_blocked() && self.is_contact()
     }
 
     /// Whether this peer may be handed the author's signature over an own
-    /// event, which is the capability to forward it one more hop.
+    /// event, which is the capability to carry it one more hop.
     #[must_use]
-    pub fn may_forward(&self) -> bool {
-        !self.is_blocked() && self.policy.forward.admits(self.standing)
+    pub fn signs(&self) -> bool {
+        !self.is_blocked() && self.policy.sharing.signs() && self.is_contact()
     }
 }
 
@@ -247,20 +232,16 @@ mod tests {
             [
                 "accept",
                 "discover_in_background",
-                "forward",
-                "gossip",
                 "quiet_times",
                 "retention_days",
-                "visibility",
+                "sharing",
             ]
             .into()
         );
 
-        // Including the visibility rules, which an edit writes back whole.
-        assert_eq!(crossed["visibility"]["rules"].as_array().unwrap().len(), 2);
-        assert_eq!(crossed["visibility"]["default"], "lenient");
+        assert_eq!(crossed["sharing"], "anyone");
         assert_eq!(crossed["accept"], "lenient");
-        assert_eq!(crossed["retention_days"], 30);
+        assert_eq!(crossed["retention_days"], 90);
     }
 
     #[test]
@@ -285,31 +266,6 @@ mod tests {
     }
 
     #[test]
-    fn the_user_is_always_in_their_own_gossip_set() {
-        let mut policy = policy();
-
-        policy.gossip = Scope::Nothing;
-        assert_eq!(
-            policy.clone().for_pubkey(author(2)).gossip_authors(),
-            Authors::Only([us()].into())
-        );
-
-        policy.gossip = Scope::Network;
-        assert_eq!(
-            policy.clone().for_pubkey(author(2)).gossip_authors(),
-            Authors::Only([us(), author(2), author(3)].into())
-        );
-
-        // And never in the set a lenient scope excludes, which would hide the user entirely.
-        policy.gossip = Scope::Lenient;
-        policy.graph.blocked.insert(us());
-        assert_eq!(
-            policy.for_pubkey(author(2)).gossip_authors(),
-            Authors::Except([author(4)].into())
-        );
-    }
-
-    #[test]
     fn visibility_governs_the_users_own_events() {
         let policy = policy();
         let stranger = policy.clone().for_pubkey(author(9));
@@ -319,28 +275,43 @@ mod tests {
         let note = event(us(), 1, 1, "", Tags::new());
         let mutes = event(us(), MUTE, 1, "", Tags::new());
 
-        // The defaults: the mute list to trusted peers, everything else public.
-        assert!(stranger.is_visible(&profile));
-        assert!(stranger.is_visible(&note));
-        assert!(!stranger.is_visible(&mutes));
-        assert!(trusted.is_visible(&mutes));
-
-        assert!(stranger.should_gossip(&event(us(), profile::KIND, 1, "", Tags::new())));
-        assert!(stranger.should_gossip(&event(us(), 1, 1, "", Tags::new())));
-        assert!(!stranger.should_gossip(&event(us(), MUTE, 1, "", Tags::new())));
-        assert!(trusted.should_gossip(&event(us(), MUTE, 1, "", Tags::new())));
+        // The defaults: the mute list to trusted peers, everything else to anyone.
+        assert!(stranger.may_share(&profile));
+        assert!(stranger.may_share(&note));
+        assert!(!stranger.may_share(&mutes));
+        assert!(trusted.may_share(&mutes));
     }
 
     #[test]
-    fn gossip_measures_other_peoples_events_against_their_author() {
+    fn somebody_elses_event_goes_only_to_a_contact() {
         let policy = policy();
-        let stranger = policy.clone().for_pubkey(author(9));
+        let theirs = event(author(3), 1, 1, "", Tags::new());
 
-        // Gossip defaults to network, so a stranger's note goes no further whoever asks.
-        assert!(stranger.should_gossip(&event(author(2), 1, 1, "", Tags::new())));
-        assert!(stranger.should_gossip(&event(author(3), 1, 1, "", Tags::new())));
-        assert!(!stranger.should_gossip(&event(author(9), 1, 1, "", Tags::new())));
-        assert!(!stranger.should_gossip(&event(author(4), 1, 1, "", Tags::new())));
+        assert!(policy.clone().for_pubkey(author(2)).may_share(&theirs));
+        assert!(policy.clone().for_pubkey(author(6)).may_share(&theirs));
+        assert!(!policy.clone().for_pubkey(author(3)).may_share(&theirs));
+        assert!(!policy.for_pubkey(author(9)).may_share(&theirs));
+    }
+
+    #[test]
+    fn sharing_sets_who_sees_the_users_events_and_who_can_carry_them() {
+        let mut policy = policy();
+        let note = event(us(), 1, 1, "", Tags::new());
+        let at = |policy: &Policy, pubkey| policy.clone().for_pubkey(pubkey);
+
+        // Anyone: a stranger sees it first-hand, and only contacts get a signature.
+        assert!(at(&policy, author(9)).may_share(&note));
+        assert!(!at(&policy, author(9)).signs());
+        assert!(at(&policy, author(6)).signs());
+
+        policy.sharing = Sharing::Network;
+        assert!(!at(&policy, author(9)).may_share(&note));
+        assert!(at(&policy, author(6)).may_share(&note));
+        assert!(at(&policy, author(6)).signs());
+
+        policy.sharing = Sharing::Contacts;
+        assert!(at(&policy, author(6)).may_share(&note));
+        assert!(!at(&policy, author(2)).signs());
     }
 
     #[test]
@@ -368,7 +339,8 @@ mod tests {
         let blocked = policy().for_pubkey(author(4));
 
         assert!(blocked.is_blocked());
-        assert!(!blocked.should_gossip(&event(us(), 1, 1, "", Tags::new())));
+        assert!(!blocked.may_share(&event(us(), 1, 1, "", Tags::new())));
+        assert!(!blocked.signs());
         assert!(!blocked.should_accept(&event(author(2), 1, 1, "", Tags::new())));
 
         // Blocked outranks every rule, including one this peer would otherwise fall inside.

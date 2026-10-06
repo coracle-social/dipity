@@ -34,6 +34,7 @@ mod query;
 mod recipient_signature;
 mod registers;
 mod scope;
+mod sharing;
 mod visibility;
 
 pub use authors::Authors;
@@ -55,6 +56,7 @@ pub use query::Query;
 pub use recipient_signature::RecipientSignature;
 pub use registers::{Register, Registers};
 pub use scope::Scope;
+pub use sharing::Sharing;
 pub use visibility::{Visibility, VisibilityRule};
 
 #[cfg(test)]

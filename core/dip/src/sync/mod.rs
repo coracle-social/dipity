@@ -5,7 +5,7 @@
 //!
 //! | Module | Is | Governed by |
 //! | --- | --- | --- |
-//! | [`relay`] | what this device serves a peer | Gossip scope and visibility |
+//! | [`relay`] | what this device serves a peer | Sharing, and relaying only to contacts |
 //! | [`client`] | what it takes from one | Accept scope and the authorship registers |
 //!
 //! Neither is a trait: one [`Relay`](relay::Relay) and one

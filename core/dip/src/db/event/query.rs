@@ -19,8 +19,8 @@ use crate::db::Tx;
 use crate::db::condition::{Conditions, text};
 use crate::db::sql::{event_id_from_sql, placeholders, pubkey_from_sql};
 use crate::model::{
-    Authors, Order, PeerPolicy, Provenance, ProvenanceFilter, Query, Register, Registers, Scope,
-    Share,
+    Order, PeerPolicy, Provenance, ProvenanceFilter, Query, Register, Registers, Scope, Share,
+    Standing, Visibility,
 };
 
 /// The event columns, in the order [`to_event`] reads them.
@@ -550,25 +550,32 @@ fn push_policy(conditions: &mut Conditions, policy: &PeerPolicy) {
     // The trash is this device's to look through, so nothing in it is handed on.
     conditions.push("e.id NOT IN (SELECT event_id FROM event_trashed)");
 
-    let hex = |author: &PublicKey| text(author.to_hex());
-
-    match policy.gossip_authors() {
-        Authors::Any => {}
-        Authors::Only(authors) => {
-            conditions.push_set("e.pubkey", authors.iter().map(hex).collect())
-        }
-        Authors::Except(authors) => {
-            conditions.push_excluded("e.pubkey", authors.iter().map(hex).collect());
-        }
+    // What this device carries for others goes only to contacts, so a second hop stays among people somebody paired with.
+    if !policy.is_contact() {
+        conditions.push_set("e.pubkey", vec![text(policy.policy.identity.to_hex())]);
     }
 
-    push_visibility(conditions, policy);
+    let blocked = policy.policy.graph.blocked.iter();
+    conditions.push_excluded(
+        "e.pubkey",
+        blocked.map(|author| text(author.to_hex())).collect(),
+    );
+
+    push_visibility(
+        conditions,
+        &policy.policy.visibility(),
+        policy.standing,
+        &policy.policy.identity,
+    );
 }
 
-/// Exclude the user's own events this peer may not see.
-fn push_visibility(conditions: &mut Conditions, policy: &PeerPolicy) {
-    let visibility = &policy.policy.visibility;
-    let standing = policy.standing;
+/// Exclude the user's own events a peer standing at `standing` may not see.
+fn push_visibility(
+    conditions: &mut Conditions,
+    visibility: &Visibility,
+    standing: Standing,
+    identity: &PublicKey,
+) {
     let hides = |scope: Scope| !scope.admits(standing);
 
     let depth = if hides(visibility.default) {
@@ -590,14 +597,14 @@ fn push_visibility(conditions: &mut Conditions, policy: &PeerPolicy) {
             let mut reached = unmatched.clone();
 
             reached.push(matched.clone());
-            push_hidden(conditions, &policy.policy.identity, &reached);
+            push_hidden(conditions, identity, &reached);
         }
 
         unmatched.push(format!("NOT {matched}"));
     }
 
     if hides(visibility.default) {
-        push_hidden(conditions, &policy.policy.identity, &unmatched);
+        push_hidden(conditions, identity, &unmatched);
     }
 }
 
@@ -686,7 +693,7 @@ mod tests {
     use crate::db::event::command;
     use crate::db::recipient_signature::command as signature;
     use crate::fixtures::{author, event, id, note, peer};
-    use crate::model::{MUTE, Policy, RecipientSignature, Scope, Visibility, VisibilityRule};
+    use crate::model::{MUTE, Policy, RecipientSignature, Scope, Sharing, VisibilityRule};
 
     /// A query narrowed by a NIP-01 filter and nothing else.
     fn matching(filter: Filter) -> Query {
@@ -1021,52 +1028,32 @@ mod tests {
                 .collect::<BTreeSet<_>>()
         };
 
-        // The defaults: gossip reaches the trusted tier, and metadata is trusted-only.
+        // A stranger is served the user's own and nothing carried for others, and the lists stay with the trusted.
         assert_eq!(
             served(policy.clone(), author(9)),
-            [id(&profile), id(&ours), id(&trusted)].into()
+            [id(&profile), id(&ours)].into()
         );
+
+        // A contact is served what this device carries, except a blocked author's.
         assert_eq!(
             served(policy.clone(), author(2)),
-            [id(&profile), id(&mutes), id(&ours), id(&trusted)].into()
+            [
+                id(&profile),
+                id(&mutes),
+                id(&ours),
+                id(&trusted),
+                id(&stranger)
+            ]
+            .into()
         );
 
         // A blocked peer is served nothing at all.
         assert!(served(policy.clone(), author(4)).is_empty());
 
-        // Nothing gossips only the user's own, still governed by visibility.
-        let mut silent = policy.clone();
-        silent.gossip = Scope::Nothing;
-        assert_eq!(served(silent, author(9)), [id(&profile), id(&ours)].into());
-
-        // Lenient gossips everyone but the blocked.
-        let mut lenient = policy.clone();
-        lenient.gossip = Scope::Lenient;
-        assert_eq!(
-            served(lenient, author(9)),
-            [id(&profile), id(&ours), id(&trusted), id(&stranger)].into()
-        );
-
-        // A rule hiding the user's notes leaves what earlier rules matched alone.
-        let mut private = policy;
-        private.visibility = Visibility {
-            rules: vec![
-                VisibilityRule {
-                    filter: Filter::new().add_kinds([profile::KIND]),
-                    scope: Scope::Public,
-                },
-                VisibilityRule {
-                    filter: Filter::new(),
-                    scope: Scope::Nothing,
-                },
-            ],
-            default: Scope::Public,
-        };
-        private.gossip = Scope::Lenient;
-        assert_eq!(
-            served(private, author(9)),
-            [id(&profile), id(&trusted), id(&stranger)].into()
-        );
+        // Sharing with contacts only leaves a stranger nothing.
+        let mut narrow = policy;
+        narrow.sharing = Sharing::Contacts;
+        assert!(served(narrow, author(9)).is_empty());
     }
 
     /// The SQL walk in [`push_visibility`] and the walk in
@@ -1080,7 +1067,6 @@ mod tests {
         let tx = db.begin_write().unwrap();
 
         let us = author(1);
-        let them = author(9);
 
         let events = [
             event(us, profile::KIND, 100, "", Tags::new()),
@@ -1118,25 +1104,28 @@ mod tests {
         // Every ordering of the four, so a rule shadowing another is covered too.
         for order in permutations(rules.len()) {
             for default in [Scope::Nothing, Scope::Public] {
-                let mut policy = Policy::new(us);
-
-                policy.gossip = Scope::Lenient;
-                policy.visibility = Visibility {
+                let visibility = Visibility {
                     rules: order.iter().map(|index| rules[*index].clone()).collect(),
                     default,
                 };
 
-                let bound = policy.for_pubkey(them);
                 let admitted: BTreeSet<EventId> = events
                     .iter()
-                    .filter(|held| held.pubkey != us || bound.is_visible(*held))
+                    .filter(|held| {
+                        held.pubkey != us || visibility.scope_for(*held).admits(Standing::Stranger)
+                    })
                     .map(id)
                     .collect();
 
-                let served: BTreeSet<EventId> = list(&tx, &everything().with_policy(bound.clone()))
+                let mut conditions = Conditions::new();
+                push_visibility(&mut conditions, &visibility, Standing::Stranger, &us);
+                let sql = statement(COLUMNS, &mut conditions, "", None);
+                let served: BTreeSet<EventId> = tx
+                    .prepare(&sql)
                     .unwrap()
-                    .iter()
-                    .map(id)
+                    .query_map(params_from_iter(conditions.params), to_event)
+                    .unwrap()
+                    .map(|event| id(&event.unwrap()))
                     .collect();
 
                 assert_eq!(

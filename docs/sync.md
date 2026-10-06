@@ -41,7 +41,7 @@ Policy never becomes a NIP-01 filter. A filter is positive-only, so a scope like
 
 | Setting | Applied | Where |
 | --- | --- | --- |
-| Gossip, visibility | to what this device serves | the store query answering a peer, before the limit |
+| Sharing, and [relaying](./policy.md#relaying) only to contacts | to what this device serves | the store query answering a peer, before the limit |
 | The two [registers](./proofs.md#authorship-proofs) | to what may travel at all | the same query |
 | Accept | to what this device stores | ingest, per event, against the author |
 
@@ -51,11 +51,11 @@ Reconciliation is bounded from both ends by the same rule, with one asymmetry. A
 
 ### Resyncing
 
-A change to trust, block, or any of the Accept, gossip, forwarding and visibility settings applies to what is already stored and to every live session. What the new Accept scope no longer admits is evicted, unless the user bookmarked it, and is remembered as refused so reconciliation does not offer it again. The old settings' refusals are forgotten, so what the new ones admit is fetched.
+A change to trust, block, a contact card, or the Accept and Sharing settings applies to what is already stored and to every live session. What the new Accept scope no longer admits is evicted, unless the user bookmarked it, and is remembered as refused so reconciliation does not offer it again. The old settings' refusals are forgotten, so what the new ones admit is fetched.
 
 Each live session then reconciles again. A device that receives a `NEG-OPEN` beyond the number it has opened itself answers with one of its own, so a change on either side makes both sides pull, and the counts stop the exchange at one round each.
 
-A recipient signature withheld because the peer was not trusted to forward is owed, not lost. `event_shared` records whether one went with each handoff, and the user's own events handed over unsigned get their signatures once forwarding is allowed: on the resync, or when the two next meet.
+A recipient signature withheld because the peer was not a contact, or because Sharing was `contacts`, is owed, not lost. `event_shared` records whether one went with each handoff, and the user's own events handed over unsigned get their signatures once signing is allowed: on the resync, or when the two next meet.
 
 ### Quotas
 
@@ -73,7 +73,7 @@ The window is kept in the store as well as in memory, so a background relaunch r
 
 Blobs follow, on their own channel. They are addressed by the SHA-256 in the event's `imeta` tag and verified against the BLAKE3 root also included in the `imeta` tag ([`nips/imeta-blake3.md`](./nips/imeta-blake3.md)). Content addressing makes transfers resumable, dedupable across peers, and verifiable group by group as they arrive.
 
-The want list is every hash a stored event references and the device does not hold. There is no per-blob decision: [Accept](./policy.md#accept-and-gossip) gates ingest against the author of each inbound event, so a stored event has already passed the scope check and its blobs are in scope for the same reason its text is. Previews take precedence over originals, and within a role a partly-fetched blob takes precedence over one not yet started, so the most nearly complete transfer is the first to be finished.
+The want list is every hash a stored event references and the device does not hold. There is no per-blob decision: [Accept](./policy.md#accept) gates ingest against the author of each inbound event, so a stored event has already passed the scope check and its blobs are in scope for the same reason its text is. Previews take precedence over originals, and within a role a partly-fetched blob takes precedence over one not yet started, so the most nearly complete transfer is the first to be finished.
 
 Each group verifies against the BLAKE3 root as it arrives, so a bad group costs one group and names the peer that sent it. A forwarder cannot alter the root: it rides in `imeta`, and the event id commits to it. A transfer that drops leaves the groups that proved out on disk, and the next session picks the blob up there, from whichever peer is in range then.
 

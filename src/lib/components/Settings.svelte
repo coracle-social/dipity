@@ -7,7 +7,7 @@
   import {Separator} from "$lib/components/ui/separator"
   import {Switch} from "$lib/components/ui/switch"
   import KeyBackup from "$lib/components/KeyBackup.svelte"
-  import type {Scope} from "$lib/core"
+  import type {Scope, Sharing} from "$lib/core"
   import {go} from "$lib/data/nav"
   import {
     notifyContent,
@@ -20,54 +20,47 @@
     policy,
     setAccept,
     setDiscoverInBackground,
-    setForward,
-    setGossip,
     setRetentionDays,
-    setVisibility,
+    setSharing,
   } from "$lib/data/policy"
+
+  const accepts: Record<string, string> = {
+    trusted: "People you trust",
+    contacts: "People you've paired with",
+    network: "People you've paired with, and people they trust",
+    lenient: "Anyone not blocked",
+  }
+
+  const shares: Record<Sharing, string> = {
+    contacts: "People you've paired with",
+    network: "People you've paired with, who can pass it on",
+    anyone: "Anyone you meet, and people you've paired with can pass it on",
+  }
 
   const tiers = $derived([
     {
       id: "accept",
       label: "What you accept",
-      detail: "Whose notes your phone accepts from phones nearby.",
-      scopes: ["trusted", "network", "lenient"] as Scope[],
-      on: $policy?.accept,
-      set: setAccept,
+      detail: "Whose posts your phone keeps from phones nearby.",
+      on: $policy?.accept as string | undefined,
+      options: (["trusted", "contacts", "network", "lenient"] as Scope[]).map(scope => ({
+        value: scope as string,
+        label: accepts[scope],
+      })),
+      set: (value: string) => setAccept(value as Scope),
     },
     {
-      id: "gossip",
-      label: "What you pass along",
-      detail: "Whose notes your phone passes on to phones nearby.",
-      scopes: ["nothing", "trusted", "network", "lenient"] as Scope[],
-      on: $policy?.gossip,
-      set: setGossip,
-    },
-    {
-      id: "forward",
-      label: "What others are allowed to pass along",
-      detail: "Who may pass your notes on to the people they meet.",
-      scopes: ["nothing", "trusted", "network"] as Scope[],
-      on: $policy?.forward,
-      set: setForward,
-    },
-    {
-      id: "visibility",
-      label: "What others are allowed to see",
-      detail: "Who may see your notes and the names you give people.",
-      scopes: ["trusted", "network", "lenient"] as Scope[],
-      on: $policy?.visibility.default,
-      set: setVisibility,
+      id: "sharing",
+      label: "Who can see your activity",
+      detail: "Who your phone hands your posts to, and who can carry them a step further.",
+      on: $policy?.sharing as string | undefined,
+      options: (["contacts", "network", "anyone"] as Sharing[]).map(sharing => ({
+        value: sharing as string,
+        label: shares[sharing],
+      })),
+      set: (value: string) => setSharing(value as Sharing),
     },
   ])
-
-  const words: Record<Scope, string> = {
-    nothing: "Nobody",
-    trusted: "People you trust",
-    network: "People any of your contacts trust",
-    lenient: "Anyone not blocked",
-    public: "Anyone at all",
-  }
 
   // The phone's answer changes in its own settings, so it is read again whenever this screen opens.
   $effect(() => {
@@ -105,18 +98,18 @@
         <p class="text-sm font-semibold">{tier.label}</p>
         <p class="mt-0.5 text-xs text-pretty text-muted-foreground">{tier.detail}</p>
         <div class="mt-2 space-y-0.5 rounded-2xl bg-muted p-1">
-          {#each tier.scopes as scope (scope)}
+          {#each tier.options as option (option.value)}
             <button
               type="button"
               class="flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left
                      text-sm transition-colors
-                     {tier.on === scope
+                     {tier.on === option.value
                 ? 'bg-card font-medium text-foreground shadow-xs'
                 : 'text-muted-foreground'}"
-              aria-pressed={tier.on === scope}
-              onclick={() => tier.set(scope)}>
-              {words[scope]}
-              {#if tier.on === scope}
+              aria-pressed={tier.on === option.value}
+              onclick={() => tier.set(option.value)}>
+              {option.label}
+              {#if tier.on === option.value}
                 <Check class="size-4 flex-none text-secondary-accent" />
               {/if}
             </button>

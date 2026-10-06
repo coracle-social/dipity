@@ -5,15 +5,13 @@
 // defaults filled in, so nothing here restates them. The writes go back one key
 // at a time as JSON documents. `docs/policy.md`.
 
-import {get, type Readable} from "svelte/store"
-import {Dip, type Policy, type Scope} from "$lib/core"
+import type {Readable} from "svelte/store"
+import {Dip, type Policy, type Scope, type Sharing} from "$lib/core"
 import {answering, storedPreferences} from "$lib/data/query"
 
 const keys = {
   accept: "policy.accept",
-  gossip: "policy.gossip",
-  forward: "policy.forward",
-  visibility: "policy.visibility",
+  sharing: "policy.sharing",
   retentionDays: "policy.retention_days",
   discoverInBackground: "policy.discover_in_background",
 } as const
@@ -45,9 +43,7 @@ const write = (key: string, value: unknown) =>
 
 export const setAccept = (scope: Scope) => write(keys.accept, scope)
 
-export const setGossip = (scope: Scope) => write(keys.gossip, scope)
-
-export const setForward = (scope: Scope) => write(keys.forward, scope)
+export const setSharing = (sharing: Sharing) => write(keys.sharing, sharing)
 
 /**
  * Write a count, ignoring anything that is not one.
@@ -69,17 +65,3 @@ const writeCount = (key: string, typed: string, least: number) => {
 export const setRetentionDays = (typed: string) => writeCount(keys.retentionDays, typed, 1)
 
 export const setDiscoverInBackground = (on: boolean) => write(keys.discoverInBackground, on)
-
-/**
- * Widen or narrow who sees an event no rule covers, leaving the rules alone.
- *
- * The rules written back are the ones the core just answered, so a rule this
- * build has never heard of survives the edit.
- */
-export const setVisibility = (scope: Scope) => {
-  const visibility = get(policy)?.visibility
-
-  if (visibility) return write(keys.visibility, {...visibility, default: scope})
-
-  return Promise.resolve()
-}

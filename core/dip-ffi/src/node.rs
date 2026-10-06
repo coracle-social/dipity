@@ -846,8 +846,8 @@ mod tests {
 
         // Nothing is written, so this is the core's own defaults and not an empty document.
         assert_eq!(crossed["accept"], "lenient");
-        assert_eq!(crossed["retention_days"], 30);
-        assert_eq!(crossed["visibility"]["rules"].as_array().unwrap().len(), 2);
+        assert_eq!(crossed["retention_days"], 90);
+        assert_eq!(crossed["sharing"], "anyone");
     }
 
     #[test]

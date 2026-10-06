@@ -10,7 +10,7 @@
   import {Textarea} from "$lib/components/ui/textarea"
   import {arrange, ask, boostItem, compose, write, type Item} from "$lib/data/feed"
   import {dismissable} from "$lib/data/nav"
-  import type {Scope} from "$lib/core"
+  import type {Sharing} from "$lib/core"
   import {policy} from "$lib/data/policy"
   import {categories, summaryOf} from "$lib/kinds"
 
@@ -53,18 +53,13 @@
 
   const chosen = $derived(nounOf(shape))
 
-  const passers: Record<Exclude<Scope, "nothing">, string> = {
-    trusted: "People you trust can pass it on one more time.",
-    network: "People you trust, and the people they trust, can pass it on one more time.",
-    lenient: "Anyone you meet can pass it on one more time.",
-    public: "Anyone you meet can pass it on one more time.",
+  const reaches: Record<Sharing, string> = {
+    contacts: "Only people you've paired with will see this.",
+    network: "People you've paired with will see this, and can pass it on to their contacts.",
+    anyone: "Anyone you meet will see this, and people you've paired with can pass it on.",
   }
 
-  const reach = $derived(
-    !$policy || $policy.forward === "nothing"
-      ? "Only people you meet in person will see this."
-      : passers[$policy.forward],
-  )
+  const reach = $derived(reaches[$policy?.sharing ?? "contacts"])
 
   const answers = $derived(options.map(option => option.trim()).filter(Boolean))
 

@@ -711,7 +711,7 @@ impl Session {
             return Ok(());
         };
 
-        if !peer.policy.may_forward() {
+        if !peer.policy.signs() {
             return Ok(());
         }
 
@@ -986,7 +986,7 @@ impl Session {
         }
 
         // The same two tests the relay half applies: the filters, and what the peer may see.
-        if !peer.policy.should_gossip(event) {
+        if !peer.policy.may_share(event) {
             return Ok(());
         }
 
@@ -2603,7 +2603,7 @@ mod tests {
         crate::db::command::record_shares(&db, &[(own.id, false)], &[author(2)], 100).unwrap();
 
         let mut forwarding = policy();
-        forwarding.forward = crate::model::Scope::Lenient;
+        forwarding.graph.trusted.insert(author(2));
         dialer.set_policy(Arc::new(forwarding));
         dialer.resync(&db).unwrap();
 
@@ -2633,9 +2633,9 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let (mut relay, mut peer) = attended_pair(&db);
 
-        // This device passes on anybody's writing, so the third author's note may travel.
+        // The peer is a contact, so what this device carries for others may travel to them.
         let mut lenient = policy();
-        lenient.gossip = crate::model::Scope::Lenient;
+        lenient.graph.contacts.insert(author(2));
         relay.set_policy(Arc::new(lenient));
 
         quiesce(&mut relay, &mut peer, &db);
@@ -2680,7 +2680,7 @@ mod tests {
         let (mut relay, mut peer) = attended_pair(&db);
 
         let mut lenient = policy();
-        lenient.gossip = crate::model::Scope::Lenient;
+        lenient.graph.contacts.insert(author(2));
         relay.set_policy(Arc::new(lenient));
 
         quiesce(&mut relay, &mut peer, &db);

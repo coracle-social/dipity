@@ -51,7 +51,7 @@ Media is written to disk unsealed, protected by the platform's data-protection c
 
 ## Retention
 
-[Forgetting is the default](./overview.md#principles). An event carried for someone else is dropped once it has been on this device longer than the retention window, 30 days unless the user sets `policy.retention_days`. The window starts at `event.seen_at`, when the event first reached this device, which is the same time the feed orders by and the one a user can see.
+[Forgetting is the default](./overview.md#principles). An event carried for someone else is dropped once it has been on this device longer than the retention window, 90 days unless the user sets `policy.retention_days`. The window starts at `event.seen_at`, when the event first reached this device, which is the same time the feed orders by and the one a user can see.
 
 Age plays no part. A post written a year ago that reaches this device today is new here, and is kept and ordered as such. Circulation plays none either: later sightings do not extend the window. Measuring from the latest sighting looked like counting repeated propagation, but a peer offering back what this device handed it counts as a sighting too, so a community passing a post around kept it alive on every phone for as long as any two of them kept meeting. What spreads still spreads, because each phone it reaches gets its own window.
 
@@ -72,7 +72,7 @@ The sweep is the device deciding; dropping is the user deciding. Either removes 
 
 Dropping is local and tells nobody. A device holds somebody else's writing at their author's sufferance and can stop holding it at any time, but it cannot ask the neighbourhood to do the same — only the author can, by publishing a kind 5, which travels the way the event did and is a request rather than an instruction. So the two are separate operations.
 
-Nothing stops a dropped event arriving again from somebody who still has it. Dropping is not a block, and refusing a person's events is [policy](./policy.md#accept-and-gossip).
+Nothing stops a dropped event arriving again from somebody who still has it. Dropping is not a block, and refusing a person's events is [policy](./policy.md#accept).
 
 ### The trash
 

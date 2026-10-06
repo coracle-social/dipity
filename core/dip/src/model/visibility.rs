@@ -4,7 +4,7 @@ use coracle_lib::events::{HasCreatedAt, HasId, HasKind, HasPubkey, HasTags};
 use coracle_lib::filters::Filter;
 use serde::{Deserialize, Serialize};
 
-use crate::model::{BLOCK, BOOKMARKS, MUTE, Scope, TRUST};
+use crate::model::{BLOCK, BOOKMARKS, MUTE, Scope, Sharing, TRUST};
 
 /// One rule: which of the user's own events it governs, and who may see them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,9 +28,9 @@ pub struct Visibility {
     pub default: Scope,
 }
 
-impl Default for Visibility {
+impl Visibility {
     /// The social graph to trusted peers, the bookmark list to nobody, and
-    /// everything else to anyone not blocked.
+    /// everything else to whoever `sharing` reaches.
     ///
     /// The social graph is the sensitive half of what a user publishes: a
     /// trust list names people they have met in person. It is not encrypted,
@@ -38,8 +38,9 @@ impl Default for Visibility {
     /// of what keeps it from a stranger.
     ///
     /// A bookmark list cannot be encrypted, so serving it to nobody is what
-    /// keeps it private. `docs/policy.md#visibility`.
-    fn default() -> Self {
+    /// keeps it private. `docs/policy.md#sharing`.
+    #[must_use]
+    pub fn for_sharing(sharing: Sharing) -> Self {
         Self {
             rules: vec![
                 VisibilityRule {
@@ -51,8 +52,14 @@ impl Default for Visibility {
                     scope: Scope::Nothing,
                 },
             ],
-            default: Scope::Lenient,
+            default: sharing.audience(),
         }
+    }
+}
+
+impl Default for Visibility {
+    fn default() -> Self {
+        Self::for_sharing(Sharing::default())
     }
 }
 

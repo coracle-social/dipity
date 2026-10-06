@@ -40,19 +40,12 @@ pub mod keys {
     /// Whether a stranger is told who the user is while the app is not in front. Default on.
     pub const DISCOVER_IN_BACKGROUND: &str = "policy.discover_in_background";
 
-    /// Who can see what the user publishes, as ordered rules and a default.
-    pub const VISIBILITY: &str = "policy.visibility";
+    /// Who is handed the user's own activity, and who may carry it further. Default `anyone`.
+    pub const SHARING: &str = "policy.sharing";
 
     /// Whose events the device stores from a peer. Default `lenient`.
     pub const ACCEPT: &str = "policy.accept";
 
-    /// Whose events the device relays onward. Default `network`.
-    pub const GOSSIP: &str = "policy.gossip";
-
-    /// Which peers may be handed the signature that lets them forward the
-    /// user's events one more hop.
-    pub const FORWARD: &str = "policy.forward";
-
-    /// How long a carried event stays after it first reaches this device. Default 30 days.
+    /// How long a carried event stays after it first reaches this device. Default 90 days.
     pub const RETENTION_DAYS: &str = "policy.retention_days";
 }

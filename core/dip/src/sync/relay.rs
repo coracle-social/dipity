@@ -1,7 +1,7 @@
 //! This device answering a peer: the relay half.
 //!
 //! Everything it has to apply is expressible as a [`Query`]. A peer's `REQ`
-//! becomes a filter, the user's Gossip scope and visibility become a
+//! becomes a filter, the user's Sharing setting and the relaying rule become a
 //! [`PeerPolicy`](crate::model::PeerPolicy), and the two authorship registers
 //! that may travel become [`Registers::offerable`]. `db::query::list_events`
 //! takes all three, so there is no second place where what a peer may see is
@@ -247,7 +247,7 @@ pub fn serve(
 /// `EVENT`.
 pub fn record_shares(db: &Db, peer: &Peer, events: &[HashedEvent]) -> Result<()> {
     let to: Vec<PublicKey> = peer.pubkeys.iter().copied().collect();
-    let forwards = peer.policy.may_forward();
+    let forwards = peer.policy.signs();
     let shares: Vec<(EventId, bool)> = events
         .iter()
         .map(|event| {
@@ -280,7 +280,7 @@ pub fn attach(
     // One artifact per identity the peer proved, since nothing on the wire says which it uses.
     if event.pubkey == identity.pubkey() {
         // The signature is transferable evidence, so who gets one is a policy question.
-        if !peer.policy.may_forward() {
+        if !peer.policy.signs() {
             return Ok(());
         }
 
@@ -323,7 +323,7 @@ mod tests {
     use crate::db::query as db_query;
     use crate::fixtures::{author, note, secret};
     use crate::link::LinkId;
-    use crate::model::{Policy, RecipientSignature, Scope};
+    use crate::model::{Policy, RecipientSignature};
     use crate::sync::spending::SpendingLedger;
 
     fn us() -> PublicKey {
@@ -600,9 +600,9 @@ mod tests {
         let signature = RecipientSignature::sign(&secret(3), event.id, author(1));
         command::receive_signature(&db, &event.id, &signature.sig, &author(1)).unwrap();
 
-        // Gossip admits the author, or the register check alone would filter it.
+        // The peer is a contact, which is who is served what this device carries for others.
         let mut policy = Policy::new(us());
-        policy.gossip = Scope::Lenient;
+        policy.graph.contacts.insert(author(2));
         let peer = Peer::bind(LinkId(1), [author(2)], &policy);
 
         let replies = serve(

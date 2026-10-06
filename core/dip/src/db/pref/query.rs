@@ -17,7 +17,10 @@ use serde::de::DeserializeOwned;
 
 use crate::db::Tx;
 use crate::db::event::query as event;
-use crate::model::{BLOCK, Graph, MUTE, PeopleListReader, Policy, Pref, TRUST, keys};
+use crate::model::{
+    BLOCK, CONTACT, Graph, MUTE, PeopleListReader, Policy, Pref, Query, TRUST, keys,
+};
+use coracle_lib::filters::Filter;
 
 /// One preference's raw JSON value, or `None` if it has never been written —
 /// which is how a default is expressed.
@@ -92,10 +95,8 @@ pub fn policy(tx: &Tx<'_>, identity: &PublicKey) -> Result<Policy> {
         keys::DISCOVER_IN_BACKGROUND,
         &mut policy.discover_in_background,
     )?;
-    override_with(tx, keys::VISIBILITY, &mut policy.visibility)?;
     override_with(tx, keys::ACCEPT, &mut policy.accept)?;
-    override_with(tx, keys::GOSSIP, &mut policy.gossip)?;
-    override_with(tx, keys::FORWARD, &mut policy.forward)?;
+    override_with(tx, keys::SHARING, &mut policy.sharing)?;
     override_with(tx, keys::RETENTION_DAYS, &mut policy.retention_days)?;
 
     policy.graph = graph(tx, identity)?;
@@ -105,7 +106,8 @@ pub fn policy(tx: &Tx<'_>, identity: &PublicKey) -> Result<Policy> {
 
 /// The user's trust graph, from the lists they have published.
 ///
-/// Three of the four tiers are lists the user wrote. The fourth is derived:
+/// Three of the tiers are lists the user wrote, and `contacts` is the people
+/// their contact cards name. The last is derived:
 /// `network` is the union of the trust lists of everyone in `trusted`, over
 /// whichever of those lists this device happens to hold — so a trusted person
 /// whose list has not arrived contributes nobody, and the tier grows as the
@@ -133,11 +135,28 @@ fn graph(tx: &Tx<'_>, identity: &PublicKey) -> Result<Graph> {
     }
 
     Ok(Graph {
+        contacts: named(tx, identity)?.difference(&blocked).copied().collect(),
         trusted,
         network,
         blocked,
         muted: listed::<MUTE>(tx, identity)?,
     })
+}
+
+/// Everybody the user has named, which is everybody they paired with. A card
+/// emptied by forgetting somebody names nobody.
+fn named(tx: &Tx<'_>, identity: &PublicKey) -> Result<BTreeSet<PublicKey>> {
+    let cards = event::list(
+        tx,
+        &Query::new().with_filter(Filter::new().add_kinds([CONTACT]).add_authors([*identity])),
+    )?;
+
+    Ok(cards
+        .iter()
+        .filter(|card| !card.content.trim().is_empty())
+        .filter_map(|card| card.tags.iter().find(|tag| tag.name() == "d"))
+        .filter_map(|tag| PublicKey::from_hex(tag.value()).ok())
+        .collect())
 }
 
 /// The pubkeys the list `pubkey` published at `kind` names.
@@ -174,7 +193,7 @@ mod tests {
     use crate::db::event::command as event_command;
     use crate::db::pref::command as pref_command;
     use crate::fixtures::{author, event, peer};
-    use crate::model::{Scope, Standing};
+    use crate::model::{Scope, Sharing, Standing};
 
     #[test]
     fn an_unwritten_policy_is_the_documents_defaults() {
@@ -190,12 +209,12 @@ mod tests {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        pref_command::set_as(&tx, keys::GOSSIP, &Scope::Trusted, 10).unwrap();
+        pref_command::set_as(&tx, keys::SHARING, &Sharing::Network, 10).unwrap();
         pref_command::set_as(&tx, keys::DISCOVER_IN_BACKGROUND, &false, 10).unwrap();
 
         let policy = policy(&tx, &author(1)).unwrap();
 
-        assert_eq!(policy.gossip, Scope::Trusted);
+        assert_eq!(policy.sharing, Sharing::Network);
         assert!(!policy.discover_in_background);
         assert_eq!(policy.accept, Scope::Lenient);
     }
@@ -206,7 +225,7 @@ mod tests {
         let tx = db.begin_write().unwrap();
 
         // Written by a build that knew a tier this one does not; defaulting would widen scope.
-        pref_command::set(&tx, keys::GOSSIP, r#""neighbors""#, 10).unwrap();
+        pref_command::set(&tx, keys::ACCEPT, r#""neighbors""#, 10).unwrap();
 
         assert!(policy(&tx, &author(1)).is_err());
     }
