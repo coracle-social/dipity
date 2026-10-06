@@ -83,7 +83,7 @@ const fromImeta = (tag: string[]): Blob | undefined => {
   return claimed
     ? {
         sha256: claimed,
-        role: "Original",
+        role: value("preview-of") ? "Preview" : "Original",
         url: value("url") ?? null,
         mime_type: value("m") ?? null,
         size: value("size") ? Number(value("size")) : null,
@@ -128,6 +128,8 @@ export class Simulator extends WebPlugin implements DipCore {
   private notifying: NotificationPermission = "prompt"
 
   private paired = new Set<string>()
+  /** What the user attached to what they published, base64 by hash, since only the core keeps files. */
+  private media = new Map<string, string>()
   private refused = new Map<string, number>()
   private gates = new Map<number, Person>()
   private live = new Map<number, Person>()
@@ -452,8 +454,11 @@ export class Simulator extends WebPlugin implements DipCore {
 
     this.store.record(published, this.identity, now(), blobs)
 
-    for (const attached of media.map(bytes)) {
-      this.store.hold(bytesToHex(sha256(attached)), attached.length)
+    for (const [index, attached] of media.map(bytes).entries()) {
+      const hash = bytesToHex(sha256(attached))
+
+      this.store.hold(hash, attached.length)
+      this.media.set(hash, media[index])
     }
 
     this.notifyListeners("storeChanged", {group: "events"})
@@ -607,6 +612,14 @@ export class Simulator extends WebPlugin implements DipCore {
 
   async wantedBlobs(options?: {limit?: number}) {
     return {blobs: this.store.wanted(options?.limit).map(blob => JSON.stringify(blob))}
+  }
+
+  async blobPath({sha256: wanted}: {sha256: string}) {
+    const held = this.media.get(wanted)
+    const mime = this.store.blob(wanted)?.mime_type ?? "application/octet-stream"
+
+    // A browser has no files of ours to point at, so the bytes ride in the URL.
+    return {path: held ? `data:${mime};base64,${held}` : null}
   }
 
   async getBlob({sha256: wanted}: {sha256: string}) {

@@ -32,6 +32,7 @@ use std::time::Duration;
 use coracle_lib::events::EventId;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::PublicKey;
+use dip::blobs::FileBlobStore;
 use dip::clock::now;
 use dip::db::{Db, command, query};
 use dip::model::{BlobHash, Order as CoreOrder, ProvenanceFilter, Query as CoreQuery};
@@ -187,6 +188,8 @@ impl Drop for Subscription {
 pub struct Store {
     /// The connection, its migrations, and the channels its writes announce on.
     pub(crate) db: Arc<Db>,
+    /// Where the node keeps blob bytes, for pointing the view at a whole one.
+    blobs: FileBlobStore,
     /// Every live registration, so dropping the store ends them.
     subscriptions: Mutex<Vec<Arc<AtomicBool>>>,
 }
@@ -200,6 +203,7 @@ impl Store {
     #[uniffi::constructor]
     pub fn open(directory: String) -> Result<Arc<Self>, StoreError> {
         Ok(Arc::new(Self {
+            blobs: FileBlobStore::within(&directory)?,
             db: Arc::new(Db::open(directory)?),
             subscriptions: Mutex::new(Vec::new()),
         }))
@@ -279,6 +283,16 @@ impl Store {
             .as_ref()
             .map(json)
             .transpose()
+    }
+
+    /// The file holding a blob's bytes, once all of them are here, for the
+    /// view to draw. A partial file is never handed over, since it would draw
+    /// as a broken image.
+    pub fn blob_path(&self, sha256: String) -> Result<Option<String>, StoreError> {
+        let sha256 = blob_hash(&sha256)?;
+        let whole = query::get_blob(&self.db, &sha256)?.is_some_and(|blob| blob.complete);
+
+        Ok(whole.then(|| self.blobs.path(&sha256).to_string_lossy().into_owned()))
     }
 
     /// Every stored event that references a hash, by id.
@@ -609,6 +623,32 @@ mod tests {
         );
 
         subscription.stop();
+    }
+
+    #[test]
+    fn a_blob_has_a_path_only_once_it_is_whole() {
+        let open = Open::new("blob-path");
+        let hash = BlobHash::digest(b"a picture");
+        let author = coracle_lib::keys::SecretKey::generate().public_key();
+        let picture = coracle_lib::events::EventContent::new()
+            .with_tags(
+                coracle_lib::tags::Tags::new().add("imeta", [format!("x {hash}"), "size 9".into()]),
+            )
+            .with_kind(20)
+            .with_created_at(1)
+            .with_pubkey(author)
+            .with_id();
+
+        assert_eq!(open.store.blob_path(hash.to_string()).unwrap(), None);
+
+        command::receive_event(&open.store.db, &picture, &[author], 1).unwrap();
+        assert_eq!(open.store.blob_path(hash.to_string()).unwrap(), None);
+
+        command::complete_blob(&open.store.db, &hash, 9, 2).unwrap();
+        let path = open.store.blob_path(hash.to_string()).unwrap().unwrap();
+        assert!(path.ends_with(&format!("blobs/{hash}")));
+
+        assert!(open.store.blob_path("not a hash".to_owned()).is_err());
     }
 
     #[test]

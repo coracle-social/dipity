@@ -56,6 +56,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "requestNotificationPermission", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "wantedBlobs", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getBlob", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "blobPath", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "eventsReferencingBlob", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "policy", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "preferences", returnType: CAPPluginReturnPromise),
@@ -365,6 +366,15 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         answer(call, "blob") { try $0.getBlob(sha256: sha256) ?? NSNull() }
+    }
+
+    /// The file holding a whole blob, for the view to draw.
+    @objc func blobPath(_ call: CAPPluginCall) {
+        guard let sha256 = call.getString("sha256") else {
+            return call.reject("blobPath needs a sha256")
+        }
+
+        answer(call, "path") { try $0.blobPath(sha256: sha256) ?? NSNull() }
     }
 
     @objc func eventsReferencingBlob(_ call: CAPPluginCall) {

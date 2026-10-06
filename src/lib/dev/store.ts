@@ -235,8 +235,15 @@ export class Store {
   hold(sha256: string, size: number) {
     const blob = this.blobs.get(sha256)
 
-    if (blob) {
-      this.blobs.set(sha256, {...blob, size, stored_bytes: size, complete: true})
+    if (!blob) return
+
+    const whole = {...blob, size, stored_bytes: size, complete: true}
+
+    this.blobs.set(sha256, whole)
+
+    // Each detail carries its own copy of the record, which is what a listing answers with.
+    for (const detail of this.details.values()) {
+      detail.blobs = detail.blobs.map(held => (held.sha256 === sha256 ? whole : held))
     }
   }
 

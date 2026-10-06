@@ -1,7 +1,16 @@
 <script lang="ts">
   import Clock from "@lucide/svelte/icons/clock"
   import MapPin from "@lucide/svelte/icons/map-pin"
-  import {EVENT_DATE, EVENT_TIME, GENERIC_REPOST, LONG_FORM, POLL, REPOST} from "@welshman/util"
+  import {
+    EVENT_DATE,
+    EVENT_TIME,
+    GENERIC_REPOST,
+    LONG_FORM,
+    PICTURE_NOTE,
+    POLL,
+    REPOST,
+  } from "@welshman/util"
+  import Photo from "$lib/components/Photo.svelte"
   import Poll from "$lib/components/Poll.svelte"
   import Prose from "$lib/components/Prose.svelte"
   import Quoted from "$lib/components/Quoted.svelte"
@@ -86,6 +95,11 @@
       <Prose class="mt-2" {event} />
     {/if}
   </div>
+{:else if event.kind === PICTURE_NOTE}
+  <Photo {item} {social} {session} {detailed} />
+  {#if event.content.trim()}
+    <Prose class="mt-2" {event} />
+  {/if}
 {:else if event.kind === POLL}
   <Poll {item} {standing} {session} />
 {:else if written}

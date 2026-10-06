@@ -36,6 +36,8 @@ export const storedEvents = revision("events")
 
 export const storedPreferences = revision("preferences")
 
+export const storedBlobs = revision("blobs")
+
 /**
  * A store whose value is whatever the last read answered.
  *

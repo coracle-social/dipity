@@ -476,6 +476,14 @@ class DipPlugin : Plugin(), Encounters.View {
         answer(call, "blob") { it.getBlob(sha256) ?: JSONObject.NULL }
     }
 
+    /** The file holding a whole blob, for the view to draw. */
+    @PluginMethod
+    fun blobPath(call: PluginCall) {
+        val sha256 = call.getString("sha256") ?: return call.reject("blobPath needs a sha256")
+
+        answer(call, "path") { it.blobPath(sha256) ?: JSONObject.NULL }
+    }
+
     @PluginMethod
     fun eventsReferencingBlob(call: PluginCall) {
         val sha256 =

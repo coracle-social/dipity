@@ -43,7 +43,7 @@ Four facts about the transport decide most of the interface, and every story bel
 20. The trash empties, by hand or after the week, dropping everything in it off this phone, which tells nobody. — `Bookmarks` under Trash
 21. The user bookmarks something, so the retention sweep leaves it alone however long it stops circulating. — `ItemCard`
 22. The user looks at everything they bookmarked, whatever the board's filter is set to. — `Bookmarks`, under Saved
-23. The user writes a poll, a calendar event or an article rather than a note, and the form changes to suit. — `Composer`
+23. The user writes a poll, a calendar event, an article or a picture rather than a note, and the form changes to suit. — `Composer`
 24. The user opens a thing and sees how far it has travelled: how many people handed it to this device, and how many this device has handed it to. — `ItemDetail`
 25. The user looks for something they half remember, and the board narrows as they type to what says it and to what was written by somebody called it; their people and their bookmarks search the same way. — `SearchBox`, in `FeedControls`, `People` and `Bookmarks`
 
@@ -71,11 +71,13 @@ Four facts about the transport decide most of the interface, and every story bel
 39. The user decides whose content the device stores. — `Settings`
 40. The user decides who sees what they publish, and who can carry it further. — `Settings`
 41. The user decides how long a thing carried for somebody else stays on the device. — `Settings`
-42. The user decides how many strangers a day their phone names itself to, open or in a pocket. — `Settings`
+42. The user decides whether strangers learn who they are while the app is closed. — `Settings`
 43. The user writes the key down somewhere safe, locked with a password if they choose, whenever they get round to it. — `KeyBackup`, in `Settings`
 44. The user puts their key on a second phone, so both phones are them. — `DeviceLogin`
 45. The user takes the key off their other phone, and this one stops being the identity it made at first run. — `DeviceLogin`
 46. With the phone in their pocket, the user hears that somebody nearby wants to pair or that new things reached the board, once they switch that on in Settings or when the app offers it after their second post. — `NotificationOffer`, `Settings`
+47. The user decides whose pictures are blurred until tapped, and a picture with a content warning stays covered whoever posted it. — `Settings`, `Photo`
+48. A picture reaches the board once its image has, so nothing is drawn as a hole. — `Board`
 
 ## No screen yet
 
@@ -84,4 +86,4 @@ Each of these is a story the transport or the docs already support and the view 
 - **A notification while the app is closed.** Story 16 in the pocket. The core emits `WakeAt` and the shells own local notifications; nothing posts one.
 - **Quiet times.** `policy.quiet_times` is a list of windows and needs a time picker rather than a switch. Settings leaves it alone.
 - **Per-contact relaying.** [Relaying](./policy.md#relaying) hands every contact everything this device may forward, so "do not pass this person's things on" is only sayable as a block. `ContactDetail` offers mute and block.
-- **Media.** The first version carries text. `imeta`, previews and blob transfer are built below the bridge and nothing above it attaches a file.
+- **Media beyond pictures.** A picture is the one post that attaches a file. Video, audio and a file attached to a note have no composer.

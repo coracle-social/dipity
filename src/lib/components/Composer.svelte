@@ -1,5 +1,6 @@
 <script lang="ts">
   import ChevronDown from "@lucide/svelte/icons/chevron-down"
+  import ImagePlus from "@lucide/svelte/icons/image-plus"
   import Plus from "@lucide/svelte/icons/plus"
   import X from "@lucide/svelte/icons/x"
   import {Button} from "$lib/components/ui/button"
@@ -7,8 +8,9 @@
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu"
   import {Input} from "$lib/components/ui/input"
   import {Label} from "$lib/components/ui/label"
+  import {Switch} from "$lib/components/ui/switch"
   import {Textarea} from "$lib/components/ui/textarea"
-  import {arrange, ask, boostItem, compose, write, type Item} from "$lib/data/feed"
+  import {arrange, ask, boostItem, compose, share, write, type Item} from "$lib/data/feed"
   import {dismissable} from "$lib/data/nav"
   import type {Sharing} from "$lib/core"
   import {policy} from "$lib/data/policy"
@@ -35,7 +37,7 @@
   })
 
   // Passing something on is already about something; everything else picks its own shape.
-  const shapes = ["notes", "polls", "occasions", "articles"] as const
+  const shapes = ["notes", "images", "polls", "occasions", "articles"] as const
 
   type Shape = (typeof shapes)[number]
 
@@ -48,6 +50,25 @@
   let options = $state(["", ""])
   let sending = $state(false)
   let failed = $state(false)
+  let file = $state<File | undefined>(undefined)
+  let warning = $state(false)
+  let reason = $state("")
+
+  // A local URL for the picked file, given back when it is replaced.
+  const picked = $derived(file && URL.createObjectURL(file))
+
+  $effect(() => {
+    const url = picked
+
+    return () => {
+      if (url) URL.revokeObjectURL(url)
+    }
+  })
+
+  const pick = (event: Event & {currentTarget: HTMLInputElement}) => {
+    file = event.currentTarget.files?.[0]
+    event.currentTarget.value = ""
+  }
 
   const nounOf = (id: Shape) => categories.find(category => category.id === id)!
 
@@ -69,6 +90,8 @@
 
     if (shape === "notes") return Boolean(content.trim())
 
+    if (shape === "images") return Boolean(file)
+
     if (shape === "polls") return Boolean(title.trim()) && answers.length >= 2
 
     if (shape === "occasions") return Boolean(title.trim()) && Boolean(when)
@@ -80,6 +103,9 @@
     if (about) return boostItem(about, remark)
 
     if (shape === "notes") return write(content)
+
+    if (shape === "images" && file)
+      return share(file, content.trim(), warning ? reason.trim() : undefined)
 
     if (shape === "polls") return ask(title.trim(), answers)
 
@@ -106,6 +132,9 @@
         where = ""
         when = ""
         options = ["", ""]
+        file = undefined
+        warning = false
+        reason = ""
       }
 
       open = false
@@ -123,9 +152,7 @@
     <Drawer.Header>
       <Drawer.Title>{about ? "Pass it on" : "What do you want to say?"}</Drawer.Title>
       <Drawer.Description>
-        {about
-          ? "Say something about it, or send it on as it is."
-          : `Your note goes to the people physically near you. ${reach}`}
+        {about ? "Say something about it, or send it on as it is." : reach}
       </Drawer.Description>
     </Drawer.Header>
 
@@ -166,6 +193,27 @@
 
         {#if shape === "notes"}
           <Textarea bind:value={content} class="min-h-32" placeholder="Type it out" />
+        {:else if shape === "images"}
+          <label
+            class="flex cursor-pointer flex-col items-center justify-center overflow-hidden rounded-md
+                   border border-dashed border-border bg-muted text-sm text-muted-foreground
+                   {picked ? '' : 'h-40'}">
+            {#if picked}
+              <img src={picked} alt="" class="max-h-64 w-full object-contain" />
+            {:else}
+              <ImagePlus class="mb-1 size-6" />
+              Choose a picture
+            {/if}
+            <input type="file" accept="image/*" class="sr-only" onchange={pick} />
+          </label>
+          <Textarea bind:value={content} class="min-h-20" placeholder="Say something about it" />
+          <div class="flex items-center justify-between gap-4">
+            <Label for="image-warning" class="text-sm">Content warning</Label>
+            <Switch id="image-warning" bind:checked={warning} />
+          </div>
+          {#if warning}
+            <Input bind:value={reason} placeholder="Why, so people can choose (optional)" />
+          {/if}
         {:else if shape === "polls"}
           <div class="space-y-1.5">
             <Label for="poll-title">What are you asking?</Label>

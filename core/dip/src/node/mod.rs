@@ -303,7 +303,7 @@ impl Node {
         custody: Arc<dyn KeyCustody>,
         directory: impl AsRef<Path>,
     ) -> Result<Self> {
-        let blobs = Arc::new(FileBlobStore::open(directory.as_ref().join("blobs"))?);
+        let blobs = Arc::new(FileBlobStore::within(directory)?);
 
         Self::new(db, custody, blobs)
     }

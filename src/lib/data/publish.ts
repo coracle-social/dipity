@@ -15,6 +15,9 @@ const now = () => Math.floor(Date.now() / 1000)
 /**
  * Store an event under this device's identity, and answer what was stored.
  *
+ * `media` is the bytes the event's `imeta` tags describe, base64 each, which
+ * the core stores beside it.
+ *
  * `replacing` is the event this one supersedes, for a replaceable kind. Two
  * versions stamped in the same second are settled by the lower id, so an edit
  * made within a second of the last is refused and nothing says so — the store
@@ -25,6 +28,7 @@ const now = () => Math.floor(Date.now() / 1000)
 export const publish = async (
   template: EventTemplate,
   replacing?: HashedEvent,
+  media?: string[],
 ): Promise<HashedEvent> => {
   const {identity} = get(session)
 
@@ -35,7 +39,7 @@ export const publish = async (
   const at = Math.max(now(), (replacing?.created_at ?? 0) + 1)
   const event = hash(own(stamp(template, at), identity))
 
-  await Dip.publish({event: JSON.stringify(event)})
+  await Dip.publish({event: JSON.stringify(event), media})
 
   afterPublish(event.kind).catch(error => console.error("the notification offer failed", error))
 

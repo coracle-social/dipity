@@ -8,13 +8,21 @@
 
 import {derived, get, writable, type Readable} from "svelte/store"
 import {randomId, uniq} from "@welshman/lib"
-import {COMMENT, DELETE, POLL_RESPONSE, REACTION} from "@welshman/util"
+import {COMMENT, DELETE, PICTURE_NOTE, POLL_RESPONSE, REACTION} from "@welshman/util"
 import type {HashedEvent} from "@welshman/util"
 import {Dip, type EventDetail, type Order} from "$lib/core"
 import {muted, social} from "$lib/data/contacts"
 import {trashed} from "$lib/data/trash"
 import {peopleNamed, wordsOf} from "$lib/data/search"
-import {answering, detailsOf, eventsOf, remembered, storedEvents} from "$lib/data/query"
+import {attachment, pictureOf, shrink} from "$lib/data/media"
+import {
+  answering,
+  detailsOf,
+  eventsOf,
+  remembered,
+  storedBlobs,
+  storedEvents,
+} from "$lib/data/query"
 import {publish} from "$lib/data/publish"
 import {session, type Session} from "$lib/data/session"
 import {
@@ -25,6 +33,7 @@ import {
   commentOn,
   commentedOn,
   note,
+  picture,
   poll,
   pollResponse,
   reaction,
@@ -42,6 +51,8 @@ export type Item = {
   from: string[]
   /** The peers this device passed it to, earliest first. Never leaves the device. */
   to: string[]
+  /** The media it references, whether or not this device holds the bytes. */
+  media: EventDetail["blobs"]
 }
 
 /** How far through its retention window an item is. */
@@ -74,11 +85,12 @@ export type Standing = {
   saying: number
 }
 
-const toItem = ({event, sightings, shares}: EventDetail): Item => ({
+const toItem = ({event, sightings, shares, blobs}: EventDetail): Item => ({
   event,
   seenAt: Math.min(...sightings.map(sighting => sighting.seen_at)),
   from: sightings.map(sighting => sighting.pubkey),
   to: shares.map(share => share.pubkey),
+  media: blobs,
 })
 
 const nothing = (): Response => ({boosts: [], reactions: [], votes: []})
@@ -127,7 +139,11 @@ const respondedTo = (event: EventDetail["event"]): string | undefined => {
  * has not arrived opens onto nothing; it waits for the parent the way a boost
  * waits for its subject. `docs/stories.md`.
  */
-const grounded = async (items: Item[]): Promise<Item[]> => {
+const grounded = async (all: Item[]): Promise<Item[]> => {
+  // A picture is its image, so one whose bytes have not arrived has nothing to draw yet.
+  const items = all.filter(
+    ({event, media}) => event.kind !== PICTURE_NOTE || pictureOf(media, false),
+  )
   const subjects = new Map<string, string>()
 
   for (const {event} of items) {
@@ -226,7 +242,7 @@ const page = async ({view: asked, search: words, named}: Asked): Promise<Item[]>
 }
 
 const arrived = answering(
-  derived([view, search, social, storedEvents], ([$view, $search, $social]): Asked => {
+  derived([view, search, social, storedEvents, storedBlobs], ([$view, $search, $social]): Asked => {
     const words = $search.trim()
 
     return {view: $view, search: words, named: words ? peopleNamed($social, wordsOf(words)) : []}
@@ -342,6 +358,21 @@ export const warmthOf = (item: Item, swept: number | undefined, now: number): Wa
   } else {
     return "kept"
   }
+}
+
+/**
+ * Publish a picture: re-encoded small, with a preview standing in for it, and a
+ * NIP-36 content warning when `warning` is given, empty for one with no reason.
+ */
+export const share = async (file: File, description: string, warning?: string) => {
+  const {image, preview} = await shrink(file)
+  const whole = await attachment(image)
+  const small = await attachment(preview, [`preview-of ${whole.hash}`])
+  const described = picture.writer().setContent(description).addImeta(whole).addImeta(small)
+  const writer =
+    warning === undefined ? described : described.setContentWarning(warning || undefined)
+
+  return publish(await writer.renderTemplate(), undefined, [image.base64, preview.base64])
 }
 
 /** Write something of the user's own. */

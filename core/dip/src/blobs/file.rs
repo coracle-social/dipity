@@ -21,6 +21,12 @@ pub struct FileBlobStore {
 }
 
 impl FileBlobStore {
+    /// Open the blob store inside an app's data directory, which is where the
+    /// node keeps it and where the view is pointed at a file in it.
+    pub fn within(directory: impl AsRef<Path>) -> Result<Self> {
+        Self::open(directory.as_ref().join("blobs"))
+    }
+
     /// Open (creating if needed) the directory blob files live in.
     pub fn open(directory: impl AsRef<Path>) -> Result<Self> {
         let directory = directory.as_ref();
@@ -33,8 +39,9 @@ impl FileBlobStore {
         })
     }
 
-    /// The file a hash lives in.
-    fn path(&self, sha256: &BlobHash) -> PathBuf {
+    /// The file a hash lives in, whether or not it is there or whole.
+    #[must_use]
+    pub fn path(&self, sha256: &BlobHash) -> PathBuf {
         self.directory.join(sha256.as_str())
     }
 

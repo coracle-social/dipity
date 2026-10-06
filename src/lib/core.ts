@@ -260,6 +260,9 @@ export type DipCore = {
   /** One blob's metadata and transfer progress, or null. */
   getBlob(options: {sha256: string}): Promise<{blob: string | null}>
 
+  /** The file holding a blob's bytes once all of them are here, or null. */
+  blobPath(options: {sha256: string}): Promise<{path: string | null}>
+
   /** Every stored event that references a hash, by id. */
   eventsReferencingBlob(options: {sha256: string}): Promise<{ids: string[]}>
 

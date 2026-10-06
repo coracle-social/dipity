@@ -9,6 +9,7 @@
 // to the core.
 
 import CalendarDays from "@lucide/svelte/icons/calendar-days"
+import ImageIcon from "@lucide/svelte/icons/image"
 import ListChecks from "@lucide/svelte/icons/list-checks"
 import MessageCircle from "@lucide/svelte/icons/message-circle"
 import Newspaper from "@lucide/svelte/icons/newspaper"
@@ -23,6 +24,7 @@ import {
   Delete,
   MuteList,
   Note,
+  Picture,
   Poll,
   PollResponse,
   Reaction,
@@ -36,6 +38,7 @@ import {
   GENERIC_REPOST,
   LONG_FORM,
   NOTE,
+  PICTURE_NOTE,
   POLL,
   POLL_RESPONSE,
   REACTION,
@@ -50,6 +53,9 @@ import {Boost, GenericBoost} from "$lib/kinds/repost"
 const context: KindContext = {resolver: new Resolver(() => [])}
 
 export const note = Note.configure(context)
+
+/** A NIP-68 picture: one image, a preview standing in for it, and a description. */
+export const picture = Picture.configure(context)
 
 /** What somebody said about something already stored, which is how people answer each other here. */
 export const comment = Comment.configure(context)
@@ -162,6 +168,7 @@ export type Category = {
  */
 export const categories: Category[] = [
   {id: "notes", label: "Notes", noun: "Note", icon: MessageCircle, kinds: [NOTE]},
+  {id: "images", label: "Images", noun: "Image", icon: ImageIcon, kinds: [PICTURE_NOTE]},
   {id: "comments", label: "Comments", noun: "Comment", icon: Reply, kinds: [COMMENT]},
   {
     id: "boosts",

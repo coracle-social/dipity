@@ -8,6 +8,7 @@
   import {Switch} from "$lib/components/ui/switch"
   import KeyBackup from "$lib/components/KeyBackup.svelte"
   import type {Scope, Sharing} from "$lib/core"
+  import {blurring, type Blurring} from "$lib/data/media"
   import {go} from "$lib/data/nav"
   import {
     notifyContent,
@@ -36,6 +37,12 @@
     anyone: "Anyone you meet, and people you've paired with can pass it on",
   }
 
+  const blurs: Record<Blurring, string> = {
+    strangers: "People outside your network",
+    others: "Everyone except people you've paired with",
+    everyone: "Everyone",
+  }
+
   const tiers = $derived([
     {
       id: "accept",
@@ -58,6 +65,18 @@
         label: shares[sharing],
       })),
       set: (value: string) => setSharing(value as Sharing),
+    },
+    {
+      id: "blur",
+      label: "Whose images to blur",
+      detail:
+        "Tap a blurred image to see it, and anything with a content warning is always covered.",
+      on: $blurring as string,
+      options: (["strangers", "others", "everyone"] as Blurring[]).map(who => ({
+        value: who as string,
+        label: blurs[who],
+      })),
+      set: (value: string) => blurring.set(value as Blurring),
     },
   ])
 
