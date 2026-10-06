@@ -250,14 +250,14 @@ pub fn trashed(tx: &Tx<'_>, writing: bool) -> Result<Vec<(EventId, i64)>> {
          WHERE NOT ?1 OR e.kind <> ?2
          ORDER BY t.trashed_at DESC",
     )?
-        .query_map(params![writing, delete::KIND], |row| {
-            Ok((
-                event_id_from_sql(&row.get::<_, String>(0)?, 0)?,
-                row.get::<_, i64>(1)?,
-            ))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .context("reading the trash")
+    .query_map(params![writing, delete::KIND], |row| {
+        Ok((
+            event_id_from_sql(&row.get::<_, String>(0)?, 0)?,
+            row.get::<_, i64>(1)?,
+        ))
+    })?
+    .collect::<rusqlite::Result<Vec<_>>>()
+    .context("reading the trash")
 }
 
 /// Every author the store holds an event from, other than the user.
@@ -973,8 +973,11 @@ mod tests {
         command::save(&tx, &binned, &[us], 200).unwrap();
         command::set_trashed(&tx, &id(&binned), true, 300).unwrap();
 
-        let served = list(&tx, &everything().with_policy(Policy::new(us).for_pubkey(author(9))))
-            .unwrap();
+        let served = list(
+            &tx,
+            &everything().with_policy(Policy::new(us).for_pubkey(author(9))),
+        )
+        .unwrap();
         assert_eq!(served.iter().map(id).collect::<Vec<_>>(), vec![id(&kept)]);
 
         // The user still finds it, under Trash.

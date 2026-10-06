@@ -439,11 +439,12 @@ fn apply_deletion(tx: &Tx<'_>, event: &HashedEvent, at: i64) -> Result<()> {
         return Ok(());
     };
 
-    let named = deletion
-        .ids()
-        .iter()
-        .map(|id| query::get(tx, id))
-        .chain(deletion.addresses().iter().map(|address| query::by_address(tx, address)));
+    let named = deletion.ids().iter().map(|id| query::get(tx, id)).chain(
+        deletion
+            .addresses()
+            .iter()
+            .map(|address| query::by_address(tx, address)),
+    );
 
     let mut targets = Vec::new();
 
@@ -471,7 +472,9 @@ fn apply_deletion(tx: &Tx<'_>, event: &HashedEvent, at: i64) -> Result<()> {
 fn undo_deletion(tx: &Tx<'_>, retracted: &HashedEvent) -> Result<()> {
     let restored = tx
         .prepare_cached("DELETE FROM event_trashed WHERE deletion = ?1 RETURNING event_id")?
-        .query_map(params![retracted.id.to_hex()], |row| row.get::<_, String>(0))?
+        .query_map(params![retracted.id.to_hex()], |row| {
+            row.get::<_, String>(0)
+        })?
         .collect::<rusqlite::Result<Vec<_>>>()
         .with_context(|| format!("undoing deletion {}", retracted.id))?;
 
@@ -483,7 +486,8 @@ fn undo_deletion(tx: &Tx<'_>, retracted: &HashedEvent) -> Result<()> {
         return Ok(());
     };
 
-    let mut forget = tx.prepare_cached("DELETE FROM event_refused WHERE id = ?1 AND by_policy = 0")?;
+    let mut forget =
+        tx.prepare_cached("DELETE FROM event_refused WHERE id = ?1 AND by_policy = 0")?;
 
     for id in deletion.ids() {
         forget
@@ -712,7 +716,10 @@ mod tests {
         );
         save(&tx, &deletion, &[peer()], 20).unwrap();
 
-        assert_eq!(query::trashed(&tx, false).unwrap(), vec![(id(&article), 20)]);
+        assert_eq!(
+            query::trashed(&tx, false).unwrap(),
+            vec![(id(&article), 20)]
+        );
     }
 
     #[test]
@@ -743,12 +750,18 @@ mod tests {
             delete::KIND,
             300,
             "",
-            Tags::new().add("e", [id(&deletion).to_hex()]).add("k", ["5"]),
+            Tags::new()
+                .add("e", [id(&deletion).to_hex()])
+                .add("k", ["5"]),
         );
         save(&tx, &undo, &[peer()], 30).unwrap();
 
         // What the user threw out themselves stays out; the retracted deletion goes in.
-        let trashed: Vec<_> = query::trashed(&tx, false).unwrap().into_iter().map(|(id, _)| id).collect();
+        let trashed: Vec<_> = query::trashed(&tx, false)
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
         assert_eq!(trashed, vec![id(&deletion), id(&thrown_out)]);
         assert!(!query::is_deleted(&tx, &retracted).unwrap());
     }
