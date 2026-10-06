@@ -102,6 +102,8 @@ final class Radio: NSObject {
         guard central.state == .poweredOn else { return }
 
         if on {
+            // Stopping first is what a restart is for: in the background iOS reports each peripheral once per scan.
+            central.stopScan()
             // Duplicates on, which iOS honours only in the foreground: a peer the scheduler queued keeps being seen.
             central.scanForPeripherals(
                 withServices: [service],
@@ -132,6 +134,19 @@ final class Radio: NSObject {
         guard let target = seen[peripheralId] ?? known else { return }
 
         central.connect(target, options: nil)
+    }
+
+    /// Wait for a peer to come back. A CoreBluetooth connect never times out
+    /// and survives suspension, so it is the same call as a dial.
+    func waitFor(_ peripheralId: String) {
+        connect(peripheralId)
+    }
+
+    /// Give up waiting for a peripheral that is not a link.
+    func stopWaiting(_ peripheralId: String) {
+        guard let target = seen[peripheralId], link(for: target) == nil else { return }
+
+        central.cancelPeripheralConnection(target)
     }
 
     func disconnect(_ link: UInt64) {
@@ -222,6 +237,9 @@ final class Radio: NSObject {
     /// Notifies the peripheral queue would not take, oldest first.
     private var pending: [(UInt64, Data)] = []
 
+    /// Peripherals dialed and found not to serve our service, until their disconnect is reported.
+    private var foreign: Set<UUID> = []
+
     // ------------------------------------------------------------ Bookkeeping
 
     private func take() -> UInt64 {
@@ -281,6 +299,7 @@ final class Radio: NSObject {
 protocol RadioDelegate: AnyObject {
     func radio(_ radio: Radio, saw peripheral: String, rssi: Int16)
     func radio(_ radio: Radio, dialFailed peripheral: String)
+    func radio(_ radio: Radio, notOurs peripheral: String)
     func radio(_ radio: Radio, upOn link: UInt64, peripheral: String?, dialer: Bool, mtu: UInt32)
     func radio(_ radio: Radio, downOn link: UInt64)
     func radio(_ radio: Radio, received bytes: Data, on link: UInt64)
@@ -306,11 +325,14 @@ extension Radio: CBCentralManagerDelegate {
 
     func centralManager(_ manager: CBCentralManager, willRestoreState state: [String: Any]) {
         // Relaunched into an encounter. The peripherals are back; the sessions
-        // are not, so each is torn down and met again from the top.
+        // are not, so each connected one is torn down and met again from the top.
         let restored = state[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
 
+        // A connect still pending is a wait for a peer to come back, which is what relaunched us; it stays.
         for target in restored {
-            manager.cancelPeripheralConnection(target)
+            seen[target.identifier.uuidString] = target
+
+            if target.state == .connected { manager.cancelPeripheralConnection(target) }
         }
     }
 
@@ -352,7 +374,11 @@ extension Radio: CBCentralManagerDelegate {
     ) {
         // A dial that connected but never became a link, its service missing or its subscription refused.
         guard let link = link(for: target) else {
-            delegate?.radio(self, dialFailed: target.identifier.uuidString)
+            if foreign.remove(target.identifier) != nil {
+                delegate?.radio(self, notOurs: target.identifier.uuidString)
+            } else {
+                delegate?.radio(self, dialFailed: target.identifier.uuidString)
+            }
             return
         }
 
@@ -366,6 +392,8 @@ extension Radio: CBCentralManagerDelegate {
 extension Radio: CBPeripheralDelegate {
     func peripheral(_ target: CBPeripheral, didDiscoverServices error: Error?) {
         guard let found = target.services?.first(where: { $0.uuid == service }) else {
+            // Apple's overflow area is shared with other apps, so a background iPhone that matched may not be ours.
+            if error == nil { foreign.insert(target.identifier) }
             return central.cancelPeripheralConnection(target)
         }
 

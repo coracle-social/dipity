@@ -74,6 +74,8 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
         fun dialFailed(peripheral: String)
 
+        fun notOurs(peripheral: String)
+
         fun linkUp(link: ULong, peripheral: String?, dialer: Boolean, mtu: UInt)
 
         fun linkDown(link: ULong)
@@ -128,6 +130,12 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
     /** The server socket each publishing link is waiting for its peer on. */
     private val listening = mutableMapOf<ULong, BluetoothServerSocket>()
+
+    /** Standing connects waiting for a peer that walked away, by device address. */
+    private val awaiting = mutableMapOf<String, BluetoothGatt>()
+
+    /** Devices dialed and found not to serve our service, until their disconnect is reported. */
+    private val foreign = mutableSetOf<String>()
 
     /** The ATT MTU each connection negotiated, by device address, until its link is made. */
     private val negotiated = mutableMapOf<String, Int>()
@@ -221,7 +229,13 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
         if (on) {
             scanner.startScan(
-                listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(service)).build()),
+                listOf(
+                    ScanFilter.Builder().setServiceUuid(ParcelUuid(service)).build(),
+                    // An iPhone with the app in the background moves the service UUID into this.
+                    ScanFilter.Builder()
+                        .setManufacturerData(APPLE, byteArrayOf(OVERFLOW), byteArrayOf(0xFF.toByte()))
+                        .build(),
+                ),
                 ScanSettings.Builder()
                     .setScanMode(
                         if (foreground) ScanSettings.SCAN_MODE_LOW_LATENCY
@@ -281,8 +295,22 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     fun connect(peripheral: String) = confined {
         val device = seen[peripheral] ?: return@confined
 
+        // A direct dial is faster than a standing one, so it takes over.
+        awaiting.remove(peripheral)?.close()
         device.connectGatt(context, false, client, BluetoothDevice.TRANSPORT_LE)
     }
+
+    /** Wait for a peer to come back: an auto-connect does not time out, and the stack keeps it. */
+    fun waitFor(peripheral: String) = confined {
+        if (awaiting.containsKey(peripheral)) return@confined
+
+        val device = seen[peripheral] ?: adapter?.getRemoteDevice(peripheral) ?: return@confined
+
+        awaiting[peripheral] = device.connectGatt(context, true, client, BluetoothDevice.TRANSPORT_LE)
+    }
+
+    /** Give up waiting for a peripheral. */
+    fun stopWaiting(peripheral: String) = confined { awaiting.remove(peripheral)?.close() }
 
     fun disconnect(link: ULong) = confined {
         val held = links[link]
@@ -360,6 +388,8 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         advertise(false)
         links.keys.toList().forEach(::disconnect)
         bulk.keys.toList().forEach(::forget)
+        awaiting.values.forEach(BluetoothGatt::close)
+        awaiting.clear()
         server?.close()
         server = null
     }
@@ -532,6 +562,11 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, state: Int) =
                 confined {
+                    val address = gatt.device.address
+
+                    // A wait that connected is a dial from here on, and one that ended is over.
+                    if (awaiting[address] === gatt) awaiting.remove(address)
+
                     if (state == BluetoothProfile.STATE_CONNECTED) {
                         // The MTU is negotiated before the service is used, so
                         // the fragment size the core is told is the one it gets.
@@ -540,8 +575,10 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                         val link = linkFor(gatt)
 
                         // No link means the dial never came up, which the scheduler retries shortly.
-                        if (link == null) {
-                            delegate.dialFailed(gatt.device.address)
+                        if (link == null && foreign.remove(address)) {
+                            delegate.notOurs(address)
+                        } else if (link == null) {
+                            delegate.dialFailed(address)
                         } else {
                             forget(link)
                             delegate.linkDown(link)
@@ -561,7 +598,12 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                 val found = gatt.getService(service)?.getCharacteristic(characteristicId)
                 val subscription = found?.getDescriptor(CLIENT_CONFIGURATION)
 
-                if (found == null || subscription == null) return@confined gatt.disconnect()
+                if (found == null || subscription == null) {
+                    // Apple's overflow area is shared with other apps, so a matched iPhone may not be ours.
+                    if (status == BluetoothGatt.GATT_SUCCESS) foreign.add(gatt.device.address)
+
+                    return@confined gatt.disconnect()
+                }
 
                 gatt.setCharacteristicNotification(found, true)
                 gatt.writeDescriptor(subscription, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
@@ -668,6 +710,17 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         }
 
     private companion object {
+        /** Apple's Bluetooth company identifier, under which iOS puts its overflow area. */
+        const val APPLE = 0x004C
+
+        /**
+         * The manufacturer-data type of iOS's overflow area: a bitmask with one
+         * bit per backgrounded service UUID. Which bit is ours is undocumented,
+         * so any overflow advertisement matches and the core sets aside
+         * whatever turns out not to be ours.
+         */
+        const val OVERFLOW: Byte = 0x01
+
         /** The client characteristic configuration descriptor, as BLE fixes it. */
         val CLIENT_CONFIGURATION: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 

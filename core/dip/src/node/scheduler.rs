@@ -60,6 +60,16 @@ pub(crate) const DUPLICATE_BACKOFF_SECONDS: i64 = 5 * 60;
 /// `docs/discovery.md#connection-scheduling`.
 pub(crate) const HARVESTED_BACKOFF_SECONDS: i64 = CANDIDATE_TTL_SECONDS;
 
+/// How long a peripheral that turned out not to serve our service is left
+/// alone, which is until its address rotates. An iPhone with the app in the
+/// background is matched only by Apple's overflow area, which other apps
+/// share. `docs/discovery.md#connection-scheduling`.
+pub(crate) const NOT_OURS_BACKOFF_SECONDS: i64 = CANDIDATE_TTL_SECONDS;
+
+/// How long the radio waits for a peer that walked away to come back before
+/// giving up, which is until its address rotates and it cannot.
+pub(crate) const AWAIT_SECONDS: i64 = CANDIDATE_TTL_SECONDS;
+
 /// How long a sighting stays a candidate. A peripheral id rotates about every
 /// fifteen minutes, so one older than that names a device nobody can reach.
 pub(crate) const CANDIDATE_TTL_SECONDS: i64 = 15 * 60;
@@ -81,6 +91,8 @@ pub struct Scheduler {
     linked: BTreeSet<PeripheralId>,
     /// When the last connect attempt went out, for the global rate limit.
     last_attempt: Option<i64>,
+    /// Peers the radio is waiting for to come back, by when it started.
+    awaiting: BTreeMap<PeripheralId, i64>,
 }
 
 /// One advertised peripheral, as last heard.
@@ -115,7 +127,8 @@ enum Tier {
     /// A peer the core dropped: policy blocks it, its consent gate lapsed, or
     /// its frames stopped being ones the wire could carry.
     Refused,
-    /// A peer the user declined at the consent gate.
+    /// A peer the user declined at the consent gate, or a device that does
+    /// not run the app.
     Declined,
 }
 
@@ -152,6 +165,7 @@ impl Scheduler {
     /// A dial came up, so it no longer holds a slot as a pending one.
     pub fn connected(&mut self, peripheral: &PeripheralId) {
         self.dialing.remove(peripheral);
+        self.awaiting.remove(peripheral);
         self.linked.insert(peripheral.clone());
     }
 
@@ -279,6 +293,33 @@ impl Scheduler {
     pub fn harvested(&mut self, peripheral: &PeripheralId) {
         self.linked.remove(peripheral);
         self.record(peripheral, Tier::Declined, HARVESTED_BACKOFF_SECONDS);
+    }
+
+    /// The radio is waiting for a peer that walked away, which is a standing
+    /// connect rather than a dial, so it spends no link slot until it lands.
+    pub fn awaiting(&mut self, peripheral: &PeripheralId) {
+        self.awaiting.insert(peripheral.clone(), clock::now());
+    }
+
+    /// The waits that have outlasted the peer's address, which the radio
+    /// should give up.
+    pub fn lapsed_waits(&mut self) -> Vec<PeripheralId> {
+        let now = clock::now();
+        let (lapsed, waiting) = std::mem::take(&mut self.awaiting)
+            .into_iter()
+            .partition(|(_, at)| now - *at >= AWAIT_SECONDS);
+
+        self.awaiting = waiting;
+
+        lapsed.into_keys().collect()
+    }
+
+    /// A peripheral that turned out not to serve our service: leave it alone
+    /// until its address rotates.
+    pub fn not_ours(&mut self, peripheral: &PeripheralId) {
+        self.dialing.remove(peripheral);
+        self.awaiting.remove(peripheral);
+        self.record(peripheral, Tier::Declined, NOT_OURS_BACKOFF_SECONDS);
     }
 
     /// A peer whose gate was refused: leave them alone.

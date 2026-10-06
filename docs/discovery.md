@@ -6,7 +6,7 @@ How peers find each other, decide to connect, identify each other, and decide wh
 
 The BLE advertisement is a bare presence beacon: our service UUID and nothing else. iOS imposes this: there is no payload to put an identifier in once the app is backgrounded.
 
-When an iOS app advertises in the background, the local name and service data are stripped, and the 128-bit service UUID moves to the "overflow" area — readable only by another iOS device explicitly scanning for that exact UUID. In the background-to-background case, which is the case that matters, there is no payload to read. Any scheme that puts a resolvable identifier in the advertisement works in the foreground and silently stops working in the pocket.
+When an iOS app advertises in the background, the local name and service data are stripped, and the 128-bit service UUID moves to the "overflow" area: Apple manufacturer data of type `0x01`, a bitmask with one bit per backgrounded service. iOS matches it against a scan for that exact UUID. Android cannot, and which bit is ours is undocumented, so an Android scan matches every overflow advertisement and a dial that finds no service of ours sets that device aside until its address rotates. In the background-to-background case, which is the case that matters, there is no payload to read. Any scheme that puts a resolvable identifier in the advertisement works in the foreground and silently stops working in the pocket.
 
 Bluetooth's own answer (Resolvable Private Addresses with a shared IRK) is also unavailable: it operates at the address layer, requires bonding, and CoreBluetooth never exposes peer MAC addresses to apps — you get a per-app `CBPeripheral` identifier instead.
 
@@ -30,6 +30,9 @@ Attempts are rate-limited, candidates are ordered by RSSI so the nearest strange
 - A peer stays queued after it is dialed, so a dropped link is redialed when its backoff lapses without waiting for the radio to report the peer again.
 - Two phones that dial each other end up with two links to one person. Both keep the one the lower pubkey dialed and close the other, which needs no message between them.
 - A peripheral that took a disclosure and left before syncing is not redialed until its address rotates, so a harvester cannot drain the [disclosure bucket](./policy.md#discoverability) by being dialed again.
+- A peer that synced and then walked away is waited for: a standing connect that does not time out and survives the app being suspended, `connect` on iOS and an auto-connect on Android, given up once the peer's address has rotated. A suspended iPhone runs no timer, so without one a peer coming back is reached only if somebody happens to scan. A link that never synced gets no wait, since a peer that refused us would be reconnected the moment it was back.
+- A walk-away in the background restarts the scan, because iOS reports each peripheral once per scan there and a peer it already reported would otherwise never be seen again.
+- A Bluetooth relaunch keeps the connects still pending and tears down only the connected peripherals, whose sessions did not survive.
 - A teardown this device decided is not a walk-away and does not recover fast. Policy blocking the peer, a consent gate lapsing, a frame the wire cannot carry: redialing in fifteen seconds only reaches the same refusal, so it waits a minute. A gate the user refused outright waits longer still.
 
 bitchat's `BLEConnectionScheduler.swift` is the reference for this.

@@ -188,6 +188,8 @@ object Encounters : Radio.Delegate {
                 is Action.Scan -> radio.scan(action.on)
                 is Action.Advertise -> radio.advertise(action.on)
                 is Action.Connect -> radio.connect(action.peripheral.value)
+                is Action.WaitFor -> radio.waitFor(action.peripheral.value)
+                is Action.StopWaiting -> radio.stopWaiting(action.peripheral.value)
                 is Action.Disconnect -> {
                     // The view hears about a link the core ended as it does about one the radio lost.
                     radio.disconnect(action.link.value)
@@ -286,6 +288,8 @@ object Encounters : Radio.Delegate {
     }
 
     override fun dialFailed(peripheral: String) = drive { it.dialFailed(PeripheralId(peripheral)) }
+
+    override fun notOurs(peripheral: String) = drive { it.notOurs(PeripheralId(peripheral)) }
 
     /** The app came to the front or left it, which the radio's modes and the gate both follow. */
     fun foreground(on: Boolean) {

@@ -674,6 +674,12 @@ impl Session {
         Ok(())
     }
 
+    /// Whether the two ever synced on this link.
+    #[must_use]
+    pub fn synced(&self) -> bool {
+        self.synced
+    }
+
     /// Whether a stranger was told who this device is and left before the two
     /// synced, which is what a harvester does.
     #[must_use]

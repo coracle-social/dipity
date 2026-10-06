@@ -78,12 +78,24 @@ pub const TRASH_SECONDS: i64 = 7 * 86_400;
 /// Something the shell does on the core's behalf.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    /// Start or stop scanning for our service UUID.
+    /// Start or stop scanning for our service UUID. Asked again while
+    /// scanning, the scan restarts, which makes a platform that reports each
+    /// peripheral once in the background report them afresh.
     Scan(bool),
     /// Start or stop advertising it.
     Advertise(bool),
     /// Dial a peripheral the scheduler admitted.
     Connect(PeripheralId),
+    /// Wait for a peer that walked away to come back, and connect when it does.
+    ///
+    /// A standing connect that does not time out and survives the app being
+    /// suspended, which is what reaches a peer when no scan or tick would.
+    /// Answered like a [`Connect`](Self::Connect), with
+    /// [`Node::link_up`] naming the peripheral. A later `Connect` to the same
+    /// one supersedes it. `docs/discovery.md#connection-scheduling`.
+    WaitFor(PeripheralId),
+    /// Give up waiting for a peripheral, whose address has rotated.
+    StopWaiting(PeripheralId),
     /// Tear a link down.
     Disconnect(LinkId),
     /// Write one fragment, already sized to the link's MTU.
@@ -320,6 +332,15 @@ impl Node {
         self.collect()
     }
 
+    /// A dial reached a device that does not serve our service, which matching
+    /// Apple's overflow area does now and then. It is left alone until its
+    /// address rotates.
+    pub fn not_ours(&mut self, peripheral: &PeripheralId) -> Vec<Action> {
+        self.scheduler.not_ours(peripheral);
+
+        self.collect()
+    }
+
     /// A GATT connection came up, with the MTU the link negotiated.
     ///
     /// `peripheral` is the one this device dialed, so the scheduler can grade
@@ -526,6 +547,13 @@ impl Node {
             self.radio_started = true;
             actions.extend([Action::Scan(true), Action::Advertise(true)]);
         }
+
+        actions.extend(
+            self.scheduler
+                .lapsed_waits()
+                .into_iter()
+                .map(Action::StopWaiting),
+        );
 
         // A queued candidate may now be past its rate limit, its backoff, or the link cap.
         if let Some(peripheral) = self.scheduler.next_dial(self.central_links(), &self.busy()) {
@@ -916,15 +944,24 @@ impl Node {
             actions.extend(writes(session));
         }
 
-        let closed: Vec<(LinkId, Ending, bool)> = self
+        let closed: Vec<(LinkId, Ending, bool, bool)> = self
             .sessions
             .iter()
             .filter(|(_, session)| session.state == State::Closed)
-            .map(|(link, session)| (*link, session.ending, session.was_harvested()))
+            .map(|(link, session)| {
+                (
+                    *link,
+                    session.ending,
+                    session.was_harvested(),
+                    session.synced(),
+                )
+            })
             .collect();
 
+        let mut rescan = false;
+
         // Every teardown passes through here, so grading is one decision.
-        for (link, ending, harvested) in closed {
+        for (link, ending, harvested, synced) in closed {
             self.sessions.remove(&link);
 
             let duplicate = self.duplicates.remove(&link);
@@ -933,12 +970,27 @@ impl Node {
                 match ending {
                     _ if duplicate => self.scheduler.duplicate(&peripheral),
                     _ if harvested => self.scheduler.harvested(&peripheral),
-                    Ending::WalkedAway => self.scheduler.walked_away(&peripheral),
+                    Ending::WalkedAway => {
+                        self.scheduler.walked_away(&peripheral);
+
+                        // Only a peer that synced is worth a standing connect: one that refused us would loop.
+                        if synced {
+                            self.scheduler.awaiting(&peripheral);
+                            actions.push(Action::WaitFor(peripheral));
+                        }
+
+                        rescan |= self.presence != Some(Presence::Foreground);
+                    }
                     Ending::Refused => self.scheduler.refused(&peripheral),
                 }
             }
 
             actions.push(Action::Disconnect(link));
+        }
+
+        // A suspended phone gets no tick to redial from, so a fresh scan is what brings the peer back to it.
+        if rescan && self.radio_started {
+            actions.push(Action::Scan(true));
         }
 
         if let Some(deadline) = self.sessions.values().map(Session::deadline).min() {
@@ -1197,7 +1249,12 @@ impl Node {
             && event.pubkey == self.identity
         {
             for deletion in query::deletions(&self.db, &event)? {
-                db_command::publish_event(&self.db, &retraction(&deletion, now), &self.identity, now)?;
+                db_command::publish_event(
+                    &self.db,
+                    &retraction(&deletion, now),
+                    &self.identity,
+                    now,
+                )?;
             }
         }
 
@@ -1795,6 +1852,69 @@ mod tests {
     }
 
     #[test]
+    fn a_peer_that_synced_and_walked_away_in_the_background_is_waited_for() {
+        let mut one = node();
+        let mut two = node();
+
+        one.notify_foregrounded();
+        two.notify_foregrounded();
+
+        clock::at(1_000, || {
+            one.tick();
+            one.peripheral_seen(&peripheral(1), -60);
+            two.link_up(LinkId(1), None, Role::Receiver, 4096).unwrap();
+            let opening = one
+                .link_up(LinkId(1), Some(peripheral(1)), Role::Dialer, 4096)
+                .unwrap();
+            settle(&mut one, &mut two, opening);
+            one.notify_backgrounded();
+        });
+
+        let gone = clock::at(1_100, || one.link_down(LinkId(1)));
+
+        assert!(gone.contains(&Action::WaitFor(peripheral(1))));
+        assert!(gone.contains(&Action::Scan(true)));
+
+        // Once its address has rotated, the peer cannot come back under it.
+        let later = clock::at(1_100 + scheduler::AWAIT_SECONDS, || one.tick());
+
+        assert!(later.contains(&Action::StopWaiting(peripheral(1))));
+    }
+
+    #[test]
+    fn a_link_that_never_synced_is_not_waited_for() {
+        let mut node = node();
+
+        clock::at(1_000, || {
+            node.peripheral_seen(&peripheral(1), -60);
+            node.link_up(LinkId(1), Some(peripheral(1)), Role::Dialer, 4096)
+                .unwrap();
+
+            assert!(
+                !node
+                    .link_down(LinkId(1))
+                    .contains(&Action::WaitFor(peripheral(1)))
+            );
+        });
+    }
+
+    #[test]
+    fn a_device_that_is_not_ours_is_left_alone_until_its_address_rotates() {
+        let mut node = node();
+
+        clock::at(1_000, || {
+            node.peripheral_seen(&peripheral(1), -60);
+            node.not_ours(&peripheral(1));
+        });
+
+        let soon = clock::at(1_000 + scheduler::NEVER_ANSWERED_BACKOFF_SECONDS, || {
+            node.peripheral_seen(&peripheral(1), -60)
+        });
+
+        assert!(!soon.contains(&Action::Connect(peripheral(1))));
+    }
+
+    #[test]
     fn two_phones_that_dialed_each_other_keep_the_same_one_link() {
         let mut one = node();
         let mut two = node();
@@ -2049,7 +2169,10 @@ mod tests {
         db_command::receive_event(&db, &theirs, &[author(3)], 100).unwrap();
         db_command::receive_event(&db, &deletion, &[author(3)], 200).unwrap();
 
-        assert_eq!(query::trashed_writing(&db).unwrap(), vec![(theirs.id, 200, true)]);
+        assert_eq!(
+            query::trashed_writing(&db).unwrap(),
+            vec![(theirs.id, 200, true)]
+        );
         assert!(node.restore(&theirs.id).is_err());
         assert_eq!(query::trashed(&db).unwrap().len(), 1);
     }

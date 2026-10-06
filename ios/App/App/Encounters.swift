@@ -150,6 +150,10 @@ final class Encounters {
                 radio.advertise(on)
             case .connect(let peripheral):
                 radio.connect(peripheral.value)
+            case .waitFor(let peripheral):
+                radio.waitFor(peripheral.value)
+            case .stopWaiting(let peripheral):
+                radio.stopWaiting(peripheral.value)
             case .disconnect(let link):
                 // The view hears about a link the core ended as it does about one the radio lost.
                 radio.disconnect(link.value)
@@ -243,6 +247,10 @@ extension Encounters: RadioDelegate {
 
     func radio(_ radio: Radio, dialFailed peripheral: String) {
         drive { try $0.dialFailed(peripheral: PeripheralId(value: peripheral)) }
+    }
+
+    func radio(_ radio: Radio, notOurs peripheral: String) {
+        drive { try $0.notOurs(peripheral: PeripheralId(value: peripheral)) }
     }
 
     func radio(_ radio: Radio, upOn link: UInt64, peripheral: String?, dialer: Bool, mtu: UInt32) {

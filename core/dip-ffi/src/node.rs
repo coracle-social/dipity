@@ -97,6 +97,17 @@ pub enum Action {
         /// The peripheral to dial.
         peripheral: PeripheralId,
     },
+    /// Wait for a peer that walked away to come back, with a connect that does
+    /// not time out and survives suspension. A later `Connect` supersedes it.
+    WaitFor {
+        /// The peripheral to wait for.
+        peripheral: PeripheralId,
+    },
+    /// Give up waiting for a peripheral, whose address has rotated.
+    StopWaiting {
+        /// The peripheral to stop waiting for.
+        peripheral: PeripheralId,
+    },
     /// Tear a link down.
     Disconnect {
         /// The link to drop.
@@ -373,6 +384,12 @@ impl Node {
     /// A dial failed before a link came up. The core retries it shortly.
     pub fn dial_failed(&self, peripheral: PeripheralId) -> Result<Vec<Action>, NodeError> {
         drive!(self, |node| node.dial_failed(&peripheral.into()))
+    }
+
+    /// A dial reached a device that does not serve our service. The core
+    /// leaves it alone until its address rotates.
+    pub fn not_ours(&self, peripheral: PeripheralId) -> Result<Vec<Action>, NodeError> {
+        drive!(self, |node| node.not_ours(&peripheral.into()))
     }
 
     /// A GATT connection came up, with the MTU the link negotiated.
@@ -706,6 +723,12 @@ impl From<CoreAction> for Action {
             CoreAction::Scan(on) => Self::Scan { on },
             CoreAction::Advertise(on) => Self::Advertise { on },
             CoreAction::Connect(peripheral) => Self::Connect {
+                peripheral: peripheral.into(),
+            },
+            CoreAction::WaitFor(peripheral) => Self::WaitFor {
+                peripheral: peripheral.into(),
+            },
+            CoreAction::StopWaiting(peripheral) => Self::StopWaiting {
                 peripheral: peripheral.into(),
             },
             CoreAction::Disconnect(link) => Self::Disconnect { link: link.into() },

@@ -16,16 +16,16 @@
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
-		D1B0BB0700000000000000A7 /* Bulk.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0700000000000000A7 /* Bulk.swift */; };
 		D1B0BB0100000000000000A1 /* DipPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0100000000000000A1 /* DipPlugin.swift */; };
 		D1B0BB0200000000000000A2 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0200000000000000A2 /* Keychain.swift */; };
 		D1B0BB0300000000000000A3 /* Lifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0300000000000000A3 /* Lifecycle.swift */; };
 		D1B0BB03000000000000E0C1 /* Encounters.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA03000000000000E0C1 /* Encounters.swift */; };
+		D1B0BB0400000000000000A4 /* Radio.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0400000000000000A4 /* Radio.swift */; };
 		D1B0BB04000000000000E0C1 /* BridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA04000000000000E0C1 /* BridgeViewController.swift */; };
+		D1B0BB0500000000000000A5 /* dip_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0500000000000000A5 /* dip_ffi.swift */; };
 		D1B0BB05000000000000E0C1 /* Alerts.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA05000000000000E0C1 /* Alerts.swift */; };
 		D1B0BB0600000000000000A6 /* Logging.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0600000000000000A6 /* Logging.swift */; };
-		D1B0BB0400000000000000A4 /* Radio.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0400000000000000A4 /* Radio.swift */; };
-		D1B0BB0500000000000000A5 /* dip_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0500000000000000A5 /* dip_ffi.swift */; };
+		D1B0BB0700000000000000A7 /* Bulk.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B0AA0700000000000000A7 /* Bulk.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,16 +40,16 @@
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
 		9582B6822FE993A50072D4E8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
-		D1B0AA0700000000000000A7 /* Bulk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bulk.swift; sourceTree = "<group>"; };
 		D1B0AA0100000000000000A1 /* DipPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DipPlugin.swift; sourceTree = "<group>"; };
 		D1B0AA0200000000000000A2 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
 		D1B0AA0300000000000000A3 /* Lifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lifecycle.swift; sourceTree = "<group>"; };
 		D1B0AA03000000000000E0C1 /* Encounters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Encounters.swift; sourceTree = "<group>"; };
+		D1B0AA0400000000000000A4 /* Radio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Radio.swift; sourceTree = "<group>"; };
 		D1B0AA04000000000000E0C1 /* BridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeViewController.swift; sourceTree = "<group>"; };
+		D1B0AA0500000000000000A5 /* dip_ffi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = dip_ffi.swift; path = Generated/dip_ffi.swift; sourceTree = "<group>"; };
 		D1B0AA05000000000000E0C1 /* Alerts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Alerts.swift; sourceTree = "<group>"; };
 		D1B0AA0600000000000000A6 /* Logging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logging.swift; sourceTree = "<group>"; };
-		D1B0AA0400000000000000A4 /* Radio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Radio.swift; sourceTree = "<group>"; };
-		D1B0AA0500000000000000A5 /* dip_ffi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = dip_ffi.swift; path = Generated/dip_ffi.swift; sourceTree = "<group>"; };
+		D1B0AA0700000000000000A7 /* Bulk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bulk.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -366,6 +366,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = S26U9DYW3A;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -387,10 +388,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = social.coracle.dipity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
-				SWIFT_INCLUDE_PATHS = (
-					"$(inherited)",
-					"$(SRCROOT)/App/Generated",
-				);
+				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/App/Generated";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -402,6 +400,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = S26U9DYW3A;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -422,10 +421,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = social.coracle.dipity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
-				SWIFT_INCLUDE_PATHS = (
-					"$(inherited)",
-					"$(SRCROOT)/App/Generated",
-				);
+				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/App/Generated";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
