@@ -470,6 +470,17 @@ export const heldEventOf = (id: string): Readable<EventDetail["event"] | null | 
     undefined,
   )
 
+/** The id of the current event at an address, live: `null` when this device holds none. */
+export const heldAtAddress = (kind: number, pubkey: string, identifier: string) =>
+  answering(
+    derived(storedEvents, revision => ({kind, pubkey, identifier, revision})),
+    () =>
+      eventsOf({
+        filter: JSON.stringify({kinds: [kind], authors: [pubkey], "#d": [identifier], limit: 1}),
+      }).then(([event]) => event?.id ?? null),
+    undefined as string | null | undefined,
+  )
+
 /**
  * The page a card opens, which is its own only when it is about nothing else.
  *

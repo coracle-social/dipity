@@ -3,6 +3,7 @@
   import MapPin from "@lucide/svelte/icons/map-pin"
   import {EVENT_DATE, EVENT_TIME, GENERIC_REPOST, LONG_FORM, POLL, REPOST} from "@welshman/util"
   import Poll from "$lib/components/Poll.svelte"
+  import Prose from "$lib/components/Prose.svelte"
   import Quoted from "$lib/components/Quoted.svelte"
   import {article, boostedBy, calendarFor, commentedOn, occasionOf} from "$lib/kinds"
   import type {Item, Standing} from "$lib/data/feed"
@@ -26,11 +27,11 @@
 
   const {event} = $derived(item)
 
-  const paragraphs = (content: string) =>
+  const firstLine = (content: string) =>
     content
       .split("\n")
       .map(line => line.trim())
-      .filter(Boolean)
+      .find(Boolean) ?? ""
 
   const occasion = $derived.by(() => {
     if (event.kind !== EVENT_DATE && event.kind !== EVENT_TIME) return undefined
@@ -62,9 +63,7 @@
   {/if}
 {:else if about}
   <!-- A comment reaches people who never got its subject, so its own words come first. -->
-  {#each paragraphs(event.content) as line, index (index)}
-    <p class="text-sm text-pretty {index ? 'mt-1.5' : ''}">{line}</p>
-  {/each}
+  <Prose {event} />
   <div class="mt-2">
     <Quoted id={about} {social} absent="The post this replies to isn't on this phone." />
   </div>
@@ -84,7 +83,7 @@
       </p>
     {/if}
     {#if detailed && event.content}
-      <p class="mt-2 text-sm text-pretty">{event.content}</p>
+      <Prose class="mt-2" {event} />
     {/if}
   </div>
 {:else if event.kind === POLL}
@@ -95,14 +94,10 @@
     <p class="mt-1 text-sm text-pretty text-muted-foreground italic">{written.summary()}</p>
   {/if}
   {#if detailed}
-    {#each paragraphs(event.content) as line, index (index)}
-      <p class="mt-2 text-sm text-pretty">{line}</p>
-    {/each}
+    <Prose class="mt-2" gap="mt-2" {event} />
   {:else}
-    <p class="mt-1 line-clamp-2 text-sm text-pretty">{paragraphs(event.content)[0] ?? ""}</p>
+    <p class="mt-1 line-clamp-2 text-sm text-pretty">{firstLine(event.content)}</p>
   {/if}
 {:else}
-  {#each paragraphs(event.content) as line, index (index)}
-    <p class="text-sm text-pretty {index ? 'mt-1.5' : ''}">{line}</p>
-  {/each}
+  <Prose {event} />
 {/if}

@@ -6,6 +6,7 @@
   import Byline from "$lib/components/Byline.svelte"
   import EmptyState from "$lib/components/EmptyState.svelte"
   import ItemCard from "$lib/components/ItemCard.svelte"
+  import Prose from "$lib/components/Prose.svelte"
   import Quoted from "$lib/components/Quoted.svelte"
   import {bookmarked} from "$lib/data/bookmarks"
   import {social} from "$lib/data/contacts"
@@ -101,7 +102,7 @@
             <Byline social={$social} pubkey={said.pubkey} />
           {/if}
         </div>
-        <p class="mt-1 text-sm text-pretty">{said.content}</p>
+        <Prose class="mt-1" event={said} />
       </li>
     {/each}
   </ul>
