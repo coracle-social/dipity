@@ -4,10 +4,9 @@
 
   // Unknown is the system not having said yet, which is not worth alarming anyone over.
   const said: Record<string, string> = {
-    off: "Bluetooth is off, so nothing can reach this phone. Turn it on to start meeting people.",
-    denied:
-      "Dipity doesn't have permission to use Bluetooth. Turn it on in settings to start meeting people.",
-    unsupported: "This phone doesn't seem to have Bluetooth. Dipity probably won't work for you.",
+    off: "Turn on Bluetooth to trade posts with phones nearby.",
+    denied: "Allow Dipity to use Bluetooth in your phone's settings.",
+    unsupported: "This phone doesn't seem to have Bluetooth, which Dipity needs.",
   }
 </script>
 

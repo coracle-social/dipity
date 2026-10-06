@@ -75,7 +75,7 @@
     </div>
 
     <p class="mt-2 text-sm text-pretty text-muted-foreground">
-      Bookmarked posts stay on this phone until you remove the bookmark.
+      Bookmarked activity stays on this phone until you remove it.
     </p>
 
     <div class="mt-3 space-y-3">
@@ -108,8 +108,7 @@
     </div>
 
     <p class="mt-2 text-sm text-pretty text-muted-foreground">
-      Posts in the trash are deleted from this phone after 7 days. Trashing your own post asks
-      everyone who has it to delete it right away, and putting it back asks them to restore it.
+      Trashed activity is automatically deleted after 7 days.
     </p>
 
     {#if $trashedItems.length > 0}

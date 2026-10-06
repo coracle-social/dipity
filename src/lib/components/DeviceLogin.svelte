@@ -30,8 +30,7 @@
 
 {#if $step.at === "idle"}
   <p class="max-w-prose text-sm text-pretty text-muted-foreground">
-    Put your key on another phone so both phones post as you. Pair with the other phone first, then
-    pick it here.
+    Pair with your other phone first, then pick it here to give it your key.
   </p>
 
   <ul class="mt-6 space-y-2">
@@ -54,13 +53,12 @@
 
   {#if $links.length === 0}
     <EmptyState icon={BluetoothSearching}>
-      No phones in range. Open Dipity on the other phone and hold the two phones together. It
-      appears here once they connect.
+      Open Dipity on your other phone and hold the two together.
     </EmptyState>
   {/if}
 
   <p class="mt-2 text-xs text-pretty text-muted-foreground">
-    The phone you pick gets your key. Only pick your own phone.
+    Only pick your own phone, because it gets your key.
   </p>
 {:else if $step.at === "offering"}
   <p class="py-10 text-sm text-pretty text-muted-foreground">
@@ -68,8 +66,7 @@
   </p>
 {:else if $step.at === "comparing"}
   <p class="max-w-prose text-sm text-pretty text-muted-foreground">
-    Check that both phones show the same six digits. If they match, the phones are connected
-    directly to each other.
+    Check that both phones show the same six digits.
   </p>
 
   <p class="my-8 text-center font-mono text-4xl font-semibold tabular-nums">
@@ -78,12 +75,12 @@
 
   {#if $step.source}
     <p class="max-w-prose text-sm text-pretty text-muted-foreground">
-      If the digits match, that phone gets your key and can post as you. This can't be undone.
+      If they match, that phone gets your key for good.
     </p>
   {:else}
     <p class="max-w-prose text-sm text-pretty text-destructive">
-      If the digits match, this phone switches to the other phone's key. Everything on this phone,
-      including the names you gave people and your bookmarks, is erased.
+      If they match, this phone switches to the other phone's key and erases everything on it,
+      including your names for people and your bookmarks.
     </p>
   {/if}
 
@@ -111,7 +108,7 @@
   <Button class="mt-8" size="lg" onclick={back}>Done</Button>
 {:else if $step.at === "refused"}
   <p class="py-10 text-sm text-pretty text-muted-foreground">
-    No key was transferred. One of the phones declined, or they went out of range.
+    No key was transferred, because a phone declined or went out of range.
   </p>
 
   <Button size="lg" onclick={back}>Done</Button>

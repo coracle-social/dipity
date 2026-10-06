@@ -62,7 +62,7 @@
     {hidden
       ? "No categories are selected."
       : searching
-        ? "No posts on this phone match that."
-        : "No posts yet. Posts arrive when you are near other people."}
+        ? "No matching activity found."
+        : "No activity yet. Posts arrive when you are near other people."}
   </EmptyState>
 {/if}

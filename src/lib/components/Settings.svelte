@@ -54,8 +54,7 @@
     {
       id: "visibility",
       label: "What others are allowed to see",
-      detail:
-        "Who may see your notes and the names you give people. Your trust list goes only to people you trust, who can pass it on once if you let them. Your bookmarks stay on this phone.",
+      detail: "Who may see your notes and the names you give people.",
       scopes: ["trusted", "network", "lenient"] as Scope[],
       on: $policy?.visibility.default,
       set: setVisibility,
@@ -132,7 +131,7 @@
   <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Being found</h2>
 
   <p class="mt-2 text-sm text-pretty text-muted-foreground">
-    Your phone exchanges posts with phones nearby, even while it's in your pocket.
+    Your phone trades posts with phones nearby, and each stranger it meets learns who you are.
   </p>
 
   <div class="mt-4 space-y-5">
@@ -142,9 +141,7 @@
           Allow discovery when the app is closed
         </Label>
         <p class="mt-0.5 text-xs text-pretty text-muted-foreground">
-          Each stranger your phone meets learns who you are and where you were. With Dipity open, it
-          meets anyone nearby. With it closed, it meets a few strangers a day if this is on, and
-          asks you first if it's off. People you've paired with or trust are always met.
+          With this off, strangers wait for your approval while Dipity is closed.
         </p>
       </div>
       <Switch
@@ -167,8 +164,7 @@
         </InputGroup.Addon>
       </InputGroup.Root>
       <p class="text-xs text-pretty text-muted-foreground">
-        Counted from when a post first reached you, however old the post is. Once it's gone, your
-        phone won't take it back. Your own posts and your bookmarks don't expire.
+        Counted from when each post reached you, and your own posts and bookmarks never expire.
       </p>
     </div>
   </div>
@@ -196,8 +192,7 @@
 
 {#if $permission === "denied"}
   <p class="mt-3 text-xs text-pretty text-destructive">
-    Notifications are turned off for Dipity. Allow them in your phone's settings, then turn these
-    back on.
+    Notifications are off for Dipity in your phone's settings.
   </p>
 {/if}
 
@@ -206,16 +201,11 @@
 <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Your key</h2>
 
 <p class="mt-2 text-sm text-pretty text-muted-foreground">
-  Your key is who you are on Dipity. It lives on this phone, and nobody can recover it for you.
+  Your key is who you are on Dipity, and nobody can recover it if you lose this phone.
 </p>
 
 <div class="mt-4 space-y-4">
-  <div>
-    <KeyBackup />
-    <p class="mt-1.5 text-xs text-pretty text-muted-foreground">
-      Save a copy, so losing this phone doesn't lose your identity.
-    </p>
-  </div>
+  <KeyBackup />
 
   <div>
     <Button class="w-full" variant="secondary" onclick={() => go({at: "device"})}>
@@ -223,7 +213,7 @@
       Use this key on another phone
     </Button>
     <p class="mt-1.5 text-xs text-pretty text-muted-foreground">
-      Both phones post as you. The two phones need to be together.
+      Hold both phones together, and both will post as you.
     </p>
   </div>
 </div>

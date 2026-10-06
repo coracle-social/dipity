@@ -111,7 +111,5 @@
     <EmptyState icon={MessagesSquare}>No comments yet.</EmptyState>
   {/if}
 {:else}
-  <EmptyState icon={SearchX}>
-    This post isn't on this phone. Posts are deleted after a while unless you bookmark them.
-  </EmptyState>
+  <EmptyState icon={SearchX}>This post isn't on this phone.</EmptyState>
 {/if}

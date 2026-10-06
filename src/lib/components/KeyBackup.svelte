@@ -46,8 +46,7 @@
 
     <div class="space-y-4 px-4 pb-4">
       <p class="text-sm text-pretty">
-        Your key has two halves. The public half is your name: people's phones know you by it, and
-        it's safe to share.
+        Your public key is your name on Dipity, and it's safe to share.
       </p>
 
       {#if $session.identity}
@@ -57,8 +56,7 @@
       {/if}
 
       <p class="text-sm text-pretty">
-        The private half proves you're you, and it's what the backup holds. Anyone who has it can
-        post as you, so keep the file somewhere safe that isn't this phone.
+        Your private key proves you're you, so anyone with this backup can post as you.
       </p>
 
       <div class="space-y-1.5">
@@ -70,9 +68,7 @@
           autocomplete="new-password"
           placeholder="Lock the file with a password" />
         <p class="text-xs text-pretty text-muted-foreground">
-          {password
-            ? `At least ${MIN_PASSWORD} characters. Write it down: without it, nobody can open the file.`
-            : "Without one, anyone who finds the file can post as you."}
+          At least {MIN_PASSWORD} characters, and nobody can open the file without it.
         </p>
       </div>
 

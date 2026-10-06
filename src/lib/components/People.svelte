@@ -129,9 +129,7 @@
     {#if narrowed && shown.length === 0 && $contacts.length > 0}
       <EmptyState icon={Users}>No contacts match that.</EmptyState>
     {:else if $contacts.length === 0}
-      <EmptyState icon={Users}>
-        No contacts yet. Pair with someone nearby and they appear here under the name you give them.
-      </EmptyState>
+      <EmptyState icon={Users}>Pair with someone nearby and they appear here.</EmptyState>
     {/if}
   </Tabs.Content>
 
@@ -139,8 +137,7 @@
     <SearchBox class="mt-3" label="Search aliases" bind:value={aliasQuery} />
 
     <p class="mt-3 text-sm text-pretty text-muted-foreground">
-      Dipity has no profiles, so everyone you pair with names you. These are the names people know
-      you by, and who gave each one.
+      These are the names people gave you when you paired.
     </p>
 
     <ul class="mt-4 space-y-2">
@@ -157,9 +154,7 @@
     {#if aliasWords.length && given.length === 0}
       <EmptyState icon={Tag}>No aliases match that.</EmptyState>
     {:else if $aliases.length === 0}
-      <EmptyState icon={Tag}>
-        No aliases yet. When someone pairs with you, the name they give you appears here.
-      </EmptyState>
+      <EmptyState icon={Tag}>Names people give you when you pair appear here.</EmptyState>
     {/if}
   </Tabs.Content>
 </Tabs.Root>
