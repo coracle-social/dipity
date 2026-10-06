@@ -102,7 +102,7 @@ mod tests {
         // Absent rather than defaulted: a default is `Policy::new`'s to say, not this layer's.
         assert_eq!(query::get(&tx, keys::GOSSIP).unwrap(), None);
         assert_eq!(
-            query::get_as::<i64>(&tx, keys::STRANGERS_PER_DAY).unwrap(),
+            query::get_as::<i64>(&tx, keys::RETENTION_DAYS).unwrap(),
             None
         );
     }
@@ -112,8 +112,8 @@ mod tests {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        set_as(&tx, keys::STRANGERS_PER_DAY, &3_i64, 10).unwrap();
-        set_as(&tx, keys::STRANGERS_PER_DAY, &5_i64, 20).unwrap();
+        set_as(&tx, keys::RETENTION_DAYS, &3_i64, 10).unwrap();
+        set_as(&tx, keys::RETENTION_DAYS, &5_i64, 20).unwrap();
 
         let stored = query::all(&tx).unwrap();
 

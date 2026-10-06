@@ -10,7 +10,7 @@ Where events live, who can answer a query, and what happens while the app is asl
 | `event_fts` | Full-text index over content, for search. |
 | `event_tag` | One row per tag, so NIP-01 tag filters are an index lookup. |
 | `event_seen` | `event_id`, `seen_at`, `pubkey`. Unique on (`event_id`, `pubkey`). |
-| `event_refused` | `id`, `created_at`, `by_policy`, `refused_at`. One row per event this device was offered and would not store, which [reconciliation](./sync.md#event-sync) counts as held. Names no peer. A refusal the Accept scope made goes when the policy is recompiled, and the rest go with the [retention sweep](#retention). |
+| `event_refused` | `id`, `created_at`, `by_policy`, `refused_at`. One row per event this device was offered and would not store, or that the [retention sweep](#retention) let go, which [reconciliation](./sync.md#event-sync) counts as held and the store will not take back. Names no peer. A refusal the Accept scope made goes when the policy is recompiled; the rest are capped by count. |
 | `event_trashed` | `event_id`, `trashed_at`. One row per event the user put in the [trash](#the-trash). Local, and goes with its event by cascade. |
 | `spending` | `pubkey`, `meter`, `pooled`, `spent_at`, `bytes`. The [quota](./sync.md#quotas) ledger: what each peer wrote to this device inside the rolling 24 hours, so the window survives a relaunch. Rows older than the window go as new ones are written. It names who handed this device something and when, so like `event_seen` it is never served. |
 | `event_shared` | `event_id`, `pubkey`, `shared_at`, `signed`. Unique on (`event_id`, `pubkey`). One row per peer this device has handed an event to, written where the event is served. Provenance in the other direction from `event_seen`, so it is never served either, and a later handoff to the same peer is ignored — a row says this device carried something to somebody rather than how often it answered for it. `signed` says the user's recipient signature went with it, and one that did not is [sent once forwarding is allowed](./sync.md#resyncing). |
@@ -51,9 +51,11 @@ Media is written to disk unsealed, protected by the platform's data-protection c
 
 ## Retention
 
-[Forgetting is the default](./overview.md#principles). An event carried for someone else is kept while it is still circulating and dropped once it stops: the sweep forgets those whose most recent sighting is older than the retention window, 30 days unless the user sets `policy.retention_days`.
+[Forgetting is the default](./overview.md#principles). An event carried for someone else is dropped once it has been on this device longer than the retention window, 30 days unless the user sets `policy.retention_days`. The window starts at `event.seen_at`, when the event first reached this device, which is the same time the feed orders by and the one a user can see.
 
-The cutoff reads the latest row in `event_seen` rather than the `event.seen_at` the feed orders by, which is the earliest. A sighting is written once per peer, so an event that keeps arriving from peers it has not arrived from before keeps refreshing — repeated propagation, in the only unit a proximity network has. Keying on arrival instead would forget an event on its birthday no matter how many people were still passing it around.
+Age plays no part. A post written a year ago that reaches this device today is new here, and is kept and ordered as such. Circulation plays none either: later sightings do not extend the window. Measuring from the latest sighting looked like counting repeated propagation, but a peer offering back what this device handed it counts as a sighting too, so a community passing a post around kept it alive on every phone for as long as any two of them kept meeting. What spreads still spreads, because each phone it reaches gets its own window.
+
+What the sweep forgets it also refuses, in `event_refused`, which reconciliation counts as held. Otherwise the peer it was handed to would offer it straight back, it would arrive as new, and the window would start again. The store checks refusals on every save, so a live push is turned away too. These refusals are kept up to 50,000, newest first, which is a few megabytes; one that falls off the end lets its event back in as new, for one more window. Refusals the user's settings made are cheap to make again and age out with the window instead.
 
 Four things are never swept:
 

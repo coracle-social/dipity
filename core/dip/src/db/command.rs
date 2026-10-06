@@ -204,10 +204,15 @@ pub fn evict_out_of_scope(db: &Db, policy: &Policy, at: i64) -> Result<usize> {
     })
 }
 
-/// Forget events whose latest sighting is before `cutoff`, and refusals made
-/// before it. Returns how many events went.
-pub fn forget_events_unseen_since(db: &Db, identity: &PublicKey, cutoff: i64) -> Result<usize> {
-    db.write(|tx| event::forget_unseen_since(tx, identity, cutoff))
+/// Forget events that first reached this device before `cutoff`, remembering
+/// each as refused at `at`. Returns how many events went. `docs/storage.md#retention`.
+pub fn forget_events_seen_before(
+    db: &Db,
+    identity: &PublicKey,
+    cutoff: i64,
+    at: i64,
+) -> Result<usize> {
+    db.write(|tx| event::forget_seen_before(tx, identity, cutoff, at))
 }
 
 /// Forget everything the store holds.

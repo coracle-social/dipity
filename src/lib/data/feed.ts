@@ -36,10 +36,8 @@ import {CONTACT} from "$lib/kinds/contact"
 /** One stored event, and how it got here. */
 export type Item = {
   event: EventDetail["event"]
-  /** When it first reached this device, which is what the board is ordered by. */
+  /** When it first reached this device, which orders the board and starts the retention window. */
   seenAt: number
-  /** The most recent sighting, which is what the retention sweep measures. */
-  lastSeenAt: number
   /** The peers it was seen from, earliest first. Never leaves the device. */
   from: string[]
   /** The peers this device passed it to, earliest first. Never leaves the device. */
@@ -79,7 +77,6 @@ export type Standing = {
 const toItem = ({event, sightings, shares}: EventDetail): Item => ({
   event,
   seenAt: Math.min(...sightings.map(sighting => sighting.seen_at)),
-  lastSeenAt: Math.max(...sightings.map(sighting => sighting.seen_at)),
   from: sightings.map(sighting => sighting.pubkey),
   to: shares.map(share => share.pubkey),
 })
@@ -334,12 +331,12 @@ export const sweptAt = (
 ) =>
   retentionDays === undefined || spared(item, session.identity) || bookmarked
     ? undefined
-    : item.lastSeenAt + retentionDays * 86_400
+    : item.seenAt + retentionDays * 86_400
 
 /** How much of an item's life is left, as the one word the screen ever says. */
 export const warmthOf = (item: Item, swept: number | undefined, now: number): Warmth => {
   if (swept) {
-    const spent = (now - item.lastSeenAt) / (swept - item.lastSeenAt)
+    const spent = (now - item.seenAt) / (swept - item.seenAt)
 
     return spent < 0.5 ? "warm" : spent < 0.9 ? "fading" : "cold"
   } else {

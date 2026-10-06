@@ -34,7 +34,7 @@ This project is time-biased. It treats distance as something to articulate rathe
 
 2. **Trust is explicit.** Peering with an unknown person prompts a introduction ceremony. Only after that is complete can gossip proceed. Users locally maintain contact lists and policies which allow for fine-grained control over what events they receive, transmit, and who they peer with.
 
-3. **Forgetting is the default.** If someone does not actively participate in the community, they fall out of it. If content is not repeatedly invoked, it disappears. Reach is a function of communal value, expressed through repeated propagation.
+3. **Forgetting is the default.** If someone does not actively participate in the community, they fall out of it. If content is not circulated, it disappears. Reach is a function of communal value, expressed through repeated propagation.
 
 4. **Communication requires rich content types.** Communication should not be limited to chat. Different types of communication should be presented in different ways.
 
@@ -113,7 +113,7 @@ Read more at [`sync.md`](./sync.md) and [`policy.md`](./policy.md).
 
 ## Privacy
 
-A passive radio observer learns only that some device running this app is nearby. An active one can always complete a handshake, so nothing that handshake discloses outlives the session, and the user's pubkey goes to a stranger only as often as the [disclosure bucket](./policy.md#discoverability) allows. A peer who completes a session learns the user's pubkey, that they were physically present at a time and place, and whatever the gossip scope serves — which is why the consent gate sits before authentication.
+A passive radio observer learns only that some device running this app is nearby. An active one can always complete a handshake, so nothing that handshake discloses outlives the session, and the user's pubkey goes to a stranger freely only while the app is open, and otherwise only as often as the [disclosure bucket](./policy.md#discoverability) allows. A peer who completes a session learns the user's pubkey, that they were physically present at a time and place, and whatever the gossip scope serves — which is why the consent gate sits before authentication.
 
 `seen_at` and provenance are records of the user's movements, so they never leave the device. An authorship proof convinces its recipient and nobody else, so a second-hop recipient knows where an event came from and cannot prove it — though the peer the author handed it to holds a signature that does, which is where that guarantee stops.
 

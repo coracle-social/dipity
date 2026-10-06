@@ -1310,7 +1310,7 @@ impl Session {
                 if self.gate.spends_budget && !trusted {
                     crate::db::command::spend_disclosure(
                         db,
-                        self.policy.strangers_per_day,
+                        crate::model::STRANGERS_PER_DAY,
                         clock::now(),
                     )?;
                 }
@@ -2372,8 +2372,8 @@ mod tests {
         let mut dialer = pair(4096, Role::Dialer, 1);
         let mut receiver = pair(4096, Role::Receiver, 2);
 
-        dialer.gate.presence = Some(Presence::Foreground);
-        receiver.gate.presence = Some(Presence::Foreground);
+        dialer.gate.presence = Some(Presence::Background);
+        receiver.gate.presence = Some(Presence::Background);
 
         dialer.initiate().unwrap();
         pump(&mut dialer, &mut receiver, &db); // handshake msg1
@@ -2416,8 +2416,8 @@ mod tests {
 
         let mut dialer = pair(4096, Role::Dialer, 1);
         let mut receiver = pair(4096, Role::Receiver, 2);
-        dialer.gate.presence = Some(Presence::Foreground);
-        receiver.gate.presence = Some(Presence::Foreground);
+        dialer.gate.presence = Some(Presence::Background);
+        receiver.gate.presence = Some(Presence::Background);
         full_exchange(&mut dialer, &mut receiver, &db);
 
         // Both sides were strangers and both disclosed.

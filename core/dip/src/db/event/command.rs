@@ -30,8 +30,9 @@ use super::query;
 /// here too, naming the author's own pubkey in `from`, so every stored event
 /// has provenance and a seen time.
 ///
-/// Nothing is stored when the event is ephemeral, when its author has already
-/// deleted it, or when a newer event holds its address. A sighting is still
+/// Nothing is stored when the event is ephemeral, when this device already
+/// refused it, when its author has already deleted it, or when a newer event
+/// holds its address. A sighting is still
 /// recorded for an event already stored.
 pub fn save(tx: &Tx<'_>, event: &HashedEvent, from: &[PublicKey], seen_at: i64) -> Result<bool> {
     if is_ephemeral(event.kind) {
@@ -42,6 +43,11 @@ pub fn save(tx: &Tx<'_>, event: &HashedEvent, from: &[PublicKey], seen_at: i64) 
 
     if query::exists(tx, &event.id)? {
         record_seen_all(tx, &event.id, from, seen_at)?;
+        return Ok(false);
+    }
+
+    // Refused already, whether deleted, superseded, out of scope or let go by the sweep.
+    if query::is_refused(tx, &event.id)? {
         return Ok(false);
     }
 
@@ -253,24 +259,37 @@ pub fn delete(tx: &Tx<'_>, id: &EventId) -> Result<bool> {
     Ok(true)
 }
 
-/// Forget events whose latest sighting is before `cutoff`, and refusals made
-/// before it. `docs/storage.md#retention`.
+/// The most refusals a sweep keeps, newest first. Each is an id reconciliation
+/// counts as held, so an event the sweep let go is not taken back from the peer
+/// it was handed to. `docs/storage.md#retention`.
+pub const REFUSALS_KEPT: i64 = 50_000;
+
+/// Forget events that first reached this device before `cutoff`,
+/// remembering each as refused so it is not taken back.
+/// `docs/storage.md#retention`.
+///
+/// Arrival rather than age, so a post written long ago is new here when it
+/// lands, and arrival rather than circulation, so two phones handing a post
+/// back and forth cannot keep it alive between them.
 ///
 /// A bookmarked event stays. The user's own bookmark list is the only thing
 /// that says to keep something somebody else wrote, so the sweep reads it
 /// rather than taking the note and leaving the bookmark naming nothing.
-pub fn forget_unseen_since(tx: &Tx<'_>, identity: &PublicKey, cutoff: i64) -> Result<usize> {
+pub fn forget_seen_before(
+    tx: &Tx<'_>,
+    identity: &PublicKey,
+    cutoff: i64,
+    at: i64,
+) -> Result<usize> {
     let mut prepared = tx.prepare(
-        "SELECT event.id, event.kind FROM event
-         JOIN event_seen ON event_seen.event_id = event.id
+        "SELECT event.id, event.kind, event.created_at FROM event
          WHERE event.pubkey <> ?1
+           AND event.seen_at < ?2
            AND event.id NOT IN (
                SELECT bookmark.value FROM event_tag bookmark
                JOIN event list ON list.id = bookmark.event_id
                WHERE list.kind = ?3 AND list.pubkey = ?1 AND bookmark.name = 'e'
-           )
-         GROUP BY event.id
-         HAVING MAX(event_seen.seen_at) < ?2",
+           )",
     )?;
 
     let stale = prepared
@@ -278,22 +297,40 @@ pub fn forget_unseen_since(tx: &Tx<'_>, identity: &PublicKey, cutoff: i64) -> Re
             Ok((
                 event_id_from_sql(&row.get::<_, String>(0)?, 0)?,
                 row.get::<_, u16>(1)?,
+                row.get::<_, i64>(2)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("finding events to forget")?;
 
-    tx.prepare_cached("DELETE FROM event_refused WHERE refused_at < ?1")?
-        .execute(params![cutoff])
-        .context("forgetting old refusals")?;
-
     let mut forgotten = 0;
 
-    for (id, _) in stale.iter().filter(|(_, kind)| !is_state(*kind)) {
+    for (id, _, created_at) in stale.iter().filter(|(_, kind, _)| !is_state(*kind)) {
         if delete(tx, id)? {
             forgotten += 1;
         }
+
+        tx.prepare_cached(
+            "INSERT INTO event_refused (id, created_at, by_policy, refused_at) VALUES (?1, ?2, 0, ?3)
+             ON CONFLICT (id) DO UPDATE SET refused_at = excluded.refused_at",
+        )?
+        .execute(params![id.to_hex(), created_at, at])
+        .with_context(|| format!("remembering that {id} was forgotten"))?;
     }
+
+    // What settings refused is cheap to refuse again, so it ages out with the window.
+    tx.prepare_cached("DELETE FROM event_refused WHERE by_policy = 1 AND refused_at < ?1")?
+        .execute(params![cutoff])
+        .context("forgetting old policy refusals")?;
+
+    tx.prepare_cached(
+        "DELETE FROM event_refused WHERE id IN (
+             SELECT id FROM event_refused WHERE by_policy = 0
+             ORDER BY refused_at DESC LIMIT -1 OFFSET ?1
+         )",
+    )?
+    .execute(params![REFUSALS_KEPT])
+    .context("capping the refusals kept")?;
 
     Ok(forgotten)
 }
@@ -977,27 +1014,45 @@ mod tests {
         save(&tx, &old_but_fresh, &[peer()], 900).unwrap();
         save(&tx, &new_but_stale, &[peer()], 100).unwrap();
 
-        assert_eq!(forget_unseen_since(&tx, &author(2), 500).unwrap(), 1);
+        assert_eq!(forget_seen_before(&tx, &author(2), 500, 500).unwrap(), 1);
         assert!(query::get(&tx, &id(&old_but_fresh)).unwrap().is_some());
         assert!(query::get(&tx, &id(&new_but_stale)).unwrap().is_none());
     }
 
-    /// Principle 3 keeps what is repeatedly invoked, whatever its age.
     #[test]
-    fn a_still_circulating_event_outlives_its_arrival() {
+    fn a_later_sighting_does_not_extend_an_event() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        let circulating = note(author(1), 100, "still going around", Tags::new());
-        let forgotten = note(author(1), 100, "nobody repeated it", Tags::new());
+        let passed_around = note(author(1), 100, "still going around", Tags::new());
 
-        save(&tx, &circulating, &[author(201)], 100).unwrap();
-        save(&tx, &circulating, &[author(202)], 900).unwrap();
-        save(&tx, &forgotten, &[author(201)], 100).unwrap();
+        save(&tx, &passed_around, &[author(201)], 100).unwrap();
+        save(&tx, &passed_around, &[author(202)], 900).unwrap();
 
-        assert_eq!(forget_unseen_since(&tx, &author(2), 500).unwrap(), 1);
-        assert!(query::get(&tx, &id(&circulating)).unwrap().is_some());
-        assert!(query::get(&tx, &id(&forgotten)).unwrap().is_none());
+        assert_eq!(forget_seen_before(&tx, &author(2), 500, 1_000).unwrap(), 1);
+        assert!(query::get(&tx, &id(&passed_around)).unwrap().is_none());
+    }
+
+    #[test]
+    fn an_event_the_sweep_let_go_is_not_taken_back() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        let let_go = note(author(1), 100, "had its time", Tags::new());
+
+        save(&tx, &let_go, &[author(201)], 100).unwrap();
+        forget_seen_before(&tx, &author(2), 500, 600).unwrap();
+
+        // The peer it was handed to offers it back, live or by reconciliation.
+        assert!(!save(&tx, &let_go, &[author(202)], 700).unwrap());
+        assert_eq!(
+            query::refused(&tx)
+                .unwrap()
+                .into_iter()
+                .map(|item| item.id)
+                .collect::<Vec<_>>(),
+            vec![id(&let_go)]
+        );
     }
 
     /// Both have one sighting that never refreshes, so both read as stale.
@@ -1015,7 +1070,7 @@ mod tests {
         save(&tx, &their_trust_list, &[peer()], 100).unwrap();
         save(&tx, &their_note, &[peer()], 100).unwrap();
 
-        assert_eq!(forget_unseen_since(&tx, &us, 500).unwrap(), 1);
+        assert_eq!(forget_seen_before(&tx, &us, 500, 500).unwrap(), 1);
         assert!(query::get(&tx, &id(&ours)).unwrap().is_some());
         assert!(query::get(&tx, &id(&their_trust_list)).unwrap().is_some());
         assert!(query::get(&tx, &id(&their_note)).unwrap().is_none());
@@ -1041,7 +1096,7 @@ mod tests {
         save(&tx, &their_card, &[peer()], 100).unwrap();
         save(&tx, &their_note, &[peer()], 100).unwrap();
 
-        assert_eq!(forget_unseen_since(&tx, &us, 500).unwrap(), 1);
+        assert_eq!(forget_seen_before(&tx, &us, 500, 500).unwrap(), 1);
         assert!(query::get(&tx, &id(&their_card)).unwrap().is_some());
         assert!(query::get(&tx, &id(&their_note)).unwrap().is_none());
     }
@@ -1062,7 +1117,7 @@ mod tests {
         );
 
         save(&tx, &deletion, &[peer()], 100).unwrap();
-        forget_unseen_since(&tx, &us, 500).unwrap();
+        forget_seen_before(&tx, &us, 500, 500).unwrap();
 
         assert!(query::get(&tx, &id(&deletion)).unwrap().is_some());
         assert!(!save(&tx, &subject, &[peer()], 600).unwrap());
@@ -1089,7 +1144,7 @@ mod tests {
         save(&tx, &unkept, &[peer()], 100).unwrap();
         save(&tx, &bookmarks, &[us], 100).unwrap();
 
-        assert_eq!(forget_unseen_since(&tx, &us, 500).unwrap(), 1);
+        assert_eq!(forget_seen_before(&tx, &us, 500, 500).unwrap(), 1);
         assert!(query::get(&tx, &id(&kept)).unwrap().is_some());
         assert!(query::get(&tx, &id(&unkept)).unwrap().is_none());
     }
@@ -1169,7 +1224,7 @@ mod tests {
         save(&tx, &theirs, &[peer()], 100).unwrap();
         save(&tx, &bookmarks, &[peer()], 100).unwrap();
 
-        assert_eq!(forget_unseen_since(&tx, &us, 500).unwrap(), 1);
+        assert_eq!(forget_seen_before(&tx, &us, 500, 500).unwrap(), 1);
         assert!(query::get(&tx, &id(&theirs)).unwrap().is_none());
     }
 

@@ -37,8 +37,8 @@ pub mod keys {
     /// Times of day, in the device's local timezone, when no stranger is told who the user is.
     pub const QUIET_TIMES: &str = "policy.quiet_times";
 
-    /// How many strangers a day, on average, the device tells who the user is.
-    pub const STRANGERS_PER_DAY: &str = "policy.strangers_per_day";
+    /// Whether a stranger is told who the user is while the app is not in front. Default on.
+    pub const DISCOVER_IN_BACKGROUND: &str = "policy.discover_in_background";
 
     /// Who can see what the user publishes, as ordered rules and a default.
     pub const VISIBILITY: &str = "policy.visibility";
@@ -53,6 +53,6 @@ pub mod keys {
     /// user's events one more hop.
     pub const FORWARD: &str = "policy.forward";
 
-    /// How long a carried event outlives the last peer to hand it over. Default 30 days.
+    /// How long a carried event stays after it first reaches this device. Default 30 days.
     pub const RETENTION_DAYS: &str = "policy.retention_days";
 }

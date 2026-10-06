@@ -15,7 +15,7 @@ const keys = {
   forward: "policy.forward",
   visibility: "policy.visibility",
   retentionDays: "policy.retention_days",
-  strangersPerDay: "policy.strangers_per_day",
+  discoverInBackground: "policy.discover_in_background",
 } as const
 
 const read = (): Promise<Policy | undefined> =>
@@ -50,7 +50,7 @@ export const setGossip = (scope: Scope) => write(keys.gossip, scope)
 export const setForward = (scope: Scope) => write(keys.forward, scope)
 
 /**
- * Write one of the three counts, ignoring anything that is not one.
+ * Write a count, ignoring anything that is not one.
  *
  * A value the core cannot decode is an error there rather than a default, so
  * every later policy read fails and no screen clears a preference. A number
@@ -68,7 +68,7 @@ const writeCount = (key: string, typed: string, least: number) => {
 
 export const setRetentionDays = (typed: string) => writeCount(keys.retentionDays, typed, 1)
 
-export const setStrangersPerDay = (typed: string) => writeCount(keys.strangersPerDay, typed, 0)
+export const setDiscoverInBackground = (on: boolean) => write(keys.discoverInBackground, on)
 
 /**
  * Widen or narrow who sees an event no rule covers, leaving the rules alone.

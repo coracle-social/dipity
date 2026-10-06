@@ -45,7 +45,7 @@ pub const MUTE: u16 = 10_000;
 /// NIP-51's bookmark list, which the retention sweep reads.
 ///
 /// The one list here the core does not otherwise care about: the view writes
-/// it, and [`forget_unseen_since`](crate::db::event::command::forget_unseen_since)
+/// it, and [`forget_seen_before`](crate::db::event::command::forget_seen_before)
 /// spares whatever it names, because a bookmark is the only way a person says
 /// to keep something somebody else wrote. `docs/storage.md#retention`.
 pub const BOOKMARKS: u16 = 10_003;

@@ -236,7 +236,7 @@ fn the_store_serves_its_use_cases() {
     let policy = query::policy(&db, &us()).unwrap();
     assert_eq!(policy.accept, Scope::Lenient);
     assert_eq!(policy.gossip, Scope::Network);
-    assert_eq!(policy.strangers_per_day, 12);
+    assert!(policy.discover_in_background);
     assert!(policy.quiet_times.is_empty());
     assert!(!policy.for_pubkey(peer()).is_blocked());
 
@@ -249,7 +249,7 @@ fn the_store_serves_its_use_cases() {
 
     // Forgetting goes by the last peer to hand an event over, and spares ours.
     assert_eq!(
-        command::forget_events_unseen_since(&db, &us(), 250).unwrap(),
+        command::forget_events_seen_before(&db, &us(), 250, 250).unwrap(),
         2
     );
     assert_eq!(query::list_events(&db, &Query::new()).unwrap().len(), 1);

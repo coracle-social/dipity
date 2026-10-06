@@ -39,10 +39,10 @@ pub struct Policy {
     pub identity: PublicKey,
     /// Times of day when no stranger is told who the user is without asking.
     pub quiet_times: Vec<Window>,
-    /// How many strangers a day, on average, the device tells who the user is,
-    /// through the [`DisclosureBucket`](crate::model::DisclosureBucket). Peers
-    /// recognized, trusted or approved by hand do not count.
-    pub strangers_per_day: u32,
+    /// Whether a stranger is told who the user is while the app is not in
+    /// front, as often as the [`DisclosureBucket`](crate::model::DisclosureBucket)
+    /// allows. Off, every such stranger waits for the user.
+    pub discover_in_background: bool,
     /// Who can see what the user publishes.
     pub visibility: Visibility,
     /// Whose events the device stores from a peer.
@@ -51,7 +51,7 @@ pub struct Policy {
     pub gossip: Scope,
     /// Which peers may be handed the author's signature over an own event.
     pub forward: Scope,
-    /// How long a carried event outlives the last peer to hand it over.
+    /// How long a carried event stays after it first reaches this device.
     pub retention_days: u32,
     /// The trust graph the scopes above are measured against.
     #[serde(skip)]
@@ -65,7 +65,7 @@ impl Policy {
         Self {
             identity,
             quiet_times: Vec::new(),
-            strangers_per_day: 12,
+            discover_in_background: true,
             visibility: Visibility::default(),
             accept: Scope::Lenient,
             gossip: Scope::Network,
@@ -246,11 +246,11 @@ mod tests {
             named,
             [
                 "accept",
+                "discover_in_background",
                 "forward",
                 "gossip",
                 "quiet_times",
                 "retention_days",
-                "strangers_per_day",
                 "visibility",
             ]
             .into()

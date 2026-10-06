@@ -24,7 +24,7 @@ const defaults: Policy = {
   },
   retention_days: 30,
   quiet_times: [],
-  strangers_per_day: 12,
+  discover_in_background: true,
 }
 
 /** One preference's document, or the default where it has never been written. */
@@ -44,5 +44,9 @@ export const compiled = (store: Store): Policy => ({
   visibility: at<Visibility>(store, "policy.visibility", defaults.visibility),
   retention_days: at(store, "policy.retention_days", defaults.retention_days),
   quiet_times: at<Window[]>(store, "policy.quiet_times", defaults.quiet_times),
-  strangers_per_day: at(store, "policy.strangers_per_day", defaults.strangers_per_day),
+  discover_in_background: at(
+    store,
+    "policy.discover_in_background",
+    defaults.discover_in_background,
+  ),
 })

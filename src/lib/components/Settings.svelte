@@ -2,7 +2,6 @@
   import Check from "@lucide/svelte/icons/check"
   import Smartphone from "@lucide/svelte/icons/smartphone"
   import {Button} from "$lib/components/ui/button"
-  import {Input} from "$lib/components/ui/input"
   import * as InputGroup from "$lib/components/ui/input-group"
   import {Label} from "$lib/components/ui/label"
   import {Separator} from "$lib/components/ui/separator"
@@ -20,13 +19,12 @@
   import {
     policy,
     setAccept,
-    setStrangersPerDay,
+    setDiscoverInBackground,
     setForward,
     setGossip,
     setRetentionDays,
     setVisibility,
   } from "$lib/data/policy"
-  import {npubOf, session} from "$lib/data/session"
 
   const tiers = $derived([
     {
@@ -80,13 +78,13 @@
   const alerts = $derived([
     {
       id: "notify-pairing",
-      label: "Somebody nearby wants to pair",
+      label: "Pairing requested",
       on: $notifyPairing,
       set: (on: boolean) => setNotify(notifyPairing, on),
     },
     {
       id: "notify-content",
-      label: "New posts arrive",
+      label: "New activity received",
       on: $notifyContent,
       set: (on: boolean) => setNotify(notifyContent, on),
     },
@@ -138,19 +136,21 @@
   </p>
 
   <div class="mt-4 space-y-5">
-    <div class="space-y-1.5">
-      <Label for="strangers">How many strangers a day your phone tells who you are</Label>
-      <Input
-        id="strangers"
-        type="number"
-        min="0"
-        value={$policy.strangers_per_day}
-        onchange={event => setStrangersPerDay(event.currentTarget.value)} />
-      <p class="text-xs text-pretty text-muted-foreground">
-        Each stranger your phone meets learns who you are and where you were. Your phone spreads
-        these meetings across the day, a few at a time. People you've paired with or trust don't
-        count.
-      </p>
+    <div class="flex items-start justify-between gap-4">
+      <div class="min-w-0">
+        <Label for="discover" class="text-sm font-semibold">
+          Allow discovery when the app is closed
+        </Label>
+        <p class="mt-0.5 text-xs text-pretty text-muted-foreground">
+          Each stranger your phone meets learns who you are and where you were. With Dipity open, it
+          meets anyone nearby. With it closed, it meets a few strangers a day if this is on, and
+          asks you first if it's off. People you've paired with or trust are always met.
+        </p>
+      </div>
+      <Switch
+        id="discover"
+        checked={$policy.discover_in_background}
+        onCheckedChange={setDiscoverInBackground} />
     </div>
 
     <div class="space-y-1.5">
@@ -167,8 +167,8 @@
         </InputGroup.Addon>
       </InputGroup.Root>
       <p class="text-xs text-pretty text-muted-foreground">
-        Counted from the last time someone passed a post to you. Your own posts and your bookmarks
-        are kept.
+        Counted from when a post first reached you, however old the post is. Once it's gone, your
+        phone won't take it back. Your own posts and your bookmarks don't expire.
       </p>
     </div>
   </div>
@@ -205,27 +205,25 @@
 
 <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Your key</h2>
 
-{#if $session.identity}
-  <p class="mt-3 font-mono text-xs break-all text-muted-foreground">
-    {npubOf($session.identity)}
-  </p>
-{/if}
+<p class="mt-2 text-sm text-pretty text-muted-foreground">
+  Your key is who you are on Dipity. It lives on this phone, and nobody can recover it for you.
+</p>
 
-<div class="mt-4">
-  <KeyBackup />
+<div class="mt-4 space-y-4">
+  <div>
+    <KeyBackup />
+    <p class="mt-1.5 text-xs text-pretty text-muted-foreground">
+      Save a copy, so losing this phone doesn't lose your identity.
+    </p>
+  </div>
+
+  <div>
+    <Button class="w-full" variant="secondary" onclick={() => go({at: "device"})}>
+      <Smartphone />
+      Use this key on another phone
+    </Button>
+    <p class="mt-1.5 text-xs text-pretty text-muted-foreground">
+      Both phones post as you. The two phones need to be together.
+    </p>
+  </div>
 </div>
-
-<p class="mt-2 text-xs text-pretty text-muted-foreground">
-  Your key proves your posts are yours. If you lose this phone without a copy, you can't get your
-  identity back.
-</p>
-
-<Button class="mt-6" variant="secondary" onclick={() => go({at: "device"})}>
-  <Smartphone />
-  Use this key on another phone
-</Button>
-
-<p class="mt-2 text-xs text-pretty text-muted-foreground">
-  Both phones post as you, so losing one doesn't lose your identity. The two phones need to be
-  together.
-</p>

@@ -5,8 +5,14 @@
 //! follow it. Nothing else the protocol discloses outlives a session, so the
 //! rate of these samples is what tracking costs, whoever and however many the
 //! strangers are. A token bucket bounds that rate twice: a few at once, and on
-//! average no more than the user's number per day, spread across it rather
-//! than spent in one place. `docs/policy.md#discoverability`.
+//! average no more than [`STRANGERS_PER_DAY`], spread across the day rather
+//! than spent in one place. It applies only while the app is not in front: a
+//! user looking at the screen is there to meet whoever is nearby.
+//! `docs/policy.md#discoverability`.
+
+/// How many strangers a day, on average, the device tells who the user is
+/// while the app is not in front.
+pub const STRANGERS_PER_DAY: u32 = 12;
 
 /// The most disclosures the bucket holds, which is how many can happen at once.
 pub const BURST: f64 = 3.0;

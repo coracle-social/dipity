@@ -1311,7 +1311,7 @@ impl Node {
 
             let cutoff = now - i64::from(self.policy.retention_days) * 86_400;
 
-            match db_command::forget_events_unseen_since(&self.db, &self.identity(), cutoff) {
+            match db_command::forget_events_seen_before(&self.db, &self.identity(), cutoff, now) {
                 Ok(forgotten) => log::debug!("the retention sweep forgot {forgotten} events"),
                 Err(error) => log::error!("the retention sweep failed: {error:#}"),
             }
@@ -1557,7 +1557,7 @@ mod tests {
         let mut node = node();
         let hash = given_held(&mut node, b"media");
 
-        db_command::forget_events_unseen_since(&node.db, &node.identity(), 2_000).unwrap();
+        db_command::forget_events_seen_before(&node.db, &node.identity(), 2_000, 2_000).unwrap();
 
         // Nothing is reclaimed until the node drains the channel the removal was announced on.
         assert!(node.blobs.has(&hash).unwrap());

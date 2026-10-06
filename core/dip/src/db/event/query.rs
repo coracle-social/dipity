@@ -51,6 +51,13 @@ pub fn refused(tx: &Tx<'_>) -> Result<Vec<coracle_lib::sync::Item>> {
         .context("reading refused ids")
 }
 
+/// Whether this device refused an id, for whatever reason.
+pub fn is_refused(tx: &Tx<'_>, id: &EventId) -> Result<bool> {
+    tx.prepare_cached("SELECT EXISTS (SELECT 1 FROM event_refused WHERE id = ?1)")?
+        .query_row(params![id.to_hex()], |row| row.get::<_, bool>(0))
+        .with_context(|| format!("checking whether {id} was refused"))
+}
+
 /// Whether an event is stored, without loading it. The hot path on ingest.
 pub fn exists(tx: &Tx<'_>, id: &EventId) -> Result<bool> {
     let exists = tx

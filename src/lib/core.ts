@@ -145,7 +145,7 @@ export type Policy = {
   visibility: Visibility
   retention_days: number
   quiet_times: Window[]
-  strangers_per_day: number
+  discover_in_background: boolean
 }
 
 /** What the phone says about letting the app notify. */
