@@ -63,12 +63,9 @@ pub fn name_for(db: &Db, identity: &PublicKey, pubkey: &PublicKey) -> Result<Opt
     })
 }
 
-/// Whether the user has named `pubkey`, which is a contact card of theirs addressed to it.
+/// Whether the user has named `pubkey`. A card emptied by forgetting them names nobody.
 pub fn has_named(db: &Db, identity: &PublicKey, pubkey: &PublicKey) -> Result<bool> {
-    let address =
-        coracle_lib::addresses::Address::new(crate::model::CONTACT, *identity, pubkey.to_hex());
-
-    db.read(|tx| Ok(event::by_address(tx, &address)?.is_some()))
+    Ok(name_for(db, identity, pubkey)?.is_some())
 }
 
 /// Everything the user has said about who gets what.

@@ -86,6 +86,12 @@ pub fn record_shares(db: &Db, shares: &[(EventId, bool)], to: &[PublicKey], at: 
     })
 }
 
+/// Forget the pairing with a pubkey, so its device is met as a stranger until
+/// the two next sync. Returns whether one was held. `docs/discovery.md#recognition`.
+pub fn forget_pairing(db: &Db, pubkey: &PublicKey) -> Result<bool> {
+    db.write(|tx| pairing::forget_secret(tx, pubkey))
+}
+
 /// Store the pair secret derived from a completed session against every pubkey
 /// the peer proved.
 pub fn pair_with(db: &Db, pubkeys: &[PublicKey], secret: &[u8; 32], at: i64) -> Result<()> {
@@ -283,6 +289,23 @@ mod tests {
     use coracle_lib::tags::Tags;
 
     use crate::fixtures::{author, blob_hash, note, peer};
+
+    #[test]
+    fn forgetting_a_pairing_drops_that_secret_only() {
+        let db = Db::open_in_memory().unwrap();
+
+        pair_with(&db, &[author(2), author(3)], &[1u8; 32], 10).unwrap();
+
+        assert!(forget_pairing(&db, &author(2)).unwrap());
+        assert!(!forget_pairing(&db, &author(2)).unwrap());
+
+        let held: Vec<_> = crate::db::query::pair_secrets(&db)
+            .unwrap()
+            .into_iter()
+            .map(|(pubkey, _)| pubkey)
+            .collect();
+        assert_eq!(held, vec![author(3)]);
+    }
 
     #[test]
     fn a_wipe_leaves_every_table_empty() {

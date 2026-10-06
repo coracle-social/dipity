@@ -235,6 +235,9 @@ export type DipCore = {
    */
   forgetEvent(options: {id: string}): Promise<{existed: boolean}>
 
+  /** Stop recognizing somebody's device until the two next sync. Answers whether a pairing was held. */
+  forgetPairing(options: {pubkey: string}): Promise<{existed: boolean}>
+
   /** Put an event in the trash, retracting it at once with a kind 5 if the user wrote it. */
   trash(options: {id: string}): Promise<void>
 

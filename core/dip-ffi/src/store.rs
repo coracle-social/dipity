@@ -305,6 +305,14 @@ impl Store {
         Ok(command::forget_event(&self.db, &id)?)
     }
 
+    /// Forget the pairing with `pubkey`, so this device stops recognizing
+    /// theirs until the two next sync. Answers whether one was held.
+    pub fn forget_pairing(&self, pubkey: String) -> Result<bool, StoreError> {
+        let pubkey = PublicKey::from_hex(&pubkey).map_err(|error| malformed("pubkey", &error))?;
+
+        Ok(command::forget_pairing(&self.db, &pubkey)?)
+    }
+
     /// Write a preference. `value` is a JSON document.
     ///
     /// Policy is stored as preferences and interpreted by the core, which is

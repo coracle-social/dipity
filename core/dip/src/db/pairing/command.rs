@@ -22,6 +22,16 @@ pub fn save_secret(tx: &Tx<'_>, pubkey: &PublicKey, secret: &[u8; 32], at: i64) 
     Ok(())
 }
 
+/// Drop the pair secret held for a pubkey. Returns whether there was one.
+pub fn forget_secret(tx: &Tx<'_>, pubkey: &PublicKey) -> Result<bool> {
+    let removed = tx
+        .prepare_cached("DELETE FROM pair_secret WHERE pubkey = ?1")?
+        .execute(params![pubkey.to_hex()])
+        .with_context(|| format!("forgetting the pair secret for {pubkey}"))?;
+
+    Ok(removed > 0)
+}
+
 /// Write the disclosure bucket's level after a disclosure.
 pub fn save_bucket(tx: &Tx<'_>, bucket: DisclosureBucket) -> Result<()> {
     tx.prepare_cached(

@@ -13,6 +13,7 @@ import {derived, get, type Readable} from "svelte/store"
 import {spec} from "@welshman/lib"
 import type {ConfiguredKind, MuteListQuery, MuteListReader, MuteListWriter} from "@welshman/domain"
 import {MUTES, type EventTemplate, type HashedEvent} from "@welshman/util"
+import {Dip} from "$lib/core"
 import {links} from "$lib/data/links"
 import {answering, eventsOf, storedEvents} from "$lib/data/query"
 import {publish} from "$lib/data/publish"
@@ -297,3 +298,18 @@ export const setBlocked = async (pubkey: string, blocked: boolean) => {
 }
 
 export const setMuted = (pubkey: string, muted: boolean) => amend(mute, "mute", pubkey, muted)
+
+/**
+ * Forget somebody: an empty card supersedes the user's name for them, they come
+ * off the trust and mute lists, and their device is met as a stranger until the
+ * two next sync. A block stays, since it is the one thing guarding the wire.
+ */
+export const forget = async (pubkey: string) => {
+  const contact = get(social).people.get(pubkey)
+
+  if (contact?.petname) await name(pubkey, "")
+  if (contact?.trusted) await setTrusted(pubkey, false)
+  if (contact?.muted) await setMuted(pubkey, false)
+
+  await Dip.forgetPairing({pubkey})
+}

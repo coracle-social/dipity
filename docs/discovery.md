@@ -83,7 +83,7 @@ Every state above IDENTIFIED has a deadline of its own as well, independent of t
 
 The first frames on the secured channel are a recognition exchange, and the consent gate reads its result. At pairing, both sides derive a **pair secret** from the authenticated session and store it against the peer. On a later encounter, each proves it holds one without naming it, by sending a tag that is an HMAC over the session's handshake hash, keyed on the pair secret. The sender emits one tag per pair secret it holds; the receiver trial-MACs its own secrets against the list. A match identifies the relationship.
 
-The dialer sends first, and the peer answers only if a tag resolves or its disclosure bucket admits a stranger. A harvester that dials gets a list of random-looking bytes. A peer who would rather not be recognized omits their tag and arrives as a stranger.
+The dialer sends first, and the peer answers only if a tag resolves or its disclosure bucket admits a stranger. A harvester that dials gets a list of random-looking bytes. A peer who would rather not be recognized omits their tag and arrives as a stranger. Forgetting somebody drops the pair secret held for them, so the two meet as strangers until a session completes and pairs them again.
 
 The list is padded to a fixed count, so its length does not disclose how many peers the device has paired with, and a long history does not put more on the wire. Resolution stays cheap against the full set.
 

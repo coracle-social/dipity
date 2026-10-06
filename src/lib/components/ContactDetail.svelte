@@ -5,7 +5,16 @@
   import {Label} from "$lib/components/ui/label"
   import {Separator} from "$lib/components/ui/separator"
   import {Switch} from "$lib/components/ui/switch"
-  import {name, nameOf, setBlocked, setMuted, setTrusted, short, social} from "$lib/data/contacts"
+  import {
+    forget,
+    name,
+    nameOf,
+    setBlocked,
+    setMuted,
+    setTrusted,
+    short,
+    social,
+  } from "$lib/data/contacts"
   import {back} from "$lib/data/nav"
 
   let {pubkey}: {pubkey: string} = $props()
@@ -24,9 +33,21 @@
     typed = undefined
   }
 
+  let forgetting = $state(false)
+
+  // Somebody is worth forgetting while the user has named, trusted or muted them.
+  const known = $derived(Boolean(contact?.petname || contact?.trusted || contact?.muted))
+
+  const confirmForget = async () => {
+    forgetting = false
+    typed = undefined
+    await forget(pubkey)
+  }
+
   $effect(() => {
     void pubkey
     typed = undefined
+    forgetting = false
   })
 
   const controls = $derived([
@@ -112,3 +133,25 @@
     </li>
   {/each}
 </ul>
+
+{#if known}
+  <Separator class="my-6" />
+
+  <div>
+    <h2 class="text-sm font-semibold">Forget them</h2>
+    <p class="mt-0.5 text-xs text-pretty text-muted-foreground">
+      Clears your name for them, takes them off your trusted and muted lists, and stops your phone
+      recognizing theirs. Blocking stays as it is. They'll show up as a stranger next time you meet.
+    </p>
+    <div class="mt-3 flex justify-end gap-2">
+      {#if forgetting}
+        <Button variant="ghost" size="sm" onclick={() => (forgetting = false)}>Cancel</Button>
+        <Button variant="destructive" size="sm" onclick={confirmForget}>
+          Forget {named.name}
+        </Button>
+      {:else}
+        <Button variant="outline" size="sm" onclick={() => (forgetting = true)}>Forget</Button>
+      {/if}
+    </div>
+  </div>
+{/if}

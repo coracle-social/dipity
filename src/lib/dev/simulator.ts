@@ -500,6 +500,14 @@ export class Simulator extends WebPlugin implements DipCore {
     return {existed}
   }
 
+  async forgetPairing({pubkey}: {pubkey: string}) {
+    const existed = this.paired.delete(pubkey)
+
+    if (existed) log(`forgot the pairing with ${short(pubkey)}`)
+
+    return {existed}
+  }
+
   async trash({id}: {id: string}) {
     const at = now()
 

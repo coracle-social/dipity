@@ -402,6 +402,14 @@ class DipPlugin : Plugin(), Encounters.View {
         answer(call, "existed") { it.forgetEvent(id) }
     }
 
+    /** Stop recognizing somebody's device until the two next sync. */
+    @PluginMethod
+    fun forgetPairing(call: PluginCall) {
+        val pubkey = call.getString("pubkey") ?: return call.reject("forgetPairing needs a pubkey")
+
+        answer(call, "existed") { it.forgetPairing(pubkey) }
+    }
+
     /** Put an event in the trash, which retracts it at once if the user wrote it. */
     @PluginMethod
     fun trash(call: PluginCall) {

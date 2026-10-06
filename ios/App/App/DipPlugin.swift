@@ -47,6 +47,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "listDetails", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getEvent", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "forgetEvent", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "forgetPairing", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "trash", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "restore", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "trashed", returnType: CAPPluginReturnPromise),
@@ -308,6 +309,15 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         guard let id = call.getString("id") else { return call.reject("forgetEvent needs an id") }
 
         answer(call, "existed") { try $0.forgetEvent(id: id) }
+    }
+
+    /// Stop recognizing somebody's device until the two next sync.
+    @objc func forgetPairing(_ call: CAPPluginCall) {
+        guard let pubkey = call.getString("pubkey") else {
+            return call.reject("forgetPairing needs a pubkey")
+        }
+
+        answer(call, "existed") { try $0.forgetPairing(pubkey: pubkey) }
     }
 
     /// Put an event in the trash, which retracts it at once if the user wrote it.
