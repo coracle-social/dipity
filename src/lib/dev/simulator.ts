@@ -295,7 +295,7 @@ export class Simulator extends WebPlugin implements DipCore {
 
     // A stranger exchanges nothing until the gate is answered, which is when `approve` gossips.
     if (this.paired.has(person.pubkey)) {
-      this.open(link, person)
+      this.open(link, person, true)
       await this.gossip(person, faker.number.int({min: 1, max: person.talkative}))
     } else {
       this.gate(person, link)
@@ -312,13 +312,14 @@ export class Simulator extends WebPlugin implements DipCore {
    * when they have walked far enough — the view is told both, so a screen
    * naming a link knows when there is nothing behind it.
    */
-  private open(link: number, person: Person) {
+  private open(link: number, person: Person, recognized: boolean) {
     this.live.set(link, person)
     this.notifyListeners("peerIdentified", {
       link,
       pubkey: person.pubkey,
       code: pairingCode(),
       dialed: false,
+      recognized,
     })
     log(
       `link ${link} is up with ${short(person.pubkey)} — dip.receiveOffer(${link}) to be offered their key`,
@@ -466,7 +467,7 @@ export class Simulator extends WebPlugin implements DipCore {
 
     if (person && approved) {
       this.paired.add(person.pubkey)
-      this.open(link, person)
+      this.open(link, person, false)
       log(`paired with ${short(person.pubkey)}`)
       this.gossip(person, person.talkative)
     } else if (person) {

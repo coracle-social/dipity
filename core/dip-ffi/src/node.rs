@@ -146,6 +146,10 @@ pub enum Action {
         code: u32,
         /// Whether this device dialed the link.
         dialed: bool,
+        /// Whether this device recognized the pubkey by its pair secret. A
+        /// named peer it did not recognize has forgotten the user, so they are
+        /// asked to pair again.
+        recognized: bool,
     },
     /// Present the share sheet over a key backup the core has written.
     ///
@@ -740,11 +744,18 @@ impl From<CoreAction> for Action {
                 link: link.into(),
                 code,
             },
-            CoreAction::PeerIdentified(link, pubkey, code, dialed) => Self::PeerIdentified {
+            CoreAction::PeerIdentified {
+                link,
+                pubkey,
+                code,
+                dialed,
+                recognized,
+            } => Self::PeerIdentified {
                 link: link.into(),
                 pubkey: pubkey.to_hex(),
                 code,
                 dialed,
+                recognized,
             },
             CoreAction::ShareKeyBackup(path) => Self::ShareKeyBackup {
                 path: path.to_string_lossy().into_owned(),
@@ -913,7 +924,13 @@ mod tests {
             CoreAction::Disconnect(link),
             CoreAction::Send(link, vec![1, 2]),
             CoreAction::RequestApproval(link, 7_654_321),
-            CoreAction::PeerIdentified(link, proved, 1_234, true),
+            CoreAction::PeerIdentified {
+                link,
+                pubkey: proved,
+                code: 1_234,
+                dialed: true,
+                recognized: false,
+            },
             CoreAction::ShareKeyBackup(PathBuf::from("/cache/dip-key.txt")),
             CoreAction::SendBulk(link, vec![3]),
             CoreAction::PublishL2cap(link),
@@ -950,7 +967,8 @@ mod tests {
                     link,
                     pubkey: proved.to_hex(),
                     code: 1_234,
-                    dialed: true
+                    dialed: true,
+                    recognized: false
                 },
                 Action::ShareKeyBackup {
                     path: "/cache/dip-key.txt".to_owned()

@@ -7,7 +7,9 @@
 // comes once they have identified, carrying their pubkey: nothing waits on it,
 // and answering it names them. Either way the user compares the same five
 // shapes against the other phone, and a name is what lets them set anything
-// about that person. `docs/discovery.md#the-consent-gate`,
+// about that person. Somebody the user already named is asked about too when
+// this phone did not recognize them, since they have forgotten the user and
+// are being asked on their own phone. `docs/discovery.md#the-consent-gate`,
 // `docs/discovery.md#meeting-somebody`.
 
 import {get, readable, writable, type Readable} from "svelte/store"
@@ -20,8 +22,9 @@ import {session} from "$lib/data/session"
  * Somebody waiting on an answer. `held` is set when the gate is holding them,
  * which is a request to admit them as well as to name them. `pubkey` is set
  * once they have said who they are, which a dialer does before the gate holds
- * them. `formerly` holds the links it moved off, so a screen opened on one
- * still finds it.
+ * them. `known` is the user's name for somebody they already named, who
+ * forgot them. `formerly` holds the links it moved off, so a screen opened on
+ * one still finds it.
  */
 export type Request = {
   link: number
@@ -29,6 +32,7 @@ export type Request = {
   asked: number
   held?: boolean
   pubkey?: string
+  known?: string
   formerly?: number[]
 }
 
@@ -108,17 +112,20 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
 
   // One request per link and per person: a device may prove several pubkeys, and two phones may briefly hold two links.
   hold(
-    Dip.addListener("peerIdentified", ({link, pubkey, code, dialed}) => {
+    Dip.addListener("peerIdentified", ({link, pubkey, code, dialed, recognized}) => {
       identified.set(link, {pubkey, code, dialed})
 
-      if (promised.has(link) || !unnamed(known, pubkey)) return
+      if (promised.has(link) || (!unnamed(known, pubkey) && recognized)) return
+      if (pubkey === get(session).identity) return
+
+      const named = known.people.get(pubkey)?.petname
 
       pending.update(waiting => {
         // A held dialer names itself before the hold, so its request learns who it is and stands for them.
         if (waiting.some(request => request.link === link && request.held)) {
           return waiting
             .filter(request => request.held || request.pubkey !== pubkey)
-            .map(request => (request.link === link ? {...request, pubkey} : request))
+            .map(request => (request.link === link ? {...request, pubkey, known: named} : request))
         }
 
         if (waiting.some(request => request.link === link)) return waiting
@@ -129,7 +136,7 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
           )
         }
 
-        return [...waiting, {link, code, pubkey, asked: Date.now()}]
+        return [...waiting, {link, code, pubkey, known: named, asked: Date.now()}]
       })
     }),
   )
@@ -179,13 +186,13 @@ export const accept = async (link: number, petname: string) => {
   drop(request?.link ?? link)
 
   if (request?.held) {
-    if (request.pubkey) await name(request.pubkey, petname)
-    else promised.set(link, petname)
+    if (request.pubkey && petname !== request.known) await name(request.pubkey, petname)
+    else if (!request.pubkey) promised.set(link, petname)
 
     return Dip.approve({link: request.link, approved: true})
   }
 
-  if (request?.pubkey) return name(request.pubkey, petname)
+  if (request?.pubkey && petname !== request.known) return name(request.pubkey, petname)
 }
 
 /**

@@ -162,10 +162,13 @@ final class Encounters {
                 radio.send(link.value, fragment)
             case .requestApproval(let link, let code):
                 notify("requestApproval", ["link": Int(link.value), "code": Int(code)])
-            case .peerIdentified(let link, let pubkey, let code, let dialed):
+            case .peerIdentified(let link, let pubkey, let code, let dialed, let recognized):
                 notify(
                     "peerIdentified",
-                    ["link": Int(link.value), "pubkey": pubkey, "code": Int(code), "dialed": dialed])
+                    [
+                        "link": Int(link.value), "pubkey": pubkey, "code": Int(code),
+                        "dialed": dialed, "recognized": recognized,
+                    ])
             case .confirmIdentityTransfer(let link, let code):
                 notify("confirmIdentityTransfer", ["link": Int(link.value), "code": Int(code)])
             case .identityTransfer(let link, let outcome):

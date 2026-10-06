@@ -9,9 +9,11 @@
   const oldest = $derived(requests[0])
 
   const words = $derived(
-    requests.length === 1
-      ? "Somebody nearby wants to pair"
-      : `${requests.length} people nearby want to pair`,
+    requests.length > 1
+      ? `${requests.length} people nearby want to pair`
+      : oldest?.known
+        ? `${oldest.known} wants to pair again`
+        : "Somebody nearby wants to pair",
   )
 </script>
 

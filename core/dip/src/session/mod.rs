@@ -674,6 +674,12 @@ impl Session {
         Ok(())
     }
 
+    /// Whether this device recognized `pubkey` by a pair secret on this link.
+    #[must_use]
+    pub fn recognized(&self, pubkey: &PublicKey) -> bool {
+        self.recognized.contains(pubkey)
+    }
+
     /// Whether the two ever synced on this link.
     #[must_use]
     pub fn synced(&self) -> bool {

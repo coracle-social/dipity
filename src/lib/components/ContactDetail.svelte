@@ -15,7 +15,7 @@
     short,
     social,
   } from "$lib/data/contacts"
-  import {back} from "$lib/data/nav"
+  import {back, go} from "$lib/data/nav"
 
   let {pubkey}: {pubkey: string} = $props()
 
@@ -42,6 +42,7 @@
     forgetting = false
     typed = undefined
     await forget(pubkey)
+    go({at: "people"})
   }
 
   $effect(() => {
@@ -61,7 +62,7 @@
     {
       id: "muted",
       label: "Muted",
-      detail: "Their posts are hidden from you. Your phone still passes them on to others.",
+      detail: "Their posts are hidden from you, but your phone still passes them on.",
       on: Boolean(contact?.muted),
       set: (on: boolean) => setMuted(pubkey, on),
     },
@@ -140,8 +141,7 @@
   <div>
     <h2 class="text-sm font-semibold">Forget them</h2>
     <p class="mt-0.5 text-xs text-pretty text-muted-foreground">
-      Clears your name for them, takes them off your trusted and muted lists, and stops your phone
-      recognizing theirs. Blocking stays as it is. They'll show up as a stranger next time you meet.
+      Clears your name, trust and mute for them, and your phones meet as strangers next time.
     </p>
     <div class="mt-3 flex justify-end gap-2">
       {#if forgetting}

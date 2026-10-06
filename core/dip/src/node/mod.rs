@@ -118,10 +118,23 @@ pub enum Action {
     /// gate shows, so a peer the gate let through can be named over the same
     /// comparison. `docs/discovery.md#meeting-somebody`.
     ///
-    /// The last field is whether this device dialed the link. Two links to one
-    /// person resolve to the one the lower pubkey dialed, so a view showing one
-    /// of them before that happens can pick the same one the core will keep.
-    PeerIdentified(LinkId, PublicKey, u32, bool),
+    /// A peer the user named but this device did not recognize has forgotten
+    /// them, or holds a pair secret this one does not, so it is asked about
+    /// again rather than passed over. `docs/discovery.md#meeting-somebody`.
+    PeerIdentified {
+        /// The link the peer proved itself over.
+        link: LinkId,
+        /// The pubkey it proved.
+        pubkey: PublicKey,
+        /// The value both users compare.
+        code: u32,
+        /// Whether this device dialed the link. Two links to one person
+        /// resolve to the one the lower pubkey dialed, so a view showing one of
+        /// them before that happens can pick the same one the core will keep.
+        dialed: bool,
+        /// Whether this device recognized the pubkey by its pair secret.
+        recognized: bool,
+    },
     /// Present the share sheet over a key backup the core has written.
     ///
     /// The path is the shell's, not the view's: the view starts the export and
@@ -904,10 +917,16 @@ impl Node {
 
             for pubkey in identified {
                 if let Some(code) = code {
-                    let dialed = session.role == Role::Dialer;
+                    let recognized = session.recognized(&pubkey);
 
-                    actions.push(Action::PeerIdentified(session.link, pubkey, code, dialed));
-                    asking.push((session.link, Some(pubkey)));
+                    actions.push(Action::PeerIdentified {
+                        link: session.link,
+                        pubkey,
+                        code,
+                        dialed: session.role == Role::Dialer,
+                        recognized,
+                    });
+                    asking.push((session.link, Some((pubkey, recognized))));
                 }
             }
 
@@ -1178,19 +1197,20 @@ impl Node {
         Ok(())
     }
 
-    /// What to tell a user who is not looking: somebody unnamed asking on one
+    /// What to tell a user who is not looking: somebody asking to pair on one
     /// of `asking`, and new writing. A held gate names nobody, and a peer
-    /// already named is not asking to be.
-    fn notifications(&mut self, asking: Vec<(LinkId, Option<PublicKey>)>) -> Vec<Action> {
+    /// already named is asking only if this device did not recognize them.
+    fn notifications(&mut self, asking: Vec<(LinkId, Option<(PublicKey, bool)>)>) -> Vec<Action> {
         let background = self.presence != Some(Presence::Foreground);
         let mut notifications = Vec::new();
 
-        for (link, pubkey) in asking {
-            let unnamed = pubkey.is_none_or(|pubkey| {
-                !query::has_named(&self.db, &self.identity, &pubkey).unwrap_or(true)
+        for (link, identified) in asking {
+            let asks = identified.is_none_or(|(pubkey, recognized)| {
+                !recognized || !query::has_named(&self.db, &self.identity, &pubkey).unwrap_or(true)
             });
+            let pubkey = identified.map(|(pubkey, _)| pubkey);
 
-            if unnamed && let Some(notification) = self.notifier.pairing(link, pubkey, background) {
+            if asks && let Some(notification) = self.notifier.pairing(link, pubkey, background) {
                 notifications.push(Action::Notify(notification));
             }
         }
@@ -1912,6 +1932,52 @@ mod tests {
         });
 
         assert!(!soon.contains(&Action::Connect(peripheral(1))));
+    }
+
+    #[test]
+    fn a_peer_that_forgot_the_user_is_not_recognized_by_them_again() {
+        let mut one = node();
+        let mut two = node();
+
+        one.notify_foregrounded();
+        two.notify_foregrounded();
+
+        let meet = |one: &mut Node, two: &mut Node, link: u64| {
+            two.link_up(LinkId(link), None, Role::Receiver, 4096)
+                .unwrap();
+            let opening = one
+                .link_up(LinkId(link), Some(peripheral(1)), Role::Dialer, 4096)
+                .unwrap();
+            let actions = settle(one, two, opening);
+            one.link_down(LinkId(link));
+            two.link_down(LinkId(link));
+            actions
+        };
+
+        // Recognized by whom, as each side announced the other.
+        let recognized = |actions: &[Action], pubkey: PublicKey| {
+            actions.iter().find_map(|action| match action {
+                Action::PeerIdentified {
+                    pubkey: proved,
+                    recognized,
+                    ..
+                } if *proved == pubkey => Some(*recognized),
+                _ => None,
+            })
+        };
+
+        clock::at(1_000, || meet(&mut one, &mut two, 1));
+        let again = clock::at(2_000, || meet(&mut one, &mut two, 2));
+
+        assert_eq!(recognized(&again, two.identity()), Some(true));
+        assert_eq!(recognized(&again, one.identity()), Some(true));
+
+        db_command::forget_pairing(&one.db, &two.identity()).unwrap();
+        let after = clock::at(3_000, || meet(&mut one, &mut two, 3));
+
+        // Two still holds the old secret, but one no longer offers a tag for it.
+        assert_eq!(recognized(&after, two.identity()), Some(false));
+        assert_eq!(recognized(&after, one.identity()), Some(false));
     }
 
     #[test]

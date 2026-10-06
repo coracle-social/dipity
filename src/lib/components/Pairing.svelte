@@ -17,11 +17,11 @@
 
   let petname = $state("")
 
-  // A name typed for one person is not for the next.
+  // A name typed for one person is not for the next, and somebody already named starts from that name.
   const link = $derived(request?.link)
 
   $effect(() => {
-    if (link !== undefined) petname = ""
+    if (link !== undefined) petname = request?.known ?? ""
   })
 
   const at = $derived(request ? $requests.findIndex(asking => asking.link === request.link) : -1)
@@ -56,9 +56,14 @@
 </header>
 
 {#if request}
+  {#if request.known}
+    <p class="mb-2 max-w-prose text-sm font-medium text-pretty">
+      You already know {request.known}.
+    </p>
+  {/if}
+
   <p class="max-w-prose text-sm text-pretty text-muted-foreground">
-    Check that both phones show the same five shapes in the same order. If they match, the phones
-    are connected directly to each other.
+    Check that both phones show the same five shapes in the same order.
   </p>
 
   <div class="my-8">
@@ -77,7 +82,7 @@
     <Label for="petname">What do you call them?</Label>
     <Input id="petname" bind:value={petname} placeholder="Ben" autocomplete="off" />
     <p class="text-xs text-pretty text-muted-foreground">
-      Dipity has no profiles, so the name you choose here is how they appear.
+      This is the only name they have on your phone.
     </p>
   </div>
 
@@ -92,8 +97,7 @@
 
   {#if $requests.length > 1}
     <p class="mt-8 text-xs text-pretty text-muted-foreground">
-      Several people are asking to pair. Each pair of phones has its own shapes, so if these don't
-      match, the other person may be looking at a different request.
+      Each request has its own shapes, so if these don't match, try the next one.
     </p>
     <nav class="mt-2 flex items-center justify-between" aria-label="Other pairing requests">
       <Button variant="ghost" size="sm" disabled={at <= 0} onclick={() => open(at - 1)}>

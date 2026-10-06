@@ -210,7 +210,8 @@ object Encounters : Radio.Delegate {
                             .put("link", action.link.value.toLong())
                             .put("pubkey", action.pubkey)
                             .put("code", action.code.toLong())
-                            .put("dialed", action.dialed),
+                            .put("dialed", action.dialed)
+                            .put("recognized", action.recognized),
                     )
                 is Action.ConfirmIdentityTransfer ->
                     notify(

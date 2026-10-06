@@ -75,10 +75,26 @@ const namings = (events: HashedEvent[]): Naming[] =>
       return about && petname ? [{by: event.pubkey, about, petname, event}] : []
     })
 
+/** The user's newest card for each person, emptied ones included, since emptying one is forgetting them. */
+const ownCards = (events: HashedEvent[], identity?: string) => {
+  const cards = new Map<string, HashedEvent>()
+
+  for (const event of events) {
+    if (event.kind !== CONTACT || event.pubkey !== identity) continue
+
+    const about = contactCard.reader(event).parse().subject()
+    const held = about && cards.get(about)
+
+    if (about && (!held || event.created_at > held.created_at)) cards.set(about, event)
+  }
+
+  return cards
+}
+
 const collate = async (events: HashedEvent[], identity?: string): Promise<Social> => {
   const named = namings(events)
   const own = {
-    cards: new Map(named.filter(({by}) => by === identity).map(({about, event}) => [about, event])),
+    cards: ownCards(events, identity),
     trust: newest(events, TRUST, identity),
     block: newest(events, BLOCK, identity),
     mute: newest(events, MUTES, identity),
@@ -301,8 +317,9 @@ export const setMuted = (pubkey: string, muted: boolean) => amend(mute, "mute", 
 
 /**
  * Forget somebody: an empty card supersedes the user's name for them, they come
- * off the trust and mute lists, and their device is met as a stranger until the
- * two next sync. A block stays, since it is the one thing guarding the wire.
+ * off the trust and mute lists, the names other people gave them are dropped
+ * from this phone, and their device is met as a stranger until the two next
+ * sync. A block stays, since it is the one thing guarding the wire.
  */
 export const forget = async (pubkey: string) => {
   const contact = get(social).people.get(pubkey)
@@ -310,6 +327,13 @@ export const forget = async (pubkey: string) => {
   if (contact?.petname) await name(pubkey, "")
   if (contact?.trusted) await setTrusted(pubkey, false)
   if (contact?.muted) await setMuted(pubkey, false)
+
+  // Dropped rather than refused, so a card that arrives again names them again.
+  const theirs = await eventsOf({filter: JSON.stringify({kinds: [CONTACT], "#d": [pubkey]})})
+
+  for (const card of theirs) {
+    if (card.pubkey !== get(session).identity) await Dip.forgetEvent({id: card.id})
+  }
 
   await Dip.forgetPairing({pubkey})
 }
