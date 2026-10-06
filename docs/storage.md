@@ -74,7 +74,11 @@ Nothing stops a dropped event arriving again from somebody who still has it. Dro
 
 ### The trash
 
-The user drops and retracts through the trash. Throwing something out marks it in `event_trashed`, which hides it from the board and from the saved bookmarks and tells nobody. It can be put back until the trash is emptied, by hand or by the hourly sweep once it has been there a week. Emptying retracts the user's own events with a kind 5 that the core writes itself, so a retraction goes out while the view is suspended, and drops everything else.
+The user drops and retracts through the trash. Throwing something out marks it in `event_trashed`, which hides it from the board and from the saved bookmarks, and nothing in the trash is served to a peer. Throwing out the user's own event also retracts it there and then, with a kind 5 the core writes itself; anybody else's goes in telling nobody. Retracting and keeping are separate: the retracted event stays in the trash on this phone like anything else.
+
+A kind 5 that arrives does the same to what it names, putting it in the trash rather than deleting it, so somebody else's retraction leaves the board at once and still gives the user the week to look at it. `event_trashed.deletion` records which kind 5 put a thing there.
+
+Putting the user's own event back undoes its retraction for everybody, by a kind 5 naming the kind 5 that retracted it. Wherever that arrives, the retracted kind 5 goes in the trash, stops counting as a deletion, and takes back out exactly what it put in, leaving what the user threw out by hand where it is. The refusals it caused are forgotten, so a device that never held the event can take it again. Somebody else's event comes back on this phone only, and only if its author has not retracted it: the trash marks what its author retracted, and that cannot be put back by anybody but the author. Everything in the trash is dropped from this device when the trash is emptied, by hand or by the hourly sweep once it has been there a week. Emptying writes a kind 5 for any of the user's own events that went in without one, so a retraction goes out while the view is suspended.
 
 ## Notifications
 

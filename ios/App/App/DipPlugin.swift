@@ -47,7 +47,8 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "listDetails", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getEvent", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "forgetEvent", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "setTrashed", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "trash", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "restore", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "trashed", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "emptyTrash", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "notificationPermission", returnType: CAPPluginReturnPromise),
@@ -309,12 +310,18 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         answer(call, "existed") { try $0.forgetEvent(id: id) }
     }
 
-    /// Put an event in the trash, or take it back out.
-    @objc func setTrashed(_ call: CAPPluginCall) {
-        guard let id = call.getString("id") else { return call.reject("setTrashed needs an id") }
-        let trashed = call.getBool("trashed", true)
+    /// Put an event in the trash, which retracts it at once if the user wrote it.
+    @objc func trash(_ call: CAPPluginCall) {
+        guard let id = call.getString("id") else { return call.reject("trash needs an id") }
 
-        answer(call, "moved") { try $0.setTrashed(id: id, trashed: trashed) }
+        perform(call, "that could not be trashed") { try $0.node.trash(id: id) }
+    }
+
+    /// Take an event back out of the trash, which restores it for peers too if the user wrote it.
+    @objc func restore(_ call: CAPPluginCall) {
+        guard let id = call.getString("id") else { return call.reject("restore needs an id") }
+
+        perform(call, "that could not be restored") { try $0.node.restore(id: id) }
     }
 
     @objc func trashed(_ call: CAPPluginCall) {
@@ -331,7 +338,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         Alerts.request { call.resolve(["permission": $0]) }
     }
 
-    /// Delete everything in the trash, which retracts the user's own events.
+    /// Delete everything in the trash from this device.
     @objc func emptyTrash(_ call: CAPPluginCall) {
         perform(call, "the trash could not be emptied") { try $0.node.emptyTrash() }
     }

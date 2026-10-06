@@ -24,7 +24,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use coracle_lib::events::HashedEvent;
+use coracle_lib::events::{EventId, HashedEvent};
 use dip::keys::KeyCustody as CoreCustody;
 use dip::session::transfer::Outcome;
 use dip::{
@@ -308,6 +308,13 @@ pub struct Node {
 ///
 /// The guard is dropped before the conversion, so nothing crossing back into
 /// Swift or Kotlin happens under it.
+/// Parse an event id the view sent.
+fn event_id(hex: &str) -> Result<EventId, NodeError> {
+    EventId::from_hex(hex).map_err(|error| NodeError::Core {
+        reason: format!("that is not an event id: {error}"),
+    })
+}
+
 macro_rules! drive {
     ($self:expr, |$node:ident| $call:expr) => {{
         let actions = {
@@ -490,8 +497,28 @@ impl Node {
             .map_err(|error| NodeError::core(&error))?)
     }
 
-    /// Delete everything in the trash: the user's own events are retracted,
-    /// and anybody else's dropped from this device.
+    /// Put an event in the trash. One the user wrote is retracted at once,
+    /// and stays in the trash on this device until it is emptied.
+    pub fn trash(&self, id: String) -> Result<Vec<Action>, NodeError> {
+        let id = event_id(&id)?;
+
+        drive!(self, |node| node
+            .trash(&id)
+            .map_err(|error| NodeError::core(&error))?)
+    }
+
+    /// Take an event back out of the trash. One the user wrote is restored
+    /// for peers too, by retracting the kind 5 that retracted it.
+    pub fn restore(&self, id: String) -> Result<Vec<Action>, NodeError> {
+        let id = event_id(&id)?;
+
+        drive!(self, |node| node
+            .restore(&id)
+            .map_err(|error| NodeError::core(&error))?)
+    }
+
+    /// Delete everything in the trash from this device, retracting anything
+    /// of the user's not already retracted.
     pub fn empty_trash(&self) -> Result<Vec<Action>, NodeError> {
         drive!(self, |node| node
             .empty_trash()

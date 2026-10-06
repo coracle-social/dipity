@@ -151,9 +151,38 @@ pub fn get_event(db: &Db, id: &EventId) -> Result<Option<HashedEvent>> {
     db.read(|tx| event::get(tx, id))
 }
 
-/// What is in the trash, newest first, with when each went in.
+/// Whether a stored kind 5 by its author, not itself retracted, covers `event`.
+pub fn is_deleted(db: &Db, event: &HashedEvent) -> Result<bool> {
+    db.read(|tx| event::is_deleted(tx, event))
+}
+
+/// The kind 5s by its author that cover `event`, leaving out any since retracted.
+pub fn deletions(db: &Db, event: &HashedEvent) -> Result<Vec<HashedEvent>> {
+    db.read(|tx| event::deletions(tx, event))
+}
+
+/// Everything in the trash, newest first, with when each went in.
 pub fn trashed(db: &Db) -> Result<Vec<(EventId, i64)>> {
-    db.read(event::trashed)
+    db.read(|tx| event::trashed(tx, false))
+}
+
+/// What the user sees in the trash, which is everything but the retracted
+/// kind 5s, with when each went in and whether its author has retracted it.
+pub fn trashed_writing(db: &Db) -> Result<Vec<(EventId, i64, bool)>> {
+    db.read(|tx| {
+        let mut rows = Vec::new();
+
+        for (id, at) in event::trashed(tx, true)? {
+            let retracted = match event::get(tx, &id)? {
+                Some(held) => event::is_deleted(tx, &held)?,
+                None => false,
+            };
+
+            rows.push((id, at, retracted));
+        }
+
+        Ok(rows)
+    })
 }
 
 /// The user's own events handed to any of `to` without the recipient signature.

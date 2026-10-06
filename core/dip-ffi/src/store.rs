@@ -236,11 +236,13 @@ impl Store {
             .transpose()
     }
 
-    /// What is in the trash, newest first, each as `{"id", "trashed_at"}` JSON.
+    /// What is in the trash, newest first, each as `{"id", "trashed_at", "retracted"}` JSON.
     pub fn trashed(&self) -> Result<Vec<String>, StoreError> {
-        let rows: Vec<serde_json::Value> = query::trashed(&self.db)?
+        let rows: Vec<serde_json::Value> = query::trashed_writing(&self.db)?
             .into_iter()
-            .map(|(id, at)| serde_json::json!({"id": id.to_hex(), "trashed_at": at}))
+            .map(|(id, at, retracted)| {
+                serde_json::json!({"id": id.to_hex(), "trashed_at": at, "retracted": retracted})
+            })
             .collect();
 
         json_each(&rows)
@@ -301,15 +303,6 @@ impl Store {
         let id = EventId::from_hex(&id).map_err(|error| malformed("event id", &error))?;
 
         Ok(command::forget_event(&self.db, &id)?)
-    }
-
-    /// Put an event in the trash, or take it back out. Answers whether that
-    /// moved anything. Emptying it is [`Node::empty_trash`](crate::node::Node::empty_trash),
-    /// since the user's own events are retracted rather than dropped.
-    pub fn set_trashed(&self, id: String, trashed: bool) -> Result<bool, StoreError> {
-        let id = EventId::from_hex(&id).map_err(|error| malformed("event id", &error))?;
-
-        Ok(command::set_trashed(&self.db, &id, trashed, now())?)
     }
 
     /// Write a preference. `value` is a JSON document.

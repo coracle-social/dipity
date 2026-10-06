@@ -1,5 +1,5 @@
 //! Writes over `event`, `event_tag`, `event_fts`, `event_seen`,
-//! `event_shared` and `event_refused`.
+//! `event_shared`, `event_trashed` and `event_refused`.
 //!
 //! [`save`] is the whole of ingest below the policy layer: it enforces what the
 //! tables mean to each other, so an event, its indexes, its sightings and the
@@ -62,7 +62,7 @@ pub fn save(tx: &Tx<'_>, event: &HashedEvent, from: &[PublicKey], seen_at: i64) 
     record_seen_all(tx, &event.id, from, seen_at)?;
 
     if event.kind == delete::KIND {
-        apply_deletion(tx, event)?;
+        apply_deletion(tx, event, seen_at)?;
     }
 
     Ok(true)
@@ -189,17 +189,36 @@ pub fn record_shared(
 
 /// Put an event in the trash, or take it back out. Returns whether that moved anything.
 pub fn set_trashed(tx: &Tx<'_>, id: &EventId, trashed: bool, at: i64) -> Result<bool> {
-    let moved = if trashed {
-        tx.prepare_cached(
-            "INSERT OR IGNORE INTO event_trashed (event_id, trashed_at)
-             SELECT id, ?2 FROM event WHERE id = ?1",
-        )?
-        .execute(params![id.to_hex(), at])
+    if trashed {
+        trash(tx, id, None, at)
     } else {
-        tx.prepare_cached("DELETE FROM event_trashed WHERE event_id = ?1")?
-            .execute(params![id.to_hex()])
+        restore(tx, id)
     }
-    .with_context(|| format!("moving {id} in or out of the trash"))?;
+}
+
+/// Put an event in the trash, naming the kind 5 that did it if one did.
+fn trash(tx: &Tx<'_>, id: &EventId, deletion: Option<&EventId>, at: i64) -> Result<bool> {
+    let moved = tx
+        .prepare_cached(
+            "INSERT OR IGNORE INTO event_trashed (event_id, trashed_at, deletion)
+             SELECT id, ?2, ?3 FROM event WHERE id = ?1",
+        )?
+        .execute(params![id.to_hex(), at, deletion.map(EventId::to_hex)])
+        .with_context(|| format!("putting {id} in the trash"))?;
+
+    if moved > 0 {
+        channel::notify(tx, EventChange::Trashed(id.to_hex()));
+    }
+
+    Ok(moved > 0)
+}
+
+/// Take an event back out of the trash.
+fn restore(tx: &Tx<'_>, id: &EventId) -> Result<bool> {
+    let moved = tx
+        .prepare_cached("DELETE FROM event_trashed WHERE event_id = ?1")?
+        .execute(params![id.to_hex()])
+        .with_context(|| format!("taking {id} out of the trash"))?;
 
     if moved > 0 {
         channel::notify(tx, EventChange::Trashed(id.to_hex()));
@@ -413,30 +432,63 @@ fn insert(tx: &Tx<'_>, event: &HashedEvent, id: &str, seen_at: i64) -> Result<()
     Ok(())
 }
 
-/// Apply a kind 5, deleting the events it names that its author wrote.
-fn apply_deletion(tx: &Tx<'_>, event: &HashedEvent) -> Result<()> {
+/// Apply a kind 5, putting the events it names that its author wrote in the
+/// trash, where the sweep deletes them. `docs/storage.md#the-trash`.
+fn apply_deletion(tx: &Tx<'_>, event: &HashedEvent, at: i64) -> Result<()> {
     let Ok(deletion) = DeleteReader::read(event) else {
         return Ok(());
     };
 
-    for id in deletion.ids() {
-        let Some(target) = query::get(tx, id)? else {
-            continue;
-        };
+    let named = deletion
+        .ids()
+        .iter()
+        .map(|id| query::get(tx, id))
+        .chain(deletion.addresses().iter().map(|address| query::by_address(tx, address)));
 
-        if deletion.matches(&target) {
-            delete(tx, &target.id)?;
+    let mut targets = Vec::new();
+
+    for target in named {
+        if let Some(target) = target?
+            && deletion.matches(&target)
+        {
+            targets.push(target);
         }
     }
 
-    for address in deletion.addresses() {
-        let Some(target) = query::by_address(tx, address)? else {
-            continue;
-        };
+    for target in targets {
+        trash(tx, &target.id, Some(&event.id), at)?;
 
-        if deletion.matches(&target) {
-            delete(tx, &target.id)?;
+        if target.kind == delete::KIND {
+            undo_deletion(tx, &target)?;
         }
+    }
+
+    Ok(())
+}
+
+/// Take back out of the trash what a now-retracted kind 5 put there, and
+/// forget the refusals it made, so what it named can arrive again.
+fn undo_deletion(tx: &Tx<'_>, retracted: &HashedEvent) -> Result<()> {
+    let restored = tx
+        .prepare_cached("DELETE FROM event_trashed WHERE deletion = ?1 RETURNING event_id")?
+        .query_map(params![retracted.id.to_hex()], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .with_context(|| format!("undoing deletion {}", retracted.id))?;
+
+    for id in restored {
+        channel::notify(tx, EventChange::Trashed(id));
+    }
+
+    let Ok(deletion) = DeleteReader::read(retracted) else {
+        return Ok(());
+    };
+
+    let mut forget = tx.prepare_cached("DELETE FROM event_refused WHERE id = ?1 AND by_policy = 0")?;
+
+    for id in deletion.ids() {
+        forget
+            .execute(params![id.to_hex()])
+            .with_context(|| format!("forgetting the refusal of {id}"))?;
     }
 
     Ok(())
@@ -611,7 +663,7 @@ mod tests {
     }
 
     #[test]
-    fn a_deletion_removes_the_authors_own_events_only() {
+    fn a_deletion_trashes_the_authors_own_events_only() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
@@ -632,12 +684,12 @@ mod tests {
         );
         save(&tx, &deletion, &[peer()], 20).unwrap();
 
-        assert!(query::get(&tx, &id(&mine)).unwrap().is_none());
-        assert!(query::get(&tx, &id(&theirs)).unwrap().is_some());
+        assert!(query::get(&tx, &id(&mine)).unwrap().is_some());
+        assert_eq!(query::trashed(&tx, false).unwrap(), vec![(id(&mine), 20)]);
     }
 
     #[test]
-    fn a_deletion_by_address_removes_the_slot() {
+    fn a_deletion_by_address_trashes_the_slot() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
@@ -660,7 +712,103 @@ mod tests {
         );
         save(&tx, &deletion, &[peer()], 20).unwrap();
 
-        assert!(query::get(&tx, &id(&article)).unwrap().is_none());
+        assert_eq!(query::trashed(&tx, false).unwrap(), vec![(id(&article), 20)]);
+    }
+
+    #[test]
+    fn retracting_a_deletion_restores_what_it_trashed_and_nothing_else() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        let retracted = note(author(1), 100, "retracted", Tags::new());
+        let thrown_out = note(author(1), 100, "thrown out", Tags::new());
+
+        save(&tx, &retracted, &[peer()], 10).unwrap();
+        save(&tx, &thrown_out, &[peer()], 10).unwrap();
+        set_trashed(&tx, &id(&thrown_out), true, 15).unwrap();
+
+        let deletion = event(
+            author(1),
+            delete::KIND,
+            200,
+            "",
+            Tags::new()
+                .add("e", [id(&retracted).to_hex()])
+                .add("e", [id(&thrown_out).to_hex()]),
+        );
+        save(&tx, &deletion, &[peer()], 20).unwrap();
+
+        let undo = event(
+            author(1),
+            delete::KIND,
+            300,
+            "",
+            Tags::new().add("e", [id(&deletion).to_hex()]).add("k", ["5"]),
+        );
+        save(&tx, &undo, &[peer()], 30).unwrap();
+
+        // What the user threw out themselves stays out; the retracted deletion goes in.
+        let trashed: Vec<_> = query::trashed(&tx, false).unwrap().into_iter().map(|(id, _)| id).collect();
+        assert_eq!(trashed, vec![id(&deletion), id(&thrown_out)]);
+        assert!(!query::is_deleted(&tx, &retracted).unwrap());
+    }
+
+    #[test]
+    fn an_event_refused_under_a_retracted_deletion_arrives_again() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        let subject = note(author(1), 100, "back again", Tags::new());
+        let deletion = event(
+            author(1),
+            delete::KIND,
+            200,
+            "",
+            Tags::new().add("e", [id(&subject).to_hex()]),
+        );
+        let undo = event(
+            author(1),
+            delete::KIND,
+            300,
+            "",
+            Tags::new().add("e", [id(&deletion).to_hex()]),
+        );
+
+        save(&tx, &deletion, &[peer()], 10).unwrap();
+        assert!(!save(&tx, &subject, &[peer()], 20).unwrap());
+
+        save(&tx, &undo, &[peer()], 30).unwrap();
+
+        assert!(query::refused(&tx).unwrap().is_empty());
+        assert!(save(&tx, &subject, &[peer()], 40).unwrap());
+    }
+
+    #[test]
+    fn a_deletion_already_retracted_is_not_taken_back() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        let subject = note(author(1), 100, "kept", Tags::new());
+        let deletion = event(
+            author(1),
+            delete::KIND,
+            200,
+            "",
+            Tags::new().add("e", [id(&subject).to_hex()]),
+        );
+        let undo = event(
+            author(1),
+            delete::KIND,
+            300,
+            "",
+            Tags::new().add("e", [id(&deletion).to_hex()]),
+        );
+
+        save(&tx, &subject, &[peer()], 10).unwrap();
+        save(&tx, &undo, &[peer()], 20).unwrap();
+
+        assert!(!save(&tx, &deletion, &[peer()], 30).unwrap());
+        assert!(query::trashed(&tx, false).unwrap().is_empty());
     }
 
     #[test]
@@ -697,7 +845,7 @@ mod tests {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        // The mirror of `a_deletion_removes_the_authors_own_events_only`, on the stored path.
+        // The mirror of `a_deletion_trashes_the_authors_own_events_only`, on the stored path.
         let subject = note(author(1), 100, "not theirs to delete", Tags::new());
         let deletion = event(
             author(2),

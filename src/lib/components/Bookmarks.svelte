@@ -12,7 +12,7 @@
   import {responses, saying, standingOf, warmthOf, type Item} from "$lib/data/feed"
   import {matches, nameMatches, wordsOf} from "$lib/data/search"
   import {session} from "$lib/data/session"
-  import {emptyTrash} from "$lib/data/trash"
+  import {emptyTrash, trashed} from "$lib/data/trash"
   import {categories, categoryOf, summaryOf} from "$lib/kinds"
 
   let {onBoost}: {onBoost: (item: Item) => void} = $props()
@@ -108,8 +108,8 @@
     </div>
 
     <p class="mt-2 text-sm text-pretty text-muted-foreground">
-      Posts in the trash are deleted after 7 days. Deleting your own post asks everyone who has it
-      to delete it too.
+      Posts in the trash are deleted from this phone after 7 days. Trashing your own post asks
+      everyone who has it to delete it right away, and putting it back asks them to restore it.
     </p>
 
     {#if $trashedItems.length > 0}
@@ -137,6 +137,7 @@
           session={$session}
           bookmarked={$bookmarked.has(item.event.id)}
           trashed
+          retracted={$trashed.get(item.event.id)?.retracted}
           {onBoost} />
       {/each}
     </div>

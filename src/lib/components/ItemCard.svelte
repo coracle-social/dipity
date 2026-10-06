@@ -1,6 +1,6 @@
 <script lang="ts">
   import Bookmark from "@lucide/svelte/icons/bookmark"
-  import Repeat from "@lucide/svelte/icons/repeat-2"
+  import MessageCircle from "@lucide/svelte/icons/message-circle"
   import Undo from "@lucide/svelte/icons/undo-2"
   import Smile from "@lucide/svelte/icons/smile"
   import Trash from "@lucide/svelte/icons/trash-2"
@@ -27,6 +27,7 @@
     session,
     bookmarked,
     trashed = false,
+    retracted = false,
     onBoost,
     detailed = false,
   }: {
@@ -40,6 +41,8 @@
     bookmarked: boolean
     /** Whether this is in the trash, where the button puts it back rather than throwing it out. */
     trashed?: boolean
+    /** Whether its author retracted it, which leaves somebody else's nothing to put back. */
+    retracted?: boolean
     onBoost: (item: Item) => void
     /** Whether this is the card the detail page is about, which opens nothing. */
     detailed?: boolean
@@ -145,7 +148,11 @@
     <p class="min-w-0 truncate text-xs text-muted-foreground">
       {arrived}{carrier ? ` · from ${carrier}` : ""}{hops === 2 ? " · two hops" : ""}{passedOn > 0
         ? ` · ${passedOn} passed on`
-        : ""}{standing.saying > 0 ? ` · ${standing.saying} saying` : ""}
+        : ""}{standing.saying > 0 ? ` · ${standing.saying} saying` : ""}{retracted
+        ? mine
+          ? " · retracted"
+          : " · retracted by author"
+        : ""}
     </p>
 
     <div class="flex flex-none items-center gap-0.5">
@@ -153,7 +160,7 @@
         <Smile />
       </Button>
       <Button variant="ghost" size="icon-sm" aria-label="Pass it on" onclick={() => onBoost(item)}>
-        <Repeat />
+        <MessageCircle />
       </Button>
       <Button
         variant="ghost"
@@ -165,7 +172,12 @@
         <Bookmark />
       </Button>
       {#if trashed}
-        <Button variant="ghost" size="icon-sm" aria-label="Put back" onclick={() => restore(item)}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={retracted && !mine ? "Retracted by its author" : "Put back"}
+          disabled={retracted && !mine}
+          onclick={() => restore(item)}>
           <Undo />
         </Button>
       {:else}

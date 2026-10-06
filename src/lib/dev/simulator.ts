@@ -127,8 +127,6 @@ export class Simulator extends WebPlugin implements DipCore {
   /** What the phone would say about notifications; a browser has no background to notify from. */
   private notifying: NotificationPermission = "prompt"
 
-  /** What the user put in the trash, by id, with when it went in. */
-  private trash = new Map<string, number>()
   private paired = new Set<string>()
   private refused = new Map<string, number>()
   private gates = new Map<number, Person>()
@@ -502,26 +500,51 @@ export class Simulator extends WebPlugin implements DipCore {
     return {existed}
   }
 
-  async setTrashed({id, trashed}: {id: string; trashed: boolean}) {
-    const moved = trashed
-      ? Boolean(this.store.get(id)) && !this.trash.has(id) && Boolean(this.trash.set(id, now()))
-      : this.trash.delete(id)
+  async trash({id}: {id: string}) {
+    const at = now()
 
-    if (moved) this.notifyListeners("storeChanged", {group: "events"})
+    if (!this.store.trash(id, at)) return
 
-    return {moved}
+    const event = this.store.get(id)?.event
+
+    if (event) this.retract(event, at)
+
+    this.notifyListeners("storeChanged", {group: "events"})
+  }
+
+  async restore({id}: {id: string}) {
+    const event = this.store.get(id)?.event
+
+    if (event && event.pubkey !== this.identity && this.store.isDeleted(event)) {
+      throw new Error(`${id} was retracted by its author, so it cannot be put back`)
+    }
+
+    if (!this.store.restore(id)) return
+
+    if (event?.pubkey === this.identity) {
+      for (const deletion of this.store.deletions(event)) this.retract(deletion, now())
+    }
+
+    this.notifyListeners("storeChanged", {group: "events"})
   }
 
   async trashed() {
     // The core's sweep empties what has been in the trash a week; here reading it does.
     this.deleteTrashed(now() - 7 * 86_400)
 
-    const held = [...this.trash].filter(([id]) => this.store.get(id))
-
     return {
-      trashed: held
+      trashed: [...this.store.trashed]
+        .filter(([id]) => this.store.get(id)?.event.kind !== 5)
         .sort(([, a], [, b]) => b - a)
-        .map(([id, at]) => JSON.stringify({id, trashed_at: at})),
+        .map(([id, at]) => {
+          const event = this.store.get(id)?.event
+
+          return JSON.stringify({
+            id,
+            trashed_at: at,
+            retracted: Boolean(event && this.store.isDeleted(event)),
+          })
+        }),
     }
   }
 
@@ -529,36 +552,38 @@ export class Simulator extends WebPlugin implements DipCore {
     this.deleteTrashed(Infinity)
   }
 
-  /** Retract the user's own trashed events and drop the rest, as the core does. */
+  /** Drop what went into the trash before `before`, retracting the user's own first, as the core does. */
   private deleteTrashed(before: number) {
     let moved = false
 
-    for (const [id, at] of this.trash) {
+    for (const [id, at] of [...this.store.trashed]) {
       if (at >= before) continue
 
       const event = this.store.get(id)?.event
 
-      this.trash.delete(id)
+      if (event) this.retract(event, now())
+
+      this.store.forget(id)
       moved = true
-
-      if (event?.pubkey === this.identity) {
-        const created_at = now()
-        const tags = [
-          ["e", id],
-          ["k", String(event.kind)],
-        ]
-
-        this.store.record(
-          hash({kind: 5, tags, content: "", created_at, pubkey: this.identity}),
-          this.identity,
-          created_at,
-        )
-      } else {
-        this.store.forget(id)
-      }
     }
 
     if (moved) this.notifyListeners("storeChanged", {group: "events"})
+  }
+
+  /** Publish a kind 5 for the user's own event, unless one already covers it. */
+  private retract(event: HashedEvent, created_at: number) {
+    if (event.pubkey !== this.identity || this.store.isDeleted(event)) return
+
+    const tags = [
+      ["e", event.id],
+      ["k", String(event.kind)],
+    ]
+
+    this.store.record(
+      hash({kind: 5, tags, content: "", created_at, pubkey: this.identity}),
+      this.identity,
+      created_at,
+    )
   }
 
   async notificationPermission() {

@@ -241,10 +241,16 @@ pub fn unsigned_shares(
         .context("finding own events handed over unsigned")
 }
 
-/// What is in the trash, newest first, with when each went in.
-pub fn trashed(tx: &Tx<'_>) -> Result<Vec<(EventId, i64)>> {
-    tx.prepare_cached("SELECT event_id, trashed_at FROM event_trashed ORDER BY trashed_at DESC")?
-        .query_map([], |row| {
+/// What is in the trash, newest first, with when each went in. A retracted
+/// kind 5 is in there for the sweep, and `writing` leaves it out for the user.
+pub fn trashed(tx: &Tx<'_>, writing: bool) -> Result<Vec<(EventId, i64)>> {
+    tx.prepare_cached(
+        "SELECT t.event_id, t.trashed_at FROM event_trashed t
+         JOIN event e ON e.id = t.event_id
+         WHERE NOT ?1 OR e.kind <> ?2
+         ORDER BY t.trashed_at DESC",
+    )?
+        .query_map(params![writing, delete::KIND], |row| {
             Ok((
                 event_id_from_sql(&row.get::<_, String>(0)?, 0)?,
                 row.get::<_, i64>(1)?,
@@ -272,7 +278,7 @@ pub fn seen_from(tx: &Tx<'_>, id: &EventId) -> Result<Vec<PublicKey>> {
         .collect())
 }
 
-/// Whether a stored request has already asked for this event to be deleted.
+/// Whether a stored request, not itself retracted, has asked for this event to be deleted.
 ///
 /// The mirror of the sweep in [`command`](super::command), which runs when the
 /// request is the event arriving. Both ask [`DeleteReader::matches`], so who
@@ -282,12 +288,18 @@ pub fn seen_from(tx: &Tx<'_>, id: &EventId) -> Result<Vec<PublicKey>> {
 /// and no further; a second copy of the rule here would be one the two
 /// directions could disagree about.
 pub fn is_deleted(tx: &Tx<'_>, event: &HashedEvent) -> Result<bool> {
+    Ok(!deletions(tx, event)?.is_empty())
+}
+
+/// The kind 5s by its author that cover `event`, leaving out any since retracted.
+pub fn deletions(tx: &Tx<'_>, event: &HashedEvent) -> Result<Vec<HashedEvent>> {
     let id = event.id.to_hex();
     let requests = tx
         .prepare_cached(&format!(
             "SELECT DISTINCT {COLUMNS} FROM event e
              JOIN event_tag t ON t.event_id = e.id
              WHERE e.kind = ?3
+               AND e.id NOT IN (SELECT event_id FROM event_trashed)
                AND ((t.name = 'e' AND t.value = ?1) OR (t.name = 'a' AND t.value = ?2))"
         ))?
         .query_map(
@@ -299,12 +311,12 @@ pub fn is_deleted(tx: &Tx<'_>, event: &HashedEvent) -> Result<bool> {
             to_event,
         )?
         .collect::<rusqlite::Result<Vec<_>>>()
-        .with_context(|| format!("checking whether {id} is deleted"))?;
+        .with_context(|| format!("finding deletions of {id}"))?;
 
     Ok(requests
-        .iter()
-        .filter_map(|request| DeleteReader::read(request).ok())
-        .any(|request| request.matches(event)))
+        .into_iter()
+        .filter(|request| DeleteReader::read(request).is_ok_and(|reader| reader.matches(event)))
+        .collect())
 }
 
 /// Assemble a statement from its parts. The limit binds after every other
@@ -527,6 +539,9 @@ fn push_policy(conditions: &mut Conditions, policy: &PeerPolicy) {
         conditions.push_never();
         return;
     }
+
+    // The trash is this device's to look through, so nothing in it is handed on.
+    conditions.push("e.id NOT IN (SELECT event_id FROM event_trashed)");
 
     let hex = |author: &PublicKey| text(author.to_hex());
 
@@ -943,6 +958,27 @@ mod tests {
 
         assert_eq!(page.len(), 1);
         assert_eq!(page[0].created_at, 100);
+    }
+
+    #[test]
+    fn nothing_in_the_trash_is_served() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+
+        let us = author(1);
+        let kept = note(us, 100, "kept", Tags::new());
+        let binned = note(us, 200, "binned", Tags::new());
+
+        command::save(&tx, &kept, &[us], 100).unwrap();
+        command::save(&tx, &binned, &[us], 200).unwrap();
+        command::set_trashed(&tx, &id(&binned), true, 300).unwrap();
+
+        let served = list(&tx, &everything().with_policy(Policy::new(us).for_pubkey(author(9))))
+            .unwrap();
+        assert_eq!(served.iter().map(id).collect::<Vec<_>>(), vec![id(&kept)]);
+
+        // The user still finds it, under Trash.
+        assert_eq!(list(&tx, &everything()).unwrap().len(), 2);
     }
 
     #[test]

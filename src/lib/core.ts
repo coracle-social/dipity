@@ -235,13 +235,16 @@ export type DipCore = {
    */
   forgetEvent(options: {id: string}): Promise<{existed: boolean}>
 
-  /** Put an event in the trash, or take it back out. */
-  setTrashed(options: {id: string; trashed: boolean}): Promise<{moved: boolean}>
+  /** Put an event in the trash, retracting it at once with a kind 5 if the user wrote it. */
+  trash(options: {id: string}): Promise<void>
 
-  /** What is in the trash, newest first, each as `{id, trashed_at}` JSON. */
+  /** Take an event back out of the trash, restoring it for peers too with a kind 5 of its kind 5 if the user wrote it. */
+  restore(options: {id: string}): Promise<void>
+
+  /** What is in the trash, newest first, each as `{id, trashed_at, retracted}` JSON. */
   trashed(): Promise<{trashed: string[]}>
 
-  /** Delete everything in the trash: the user's own events are retracted, the rest dropped. */
+  /** Delete everything in the trash from this device, retracting the user's own not yet retracted. */
   emptyTrash(): Promise<void>
 
   /** Whether the phone lets the app notify. */

@@ -57,6 +57,10 @@ export class Store {
   private details = new Map<string, EventDetail>()
   private blobs = new Map<string, Blob>()
   private preferences = new Map<string, {value: string; updatedAt: number}>()
+  /** What is in the trash, by id, with when it went in. */
+  readonly trashed = new Map<string, number>()
+  /** The kind 5 that put each of those in the trash, for one the user did not. */
+  private trashedBy = new Map<string, string>()
   /** Events the author's signature arrived with, which is what makes them forwardable. */
 
   /**
@@ -64,8 +68,9 @@ export class Store {
    *
    * Refused the same ways the core refuses: an ephemeral kind is never stored,
    * nor one its author has deleted, and a replaceable one only when it beats
-   * whatever holds its address — later, or equal and lower id. A deletion takes
-   * what its author wrote and it names. A simulator that keeps every version is
+   * whatever holds its address — later, or equal and lower id. A deletion puts
+   * what its author wrote and it names in the trash, and one naming a deletion
+   * takes back out what that one put in. A simulator that keeps every version is
    * more forgiving than the core, and an edit the core silently drops then looks
    * like it landed. `core/dip/src/db/event/command.rs`.
    */
@@ -95,28 +100,65 @@ export class Store {
     this.details.set(event.id, {event, blobs, sightings: [sighting], shares: []})
 
     if (event.kind === DELETE) {
-      for (const detail of [...this.details.values()]) {
-        if (this.isDeleted(detail.event)) this.forget(detail.event.id)
+      for (const {event: target} of [...this.details.values()]) {
+        if (!this.covers(event, target)) continue
+
+        this.trash(target.id, at, event.id)
+
+        // Retracting a deletion takes back out exactly what it put in.
+        if (target.kind === DELETE) {
+          for (const [id, by] of [...this.trashedBy]) {
+            if (by !== target.id) continue
+
+            this.trashed.delete(id)
+            this.trashedBy.delete(id)
+          }
+        }
       }
     }
 
     return true
   }
 
-  /** Whether a stored deletion by the event's own author names it. */
-  private isDeleted(event: HashedEvent) {
-    const address = getIdOrAddress(event)
+  /** Put a stored event in the trash, answering whether that moved anything. */
+  trash(id: string, at: number, deletion?: string) {
+    if (!this.details.has(id) || this.trashed.has(id)) return false
 
-    return [...this.details.values()].some(({event: deletion}) => {
-      if (deletion.kind !== DELETE || deletion.pubkey !== event.pubkey) return false
+    this.trashed.set(id, at)
+    if (deletion) this.trashedBy.set(id, deletion)
 
-      const named = removal.reader(deletion).parse()
+    return true
+  }
 
-      return (
-        named.ids().includes(event.id) ||
-        (named.addresses().includes(address) && event.created_at <= deletion.created_at)
-      )
-    })
+  /** Take an event back out of the trash, answering whether that moved anything. */
+  restore(id: string) {
+    this.trashedBy.delete(id)
+
+    return this.trashed.delete(id)
+  }
+
+  /** The stored deletions by the event's own author that name it, leaving out retracted ones. */
+  deletions(event: HashedEvent) {
+    return [...this.details.values()]
+      .map(detail => detail.event)
+      .filter(deletion => !this.trashed.has(deletion.id) && this.covers(deletion, event))
+  }
+
+  /** Whether a stored deletion, not itself retracted, names the event. */
+  isDeleted(event: HashedEvent) {
+    return this.deletions(event).length > 0
+  }
+
+  /** Whether `deletion` is a kind 5 by the event's own author naming it. */
+  private covers(deletion: HashedEvent, event: HashedEvent) {
+    if (deletion.kind !== DELETE || deletion.pubkey !== event.pubkey) return false
+
+    const named = removal.reader(deletion).parse()
+
+    return (
+      named.ids().includes(event.id) ||
+      (named.addresses().includes(getIdOrAddress(event)) && event.created_at <= deletion.created_at)
+    )
   }
 
   /**
@@ -169,6 +211,7 @@ export class Store {
     if (!detail) return false
 
     this.details.delete(id)
+    this.restore(id)
 
     for (const blob of detail.blobs) {
       if (this.referencing(blob.sha256).length === 0) this.blobs.delete(blob.sha256)

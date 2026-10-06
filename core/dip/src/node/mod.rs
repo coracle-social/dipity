@@ -41,7 +41,7 @@ use std::sync::Arc;
 use anyhow::{Result, bail};
 use coracle_kinds::delete;
 use coracle_lib::addresses::Address;
-use coracle_lib::events::{EventContent, HashedEvent};
+use coracle_lib::events::{EventContent, EventId, HashedEvent};
 use coracle_lib::keys::{PublicKey, SecretKey};
 use coracle_lib::tags::Tags;
 use tokio::sync::broadcast::{self, error::TryRecvError};
@@ -1160,15 +1160,59 @@ impl Node {
         notifications
     }
 
-    /// Delete everything in the trash: retract what the user wrote, and drop
-    /// what somebody else did from this device. `docs/storage.md#the-trash`.
+    /// Put an event in the trash, retracting it at once if the user wrote it.
+    /// `docs/storage.md#the-trash`.
+    pub fn trash(&mut self, id: &EventId) -> Result<Vec<Action>> {
+        let now = clock::now();
+
+        if !db_command::set_trashed(&self.db, id, true, now)? {
+            return Ok(self.collect());
+        }
+
+        if let Some(event) = query::get_event(&self.db, id)? {
+            self.retract(&event, now)?;
+        }
+
+        Ok(self.collect())
+    }
+
+    /// Take an event back out of the trash. One the user wrote is restored for
+    /// peers too, by retracting the kind 5 that retracted it; one its author
+    /// retracted stays where it is.
+    /// `docs/storage.md#the-trash`.
+    pub fn restore(&mut self, id: &EventId) -> Result<Vec<Action>> {
+        let now = clock::now();
+        let event = query::get_event(&self.db, id)?;
+
+        if let Some(event) = &event
+            && event.pubkey != self.identity
+            && query::is_deleted(&self.db, event)?
+        {
+            bail!("{id} was retracted by its author, so it cannot be put back");
+        }
+
+        db_command::set_trashed(&self.db, id, false, now)?;
+
+        if let Some(event) = event
+            && event.pubkey == self.identity
+        {
+            for deletion in query::deletions(&self.db, &event)? {
+                db_command::publish_event(&self.db, &retraction(&deletion, now), &self.identity, now)?;
+            }
+        }
+
+        Ok(self.collect())
+    }
+
+    /// Delete everything in the trash, from this device. `docs/storage.md#the-trash`.
     pub fn empty_trash(&mut self) -> Result<Vec<Action>> {
         self.delete_trashed(i64::MAX)?;
 
         Ok(self.collect())
     }
 
-    /// Delete what went into the trash before `before`.
+    /// Delete what went into the trash before `before`, retracting anything of
+    /// the user's that went in before trashing did.
     fn delete_trashed(&mut self, before: i64) -> Result<usize> {
         let mut deleted = 0;
 
@@ -1177,21 +1221,25 @@ impl Node {
                 continue;
             }
 
-            let Some(event) = query::get_event(&self.db, &id)? else {
-                continue;
-            };
-
-            if event.pubkey == self.identity {
-                let now = clock::now();
-                db_command::publish_event(&self.db, &retraction(&event, now), &self.identity, now)?;
-            } else {
-                db_command::forget_event(&self.db, &id)?;
+            if let Some(event) = query::get_event(&self.db, &id)? {
+                self.retract(&event, clock::now())?;
             }
 
-            deleted += 1;
+            if db_command::forget_event(&self.db, &id)? {
+                deleted += 1;
+            }
         }
 
         Ok(deleted)
+    }
+
+    /// Publish a kind 5 for `event` if the user wrote it and none covers it yet.
+    fn retract(&self, event: &HashedEvent, at: i64) -> Result<()> {
+        if event.pubkey == self.identity && !query::is_deleted(&self.db, event)? {
+            db_command::publish_event(&self.db, &retraction(event, at), &self.identity, at)?;
+        }
+
+        Ok(())
     }
 
     /// Forget what stopped circulating, at most once an interval.
@@ -1936,6 +1984,74 @@ mod tests {
         .unwrap();
         assert_eq!(retractions.len(), 1);
         assert_eq!(retractions[0].pubkey, author(1));
+    }
+
+    #[test]
+    fn trashing_the_users_own_retracts_it_at_once_and_keeps_it_in_the_trash() {
+        let db = db();
+        let mut node = trash_node(&db);
+        let mine = note(author(1), 100, "mine", Tags::new());
+        let theirs = note(author(3), 100, "theirs", Tags::new());
+        let retractions = || {
+            query::list_events(
+                &db,
+                &Query::new().with_filter(Filter::new().add_kinds([delete::KIND])),
+            )
+            .unwrap()
+        };
+
+        db_command::publish_event(&db, &mine, &author(1), 100).unwrap();
+        db_command::receive_event(&db, &theirs, &[author(3)], 100).unwrap();
+
+        clock::at(200, || node.trash(&mine.id)).unwrap();
+        clock::at(200, || node.trash(&theirs.id)).unwrap();
+
+        assert_eq!(retractions().len(), 1);
+        assert!(query::get_event(&db, &mine.id).unwrap().is_some());
+        assert_eq!(query::trashed(&db).unwrap().len(), 2);
+
+        node.empty_trash().unwrap();
+
+        assert_eq!(retractions().len(), 1);
+        assert!(query::get_event(&db, &mine.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn restoring_the_users_own_retracts_its_retraction() {
+        let db = db();
+        let mut node = trash_node(&db);
+        let mine = note(author(1), 100, "mine", Tags::new());
+
+        db_command::publish_event(&db, &mine, &author(1), 100).unwrap();
+        clock::at(200, || node.trash(&mine.id)).unwrap();
+        assert!(query::is_deleted(&db, &mine).unwrap());
+
+        clock::at(300, || node.restore(&mine.id)).unwrap();
+
+        assert!(!query::is_deleted(&db, &mine).unwrap());
+        assert!(query::trashed_writing(&db).unwrap().is_empty());
+        assert_eq!(query::trashed(&db).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn what_somebody_else_retracted_cannot_be_put_back() {
+        let db = db();
+        let mut node = trash_node(&db);
+        let theirs = note(author(3), 100, "theirs", Tags::new());
+        let deletion = crate::fixtures::event(
+            author(3),
+            delete::KIND,
+            200,
+            "",
+            Tags::new().add("e", [theirs.id.to_hex()]),
+        );
+
+        db_command::receive_event(&db, &theirs, &[author(3)], 100).unwrap();
+        db_command::receive_event(&db, &deletion, &[author(3)], 200).unwrap();
+
+        assert_eq!(query::trashed_writing(&db).unwrap(), vec![(theirs.id, 200, true)]);
+        assert!(node.restore(&theirs.id).is_err());
+        assert_eq!(query::trashed(&db).unwrap().len(), 1);
     }
 
     #[test]
