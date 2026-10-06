@@ -137,7 +137,7 @@ mod tests {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        set_as(&tx, keys::ACCEPT, &"trusted", 10).unwrap();
+        set_as(&tx, keys::ACCEPT, &"contacts", 10).unwrap();
 
         assert!(remove(&tx, keys::ACCEPT).unwrap());
         assert!(!remove(&tx, keys::ACCEPT).unwrap());

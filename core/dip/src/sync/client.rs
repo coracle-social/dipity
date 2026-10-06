@@ -15,7 +15,7 @@ use crate::clock;
 use crate::db::Db;
 use crate::db::command;
 use crate::db::query as db_query;
-use crate::model::{AuthorshipClaim, AuthorshipProof, Identity, RecipientSignature, Standing};
+use crate::model::{AuthorshipClaim, AuthorshipProof, Identity, RecipientSignature};
 use crate::session::Peer;
 use crate::sync::spending::{SessionSpending, Spent, event_size};
 use crate::sync::{Message, Quota, SubscriptionId};
@@ -483,7 +483,7 @@ fn admissible(
     }
 
     // A stranger is bounded twice; the pool is what a fresh keypair cannot reset.
-    if peer.policy.standing != Standing::Trusted
+    if !peer.policy.is_contact()
         && (spent.pooled_events >= Quota::STRANGER_POOL.events
             || spent.pooled_bytes + size > Quota::STRANGER_POOL.bytes)
     {
@@ -613,7 +613,7 @@ mod tests {
     #[test]
     fn an_event_outside_accept_is_rejected() {
         let mut policy = Policy::new(us());
-        policy.accept = Scope::Trusted;
+        policy.accept = Scope::Contacts;
 
         let peer = Peer::bind(LinkId(1), [author(2)], &policy);
         let event = note_from(2, 100);
@@ -628,7 +628,7 @@ mod tests {
     fn an_event_outside_accept_counts_as_held_until_the_policy_changes() {
         let db = Db::open_in_memory().unwrap();
         let mut policy = Policy::new(us());
-        policy.accept = Scope::Trusted;
+        policy.accept = Scope::Contacts;
 
         let peer = Peer::bind(LinkId(1), [author(2)], &policy);
         let event = note_from(2, 100);
@@ -775,10 +775,10 @@ mod tests {
     }
 
     #[test]
-    fn a_trusted_peer_passes_a_spent_stranger_pool() {
+    fn a_contact_passes_a_spent_stranger_pool() {
         // "A hard ceiling that cannot crowd out known peers": a full pool is theirs, not ours.
         let mut policy = Policy::new(us());
-        policy.graph.trusted.insert(author(2));
+        policy.graph.contacts.insert(author(2));
         let peer = Peer::bind(LinkId(1), [author(2)], &policy);
 
         let spent = Spent {
@@ -788,7 +788,7 @@ mod tests {
         };
 
         assert_eq!(
-            admits(&peer, &note_from(2, 100), None, Quota::TRUSTED, spent),
+            admits(&peer, &note_from(2, 100), None, Quota::CONTACT, spent),
             Ok(())
         );
     }

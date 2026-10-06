@@ -25,9 +25,8 @@
   } from "$lib/data/policy"
 
   const accepts: Record<string, string> = {
-    trusted: "People you trust",
     contacts: "People you've paired with",
-    network: "People you've paired with, and people they trust",
+    network: "People you've paired with, and people they've paired with",
     lenient: "Anyone not blocked",
   }
 
@@ -43,7 +42,7 @@
       label: "What you accept",
       detail: "Whose posts your phone keeps from phones nearby.",
       on: $policy?.accept as string | undefined,
-      options: (["trusted", "contacts", "network", "lenient"] as Scope[]).map(scope => ({
+      options: (["contacts", "network", "lenient"] as Scope[]).map(scope => ({
         value: scope as string,
         label: accepts[scope],
       })),

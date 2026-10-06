@@ -1006,17 +1006,17 @@ mod tests {
         let us = author(1);
         let mut policy = Policy::new(us);
 
-        policy.graph.trusted.insert(author(2));
+        policy.graph.contacts.insert(author(2));
         policy.graph.blocked.insert(author(4));
 
         let profile = event(us, profile::KIND, 100, "", Tags::new());
         let mutes = event(us, MUTE, 200, "", Tags::new());
         let ours = note(us, 300, "ours", Tags::new());
-        let trusted = note(author(2), 400, "trusted", Tags::new());
+        let known = note(author(2), 400, "a contact's", Tags::new());
         let stranger = note(author(9), 500, "stranger", Tags::new());
         let blocked = note(author(4), 600, "blocked", Tags::new());
 
-        for held in [&profile, &mutes, &ours, &trusted, &stranger, &blocked] {
+        for held in [&profile, &mutes, &ours, &known, &stranger, &blocked] {
             command::save(&tx, held, &[peer()], held.created_at).unwrap();
         }
 
@@ -1028,7 +1028,7 @@ mod tests {
                 .collect::<BTreeSet<_>>()
         };
 
-        // A stranger is served the user's own and nothing carried for others, and the lists stay with the trusted.
+        // A stranger is served the user's own and nothing carried for others, and the lists stay with contacts.
         assert_eq!(
             served(policy.clone(), author(9)),
             [id(&profile), id(&ours)].into()
@@ -1041,7 +1041,7 @@ mod tests {
                 id(&profile),
                 id(&mutes),
                 id(&ours),
-                id(&trusted),
+                id(&known),
                 id(&stranger)
             ]
             .into()
@@ -1093,7 +1093,7 @@ mod tests {
             },
             VisibilityRule {
                 filter: Filter::new().add_kinds([1, 30_023]),
-                scope: Scope::Trusted,
+                scope: Scope::Contacts,
             },
             VisibilityRule {
                 filter: Filter::new(),

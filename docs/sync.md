@@ -16,7 +16,7 @@ Ingest applies this once, in the core. An event is accepted from the peer that a
 
 Once a connection reached `SYNCING` status, each side can initiate synchronization by requesting data it is missing. Event syncing uses the nostr client/relay protocol without modification. Each peer acts as both a client and a relay.
 
-Sync begins with a NIP 77 NEGENTROPY sync. The opening filter names no authors, because the peer reads the filter and a list of authors would hand it the trust graph. The dialing side's set is everything it holds plus every id it has refused — a deleted event, a superseded version, or an author outside its Accept scope — so the peer does not deliver a refused event again on every encounter. Peers may respond with fewer than the requested events depending on their visibility and gossip policies, and every event is checked against the receiver's accept policy.
+Sync begins with a NIP 77 NEGENTROPY sync. The opening filter names no authors, because the peer reads the filter and a list of authors would hand it the contact graph. The dialing side's set is everything it holds plus every id it has refused — a deleted event, a superseded version, or an author outside its Accept scope — so the peer does not deliver a refused event again on every encounter. Peers may respond with fewer than the requested events depending on their visibility and gossip policies, and every event is checked against the receiver's accept policy.
 
 Once the negentropy reconciliation is complete, a regular `REQ` is used to retrieve the desired events. Syncing is paginated in reverse chronological order by `created_at` timestamp with dynamic since/until windows.
 
@@ -37,7 +37,7 @@ The sender attaches recipient signatures or authorship proofs to an event, never
 
 ### How policy reaches the wire
 
-Policy never becomes a NIP-01 filter. A filter is positive-only, so a scope like "anyone except the people I blocked" has no expression in one, and a filter is something a peer reads — compiling a trust graph into one would hand it over. Scope is applied where the events are read instead.
+Policy never becomes a NIP-01 filter. A filter is positive-only, so a scope like "anyone except the people I blocked" has no expression in one, and a filter is something a peer reads — compiling the contact graph into one would hand it over. Scope is applied where the events are read instead.
 
 | Setting | Applied | Where |
 | --- | --- | --- |
@@ -51,7 +51,7 @@ Reconciliation is bounded from both ends by the same rule, with one asymmetry. A
 
 ### Resyncing
 
-A change to trust, block, a contact card, or the Accept and Sharing settings applies to what is already stored and to every live session. What the new Accept scope no longer admits is evicted, unless the user bookmarked it, and is remembered as refused so reconciliation does not offer it again. The old settings' refusals are forgotten, so what the new ones admit is fetched.
+A change to block, a contact card, or the Accept and Sharing settings applies to what is already stored and to every live session. What the new Accept scope no longer admits is evicted, unless the user bookmarked it, and is remembered as refused so reconciliation does not offer it again. The old settings' refusals are forgotten, so what the new ones admit is fetched.
 
 Each live session then reconciles again. A device that receives a `NEG-OPEN` beyond the number it has opened itself answers with one of its own, so a change on either side makes both sides pull, and the counts stop the exchange at one round each.
 
@@ -63,7 +63,7 @@ Accepting gossiped events is an unbounded write from whoever is standing nearby.
 
 - Per-peer event-count and byte budgets over a rolling 24 h window. A session's own accepts land in the same window, so one meter bounds the session and the reconnect alike.
 - Per-event size cap.
-- A separate, smaller budget for untrusted peers, and above it a hard ceiling on what every untrusted peer together may write, which cannot crowd out known peers. bitchat's courier trust tiers are the pattern.
+- A separate, smaller budget for peers who are not contacts, and above it a hard ceiling on what all of them together may write, which cannot crowd out contacts. bitchat's courier trust tiers are the pattern.
 
 The ceiling is the one that has to hold, because the per-peer budget below it does not bind a stranger. Content events carry no signature, so an identity costs an attacker a keypair: metering per pubkey assumes identity is expensive, and here it is free. The ceiling is keyed on nothing at all, so there is nothing for a burner to reset.
 

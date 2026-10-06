@@ -5,16 +5,7 @@
   import {Label} from "$lib/components/ui/label"
   import {Separator} from "$lib/components/ui/separator"
   import {Switch} from "$lib/components/ui/switch"
-  import {
-    forget,
-    name,
-    nameOf,
-    setBlocked,
-    setMuted,
-    setTrusted,
-    short,
-    social,
-  } from "$lib/data/contacts"
+  import {forget, name, nameOf, setBlocked, setMuted, short, social} from "$lib/data/contacts"
   import {back, go} from "$lib/data/nav"
 
   let {pubkey}: {pubkey: string} = $props()
@@ -35,8 +26,8 @@
 
   let forgetting = $state(false)
 
-  // Somebody is worth forgetting while the user has named, trusted or muted them.
-  const known = $derived(Boolean(contact?.petname || contact?.trusted || contact?.muted))
+  // Somebody is worth forgetting while the user has named or muted them.
+  const known = $derived(Boolean(contact?.petname || contact?.muted))
 
   const confirmForget = async () => {
     forgetting = false
@@ -52,13 +43,6 @@
   })
 
   const controls = $derived([
-    {
-      id: "trusted",
-      label: "Trusted",
-      detail: "They can pass your posts on to the people they meet.",
-      on: Boolean(contact?.trusted),
-      set: (on: boolean) => setTrusted(pubkey, on),
-    },
     {
       id: "muted",
       label: "Muted",
@@ -141,7 +125,7 @@
   <div>
     <h2 class="text-sm font-semibold">Forget them</h2>
     <p class="mt-0.5 text-xs text-pretty text-muted-foreground">
-      Clears your name, trust and mute for them, and your phones meet as strangers next time.
+      Clears your name and mute for them, and your phones meet as strangers next time.
     </p>
     <div class="mt-3 flex justify-end gap-2">
       {#if forgetting}

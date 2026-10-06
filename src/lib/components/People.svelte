@@ -19,7 +19,6 @@
 
   const standings = [
     {value: "everyone", label: "Everyone"},
-    {value: "trusted", label: "Trusted"},
     {value: "muted", label: "Muted"},
     {value: "blocked", label: "Blocked"},
   ] as const
@@ -113,8 +112,6 @@
 
             {#if contact.blocked}
               <Badge variant="destructive">blocked</Badge>
-            {:else if contact.trusted}
-              <Badge variant="secondary">trusted</Badge>
             {/if}
             {#if contact.muted}
               <Badge variant="outline">muted</Badge>

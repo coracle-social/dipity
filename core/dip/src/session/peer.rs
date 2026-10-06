@@ -10,7 +10,7 @@ use crate::model::{Identity, PeerPolicy, Policy, Standing};
 ///
 /// A device may hold several identities and prove them all over one channel,
 /// so what it proved is a set. What the user's settings say about it is not:
-/// the trust graph names people, and every question the sync layer asks — what
+/// the contact graph names people, and every question the sync layer asks — what
 /// may be served, what may be stored, how much it may write — is a question
 /// about the device. The set is therefore reduced once, at binding, to the one
 /// [`Standing`] everything downstream reads.
@@ -69,7 +69,7 @@ mod tests {
     fn policy() -> Policy {
         let mut policy = Policy::new(author(1));
 
-        policy.graph.trusted.insert(author(2));
+        policy.graph.contacts.insert(author(2));
         policy.graph.network.insert(author(3));
         policy.graph.blocked.insert(author(9));
 
@@ -85,7 +85,7 @@ mod tests {
             Peer::bind(LinkId(1), [author(3), author(2)], &policy)
                 .policy
                 .standing,
-            Standing::Trusted
+            Standing::Contact
         );
         assert_eq!(
             Peer::bind(LinkId(1), [author(3), author(4)], &policy)
@@ -105,7 +105,7 @@ mod tests {
         let peer = Peer::bind(LinkId(1), [author(2), author(9)], &policy());
 
         assert!(peer.policy.is_blocked());
-        assert_ne!(peer.policy.standing, Standing::Trusted);
+        assert_ne!(peer.policy.standing, Standing::Contact);
         assert!(!peer.policy.signs());
     }
 
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn signing_follows_the_devices_standing() {
-        // A contact is signed for, so one proved trusted key qualifies the device.
+        // A contact is signed for, so one proved contact's key qualifies the device.
         let policy = policy();
 
         assert!(

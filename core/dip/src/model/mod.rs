@@ -18,7 +18,6 @@
 //! ([`Register`]), who may be served it ([`Policy`]), and the metadata for the
 //! files it references ([`Blob`]).
 
-mod authors;
 mod authorship_proof;
 mod blob;
 mod charge;
@@ -37,7 +36,6 @@ mod scope;
 mod sharing;
 mod visibility;
 
-pub use authors::Authors;
 pub use authorship_proof::{AuthorshipClaim, AuthorshipProof};
 pub use blob::{Blob, BlobDigest, BlobHash, BlobRole};
 pub use charge::{Charge, Meter};
@@ -46,7 +44,7 @@ pub use graph::{Graph, Standing};
 pub use identity::Identity;
 pub use kinds::{
     BLOCK, BOOKMARKS, BlockListReader, BlockListWriter, CONTACT, MUTE, MuteListReader,
-    MuteListWriter, PeopleListReader, PeopleListWriter, TRUST, TrustListReader, TrustListWriter,
+    MuteListWriter, PeopleListReader, PeopleListWriter,
 };
 pub use order::Order;
 pub use policy::{PeerPolicy, Policy};

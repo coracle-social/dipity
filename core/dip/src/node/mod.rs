@@ -60,7 +60,7 @@ use crate::db::recipient_signature::channel::{
 use crate::db::{Db, query};
 use crate::keys::KeyCustody;
 use crate::link::{LinkId, PeripheralId, Role};
-use crate::model::{BLOCK, Blob, BlobHash, MUTE, NotificationPrefs, Policy, TRUST};
+use crate::model::{BLOCK, Blob, BlobHash, CONTACT, MUTE, NotificationPrefs, Policy};
 use crate::session::gate::Presence;
 use crate::session::l2cap::Step;
 use crate::session::transfer::Outcome;
@@ -686,7 +686,7 @@ impl Node {
     /// every live session.
     ///
     /// Every entry point does this on its own once the store announces a
-    /// preference or a trust, block or mute list, because a session that cached
+    /// preference, a contact card, or a block or mute list, because a session that cached
     /// a policy would keep serving a peer the user has just blocked. A session
     /// whose peer the new policy blocks closes here.
     pub fn policy_changed(&mut self) -> Result<Vec<Action>> {
@@ -1080,7 +1080,7 @@ impl Node {
     /// same query a fresh `REQ` would run, so an event held for this device alone
     /// goes nowhere.
     ///
-    /// Answers whether a trust, block or mute list arrived, which the policy is
+    /// Answers whether a contact card, block or mute list arrived, which the policy is
     /// compiled from, or whether changes were missed and one might have.
     fn offer_saved_events(&mut self) -> bool {
         let mut graph_moved = false;
@@ -1089,7 +1089,7 @@ impl Node {
         loop {
             match self.events.try_recv() {
                 Ok(EventChange::Stored(event)) => {
-                    graph_moved |= [TRUST, BLOCK, MUTE].contains(&event.kind);
+                    graph_moved |= [CONTACT, BLOCK, MUTE].contains(&event.kind);
                     // What arrives on screen is seen as it arrives.
                     if self.presence != Some(Presence::Foreground) {
                         self.notifier
@@ -1206,7 +1206,7 @@ impl Node {
 
         for (link, identified) in asking {
             let asks = identified.is_none_or(|(pubkey, recognized)| {
-                !recognized || !query::has_named(&self.db, &self.identity, &pubkey).unwrap_or(true)
+                !recognized || !self.policy.graph.contacts.contains(&pubkey)
             });
             let pubkey = identified.map(|(pubkey, _)| pubkey);
 
@@ -2097,24 +2097,24 @@ mod tests {
     }
 
     #[test]
-    fn publishing_a_trust_list_recompiles_the_policy() {
+    fn naming_somebody_recompiles_the_policy() {
         let mut node = Node::new(
             db(),
             custody(secret(1)),
             Arc::new(crate::blobs::MemoryBlobStore::default()),
         )
         .unwrap();
-        let trust = crate::fixtures::event(
+        let card = crate::fixtures::event(
             author(1),
-            TRUST,
+            CONTACT,
             100,
-            "",
-            Tags::new().add("p", [author(2).to_hex()]),
+            "Ben",
+            Tags::new().add("d", [author(2).to_hex()]),
         );
 
-        node.publish(&trust, &[]).unwrap();
+        node.publish(&card, &[]).unwrap();
 
-        assert!(node.policy().graph.trusted.contains(&author(2)));
+        assert!(node.policy().graph.contacts.contains(&author(2)));
     }
 
     #[test]

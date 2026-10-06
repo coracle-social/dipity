@@ -5,9 +5,9 @@
 // neighbour. A name therefore always has a claimant, and the screen says whose
 // it is.
 //
-// Trust, block and mute are the user's own lists and the core derives the trust
-// graph from them, so writing one is publishing a replaceable event rather than
-// setting a preference. `docs/policy.md#social-graph`.
+// The user's cards, block and mute are things they publish, and the core
+// derives the contact graph from them, so writing one is publishing an event
+// rather than setting a preference. `docs/policy.md#social-graph`.
 
 import {derived, get, type Readable} from "svelte/store"
 import {spec} from "@welshman/lib"
@@ -18,9 +18,9 @@ import {links} from "$lib/data/links"
 import {answering, eventsOf, storedEvents} from "$lib/data/query"
 import {publish} from "$lib/data/publish"
 import {session} from "$lib/data/session"
-import {block, contactCard, mute, trust} from "$lib/kinds"
+import {block, contactCard, mute} from "$lib/kinds"
 import {CONTACT} from "$lib/kinds/contact"
-import {BLOCK, TRUST} from "$lib/kinds/people"
+import {BLOCK} from "$lib/kinds/people"
 
 /** Somebody the device knows about. */
 export type Contact = {
@@ -29,7 +29,6 @@ export type Contact = {
   petname?: string
   /** What other people call them, newest card first. */
   aliases: {by: string; petname: string}[]
-  trusted: boolean
   muted: boolean
   blocked: boolean
 }
@@ -38,7 +37,6 @@ export type Contact = {
 export type Own = {
   /** The user's own card for each person they have named. */
   cards: Map<string, HashedEvent>
-  trust?: HashedEvent
   block?: HashedEvent
   mute?: HashedEvent
 }
@@ -95,12 +93,10 @@ const collate = async (events: HashedEvent[], identity?: string): Promise<Social
   const named = namings(events)
   const own = {
     cards: ownCards(events, identity),
-    trust: newest(events, TRUST, identity),
     block: newest(events, BLOCK, identity),
     mute: newest(events, MUTES, identity),
   }
 
-  const trusted = await listed(own.trust, trust)
   const blocked = await listed(own.block, block)
   const muted = await listed(own.mute, mute)
   const people = new Map<string, Contact>()
@@ -108,7 +104,6 @@ const collate = async (events: HashedEvent[], identity?: string): Promise<Social
     const contact = people.get(pubkey) ?? {
       pubkey,
       aliases: [],
-      trusted: trusted.has(pubkey),
       muted: muted.has(pubkey),
       blocked: blocked.has(pubkey),
     }
@@ -126,13 +121,13 @@ const collate = async (events: HashedEvent[], identity?: string): Promise<Social
     }
   }
 
-  for (const pubkey of [...trusted, ...blocked, ...muted]) at(pubkey)
+  for (const pubkey of [...blocked, ...muted]) at(pubkey)
 
   return {people, own}
 }
 
 const read = ([identity]: [string | undefined, number]) =>
-  eventsOf({filter: JSON.stringify({kinds: [CONTACT, MUTES, TRUST, BLOCK]})}).then(events =>
+  eventsOf({filter: JSON.stringify({kinds: [CONTACT, MUTES, BLOCK]})}).then(events =>
     collate(events, identity),
   )
 
@@ -176,7 +171,6 @@ export const contacts: Readable<Listed[]> = derived(
         listed.set(pubkey, {
           pubkey,
           aliases: [],
-          trusted: false,
           muted: false,
           blocked: false,
           connected: true,
@@ -299,25 +293,14 @@ const amend = (kind: PeopleList, list: keyof Omit<Own, "cards">, pubkey: string,
     return amended.renderTemplate()
   })
 
-export const setTrusted = (pubkey: string, trusted: boolean) =>
-  amend(trust, "trust", pubkey, trusted)
-
-/** Block somebody, which takes them off the trust list too: a block is a veto over trust. */
-export const setBlocked = async (pubkey: string, blocked: boolean) => {
-  const current = get(social)
-
-  if (blocked && current.people.get(pubkey)?.trusted) {
-    await amend(trust, "trust", pubkey, false)
-  }
-
-  await amend(block, "block", pubkey, blocked)
-}
+export const setBlocked = (pubkey: string, blocked: boolean) =>
+  amend(block, "block", pubkey, blocked)
 
 export const setMuted = (pubkey: string, muted: boolean) => amend(mute, "mute", pubkey, muted)
 
 /**
  * Forget somebody: an empty card supersedes the user's name for them, they come
- * off the trust and mute lists, the names other people gave them are dropped
+ * off the mute list, the names other people gave them are dropped
  * from this phone, and their device is met as a stranger until the two next
  * sync. A block stays, since it is the one thing guarding the wire.
  */
@@ -325,7 +308,6 @@ export const forget = async (pubkey: string) => {
   const contact = get(social).people.get(pubkey)
 
   if (contact?.petname) await name(pubkey, "")
-  if (contact?.trusted) await setTrusted(pubkey, false)
   if (contact?.muted) await setMuted(pubkey, false)
 
   // Dropped rather than refused, so a card that arrives again names them again.

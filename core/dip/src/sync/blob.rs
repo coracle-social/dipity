@@ -70,7 +70,7 @@ pub const L2CAP_THRESHOLD_BYTES: u64 = 4 * GROUP_BYTES;
 /// What the device holds in fetched originals before the least recently read
 /// are dropped. `docs/sync.md#quotas-1`.
 ///
-/// Sixteen trusted peers' blob budget. It bounds the user's disk rather than
+/// Sixteen contacts' blob budget. It bounds the user's disk rather than
 /// naming a target: a group at a time over BLE, filling it takes hours of
 /// contact, and previews are exempt so a feed still renders offline.
 pub const ORIGINAL_CACHE_BYTES: i64 = 256 * 1024 * 1024;
@@ -974,12 +974,12 @@ mod tests {
         (BlobExchange::new(store.clone()), store)
     }
 
-    /// A quota with room for `bytes` of blob, and the trusted budget for
+    /// A quota with room for `bytes` of blob, and the contact budget for
     /// everything else.
     fn quota(bytes: u64) -> Quota {
         Quota {
             blob_bytes: bytes,
-            ..Quota::TRUSTED
+            ..Quota::CONTACT
         }
     }
 
@@ -1058,7 +1058,7 @@ mod tests {
     /// `blobs`, returning the blob's hash.
     fn drive_fetch(blobs: &mut BlobExchange, db: &Db, bytes: &[u8]) -> BlobHash {
         let hash = given_wanted(db, bytes);
-        let quota = quota(Quota::TRUSTED.blob_bytes);
+        let quota = quota(Quota::CONTACT.blob_bytes);
 
         // The fetch begins with a HEAD.
         let head = blobs.poll(db, quota).unwrap().expect("a HEAD to probe");
@@ -1523,7 +1523,7 @@ mod tests {
     fn the_battery_floor_gates_fetches() {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, _) = exchange();
-        let quota = quota(Quota::TRUSTED.blob_bytes);
+        let quota = quota(Quota::CONTACT.blob_bytes);
 
         given_wanted(&db, b"below the floor");
 
@@ -1541,7 +1541,7 @@ mod tests {
     fn a_missing_blob_is_not_asked_of_the_same_peer_again() {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, _) = exchange();
-        let quota = quota(Quota::TRUSTED.blob_bytes);
+        let quota = quota(Quota::CONTACT.blob_bytes);
 
         given_wanted(&db, b"nobody holds this");
 
@@ -1560,7 +1560,7 @@ mod tests {
     fn the_want_list_moves_past_a_hash_the_peer_missed() {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, _) = exchange();
-        let quota = quota(Quota::TRUSTED.blob_bytes);
+        let quota = quota(Quota::CONTACT.blob_bytes);
 
         let first = given_wanted(&db, b"the first one");
         let second = given_wanted(&db, b"the second one");
@@ -1585,7 +1585,7 @@ mod tests {
     fn bytes_that_fail_their_hash_are_dropped_and_the_peer_skipped() {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, store) = exchange();
-        let quota = quota(Quota::TRUSTED.blob_bytes);
+        let quota = quota(Quota::CONTACT.blob_bytes);
         let bytes = b"the quick brown fox";
         let hash = given_wanted(&db, bytes);
 
@@ -1633,7 +1633,7 @@ mod tests {
     fn a_body_longer_than_the_request_is_refused() {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, store) = exchange();
-        let quota = quota(Quota::TRUSTED.blob_bytes);
+        let quota = quota(Quota::CONTACT.blob_bytes);
         let hash = given_wanted_sized(&db, &BlobHash::digest(b"small"), 8);
 
         let head = blobs.poll(&db, quota).unwrap().unwrap();
@@ -1665,7 +1665,7 @@ mod tests {
     fn a_peer_disagreeing_with_the_declared_size_is_not_fetched_from() {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, _) = exchange();
-        let quota = quota(Quota::TRUSTED.blob_bytes);
+        let quota = quota(Quota::CONTACT.blob_bytes);
 
         given_wanted_sized(&db, &BlobHash::digest(b"small"), 8);
 
@@ -1738,7 +1738,7 @@ mod tests {
     fn the_bulk_channel_is_asked_for_once_and_only_when_it_pays() {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, _) = exchange();
-        let quota = quota(Quota::TRUSTED.blob_bytes);
+        let quota = quota(Quota::CONTACT.blob_bytes);
 
         // A small blob moves in a couple of round trips; a channel costs more than it saves.
         drive_fetch(&mut blobs, &db, b"the quick brown fox");
@@ -1770,7 +1770,7 @@ mod tests {
     fn a_refusal_ends_the_session_s_fetching() {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, _) = exchange();
-        let quota = quota(Quota::TRUSTED.blob_bytes);
+        let quota = quota(Quota::CONTACT.blob_bytes);
 
         given_wanted(&db, b"the first one");
         given_wanted(&db, b"the second one");
@@ -1793,7 +1793,7 @@ mod tests {
     fn a_malformed_hash_from_a_peer_never_reaches_the_store() {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, _) = exchange();
-        let quota = quota(Quota::TRUSTED.blob_bytes);
+        let quota = quota(Quota::CONTACT.blob_bytes);
 
         for bad in ["ab", "", "not-hex", &"ab".repeat(31), &"zz".repeat(32)] {
             let event = note(

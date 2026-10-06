@@ -32,7 +32,7 @@ The pair is hashed rather than signed directly because BIP-340 takes a message o
 
 This signature must never leave B's device, since it is verifiable by anyone. It names B, and it attributes the event to A permanently and to everyone — the one artifact in the protocol that defeats the author's deniability outright.
 
-Two rules follow. It is never sent to anyone but the peer it names — a second-hop recipient gets a [proof](#authorship-proofs) built from it instead. And only peers who can be trusted not to leak a signature should receive one: the author chooses, per recipient rather than per event.
+Two rules follow. It is never sent to anyone but the peer it names — a second-hop recipient gets a [proof](#authorship-proofs) built from it instead. And only a [contact](./policy.md#social-graph) receives one: the author chooses, per recipient rather than per event.
 
 Where that guarantee stops is in [`privacy.md`](./privacy.md#what-deniability-covers).
 

@@ -62,7 +62,7 @@ Four facts about the transport decide most of the interface, and every story bel
 33. The user looks up everybody the device knows, and the name each one is known by. — `People`
 34. Somebody the user never met is known through a neighbour, so they appear with the neighbour's name for them. — `People`
 35. The user renames somebody. — `ContactDetail`
-36. The user trusts somebody, which is what lets that person carry their content onward. — `ContactDetail`
+36. The user forgets somebody, so they stop being a contact. — `ContactDetail`
 37. The user mutes somebody, so their content stops appearing without anything stopping at the wire. — `ContactDetail`
 38. The user blocks somebody, so the device refuses their sessions and drops what they send. — `ContactDetail`
 
@@ -83,5 +83,5 @@ Each of these is a story the transport or the docs already support and the view 
 
 - **A notification while the app is closed.** Story 16 in the pocket. The core emits `WakeAt` and the shells own local notifications; nothing posts one.
 - **Quiet times.** `policy.quiet_times` is a list of windows and needs a time picker rather than a switch. Settings leaves it alone.
-- **Per-contact relaying.** [Relaying](./policy.md#relaying) hands every contact everything this device may forward, so "do not pass this person's things on" is only sayable as a block. `ContactDetail` offers trust, mute and block.
+- **Per-contact relaying.** [Relaying](./policy.md#relaying) hands every contact everything this device may forward, so "do not pass this person's things on" is only sayable as a block. `ContactDetail` offers mute and block.
 - **Media.** The first version carries text. `imeta`, previews and blob transfer are built below the bridge and nothing above it attaches a file.

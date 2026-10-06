@@ -60,7 +60,7 @@ What the sweep forgets it also refuses, in `event_refused`, which reconciliation
 Four things are never swept:
 
 - Events the user wrote. This device is their origin and no peer hands one back, so a sweep would not be letting a copy go, it would be deleting the last one.
-- Replaceable events, which are state rather than content. A trust list arrives once and is never offered again, so a sweep reading only circulation would take the [graph](./policy.md#social-graph) that policy is measured against. A [contact card](./policy.md#social-graph) is addressable rather than replaceable, so the sweep spares its kind by name, since sweeping one would leave a person nameless on a device that still holds their writing.
+- Replaceable events, which are state rather than content. A block list arrives once and is never offered again, so a sweep reading only circulation would take the [graph](./policy.md#social-graph) that policy is measured against. A [contact card](./policy.md#social-graph) is addressable rather than replaceable, so the sweep spares its kind by name, since sweeping one would leave a person nameless on a device that still holds their writing.
 - Deletion requests, kind 5. The store refuses an event a stored request covers, so sweeping the request would let the deleted event back in the next time a peer offers it.
 - Events the user bookmarked. Circulation is a measure of what the neighbourhood is still interested in, and a bookmark is the one place the person holding the device says otherwise. The sweep reads the `e` tags on their own NIP-51 list, kind 10003, which is replaceable and so survives on the rule above; somebody else's bookmark list keeps nothing here.
 

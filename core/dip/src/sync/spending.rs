@@ -7,10 +7,10 @@
 //! | Meter | Keyed on | Bounds |
 //! | --- | --- | --- |
 //! | Per peer | the peer's pubkey | one identity, however often it reconnects |
-//! | The stranger pool | nothing | every untrusted peer together |
+//! | The stranger pool | nothing | every peer who is not a contact, together |
 //!
 //! The per-peer meter is the one that means something when identity does. A
-//! peer the user trusts holds a key they chose, so metering it bounds that
+//! contact holds a key the user chose, so metering it bounds that
 //! person; every accept lands in the window, so dropping the link and
 //! reconnecting refills nothing.
 //!
@@ -38,7 +38,7 @@ use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::PublicKey;
 
 use crate::db::{Db, command, query};
-use crate::model::{Charge, Meter, Standing};
+use crate::model::{Charge, Meter};
 use crate::session::Peer;
 
 /// How far back spending counts, in seconds.
@@ -58,7 +58,7 @@ type Entry = (i64, u64);
 struct Ledger {
     /// Each peer's accepted events, `(seen_at, bytes)` in arrival order.
     by_peer: BTreeMap<PublicKey, VecDeque<Entry>>,
-    /// What untrusted peers have written, pooled. No pubkey, which is the
+    /// What strangers have written, pooled. No pubkey, which is the
     /// point: a fresh one buys nothing here.
     strangers: VecDeque<Entry>,
 }
@@ -66,7 +66,7 @@ struct Ledger {
 impl Ledger {
     /// Record one accepted event, pruning the peer's expired entries first so
     /// the deque stays bounded by one window of the peer's own approvals.
-    fn record(&mut self, pubkey: &PublicKey, trusted: bool, at: i64, bytes: u64) {
+    fn record(&mut self, pubkey: &PublicKey, contact: bool, at: i64, bytes: u64) {
         let cutoff = at - WINDOW_SECONDS;
 
         self.prune(pubkey, cutoff);
@@ -75,13 +75,13 @@ impl Ledger {
             .or_default()
             .push_back((at, bytes));
 
-        if !trusted {
+        if !contact {
             prune_queue(&mut self.strangers, cutoff);
             self.strangers.push_back((at, bytes));
         }
     }
 
-    /// What every untrusted peer together has written inside the window.
+    /// What every stranger together has written inside the window.
     fn strangers_since(&mut self, now: i64) -> (u32, u64) {
         let cutoff = now - WINDOW_SECONDS;
         prune_queue(&mut self.strangers, cutoff);
@@ -176,9 +176,9 @@ impl SpendingLedger {
     }
 
     /// Record one accepted event's bytes against the peer, and against the
-    /// stranger pool when the peer is not one the user trusts.
-    pub fn record(&self, pubkey: &PublicKey, trusted: bool, bytes: usize) {
-        self.charge(Meter::Event, pubkey, !trusted, bytes as u64);
+    /// stranger pool when the peer is not a contact.
+    pub fn record(&self, pubkey: &PublicKey, contact: bool, bytes: usize) {
+        self.charge(Meter::Event, pubkey, !contact, bytes as u64);
     }
 
     /// Record blob bytes taken from the peer.
@@ -218,7 +218,7 @@ impl SpendingLedger {
             .1
     }
 
-    /// What every untrusted peer together has written within the window.
+    /// What every stranger together has written within the window.
     pub fn strangers(&self) -> (u32, u64) {
         self.events
             .lock()
@@ -267,7 +267,7 @@ pub struct Spent {
     pub events: u32,
     /// Bytes of them.
     pub bytes: u64,
-    /// Events accepted from every untrusted peer together.
+    /// Events accepted from every stranger together.
     pub pooled_events: u32,
     /// Bytes of those.
     pub pooled_bytes: u64,
@@ -307,8 +307,8 @@ impl SessionSpending {
                 (events.max(their_events), bytes.max(their_bytes))
             });
 
-        // A trusted peer is not measured against the pool, so reading it would only cost a lock.
-        let (pooled_events, pooled_bytes) = if peer.policy.standing == Standing::Trusted {
+        // A contact is not measured against the pool, so reading it would only cost a lock.
+        let (pooled_events, pooled_bytes) = if peer.policy.is_contact() {
             (0, 0)
         } else {
             self.ledger.strangers()
@@ -364,13 +364,13 @@ impl SessionSpending {
     /// Charged to every identity the peer proved, and once to the pool.
     pub fn record(&mut self, peer: &Peer, event: &HashedEvent) {
         let size = event_size(event);
-        let trusted = peer.policy.standing == Standing::Trusted;
+        let contact = peer.policy.is_contact();
 
         for (index, pubkey) in peer.pubkeys.iter().enumerate() {
             // The pool counts the event, not the identities behind it.
             let pooled = index == 0;
 
-            self.ledger.record(pubkey, trusted || !pooled, size);
+            self.ledger.record(pubkey, contact || !pooled, size);
         }
     }
 }
@@ -445,8 +445,8 @@ mod tests {
     }
 
     #[test]
-    fn a_trusted_peer_is_not_charged_to_the_stranger_pool() {
-        // The pool is the untrusted ceiling; charging trusted traffic to it crowds out the chosen.
+    fn a_contact_is_not_charged_to_the_stranger_pool() {
+        // The pool is the strangers' ceiling; charging a contact's traffic to it crowds out the chosen.
         let ledger = SpendingLedger::default();
 
         clock::at(1_000, || {

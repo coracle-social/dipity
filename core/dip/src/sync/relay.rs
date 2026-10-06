@@ -497,14 +497,14 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let stored = given(&db, author(1), 100, "mine");
 
-        // Trusted, because the signature is transferable and Forward defaults to the trusted.
+        // A contact, because the signature is transferable and only a contact is handed one.
         let mut policy = Policy::new(us());
-        policy.graph.trusted.insert(author(2));
-        let trusted = Peer::bind(LinkId(1), [author(2)], &policy);
+        policy.graph.contacts.insert(author(2));
+        let contact = Peer::bind(LinkId(1), [author(2)], &policy);
 
         let replies = serve(
             &db,
-            &trusted,
+            &contact,
             &secret(1),
             &SubscriptionId("sub".into()),
             &[Filter::new().add_kinds([1])],
@@ -526,7 +526,7 @@ mod tests {
         let stored = given(&db, author(1), 100, "mine");
 
         let mut policy = Policy::new(us());
-        policy.graph.trusted.insert(author(2));
+        policy.graph.contacts.insert(author(2));
         let peer = Peer::bind(LinkId(1), [author(2), author(3)], &policy);
 
         let replies = serve(
@@ -565,7 +565,7 @@ mod tests {
 
     #[test]
     fn a_stranger_is_served_the_event_without_the_signature() {
-        // `docs/proofs.md`: only peers trusted not to leak a signature should receive one.
+        // `docs/proofs.md`: only a contact receives a signature.
         let db = Db::open_in_memory().unwrap();
         let stored = given(&db, author(1), 100, "mine");
 

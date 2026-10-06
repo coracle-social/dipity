@@ -4,7 +4,7 @@ use coracle_lib::events::{HasCreatedAt, HasId, HasKind, HasPubkey, HasTags};
 use coracle_lib::filters::Filter;
 use serde::{Deserialize, Serialize};
 
-use crate::model::{BLOCK, BOOKMARKS, MUTE, Scope, Sharing, TRUST};
+use crate::model::{BLOCK, BOOKMARKS, MUTE, Scope, Sharing};
 
 /// One rule: which of the user's own events it governs, and who may see them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,13 +29,12 @@ pub struct Visibility {
 }
 
 impl Visibility {
-    /// The social graph to trusted peers, the bookmark list to nobody, and
+    /// The block and mute lists to contacts, the bookmark list to nobody, and
     /// everything else to whoever `sharing` reaches.
     ///
-    /// The social graph is the sensitive half of what a user publishes: a
-    /// trust list names people they have met in person. It is not encrypted,
-    /// because trusted peers are meant to read it, so that rule is the whole
-    /// of what keeps it from a stranger.
+    /// The block and mute lists say who the user wants nothing to do with. They
+    /// are not encrypted, because contacts are meant to read them, so that rule
+    /// is the whole of what keeps them from a stranger.
     ///
     /// A bookmark list cannot be encrypted, so serving it to nobody is what
     /// keeps it private. `docs/policy.md#sharing`.
@@ -44,8 +43,8 @@ impl Visibility {
         Self {
             rules: vec![
                 VisibilityRule {
-                    filter: Filter::new().add_kinds([MUTE, TRUST, BLOCK]),
-                    scope: Scope::Trusted,
+                    filter: Filter::new().add_kinds([MUTE, BLOCK]),
+                    scope: Scope::Contacts,
                 },
                 VisibilityRule {
                     filter: Filter::new().add_kinds([BOOKMARKS]),
@@ -98,7 +97,7 @@ mod tests {
         let visibility = Visibility {
             rules: vec![
                 rule(Filter::new().add_kinds([profile::KIND]), Scope::Public),
-                rule(Filter::new(), Scope::Trusted),
+                rule(Filter::new(), Scope::Contacts),
             ],
             default: Scope::Nothing,
         };
@@ -108,14 +107,14 @@ mod tests {
         let note = event(author(1), 1, 1, "", Tags::new());
 
         assert_eq!(visibility.scope_for(&profile), Scope::Public);
-        assert_eq!(visibility.scope_for(&note), Scope::Trusted);
+        assert_eq!(visibility.scope_for(&note), Scope::Contacts);
     }
 
     #[test]
     fn a_rule_below_one_that_matches_everything_is_dead() {
         let visibility = Visibility {
             rules: vec![
-                rule(Filter::new(), Scope::Trusted),
+                rule(Filter::new(), Scope::Contacts),
                 rule(Filter::new().add_kinds([profile::KIND]), Scope::Public),
             ],
             default: Scope::Nothing,
@@ -123,7 +122,7 @@ mod tests {
 
         let profile = event(author(1), profile::KIND, 1, "", Tags::new());
 
-        assert_eq!(visibility.scope_for(&profile), Scope::Trusted);
+        assert_eq!(visibility.scope_for(&profile), Scope::Contacts);
     }
 
     #[test]
@@ -146,7 +145,6 @@ mod tests {
         let visibility = Visibility::default();
 
         let mutes = event(author(1), MUTE, 1, "", Tags::new());
-        let trust = event(author(1), TRUST, 1, "", Tags::new());
         let block = event(author(1), BLOCK, 1, "", Tags::new());
         let bookmarks = event(author(1), BOOKMARKS, 1, "", Tags::new());
         let card = event(
@@ -159,9 +157,8 @@ mod tests {
         let profile = event(author(1), profile::KIND, 1, "", Tags::new());
         let note = event(author(1), 1, 1, "", Tags::new());
 
-        assert_eq!(visibility.scope_for(&mutes), Scope::Trusted);
-        assert_eq!(visibility.scope_for(&trust), Scope::Trusted);
-        assert_eq!(visibility.scope_for(&block), Scope::Trusted);
+        assert_eq!(visibility.scope_for(&mutes), Scope::Contacts);
+        assert_eq!(visibility.scope_for(&block), Scope::Contacts);
         assert_eq!(visibility.scope_for(&bookmarks), Scope::Nothing);
         assert_eq!(visibility.scope_for(&card), Scope::Lenient);
         assert_eq!(visibility.scope_for(&profile), Scope::Lenient);
@@ -199,7 +196,7 @@ mod tests {
         let visibility = Visibility {
             rules: vec![rule(
                 Filter::new().add_tag(TagMatch::Any, "t", "work"),
-                Scope::Trusted,
+                Scope::Contacts,
             )],
             default: Scope::Public,
         };
@@ -207,7 +204,7 @@ mod tests {
         let work = event(author(1), 1, 1, "", Tags::new().add("t", ["work"]));
         let play = event(author(1), 1, 1, "", Tags::new().add("t", ["play"]));
 
-        assert_eq!(visibility.scope_for(&work), Scope::Trusted);
+        assert_eq!(visibility.scope_for(&work), Scope::Contacts);
         assert_eq!(visibility.scope_for(&play), Scope::Public);
     }
 }

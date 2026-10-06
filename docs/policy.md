@@ -16,7 +16,7 @@ Otherwise, a stranger is admitted without a prompt in one of two ways. While the
 
 Each disclosure gives a stranger the user's pubkey at a place and a time. Nothing else the protocol discloses outlives a session, so the rate of disclosures sets what tracking the user costs. Every stranger met in the background draws on the one bucket, because a burner pubkey defeats any limit per identity. The bucket holds three disclosures and refills at 12 a day, fixed rather than a preference, so an observer gets at most a burst of three and then one sighting every two hours on average. It limits how often the user can be sighted in their pocket. It does not make them untrackable, and with the app open it does not apply at all.
 
-A disclosure in the background is spent when the device sends its `AUTH` response, not when the exchange completes. The dialer identifies first and does not learn the peer's pubkey until afterwards, so a harvester that collects an auth event and walks away costs a disclosure all the same. Three peers cost nothing: one the user has paired with, which is recognized before anyone discloses; one the user approves by hand; and a dialer the user has named or trusts, whose pubkey the receiver has seen before it answers. [Connection scheduling](./discovery.md#connection-scheduling) keeps a harvester from draining the bucket by being redialed.
+A disclosure in the background is spent when the device sends its `AUTH` response, not when the exchange completes. The dialer identifies first and does not learn the peer's pubkey until afterwards, so a harvester that collects an auth event and walks away costs a disclosure all the same. Three peers cost nothing: one the user has paired with, which is recognized before anyone discloses; one the user approves by hand; and a dialer who is a [contact](#social-graph), whose pubkey the receiver has seen before it answers. [Connection scheduling](./discovery.md#connection-scheduling) keeps a harvester from draining the bucket by being redialed.
 
 When the bucket is empty, a stranger is held for the user to approve. **Quiet times** are times of day, in the device's local timezone, when every stranger is held that way. There are none by default.
 
@@ -24,27 +24,30 @@ When the bucket is empty, a stranger is held for the user to approve. **Quiet ti
 
 There are certain classifications that users may wish to use to tag other users:
 
-- Trust - the user trusts this person (kind 16017)
 - Block - the user has blocked this person (kind 16018)
 - Mute - the user has muted this person (kind 10000)
 
-Each is a replaceable event whose `p` tags name people, so the current list is one lookup at `<kind>:<pubkey>:` and an edit supersedes what came before. **The first two kinds are ours rather than NIP-51's**, because a trust list here is not a curation of people to read — it decides who is handed the author's signature, which is permanent transferable attribution. A generic list editor in another client must not be able to grant that without knowing it has.
+Each is a replaceable event whose `p` tags name people, so the current list is one lookup at `<kind>:<pubkey>:` and an edit supersedes what came before. The block kind is ours rather than NIP-51's.
 
-**Neither is encrypted.** NIP-51 keeps private entries as ciphertext in `content`, which would put them beyond the peers who need them — trusted peers read these lists by design. [Sharing](#sharing) fixes which peers this device hands them to.
+**Neither is encrypted.** NIP-51 keeps private entries as ciphertext in `content`, which would put them beyond the peers who need them, since contacts read these lists by design. [Sharing](#sharing) fixes which peers this device hands them to.
 
-A fourth kind says what the user calls somebody: a contact card, kind 36017, addressed to the person it names at `36017:<author>:<subject>`. Nobody publishes a profile here, so a card is the only way anybody has a name. The name is the card's content.
+A third kind says what the user calls somebody: a contact card, kind 36017, addressed to the person it names at `36017:<author>:<subject>`. Nobody publishes a profile here, so a card is the only way anybody has a name. The name is the card's content.
 
 There is one card per contact rather than one list naming everybody the user has met, so a name travels with that contact's own events.
 
+A **contact** is somebody the user paired with and named: the subject of one of the user's own contact cards whose name is not empty, unless they are blocked. Pairing, which compares shapes in person and names the other person, is the explicit act that makes somebody a contact. Forgetting somebody empties the user's card for them, so they stop being one.
+
 Every setting below is expressed on the same tiers, applied either to the peer on the other end of a session or to the author of an event:
 
-- **Trusted** - people the user explicitly trusts.
-- **Contacts** - people the user paired with and named, and the trusted.
-- **Network** - contacts, and the people the trusted trust.
+- **Nothing** - nobody.
+- **Contacts** - people the user paired with and named.
+- **Network** - contacts, and the people the user's contacts have named.
 - **Lenient** - anyone who connects, except blocked pubkeys.
-- **Public** - anyone. Only the fixed visibility rules use it.
+- **Public** - anyone.
 
-Network is the union of the trust lists published by everyone in Trusted. It is derived rather than stored, from whichever of those lists the device holds, so a trusted person whose list has not arrived yet contributes nobody.
+Only the fixed visibility rules use Nothing and Public.
+
+Network adds the subjects of every non-empty contact card authored by a contact, except blocked pubkeys, and stops there, two hops from the user. It is derived rather than stored, from whichever of those cards the device holds, so a contact whose cards have not arrived yet contributes nobody.
 
 ## A device, not a pubkey
 
@@ -53,7 +56,7 @@ A peer may prove several pubkeys over one session, since [NIP-42](./nips/p2p-aut
 The set reduces to one standing, and the two directions reduce differently:
 
 - **Block is a veto.** Any blocked pubkey blocks the device. Blocking is a decision about a person, and a device holding that key is theirs whatever else it also signs with.
-- **Access takes the best.** Any trusted pubkey makes the device trusted. Proving an extra key is a claim to more, never less, and the peer could have made the better claim on its own.
+- **Access takes the best.** Any contact's pubkey makes the device a contact. Proving an extra key is a claim to more, never less, and the peer could have made the better claim on its own.
 
 Everything downstream reads that one standing, so a session syncs one superset once rather than once per key. What does *not* reduce is the cryptography: a recipient signature names one recipient and an [authorship proof](./proofs.md#authorship-proofs) designates one verifier, so those are minted once per identity the peer proved.
 
@@ -61,7 +64,7 @@ The same holds in the other direction, for a device carrying several of the user
 
 ## Accept
 
-What the device stores from a peer, measured against each event's author: `policy.accept`, `lenient` by default. It takes the tiers above except Nothing and Public, and the user's own events are always accepted.
+What the device stores from a peer, measured against each event's author: `policy.accept`, `lenient` by default. It takes Contacts, Network or Lenient, and the user's own events are always accepted. A stored `trusted` reads as `contacts`.
 
 ## Sharing
 
@@ -73,9 +76,9 @@ Who is handed the user's own activity, and who may carry it a hop further: `poli
 | `network` | contacts | contacts | contacts, and their contacts |
 | `anyone` (default) | anyone not blocked | contacts | anyone the user meets, and their contacts' contacts |
 
-A **contact** is somebody the user paired with and named, or trusts. A peer carries an event its second hop by presenting an [authorship proof](./proofs.md#authorship-proofs), which it can only build from the author's signature over the event id and its own pubkey. That signature is verifiable by anyone, so handing it over [ends the author's deniability](./proofs.md#the-authors-signature-stays-with-the-peer-it-names) for that event permanently and for everyone. A signature therefore only ever goes to a contact, and `anyone` widens who sees an event first-hand rather than who can attribute it. A signature handed to a stranger would mint permanent attribution for whoever happens to dial, which on a proximity transport includes a beacon left on a windowsill.
+A peer carries an event its second hop by presenting an [authorship proof](./proofs.md#authorship-proofs), which it can only build from the author's signature over the event id and its own pubkey. That signature is verifiable by anyone, so handing it over [ends the author's deniability](./proofs.md#the-authors-signature-stays-with-the-peer-it-names) for that event permanently and for everyone. A signature therefore only ever goes to a [contact](#social-graph), and `anyone` widens who sees an event first-hand rather than who can attribute it. A signature handed to a stranger would mint permanent attribution for whoever happens to dial, which on a proximity transport includes a beacon left on a windowsill.
 
-Two of the user's events follow fixed rules whatever the setting. The trust, block and mute lists go only to trusted peers, which is the whole of what keeps a list naming people the user has met from a stranger. The bookmark list goes to nobody, including the user's own second phone, because it cannot be encrypted on a path with no signer.
+Three of the user's events follow fixed rules whatever the setting. The block and mute lists go only to contacts. The bookmark list goes to nobody, including the user's own second phone, because it cannot be encrypted on a path with no signer. Contact cards follow the setting.
 
 ### Relaying
 

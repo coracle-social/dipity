@@ -496,12 +496,12 @@ impl Session {
 
     /// The peer's quota for this session.
     ///
-    /// A peer that proved any trusted identity is the same device whatever it
-    /// signs with, so the trusted budget is the whole session's.
+    /// A peer that proved any contact's identity is the same device whatever
+    /// it signs with, so the contact budget is the whole session's.
     #[must_use]
     pub fn quota(&self) -> Quota {
         match self.peer.as_ref() {
-            Some(peer) if peer.policy.standing == Standing::Trusted => Quota::TRUSTED,
+            Some(peer) if peer.policy.is_contact() => Quota::CONTACT,
             _ => Quota::STRANGER,
         }
     }
@@ -705,7 +705,7 @@ impl Session {
     }
 
     /// Sign the user's events this peer already holds but was handed while it
-    /// was not trusted to forward them. `docs/sync.md#resyncing`.
+    /// could not be signed for. `docs/sync.md#resyncing`.
     fn send_owed_signatures(&mut self, db: &Db) -> Result<()> {
         let Some(peer) = self.peer.as_ref().cloned() else {
             return Ok(());
@@ -1190,18 +1190,13 @@ impl Session {
         };
     }
 
-    /// Whether the peer proved a pubkey the user has named or trusts, which a
-    /// receiver that deferred its gate lets through without spending anything.
-    fn proved_known(&self, db: &Db) -> Result<bool> {
-        for pubkey in &self.auth.proved {
-            if self.policy.graph.standing(pubkey) == Standing::Trusted
-                || crate::db::query::has_named(db, &self.identity, pubkey)?
-            {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
+    /// Whether the peer proved a contact's pubkey, which a receiver that
+    /// deferred its gate lets through without spending anything.
+    fn proved_known(&self) -> bool {
+        self.auth
+            .proved
+            .iter()
+            .any(|pubkey| self.policy.graph.standing(pubkey) == Standing::Contact)
     }
 
     /// Dispatch one NIP-42 message, which is a challenge from the peer or its
@@ -1259,9 +1254,9 @@ impl Session {
             return Ok(());
         }
 
-        // A deferred gate decides now: somebody named or trusted passes, anybody else waits on the user.
+        // A deferred gate decides now: a contact passes, anybody else waits on the user.
         if self.gate.deferred && !self.gate.passed {
-            if !self.proved_known(db)? {
+            if !self.proved_known() {
                 self.hold();
                 return Ok(());
             }
@@ -1292,7 +1287,7 @@ impl Session {
     /// the identity leaves the device. The dialer discloses first and cannot
     /// name the recipient yet, so a peer that collects the auth event and walks
     /// away costs a disclosure all the same. A receiver has seen the dialer's
-    /// pubkeys by now, and one the user trusts costs nothing.
+    /// pubkeys by now, and a contact costs nothing.
     /// `docs/policy.md#discoverability`.
     fn answer_peer_challenge(&mut self, db: &Db) -> Result<bool> {
         let remote = self
@@ -1307,13 +1302,7 @@ impl Session {
 
                 self.send_control(control::AUTH, &message.encode())?;
 
-                let trusted = self
-                    .auth
-                    .proved
-                    .iter()
-                    .any(|pubkey| self.policy.graph.standing(pubkey) == Standing::Trusted);
-
-                if self.gate.spends_budget && !trusted {
+                if self.gate.spends_budget && !self.proved_known() {
                     crate::db::command::spend_disclosure(
                         db,
                         crate::model::STRANGERS_PER_DAY,
@@ -1599,9 +1588,9 @@ mod tests {
         // A blob fetch leaves the outbox empty between request and answer; the drain must wait.
         let db = Db::open_in_memory().unwrap();
 
-        // Trusted, because a stranger has no blob budget to fetch against.
+        // A contact, because a stranger has no blob budget to fetch against.
         let mut policy = policy();
-        policy.graph.trusted.insert(author(2));
+        policy.graph.contacts.insert(author(2));
         let mut session = secured_session(policy);
         session.identify([author(2)]);
         session.state = State::Syncing;
@@ -1693,15 +1682,15 @@ mod tests {
     }
 
     #[test]
-    fn a_trusted_identity_earns_the_trusted_budget_whichever_key_it_proved() {
+    fn a_contacts_identity_earns_the_contact_budget_whichever_key_it_proved() {
         let mut policy = policy();
-        policy.graph.trusted.insert(author(9));
+        policy.graph.contacts.insert(author(9));
         let mut session = secured_session(policy);
 
-        // The trusted pubkey sorts after the stranger one, which a "first policy" read would pick.
+        // The contact's pubkey sorts after the stranger one, which a "first policy" read would pick.
         session.identify([author(2), author(9)]);
 
-        assert_eq!(session.quota(), Quota::TRUSTED);
+        assert_eq!(session.quota(), Quota::CONTACT);
     }
 
     #[test]
@@ -2260,16 +2249,9 @@ mod tests {
         let mut receiver = pair(4096, Role::Receiver, 2);
 
         // Named on this phone, but with no pair secret that recognition could find, and nothing left to spend.
-        let card = crate::fixtures::event(
-            author(2),
-            crate::model::CONTACT,
-            50,
-            "Ben",
-            NostrTags::new().add("d", [author(1).to_hex()]),
-        );
-        crate::db::command::publish_event(&db, &card, &author(2), 50).unwrap();
         let mut empty = quiet();
         empty.identity = author(2);
+        empty.graph.contacts.insert(author(1));
         receiver.set_policy(Arc::new(empty));
 
         exchange_apart(
@@ -2396,24 +2378,6 @@ mod tests {
         // Gone before syncing, which is what the scheduler holds against the peripheral.
         dialer.close(Ending::WalkedAway);
         assert!(dialer.was_harvested());
-    }
-
-    #[test]
-    fn a_stranger_who_proves_to_be_trusted_costs_the_receiver_nothing() {
-        let dialer_db = Db::open_in_memory().unwrap();
-        let receiver_db = Db::open_in_memory().unwrap();
-        let mut dialer = pair(4096, Role::Dialer, 1);
-        let mut receiver = pair(4096, Role::Receiver, 2);
-
-        // Trusted, but never paired, so recognition cannot say so before the dialer discloses.
-        let mut trusting = policy();
-        trusting.graph.trusted.insert(author(1));
-        receiver.set_policy(Arc::new(trusting));
-
-        exchange_apart(&mut dialer, &mut receiver, &dialer_db, &receiver_db);
-
-        assert_eq!(disclosed(&dialer_db), 1);
-        assert_eq!(disclosed(&receiver_db), 0);
     }
 
     #[test]
@@ -2592,7 +2556,7 @@ mod tests {
     }
 
     #[test]
-    fn trusting_a_peer_mid_session_sends_the_withheld_signatures_and_both_sides_reconcile_again() {
+    fn naming_a_peer_mid_session_sends_the_withheld_signatures_and_both_sides_reconcile_again() {
         let db = Db::open_in_memory().unwrap();
         let (mut dialer, mut receiver) = attended_pair(&db);
         quiesce(&mut dialer, &mut receiver, &db);
@@ -2603,7 +2567,7 @@ mod tests {
         crate::db::command::record_shares(&db, &[(own.id, false)], &[author(2)], 100).unwrap();
 
         let mut forwarding = policy();
-        forwarding.graph.trusted.insert(author(2));
+        forwarding.graph.contacts.insert(author(2));
         dialer.set_policy(Arc::new(forwarding));
         dialer.resync(&db).unwrap();
 

@@ -63,11 +63,6 @@ pub fn name_for(db: &Db, identity: &PublicKey, pubkey: &PublicKey) -> Result<Opt
     })
 }
 
-/// Whether the user has named `pubkey`. A card emptied by forgetting them names nobody.
-pub fn has_named(db: &Db, identity: &PublicKey, pubkey: &PublicKey) -> Result<bool> {
-    Ok(name_for(db, identity, pubkey)?.is_some())
-}
-
 /// Everything the user has said about who gets what.
 pub fn policy(db: &Db, identity: &PublicKey) -> Result<Policy> {
     db.read(|tx| pref::policy(tx, identity))

@@ -23,7 +23,7 @@ pub use message::{Message, SubscriptionId};
 /// Per-peer ceilings on what a session may write to this device.
 ///
 /// Accepting gossip is an unbounded write from whoever is standing nearby, so
-/// these apply independently of scope: a peer inside the user's trust graph is
+/// these apply independently of scope: a contact is
 /// still metered, and what it has spent against these is [`spending`].
 /// `docs/sync.md#quotas`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,14 +37,14 @@ pub struct Quota {
 }
 
 impl Quota {
-    /// What a peer the user has never trusted gets.
+    /// What a peer who is not a contact gets.
     pub const STRANGER: Self = Self {
         events: 128,
         bytes: 256 * 1024,
         blob_bytes: 0,
     };
 
-    /// What every untrusted peer together may write in the window.
+    /// What every stranger together may write in the window.
     ///
     /// The per-peer stranger budget bounds one pubkey, and a pubkey is free:
     /// content events carry no signature, so a fresh keypair per encounter
@@ -60,8 +60,8 @@ impl Quota {
         blob_bytes: 0,
     };
 
-    /// What a peer in the user's trust graph gets.
-    pub const TRUSTED: Self = Self {
+    /// What a contact gets.
+    pub const CONTACT: Self = Self {
         events: 4096,
         bytes: 8 * 1024 * 1024,
         blob_bytes: 16 * 1024 * 1024,

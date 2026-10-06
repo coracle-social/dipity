@@ -1,19 +1,19 @@
-//! The kinds this app defines: the people lists the trust graph is built
-//! from, and the card that says what somebody is called.
+//! The kinds this app defines: the people lists the contact graph is
+//! narrowed by, and the card that says what somebody is called.
 //!
 //! Every kind the core reads and does not define comes from `coracle-kinds` —
 //! [`delete`](coracle_kinds::delete) for kind 5, [`profile`](coracle_kinds::profile)
 //! for kind 0 — so this module holds only what is ours.
 //!
-//! Trust, block and mute are the same shape: `p` tags naming pubkeys,
+//! Block and mute are the same shape: `p` tags naming pubkeys,
 //! distinguished only by the kind that gives them meaning. That is
 //! `coracle-kinds`'s `relay_collection` arrangement — one reader and one
 //! writer parameterized by kind, with an alias and a named constant per kind —
 //! and it is followed here rather than reinvented.
 //!
-//! **None of the three is encrypted.** NIP-51 keeps private entries as
-//! ciphertext in `content`, which would put a list beyond reach of the peers
-//! who need it — these travel to trusted peers by design, so what governs who
+//! **Neither is encrypted.** NIP-51 keeps private entries as ciphertext in
+//! `content`, which would put a list beyond reach of the peers who need it —
+//! these travel to contacts by design, so what governs who
 //! sees them is [`Visibility`](crate::model::Visibility) rather than a key.
 //! That is why no `Sealed` payload appears below, where the library's own list
 //! kinds carry one. `docs/policy.md#social-graph`.
@@ -23,17 +23,6 @@ use coracle_lib::keys::PublicKey;
 use coracle_lib::readers::{Reader, ReaderError};
 use coracle_lib::tags::{HasTagsMut, Tags};
 use coracle_lib::writers::{ValidationError, Writer};
-
-/// The people the user trusts.
-///
-/// Ours rather than NIP-51's, because this list is not a curation of people to
-/// read — it decides who may be handed the author's signature, which is
-/// permanent transferable attribution. A generic list editor in another client
-/// must not be able to grant that without knowing it has.
-///
-/// Replaceable, so the address is `16017:<pubkey>:` and one lookup answers for
-/// the whole list. See `docs/policy.md#social-graph`.
-pub const TRUST: u16 = 16_017;
 
 /// The people the user has blocked. The wire control, and separate from
 /// [`MUTE`], which only filters what the user is shown.
@@ -81,8 +70,6 @@ pub struct PeopleListReader<'e, E, const KIND: u16> {
     pubkeys: Vec<PublicKey>,
 }
 
-/// A trust list being read.
-pub type TrustListReader<'e, E> = PeopleListReader<'e, E, TRUST>;
 /// A block list being read.
 pub type BlockListReader<'e, E> = PeopleListReader<'e, E, BLOCK>;
 /// A mute list being read.
@@ -125,8 +112,6 @@ pub struct PeopleListWriter<const KIND: u16> {
     tags: Tags,
 }
 
-/// A trust list being assembled.
-pub type TrustListWriter = PeopleListWriter<TRUST>;
 /// A block list being assembled.
 pub type BlockListWriter = PeopleListWriter<BLOCK>;
 /// A mute list being assembled.
@@ -202,9 +187,9 @@ mod tests {
 
     use crate::fixtures::{author, event};
 
-    /// A stored trust list for the reader to borrow.
+    /// A stored block list for the reader to borrow.
     fn stored(tags: Tags) -> coracle_lib::events::HashedEvent {
-        event(author(1), TRUST, 100, "", tags)
+        event(author(1), BLOCK, 100, "", tags)
     }
 
     #[test]
@@ -214,7 +199,7 @@ mod tests {
                 .add("p", [author(2).to_hex()])
                 .add("p", [author(3).to_hex()]),
         );
-        let list = TrustListReader::read(&event).unwrap();
+        let list = BlockListReader::read(&event).unwrap();
 
         assert_eq!(list.pubkeys(), [author(2), author(3)]);
         assert!(list.contains(&author(2)));
@@ -230,7 +215,7 @@ mod tests {
         );
 
         assert_eq!(
-            TrustListReader::read(&event).unwrap().pubkeys(),
+            BlockListReader::read(&event).unwrap().pubkeys(),
             [author(2)]
         );
     }
@@ -244,7 +229,7 @@ mod tests {
         );
 
         assert_eq!(
-            TrustListReader::read(&event).unwrap().pubkeys(),
+            BlockListReader::read(&event).unwrap().pubkeys(),
             [author(2)]
         );
     }
@@ -253,7 +238,7 @@ mod tests {
     fn a_reader_refuses_another_kind() {
         let blocks = event(author(1), BLOCK, 100, "", Tags::new());
 
-        assert!(TrustListReader::read(&blocks).is_err());
+        assert!(MuteListReader::read(&blocks).is_err());
         assert!(BlockListReader::read(&blocks).is_ok());
     }
 
@@ -262,7 +247,7 @@ mod tests {
         // A tag the writer has no field for survives: it holds the tag set, not a parse of it.
         let stored = event(
             author(1),
-            TRUST,
+            BLOCK,
             100,
             "",
             Tags::new()
@@ -270,28 +255,28 @@ mod tests {
                 .add("title", ["people I have met"]),
         );
 
-        let template = TrustListWriter::read(&stored)
+        let template = BlockListWriter::read(&stored)
             .unwrap()
             .add_pubkey(author(3))
             .render_template()
             .unwrap();
 
         assert_eq!(template.tags.value("title"), Some("people I have met"));
-        assert_eq!(template.kind, TRUST);
+        assert_eq!(template.kind, BLOCK);
         // Public, so nothing rides in content.
         assert!(template.content.is_empty());
 
-        let rebuilt = event(author(1), TRUST, 100, "", template.tags);
+        let rebuilt = event(author(1), BLOCK, 100, "", template.tags);
 
         assert_eq!(
-            TrustListReader::read(&rebuilt).unwrap().pubkeys(),
+            BlockListReader::read(&rebuilt).unwrap().pubkeys(),
             [author(2), author(3)]
         );
     }
 
     #[test]
     fn adding_and_removing_name_and_unname() {
-        let list = TrustListWriter::new()
+        let list = BlockListWriter::new()
             .add_pubkey(author(2))
             .add_pubkey(author(3))
             // Already named, so this is not a second tag.
@@ -312,18 +297,18 @@ mod tests {
     #[test]
     fn the_kinds_are_replaceable_so_one_address_holds_each_list() {
         // An edit supersedes, and `by_address` finds the current list in one lookup.
-        for kind in [TRUST, BLOCK, MUTE] {
+        for kind in [BLOCK, MUTE] {
             assert!(coracle_lib::kinds::is_replaceable(kind), "{kind} is not");
         }
 
         use coracle_lib::addresses::EventExtensionAddress;
 
         assert_eq!(
-            event(author(1), TRUST, 100, "", Tags::new())
+            event(author(1), BLOCK, 100, "", Tags::new())
                 .address()
                 .unwrap()
                 .to_string(),
-            format!("{TRUST}:{}:", author(1).to_hex())
+            format!("{BLOCK}:{}:", author(1).to_hex())
         );
     }
 }

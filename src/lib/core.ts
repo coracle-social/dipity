@@ -124,7 +124,7 @@ export type EventDetail = {
 export type Pref = {key: string; value: string; updatedAt: number}
 
 /** The tiers every setting is expressed on, narrowest first. */
-export type Scope = "nothing" | "trusted" | "contacts" | "network" | "lenient" | "public"
+export type Scope = "nothing" | "contacts" | "network" | "lenient" | "public"
 
 /** Who is handed the user's own activity, and who may carry it further. `docs/policy.md#sharing`. */
 export type Sharing = "contacts" | "network" | "anyone"

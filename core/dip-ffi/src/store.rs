@@ -621,7 +621,7 @@ mod tests {
         std::thread::sleep(COALESCE * 3);
 
         open.store
-            .set_preference("policy.gossip".to_owned(), r#""trusted""#.to_owned())
+            .set_preference("policy.sharing".to_owned(), r#""contacts""#.to_owned())
             .unwrap();
 
         assert!(received.recv_timeout(COALESCE * 3).is_err());

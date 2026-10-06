@@ -1063,16 +1063,16 @@ mod tests {
 
         let us = author(9);
         let ours = note(us, 100, "we wrote this", Tags::new());
-        let their_trust_list = event(author(1), 16_017, 100, "", Tags::new());
+        let their_block_list = event(author(1), 16_018, 100, "", Tags::new());
         let their_note = note(author(1), 100, "we carried this", Tags::new());
 
         save(&tx, &ours, &[us], 100).unwrap();
-        save(&tx, &their_trust_list, &[peer()], 100).unwrap();
+        save(&tx, &their_block_list, &[peer()], 100).unwrap();
         save(&tx, &their_note, &[peer()], 100).unwrap();
 
         assert_eq!(forget_seen_before(&tx, &us, 500, 500).unwrap(), 1);
         assert!(query::get(&tx, &id(&ours)).unwrap().is_some());
-        assert!(query::get(&tx, &id(&their_trust_list)).unwrap().is_some());
+        assert!(query::get(&tx, &id(&their_block_list)).unwrap().is_some());
         assert!(query::get(&tx, &id(&their_note)).unwrap().is_none());
     }
 

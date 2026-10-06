@@ -32,7 +32,7 @@ pub struct Charge {
     pub pubkey: PublicKey,
     /// Which budget.
     pub meter: Meter,
-    /// Whether it also counts against the pool every untrusted peer shares.
+    /// Whether it also counts against the pool every stranger shares.
     pub pooled: bool,
     /// When, in seconds.
     pub at: i64,

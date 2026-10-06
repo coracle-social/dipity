@@ -1,7 +1,7 @@
 //! Everything the user has said about who gets what.
 //!
 //! [`Policy`] is `docs/policy.md` in full — every preference the document
-//! defines, plus the trust graph its tiers are measured against — and it is
+//! defines, plus the contact graph its tiers are measured against — and it is
 //! what the rest of the core asks rather than reading preference keys one at a
 //! time.
 //!
@@ -49,7 +49,7 @@ pub struct Policy {
     pub accept: Scope,
     /// How long a carried event stays after it first reaches this device.
     pub retention_days: u32,
-    /// The trust graph the scopes above are measured against.
+    /// The contact graph the scopes above are measured against.
     #[serde(skip)]
     pub graph: Graph,
 }
@@ -131,12 +131,12 @@ impl PeerPolicy {
         self.standing == Standing::Blocked
     }
 
-    /// Whether this pubkey is somebody the user paired with or trusts, which
-    /// is who may be handed what this device carries for others, and who may
-    /// be handed the user's signature.
+    /// Whether this pubkey is somebody the user paired with, which is who may
+    /// be handed what this device carries for others, and who may be handed
+    /// the user's signature.
     #[must_use]
     pub fn is_contact(&self) -> bool {
-        matches!(self.standing, Standing::Trusted | Standing::Contact)
+        self.standing == Standing::Contact
     }
 
     /// Whether this pubkey may see an event of the user's own.
@@ -269,17 +269,17 @@ mod tests {
     fn visibility_governs_the_users_own_events() {
         let policy = policy();
         let stranger = policy.clone().for_pubkey(author(9));
-        let trusted = policy.clone().for_pubkey(author(2));
+        let contact = policy.clone().for_pubkey(author(2));
 
         let profile = event(us(), profile::KIND, 1, "", Tags::new());
         let note = event(us(), 1, 1, "", Tags::new());
         let mutes = event(us(), MUTE, 1, "", Tags::new());
 
-        // The defaults: the mute list to trusted peers, everything else to anyone.
+        // The defaults: the mute list to contacts, everything else to anyone.
         assert!(stranger.may_share(&profile));
         assert!(stranger.may_share(&note));
         assert!(!stranger.may_share(&mutes));
-        assert!(trusted.may_share(&mutes));
+        assert!(contact.may_share(&mutes));
     }
 
     #[test]
@@ -288,7 +288,6 @@ mod tests {
         let theirs = event(author(3), 1, 1, "", Tags::new());
 
         assert!(policy.clone().for_pubkey(author(2)).may_share(&theirs));
-        assert!(policy.clone().for_pubkey(author(6)).may_share(&theirs));
         assert!(!policy.clone().for_pubkey(author(3)).may_share(&theirs));
         assert!(!policy.for_pubkey(author(9)).may_share(&theirs));
     }
@@ -302,15 +301,15 @@ mod tests {
         // Anyone: a stranger sees it first-hand, and only contacts get a signature.
         assert!(at(&policy, author(9)).may_share(&note));
         assert!(!at(&policy, author(9)).signs());
-        assert!(at(&policy, author(6)).signs());
+        assert!(at(&policy, author(2)).signs());
 
         policy.sharing = Sharing::Network;
         assert!(!at(&policy, author(9)).may_share(&note));
-        assert!(at(&policy, author(6)).may_share(&note));
-        assert!(at(&policy, author(6)).signs());
+        assert!(at(&policy, author(2)).may_share(&note));
+        assert!(at(&policy, author(2)).signs());
 
         policy.sharing = Sharing::Contacts;
-        assert!(at(&policy, author(6)).may_share(&note));
+        assert!(at(&policy, author(2)).may_share(&note));
         assert!(!at(&policy, author(2)).signs());
     }
 

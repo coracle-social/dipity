@@ -32,7 +32,7 @@ This project is time-biased. It treats distance as something to articulate rathe
 
 1. **Digital localism is structural, not based on policy.** Exclusive use of physical media enforces proximity. Limited device storage enforces ephemerality. Reach is a function of communal assent. Cryptography governs verifiability of public speech.
 
-2. **Trust is explicit.** Peering with an unknown person prompts a introduction ceremony. Only after that is complete can gossip proceed. Users locally maintain contact lists and policies which allow for fine-grained control over what events they receive, transmit, and who they peer with.
+2. **Trust is explicit.** Peering with an unknown person prompts a introduction ceremony. Only after that is complete can gossip proceed, and pairing is what makes somebody a contact. Users locally maintain contact lists and policies which allow for fine-grained control over what events they receive, transmit, and who they peer with.
 
 3. **Forgetting is the default.** If someone does not actively participate in the community, they fall out of it. If content is not circulated, it disappears. Reach is a function of communal value, expressed through repeated propagation.
 
