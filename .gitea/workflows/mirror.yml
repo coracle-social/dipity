@@ -18,7 +18,7 @@ concurrency:
 jobs:
   push-to-github:
     runs-on: ubuntu-latest
-    if: github.repository == 'coracle/dip' && github.event_name != 'schedule'
+    if: github.repository == 'coracle/dipity' && github.event_name != 'schedule'
 
     steps:
       - name: Push master and tags to GitHub
@@ -39,7 +39,7 @@ jobs:
   copy-release-to-github:
     runs-on: ubuntu-latest
     needs: push-to-github
-    if: ${{ !cancelled() && github.repository == 'coracle/dip' && needs.push-to-github.result != 'failure' }}
+    if: ${{ !cancelled() && github.repository == 'coracle/dipity' && needs.push-to-github.result != 'failure' }}
 
     steps:
       - name: Checkout repository
