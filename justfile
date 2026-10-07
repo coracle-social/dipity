@@ -51,6 +51,14 @@ setup:
 dev:
     pnpm exec vite
 
+# The marketing site, an Astro project of its own in website/.
+website:
+    cd website && pnpm install && pnpm exec astro dev
+
+# Build the marketing site into website/dist.
+website-build:
+    cd website && pnpm install --frozen-lockfile && pnpm exec astro build
+
 # Components are copied into the repo rather than depended on, so this is the
 # only way one arrives. See docs/ui.md.
 

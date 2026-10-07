@@ -8,7 +8,6 @@
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu"
   import {Input} from "$lib/components/ui/input"
   import {Label} from "$lib/components/ui/label"
-  import {Switch} from "$lib/components/ui/switch"
   import {Textarea} from "$lib/components/ui/textarea"
   import {arrange, ask, boostItem, compose, share, write, type Item} from "$lib/data/feed"
   import {dismissable} from "$lib/data/nav"
@@ -51,8 +50,6 @@
   let sending = $state(false)
   let failed = $state(false)
   let file = $state<File | undefined>(undefined)
-  let warning = $state(false)
-  let reason = $state("")
 
   // A local URL for the picked file, given back when it is replaced.
   const picked = $derived(file && URL.createObjectURL(file))
@@ -104,8 +101,7 @@
 
     if (shape === "notes") return write(content)
 
-    if (shape === "images" && file)
-      return share(file, content.trim(), warning ? reason.trim() : undefined)
+    if (shape === "images" && file) return share(file, content.trim())
 
     if (shape === "polls") return ask(title.trim(), answers)
 
@@ -133,8 +129,6 @@
         when = ""
         options = ["", ""]
         file = undefined
-        warning = false
-        reason = ""
       }
 
       open = false
@@ -207,13 +201,6 @@
             <input type="file" accept="image/*" class="sr-only" onchange={pick} />
           </label>
           <Textarea bind:value={content} class="min-h-20" placeholder="Say something about it" />
-          <div class="flex items-center justify-between gap-4">
-            <Label for="image-warning" class="text-sm">Content warning</Label>
-            <Switch id="image-warning" bind:checked={warning} />
-          </div>
-          {#if warning}
-            <Input bind:value={reason} placeholder="Why, so people can choose (optional)" />
-          {/if}
         {:else if shape === "polls"}
           <div class="space-y-1.5">
             <Label for="poll-title">What are you asking?</Label>

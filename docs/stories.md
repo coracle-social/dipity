@@ -76,7 +76,7 @@ Four facts about the transport decide most of the interface, and every story bel
 44. The user puts their key on a second phone, so both phones are them. — `DeviceLogin`
 45. The user takes the key off their other phone, and this one stops being the identity it made at first run. — `DeviceLogin`
 46. With the phone in their pocket, the user hears that somebody nearby wants to pair or that new things reached the board, once they switch that on in Settings or when the app offers it after their second post. — `NotificationOffer`, `Settings`
-47. The user decides whose pictures are blurred until tapped, and a picture with a content warning stays covered whoever posted it. — `Settings`, `Photo`
+47. The user decides whose pictures are blurred until tapped. — `Settings`, `Photo`
 48. A picture reaches the board once its image has, so nothing is drawn as a hole. — `Board`
 
 ## No screen yet

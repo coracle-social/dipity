@@ -360,17 +360,12 @@ export const warmthOf = (item: Item, swept: number | undefined, now: number): Wa
   }
 }
 
-/**
- * Publish a picture: re-encoded small, with a preview standing in for it, and a
- * NIP-36 content warning when `warning` is given, empty for one with no reason.
- */
-export const share = async (file: File, description: string, warning?: string) => {
+/** Publish a picture, re-encoded small, with a preview standing in for it. */
+export const share = async (file: File, description: string) => {
   const {image, preview} = await shrink(file)
   const whole = await attachment(image)
   const small = await attachment(preview, [`preview-of ${whole.hash}`])
-  const described = picture.writer().setContent(description).addImeta(whole).addImeta(small)
-  const writer =
-    warning === undefined ? described : described.setContentWarning(warning || undefined)
+  const writer = picture.writer().setContent(description).addImeta(whole).addImeta(small)
 
   return publish(await writer.renderTemplate(), undefined, [image.base64, preview.base64])
 }

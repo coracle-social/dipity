@@ -1,0 +1,4 @@
+# Its own workspace, so the app's install never pulls in the website's toolchain.
+allowBuilds:
+  esbuild: true
+  sharp: true

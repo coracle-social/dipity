@@ -4,9 +4,8 @@
   import type {Social} from "$lib/data/contacts"
   import {blurring, blurs, pictureOf, urlOf} from "$lib/data/media"
   import type {Session} from "$lib/data/session"
-  import {picture} from "$lib/kinds"
 
-  // A picture post's image, held back behind a tap when it carries a warning or the user blurs its author.
+  // A picture post's image, held back behind a tap when the user blurs its author.
   let {
     item,
     social,
@@ -24,11 +23,7 @@
 
   const url = $derived(urlOf(shown?.sha256))
 
-  const read = $derived(picture.reader(item.event).parse())
-
-  const warned = $derived(read.contentWarning())
-
-  const covered = $derived(warned || blurs($blurring, social, session.identity, item.event.pubkey))
+  const covered = $derived(blurs($blurring, social, session.identity, item.event.pubkey))
 
   let revealed = $state(false)
 
@@ -58,9 +53,6 @@
                px-4 text-center text-sm font-medium text-foreground"
         onclick={() => (revealed = true)}>
         <EyeOff class="size-5" />
-        {#if warned}
-          <span class="text-pretty">{read.contentWarningReason() || "Content warning"}</span>
-        {/if}
         <span class="text-xs text-muted-foreground">Tap to show</span>
       </button>
     {/if}

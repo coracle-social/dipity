@@ -1,0 +1,76 @@
+---
+import "../styles/global.css"
+import Wordmark from "../components/Wordmark.astro"
+
+interface Props {
+  title?: string
+  description?: string
+}
+
+const {
+  title = "Dipity — Where your town talks",
+  description = "A community bulletin board that lives on the phones of the people around you, passed from phone to phone over Bluetooth instead of the internet.",
+} = Astro.props
+
+const links = [
+  {href: "/#how-it-works", label: "How it works", wide: true},
+  {href: "/privacy", label: "Privacy"},
+  {href: "/contact", label: "Contact"},
+]
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#f8f5f1" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1c1814" media="(prefers-color-scheme: dark)" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{title}</title>
+  </head>
+  <body class="min-h-svh">
+    <header class="mx-auto flex max-w-6xl items-center justify-between gap-6 px-5 py-5 sm:px-8">
+      <a href="/" class="shrink-0" aria-label="Dipity home">
+        <Wordmark class="h-9 w-auto" />
+      </a>
+      <nav class="flex items-center gap-1 text-sm font-medium sm:gap-2">
+        {
+          links.map(link => (
+            <a
+              href={link.href}
+              class:list={[
+                "rounded-full px-3 py-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+                {"hidden sm:inline": link.wide},
+              ]}>
+              {link.label}
+            </a>
+          ))
+        }
+      </nav>
+    </header>
+
+    <main>
+      <slot />
+    </main>
+
+    <footer class="mt-24 border-t">
+      <div
+        class="mx-auto flex max-w-6xl flex-col gap-6 px-5 py-10 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:px-8">
+        <div class="flex items-center gap-3">
+          <Wordmark class="h-6 w-auto" />
+          <span>Made by <a href="https://coracle.social" class="hover:text-foreground">Coracle</a></span>
+        </div>
+        <nav class="flex flex-wrap gap-x-6 gap-y-2">
+          <a href="/terms" class="hover:text-foreground">Terms</a>
+          <a href="/privacy" class="hover:text-foreground">Privacy</a>
+          <a href="/contact" class="hover:text-foreground">Contact</a>
+          <a href="https://gitea.coracle.social/coracle/dipity" class="hover:text-foreground">Source</a>
+        </nav>
+      </div>
+    </footer>
+  </body>
+</html>

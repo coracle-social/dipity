@@ -176,11 +176,11 @@ Weight carries hierarchy before size does: a 14px semibold label reads as distin
 
 ## Images
 
-A picture is a NIP-68 kind 20 post: one image, a description, and an optional NIP-36 content warning. `src/lib/data/media.ts` re-encodes the picked file through a canvas before it is published, as a JPEG of at most 1280 pixels on its long edge and a 640-pixel preview standing in for it ([`nips/imeta-preview.md`](./nips/imeta-preview.md)). Re-encoding is also what strips the camera's metadata, a location included. The core describes each for its `imeta` tag, which carries a hash rather than a url, and stores both beside the event.
+A picture is a NIP-68 kind 20 post: one image and a description. `src/lib/data/media.ts` re-encodes the picked file through a canvas before it is published, as a JPEG of at most 1280 pixels on its long edge and a 640-pixel preview standing in for it ([`nips/imeta-preview.md`](./nips/imeta-preview.md)). Re-encoding is also what strips the camera's metadata, a location included. The core describes each for its `imeta` tag, which carries a hash rather than a url, and stores both beside the event.
 
 The view draws a blob from the file the core keeps it in, once all of it is there (`blobPath`). A picture post is left off the board until one of its images is whole, because the image is the post. The board draws the preview and the post's own page the image.
 
-Whose pictures are blurred until tapped is a preference, `display.blur`: people outside the user's network by default, everyone but contacts, or everyone but the user. A content warning covers a picture whoever posted it, with its reason on the cover.
+Whose pictures are blurred until tapped is a preference, `display.blur`: people outside the user's network by default, everyone but contacts, or everyone but the user.
 
 ## Conventions
 

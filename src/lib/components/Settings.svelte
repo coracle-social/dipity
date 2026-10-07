@@ -69,8 +69,7 @@
     {
       id: "blur",
       label: "Whose images to blur",
-      detail:
-        "Tap a blurred image to see it, and anything with a content warning is always covered.",
+      detail: "Tap a blurred image to see it.",
       on: $blurring as string,
       options: (["strangers", "others", "everyone"] as Blurring[]).map(who => ({
         value: who as string,

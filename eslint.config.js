@@ -47,6 +47,7 @@ export default ts.config(
       "ref/",
       ".local/",
       "node_modules/",
+      "website/",
     ],
   },
 
