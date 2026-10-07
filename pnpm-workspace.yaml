@@ -1,2 +1,10 @@
 allowBuilds:
   cbor-extract: true
+minimumReleaseAgeExclude:
+  - "@welshman/content@0.12.5"
+  - "@welshman/domain@0.12.5"
+  - "@welshman/feeds@0.12.5"
+  - "@welshman/lib@0.12.5"
+  - "@welshman/net@0.12.5"
+  - "@welshman/signer@0.12.5"
+  - "@welshman/util@0.12.5"
