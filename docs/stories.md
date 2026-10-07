@@ -77,11 +77,12 @@ Four facts about the transport decide most of the interface, and every story bel
 45. The user decides whether strangers learn who they are while the app is closed. — `Settings`
 46. The user writes the key down somewhere safe, locked with a password if they choose, whenever they get round to it. — `KeyBackup`, in `Settings`
 47. The user puts their key on a second phone, so both phones are them. — `DeviceLogin`
-48. The user takes the key off their other phone, and this one stops being the identity it made at first run. — `DeviceLogin`
+48. On a new phone, the user takes the key off their other phone instead of making one. — `FirstRun`, `DeviceLogin`
 49. With the phone in their pocket, the user hears that somebody nearby wants to pair or that new things reached the board, once they switch that on in Settings or when the app offers it after their second post. — `NotificationOffer`, `Settings`
 50. The user decides whose pictures are blurred until tapped. — `Settings`, `Photo`
 51. The user decides which topics are muted. — `Settings`
 52. A picture reaches the board once its image has, so nothing is drawn as a hole. — `Board`
+53. The user logs out, which erases the key and everything on the phone. — `Settings`
 
 ## No screen yet
 

@@ -438,6 +438,8 @@ export class Simulator extends WebPlugin implements DipCore {
     const existed = Boolean(this.identity)
 
     this.identity = ""
+    this.store = new Store()
+    this.started = false
     clearTimeout(this.clock)
 
     return {existed}
@@ -706,6 +708,13 @@ export class Simulator extends WebPlugin implements DipCore {
   receiveOffer(link: number) {
     if (!this.live.has(link)) throw new Error(`link ${link} has no session to transfer over`)
     if (this.transfer) throw new Error("an identity transfer is already running")
+
+    // The core turns an offer away, unasked, once this phone has published as itself.
+    const mine = this.store.list({filter: JSON.stringify({authors: [this.identity], limit: 1})})
+
+    if (mine.length > 0) {
+      return log(`turned away the identity offered on link ${link}: this phone has posted`)
+    }
 
     this.invite(link, false)
   }

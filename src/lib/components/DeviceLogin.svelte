@@ -6,12 +6,17 @@
   import EmptyState from "$lib/components/EmptyState.svelte"
   import {nameOf, social} from "$lib/data/contacts"
   import {links} from "$lib/data/links"
-  import {back} from "$lib/data/nav"
-  import {npubOf, session} from "$lib/data/session"
+  import {back, swap} from "$lib/data/nav"
+  import {logOut, npubOf, session} from "$lib/data/session"
   import {clear, compare, offer, step} from "$lib/data/transfer"
 
   // The phone's own back button leaves without passing through here, so the ending goes on the way out.
   $effect(() => clear)
+
+  // A stand-in identity has nowhere to go back to, so leaving gives it up.
+  const leave = () => ($session.receiving ? logOut() : back())
+
+  const done = () => back() || swap({at: "board"})
 
   /** Six digits, grouped the way a person reads a number off another screen. */
   const digits = (code: number) => {
@@ -22,15 +27,21 @@
 </script>
 
 <header class="flex items-center gap-1 pt-4 pb-3">
-  <Button variant="ghost" size="icon-sm" aria-label="Back" onclick={back}>
+  <Button variant="ghost" size="icon-sm" aria-label="Back" onclick={leave}>
     <ArrowLeft />
   </Button>
   <h1 class="text-2xl font-semibold">Another phone</h1>
 </header>
 
-{#if $step.at === "idle"}
+{#if $step.at === "idle" && $session.receiving}
   <p class="max-w-prose text-sm text-pretty text-muted-foreground">
-    Pair with your other phone first, then pick it here to give it your key.
+    On your other phone, open Settings, tap Use this key on another phone, and pick this one.
+  </p>
+
+  <EmptyState icon={BluetoothSearching}>Hold the two phones together.</EmptyState>
+{:else if $step.at === "idle"}
+  <p class="max-w-prose text-sm text-pretty text-muted-foreground">
+    On your other phone, tap Log in with your other phone, then pick it here.
   </p>
 
   <ul class="mt-6 space-y-2">
@@ -56,10 +67,6 @@
       Open Dipity on your other phone and hold the two together.
     </EmptyState>
   {/if}
-
-  <p class="mt-2 text-xs text-pretty text-muted-foreground">
-    Only pick your own phone, because it gets your key.
-  </p>
 {:else if $step.at === "offering"}
   <p class="py-10 text-sm text-pretty text-muted-foreground">
     Waiting for the other phone. Dipity needs to be open on it.
@@ -78,9 +85,8 @@
       If they match, that phone gets your key for good.
     </p>
   {:else}
-    <p class="max-w-prose text-sm text-pretty text-destructive">
-      If they match, this phone switches to the other phone's key and erases everything on it,
-      including your names for people and your bookmarks.
+    <p class="max-w-prose text-sm text-pretty text-muted-foreground">
+      If they match, this phone switches to your other phone's key.
     </p>
   {/if}
 
@@ -95,7 +101,7 @@
 {:else if $step.at === "sent"}
   <p class="py-10 text-sm text-pretty">That phone now has your key.</p>
 
-  <Button size="lg" onclick={back}>Done</Button>
+  <Button size="lg" onclick={done}>Done</Button>
 {:else if $step.at === "arrived"}
   <p class="pt-10 text-sm text-pretty">This phone now has your key.</p>
 
@@ -105,15 +111,20 @@
     </p>
   {/if}
 
-  <Button class="mt-8" size="lg" onclick={back}>Done</Button>
+  <Button class="mt-8" size="lg" onclick={done}>Done</Button>
 {:else if $step.at === "refused"}
   <p class="py-10 text-sm text-pretty text-muted-foreground">
-    No key was transferred, because a phone declined or went out of range.
+    No key was transferred. A phone declined, went out of range, or has already posted under its own
+    key.
   </p>
 
-  <Button size="lg" onclick={back}>Done</Button>
+  <Button size="lg" onclick={$session.receiving ? clear : done}>
+    {$session.receiving ? "Try again" : "Done"}
+  </Button>
 {:else}
   <p class="py-10 text-sm text-pretty text-destructive">{$step.why}</p>
 
-  <Button size="lg" onclick={back}>Done</Button>
+  <Button size="lg" onclick={$session.receiving ? clear : done}>
+    {$session.receiving ? "Try again" : "Done"}
+  </Button>
 {/if}

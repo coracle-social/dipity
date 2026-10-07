@@ -7,6 +7,7 @@
 import {writable, type Readable} from "svelte/store"
 import {nip19} from "nostr-tools"
 import {Dip} from "$lib/core"
+import {reset} from "$lib/data/nav"
 
 /** How far the core has got, from the view's side of the bridge. */
 export type SessionState = "opening" | "ready" | "absent" | "unavailable"
@@ -18,6 +19,8 @@ export type Session = {
   identity?: string
   /** What the shell said when the core could not be reached. */
   why?: string
+  /** The identity is a stand-in, made only so the user's other phone can hand over theirs. */
+  receiving?: boolean
 }
 
 const store = writable<Session>({state: "opening"})
@@ -61,6 +64,31 @@ export const createIdentity = async () => {
 export const importIdentity = async (nsec: string) => {
   await Dip.importIdentity({nsec: nsec.trim()})
   await ready()
+}
+
+/**
+ * Make a stand-in identity and wait on the device screen for the user's other
+ * phone to replace it.
+ *
+ * A phone needs a key to authenticate the session a key arrives over, and only
+ * one that has published nothing under its own will take another.
+ * `docs/keys.md#login-with-device`.
+ */
+export const awaitIdentity = async () => {
+  await Dip.createIdentity()
+
+  const {identity} = await Dip.start()
+
+  reset({at: "device"})
+  store.set({state: "ready", identity, receiving: true})
+}
+
+/** Erase the key and everything gathered under it, and go back to first run. */
+export const logOut = async () => {
+  await Dip.deleteIdentity()
+
+  reset({at: "board"})
+  store.set({state: "absent"})
 }
 
 /**

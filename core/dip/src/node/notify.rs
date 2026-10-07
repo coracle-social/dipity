@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 
 use crate::link::LinkId;
-use crate::model::NotificationPrefs;
+use crate::model::{Graph, NotificationPrefs};
 use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::PublicKey;
 
@@ -90,17 +90,20 @@ impl Notifier {
         self.asked.clear();
     }
 
-    /// Count a newly stored event, if it is somebody else's writing the user
-    /// has not muted.
-    pub fn stored(
-        &mut self,
-        event: &HashedEvent,
-        identity: &PublicKey,
-        muted: &BTreeSet<PublicKey>,
-    ) {
+    /// Count a newly stored event, if it is somebody else's writing and the
+    /// user has muted neither its author nor its topic.
+    pub fn stored(&mut self, event: &HashedEvent, identity: &PublicKey, graph: &Graph) {
+        let topic = event.tags.iter().find(|tag| tag.name() == "t");
+        let muted_topic = topic.is_some_and(|tag| {
+            graph
+                .muted_topics
+                .contains(crate::model::topic(tag.value()))
+        });
+
         if event.pubkey != *identity
             && CONTENT_KINDS.contains(&event.kind)
-            && !muted.contains(&event.pubkey)
+            && !graph.muted.contains(&event.pubkey)
+            && !muted_topic
         {
             self.unseen = self.unseen.saturating_add(1);
             self.latest = Some(event.clone());
@@ -159,7 +162,10 @@ mod tests {
     #[test]
     fn writing_is_counted_but_reactions_own_events_and_the_muted_are_not() {
         let mut notifier = on();
-        let muted = BTreeSet::from([author(5)]);
+        let muted = Graph {
+            muted: BTreeSet::from([author(5)]),
+            ..Graph::default()
+        };
 
         notifier.stored(
             &note(author(2), 1, "hello", Tags::new()),
@@ -182,14 +188,36 @@ mod tests {
     }
 
     #[test]
+    fn writing_under_a_muted_topic_is_not_counted() {
+        let mut notifier = on();
+        let graph = Graph {
+            muted_topics: BTreeSet::from(["politics".to_owned()]),
+            ..Graph::default()
+        };
+
+        notifier.stored(
+            &note(author(2), 1, "muted", Tags::new().add("t", ["#politics"])),
+            &author(1),
+            &graph,
+        );
+        notifier.stored(
+            &note(author(2), 1, "counted", Tags::new().add("t", ["gardening"])),
+            &author(1),
+            &graph,
+        );
+
+        assert_eq!(notifier.content(100, true).map(|(count, _)| count), Some(1));
+    }
+
+    #[test]
     fn the_writing_notification_updates_at_most_once_an_interval() {
         let mut notifier = on();
         let stored = note(author(2), 1, "hello", Tags::new());
 
-        notifier.stored(&stored, &author(1), &BTreeSet::new());
+        notifier.stored(&stored, &author(1), &Graph::default());
         assert_eq!(notifier.content(100, true).map(|(count, _)| count), Some(1));
 
-        notifier.stored(&stored, &author(1), &BTreeSet::new());
+        notifier.stored(&stored, &author(1), &Graph::default());
         assert_eq!(notifier.content(130, true), None);
         assert_eq!(
             notifier
@@ -205,7 +233,7 @@ mod tests {
         notifier.stored(
             &note(author(2), 1, "hello", Tags::new()),
             &author(1),
-            &BTreeSet::new(),
+            &Graph::default(),
         );
 
         assert_eq!(notifier.content(100, false), None);

@@ -135,6 +135,7 @@ fn graph(tx: &Tx<'_>, identity: &PublicKey) -> Result<Graph> {
         network,
         blocked,
         muted: listed::<MUTE>(tx, identity)?,
+        muted_topics: topics::<MUTE>(tx, identity)?,
     })
 }
 
@@ -169,6 +170,22 @@ fn listed<const KIND: u16>(tx: &Tx<'_>, pubkey: &PublicKey) -> Result<BTreeSet<P
     Ok(PeopleListReader::<_, KIND>::read(&list)
         .map(|list| list.pubkeys().iter().copied().collect())
         .unwrap_or_default())
+}
+
+/// The topics the list `pubkey` published at `kind` names, each without the
+/// `#` a writer may have left on it.
+fn topics<const KIND: u16>(tx: &Tx<'_>, pubkey: &PublicKey) -> Result<BTreeSet<String>> {
+    let Some(list) = event::by_address(tx, &Address::new(KIND, *pubkey, ""))? else {
+        return Ok(BTreeSet::new());
+    };
+
+    Ok(list
+        .tags
+        .iter()
+        .filter(|tag| tag.name() == "t")
+        .map(|tag| crate::model::topic(tag.value()).to_owned())
+        .filter(|topic| !topic.is_empty())
+        .collect())
 }
 
 fn to_pref(row: &Row<'_>) -> rusqlite::Result<Pref> {
@@ -379,7 +396,9 @@ mod tests {
             Tags::new()
                 .add("p", [author(2).to_hex()])
                 // Not a pubkey, and not a reason to lose the rest of the list.
-                .add("p", ["nonsense"]),
+                .add("p", ["nonsense"])
+                .add("t", ["#politics"])
+                .add("t", ["weather"]),
         );
 
         event_command::save(&tx, &mutes, &[us], 100).unwrap();
@@ -387,6 +406,10 @@ mod tests {
         let ours = policy(&tx, &us).unwrap();
 
         assert_eq!(ours.graph.muted, [author(2)].into());
+        assert_eq!(
+            ours.graph.muted_topics,
+            ["politics".to_owned(), "weather".to_owned()].into()
+        );
         assert!(ours.graph.muted.contains(&author(2)));
 
         // Muting is a display filter, so it moves nobody in the tiers.

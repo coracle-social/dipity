@@ -125,9 +125,18 @@ class DipPlugin : Plugin(), Encounters.View {
         }
     }
 
-    /** Forget the identity, closing the core that runs as it. */
+    /**
+     * Forget the identity and everything the store gathered under it, closing
+     * the core that runs as it.
+     */
     @PluginMethod
     fun deleteIdentity(call: PluginCall) {
+        try {
+            core?.store?.wipe()
+        } catch (error: Exception) {
+            return call.reject("the store could not be emptied", error)
+        }
+
         Encounters.close()
         call.resolve(JSObject().put("existed", keystore.delete()))
     }

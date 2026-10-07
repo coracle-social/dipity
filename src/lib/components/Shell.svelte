@@ -18,6 +18,7 @@
   import {watchLinks} from "$lib/data/links"
   import {go, place} from "$lib/data/nav"
   import {requestOn, requests, watchPairings} from "$lib/data/pairing"
+  import {session} from "$lib/data/session"
   import {step, watchTransfers} from "$lib/data/transfer"
 
   let composing = $state(false)
@@ -91,7 +92,7 @@
 </div>
 
 <!-- One stack along the bottom, so the bar, the tray and the button cannot overlap. -->
-<div class="pointer-events-none fixed inset-x-0 bottom-0 z-20">
+<div class={["pointer-events-none fixed inset-x-0 bottom-0 z-20", $session.receiving && "hidden"]}>
   {#if $place.at === "board"}
     <div class="mx-auto flex max-w-2xl justify-end px-5 pb-4">
       <Button

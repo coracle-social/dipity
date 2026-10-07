@@ -40,7 +40,7 @@ pub use authorship_proof::{AuthorshipClaim, AuthorshipProof};
 pub use blob::{Blob, BlobDigest, BlobHash, BlobRole};
 pub use charge::{Charge, Meter};
 pub use disclosure::{DisclosureBucket, STRANGERS_PER_DAY};
-pub use graph::{Graph, Standing};
+pub use graph::{Graph, Standing, topic};
 pub use identity::Identity;
 pub use kinds::{
     BLOCK, BOOKMARKS, BlockListReader, BlockListWriter, CONTACT, MUTE, MuteListReader,

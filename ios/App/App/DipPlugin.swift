@@ -104,9 +104,16 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    /// Forget the identity, closing the core that runs as it.
+    /// Forget the identity and everything the store gathered under it, closing
+    /// the core that runs as it.
     @objc func deleteIdentity(_ call: CAPPluginCall) {
         onMain {
+            do {
+                try self.core?.store.wipe()
+            } catch {
+                return call.reject("the store could not be emptied", nil, error)
+            }
+
             Encounters.shared.close()
             call.resolve(["existed": Keychain.delete()])
         }

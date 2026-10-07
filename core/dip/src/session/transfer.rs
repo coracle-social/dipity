@@ -227,6 +227,22 @@ impl IdentityTransfer {
         self.step.is_some()
     }
 
+    /// Whether an offer arrived and this device's user has not been asked yet.
+    #[must_use]
+    pub fn invited(&self) -> bool {
+        matches!(self.step, Some(Step::Invited { prompted: false }))
+    }
+
+    /// Decline an offer nobody here was asked about, answering with the
+    /// `DECLINE` the peer is owed and announcing nothing on this device.
+    pub fn turn_away(&mut self) -> Option<Vec<u8>> {
+        self.invited().then(|| {
+            self.step = None;
+
+            vec![message::DECLINE]
+        })
+    }
+
     /// Give up whatever is running, because nobody is in front of the screen
     /// any more, answering with the `DECLINE` the peer is owed.
     pub fn cancel(&mut self) -> Option<Vec<u8>> {

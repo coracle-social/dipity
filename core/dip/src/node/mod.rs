@@ -42,6 +42,7 @@ use anyhow::{Result, bail};
 use coracle_kinds::delete;
 use coracle_lib::addresses::Address;
 use coracle_lib::events::{EventContent, EventId, HashedEvent};
+use coracle_lib::filters::Filter;
 use coracle_lib::keys::{PublicKey, SecretKey};
 use coracle_lib::tags::Tags;
 use tokio::sync::broadcast::{self, error::TryRecvError};
@@ -60,7 +61,7 @@ use crate::db::recipient_signature::channel::{
 use crate::db::{Db, query};
 use crate::keys::KeyCustody;
 use crate::link::{LinkId, PeripheralId, Role};
-use crate::model::{BLOCK, Blob, BlobHash, CONTACT, MUTE, NotificationPrefs, Policy};
+use crate::model::{BLOCK, Blob, BlobHash, CONTACT, MUTE, NotificationPrefs, Policy, Query};
 use crate::session::gate::Presence;
 use crate::session::l2cap::Step;
 use crate::session::transfer::Outcome;
@@ -930,6 +931,17 @@ impl Node {
                 }
             }
 
+            // Only a phone that has published nothing as itself may take another identity.
+            if session.transfer.invited()
+                && published_as(&self.db, &self.identity)
+                && let Err(error) = session.turn_away_transfer()
+            {
+                log::error!(
+                    "turning away an identity transfer on link {:?} failed: {error:#}",
+                    session.link
+                );
+            }
+
             // An identity transfer asks each user once, and says how it ended.
             if let Some(sas) = session.take_transfer_prompt() {
                 actions.push(Action::ConfirmIdentityTransfer(session.link, sas));
@@ -1093,7 +1105,7 @@ impl Node {
                     // What arrives on screen is seen as it arrives.
                     if self.presence != Some(Presence::Foreground) {
                         self.notifier
-                            .stored(&event, &self.identity, &self.policy.graph.muted);
+                            .stored(&event, &self.identity, &self.policy.graph);
                     }
                     saved.push(*event);
                 }
@@ -1388,6 +1400,16 @@ fn writes(session: &mut Session) -> Vec<Action> {
     }
 
     actions
+}
+
+/// Whether the store holds anything `identity` wrote, which is what makes a
+/// phone's own key worth keeping. A store that cannot be read counts as one
+/// that does, so a failure never costs the user what they published.
+/// `docs/keys.md#login-with-device`.
+fn published_as(db: &Db, identity: &PublicKey) -> bool {
+    let mine = Query::new().with_filter(Filter::new().add_authors([*identity]).add_limit(1));
+
+    query::list_events(db, &mine).map_or(true, |events| !events.is_empty())
 }
 
 #[cfg(test)]
@@ -2673,6 +2695,25 @@ mod tests {
             Some(key)
         );
         assert!(target.take_transferred_identity(LinkId(1)).is_none());
+    }
+
+    #[test]
+    fn a_phone_that_has_published_turns_an_identity_away_without_asking() {
+        let (mut source, mut target) = attended_pair();
+        let mine = note(target.identity, 100, "already here", Tags::new());
+        target.publish(&mine, &[]).unwrap();
+
+        let offered = source.offer_identity(LinkId(1)).unwrap();
+        let actions = settle(&mut source, &mut target, offered);
+
+        // Only the source put its digits up, and it learns the offer went nowhere.
+        let prompts = actions
+            .iter()
+            .filter(|action| matches!(action, Action::ConfirmIdentityTransfer(..)));
+        assert_eq!(prompts.count(), 1);
+        assert!(actions.contains(&Action::IdentityTransfer(LinkId(1), Outcome::Refused)));
+        assert!(!target.sessions[&LinkId(1)].transfer.running());
+        assert!(!source.sessions[&LinkId(1)].transfer.running());
     }
 
     #[test]

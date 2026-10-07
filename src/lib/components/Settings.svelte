@@ -1,5 +1,6 @@
 <script lang="ts">
   import Check from "@lucide/svelte/icons/check"
+  import LogOut from "@lucide/svelte/icons/log-out"
   import Smartphone from "@lucide/svelte/icons/smartphone"
   import {Button} from "$lib/components/ui/button"
   import * as InputGroup from "$lib/components/ui/input-group"
@@ -25,7 +26,10 @@
     setSharing,
   } from "$lib/data/policy"
   import {mutedTopics, setTopicMuted} from "$lib/data/contacts"
+  import {logOut} from "$lib/data/session"
   import {topics} from "$lib/kinds"
+
+  let leaving = $state(false)
 
   const accepts: Record<string, string> = {
     contacts: "People you've paired with",
@@ -239,13 +243,28 @@
 <div class="mt-4 space-y-4">
   <KeyBackup />
 
-  <div>
-    <Button class="w-full" variant="secondary" onclick={() => go({at: "device"})}>
-      <Smartphone />
-      Use this key on another phone
+  <Button class="w-full" variant="secondary" onclick={() => go({at: "device"})}>
+    <Smartphone />
+    Use this key on another phone
+  </Button>
+</div>
+
+<Separator class="my-6" />
+
+<h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Log out</h2>
+
+<p class="mt-2 text-sm text-pretty text-muted-foreground">
+  Erases your key and everything on this phone, so back up your key first if you want to keep it.
+</p>
+
+<div class="mt-4 flex gap-2">
+  {#if leaving}
+    <Button class="flex-1" variant="ghost" onclick={() => (leaving = false)}>Cancel</Button>
+    <Button class="flex-1" variant="destructive" onclick={logOut}>Erase and log out</Button>
+  {:else}
+    <Button class="w-full" variant="destructive" onclick={() => (leaving = true)}>
+      <LogOut />
+      Log out
     </Button>
-    <p class="mt-1.5 text-xs text-pretty text-muted-foreground">
-      Hold both phones together, and both will post as you.
-    </p>
-  </div>
+  {/if}
 </div>

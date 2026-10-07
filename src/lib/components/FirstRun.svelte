@@ -4,7 +4,7 @@
   import {Input} from "$lib/components/ui/input"
   import {Label} from "$lib/components/ui/label"
   import {dismissable} from "$lib/data/nav"
-  import {createIdentity, importIdentity} from "$lib/data/session"
+  import {awaitIdentity, createIdentity, importIdentity} from "$lib/data/session"
 
   let nsec = $state("")
   let pasting = $state(false)
@@ -14,13 +14,13 @@
     if (pasting) return dismissable(() => (pasting = false))
   })
 
-  const take = async (make: () => Promise<void>) => {
+  const take = async (make: () => Promise<void>, why = "That didn't work. Try again.") => {
     failed = ""
 
     try {
       await make()
     } catch (error) {
-      failed = "That isn't a valid key. Keys start with nsec1."
+      failed = why
       console.error("the identity could not be stored", error)
     }
   }
@@ -37,7 +37,11 @@
         <Input id="nsec" bind:value={nsec} placeholder="nsec1…" autocomplete="off" />
       </div>
       <div class="mt-4 flex flex-col gap-2">
-        <Button size="lg" disabled={!nsec.trim()} onclick={() => take(() => importIdentity(nsec))}>
+        <Button
+          size="lg"
+          disabled={!nsec.trim()}
+          onclick={() =>
+            take(() => importIdentity(nsec), "That isn't a valid key. Keys start with nsec1.")}>
           Log in
         </Button>
         <Button variant="ghost" size="lg" onclick={() => (pasting = false)}>Back</Button>
@@ -45,6 +49,9 @@
     {:else}
       <div class="mt-6 flex flex-col gap-2">
         <Button size="lg" onclick={() => take(createIdentity)}>Get started</Button>
+        <Button variant="ghost" size="lg" onclick={() => take(awaitIdentity)}>
+          Log in with your other phone
+        </Button>
         <Button variant="ghost" size="lg" onclick={() => (pasting = true)}>
           Log in with a key
         </Button>

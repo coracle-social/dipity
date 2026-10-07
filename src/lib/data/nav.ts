@@ -123,6 +123,13 @@ export const back = () => {
   return true
 }
 
+/** Start the trail over at `to`, for a change of identity that leaves nothing behind it. */
+export const reset = (to: Place) => {
+  trail.set([])
+  overlays.set([])
+  place.set(to)
+}
+
 /**
  * Have back close this while it is open, and answer how to stop saying so.
  *

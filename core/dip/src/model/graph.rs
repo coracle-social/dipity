@@ -37,6 +37,13 @@ impl Standing {
     }
 }
 
+/// A topic as a `t` tag names it, without the `#` a writer may have left on
+/// it, which is how the view reads one too.
+#[must_use]
+pub fn topic(value: &str) -> &str {
+    value.strip_prefix('#').unwrap_or(value)
+}
+
 /// The user's contact graph: the tiers, as sets of pubkeys.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Graph {
@@ -48,6 +55,8 @@ pub struct Graph {
     pub blocked: BTreeSet<PublicKey>,
     /// People the user has muted.
     pub muted: BTreeSet<PublicKey>,
+    /// Topics the user has muted, as the mute list's `t` tags name them.
+    pub muted_topics: BTreeSet<String>,
 }
 
 impl Graph {

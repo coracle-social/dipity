@@ -914,6 +914,13 @@ impl Session {
         self.send_transfer(step)
     }
 
+    /// Decline an offer this device may not take, without asking its user.
+    pub fn turn_away_transfer(&mut self) -> Result<()> {
+        let step = self.transfer.turn_away();
+
+        self.send_transfer(step)
+    }
+
     /// The comparison value to put in front of the user, once per prompt.
     ///
     /// It is the Noise transcript both ends hold and nothing else, so a session

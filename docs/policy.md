@@ -29,7 +29,7 @@ There are certain classifications that users may wish to use to tag other users:
 
 Each is a replaceable event whose `p` tags name people, so the current list is one lookup at `<kind>:<pubkey>:` and an edit supersedes what came before. The block kind is ours rather than NIP-51's.
 
-The mute list names **topics** as well as people, as NIP-51's `t` tags. A post carries at most one topic, and muting one keeps its posts off the board and does nothing else. The device still stores them and still hands them on. The new-activity notification reads the muted pubkeys alone, so a muted topic still counts toward it. [Sharing](#sharing) hands the mute list to contacts, so a muted topic is as visible to them as a muted person.
+The mute list names **topics** as well as people, as NIP-51's `t` tags. A post carries at most one topic, and muting one keeps its posts off the board and out of the new-activity notification, and does nothing else. The device still stores them and still hands them on. [Sharing](#sharing) hands the mute list to contacts, so a muted topic is as visible to them as a muted person.
 
 **Neither is encrypted.** NIP-51 keeps private entries as ciphertext in `content`, which would put them beyond the peers who need them, since contacts read these lists by design. [Sharing](#sharing) fixes which peers this device hands them to.
 
