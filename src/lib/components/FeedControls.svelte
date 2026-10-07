@@ -1,7 +1,8 @@
 <script lang="ts">
   import CategoryFilter from "$lib/components/CategoryFilter.svelte"
   import SearchBox from "$lib/components/SearchBox.svelte"
-  import {search, setOrder, toggleCategory, type View} from "$lib/data/feed"
+  import TopicFilter from "$lib/components/TopicFilter.svelte"
+  import {search, setOrder, setTopic, toggleCategory, type View} from "$lib/data/feed"
 
   let {view}: {view: View} = $props()
 
@@ -29,6 +30,10 @@
   </div>
 
   <CategoryFilter showing={view.showing} onToggle={toggleCategory} />
+</div>
+
+<div class="mt-2 flex justify-end">
+  <TopicFilter topic={view.topic} onPick={setTopic} />
 </div>
 
 <SearchBox class="mt-3" label="Search the board" bind:value={$search} />

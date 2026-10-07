@@ -1,22 +1,26 @@
 <script lang="ts">
   import Bookmark from "@lucide/svelte/icons/bookmark"
+  import Ellipsis from "@lucide/svelte/icons/ellipsis"
   import MessageCircle from "@lucide/svelte/icons/message-circle"
   import Undo from "@lucide/svelte/icons/undo-2"
   import Smile from "@lucide/svelte/icons/smile"
   import Trash from "@lucide/svelte/icons/trash-2"
+  import VolumeOff from "@lucide/svelte/icons/volume-off"
+  import {Badge} from "$lib/components/ui/badge"
   import {Button} from "$lib/components/ui/button"
+  import * as DropdownMenu from "$lib/components/ui/dropdown-menu"
   import Byline from "$lib/components/Byline.svelte"
   import Cooling from "$lib/components/Cooling.svelte"
   import EmojiPicker from "$lib/components/EmojiPicker.svelte"
   import ItemBody from "$lib/components/ItemBody.svelte"
   import Reactions from "$lib/components/Reactions.svelte"
   import {toggleBookmark} from "$lib/data/bookmarks"
-  import {nameOf, type Social} from "$lib/data/contacts"
+  import {nameOf, setTopicMuted, type Social} from "$lib/data/contacts"
   import {opensId, react, type Item, type Standing, type Warmth} from "$lib/data/feed"
   import {go} from "$lib/data/nav"
   import type {Session} from "$lib/data/session"
   import {restore, trash} from "$lib/data/trash"
-  import {categoryOf} from "$lib/kinds"
+  import {categoryOf, topicLabel, topicOf} from "$lib/kinds"
 
   let {
     item,
@@ -57,6 +61,8 @@
   const hops = $derived(mine || item.from.includes(item.event.pubkey) ? 1 : 2)
 
   const category = $derived(categoryOf(item.event.kind))
+
+  const topic = $derived(topicOf(item.event))
 
   const opens = $derived(opensId(item))
 
@@ -102,6 +108,9 @@
       <Byline {social} pubkey={item.event.pubkey} />
     {/if}
     <span class="flex flex-none items-center gap-2">
+      {#if topic}
+        <Badge variant="secondary">{topicLabel(topic)}</Badge>
+      {/if}
       <Cooling {warmth} {sweptAt} />
       <Mark class="size-4 text-muted-foreground" aria-label={category.noun} />
     </span>
@@ -188,6 +197,23 @@
           onclick={() => trash(item)}>
           <Trash />
         </Button>
+      {/if}
+      {#if topic}
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
+            {#snippet child({props})}
+              <Button {...props} variant="ghost" size="icon-sm" aria-label="More for this post">
+                <Ellipsis />
+              </Button>
+            {/snippet}
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content align="end">
+            <DropdownMenu.Item onSelect={() => setTopicMuted(topic, true)}>
+              <VolumeOff />
+              Mute {topicLabel(topic)}
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
       {/if}
     </div>
   </footer>

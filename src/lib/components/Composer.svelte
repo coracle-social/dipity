@@ -2,6 +2,7 @@
   import ChevronDown from "@lucide/svelte/icons/chevron-down"
   import ImagePlus from "@lucide/svelte/icons/image-plus"
   import Plus from "@lucide/svelte/icons/plus"
+  import Tag from "@lucide/svelte/icons/tag"
   import X from "@lucide/svelte/icons/x"
   import {Button} from "$lib/components/ui/button"
   import * as Drawer from "$lib/components/ui/drawer"
@@ -13,7 +14,7 @@
   import {dismissable} from "$lib/data/nav"
   import type {Sharing} from "$lib/core"
   import {policy} from "$lib/data/policy"
-  import {categories, summaryOf} from "$lib/kinds"
+  import {categories, summaryOf, topics} from "$lib/kinds"
 
   let {
     open = $bindable(false),
@@ -41,6 +42,7 @@
   type Shape = (typeof shapes)[number]
 
   let shape = $state<Shape>("notes")
+  let topic = $state<string | undefined>(undefined)
   let content = $state("")
   let title = $state("")
   let summary = $state("")
@@ -71,6 +73,10 @@
 
   const chosen = $derived(nounOf(shape))
 
+  const none = "none"
+
+  const filed = $derived(topics.find(({id}) => id === topic))
+
   const reaches: Record<Sharing, string> = {
     contacts: "Only people you've paired with will see this.",
     network: "People you've paired with will see this, and can pass it on to their contacts.",
@@ -99,17 +105,17 @@
   const written = () => {
     if (about) return boostItem(about, remark)
 
-    if (shape === "notes") return write(content)
+    if (shape === "notes") return write(content, topic)
 
-    if (shape === "images" && file) return share(file, content.trim())
+    if (shape === "images" && file) return share(file, content.trim(), topic)
 
-    if (shape === "polls") return ask(title.trim(), answers)
+    if (shape === "polls") return ask(title.trim(), answers, topic)
 
     if (shape === "occasions") {
-      return arrange(title.trim(), Date.parse(when) / 1000, where.trim(), content)
+      return arrange(title.trim(), Date.parse(when) / 1000, where.trim(), content, topic)
     }
 
-    return compose(title.trim(), summary.trim(), content)
+    return compose(title.trim(), summary.trim(), content, topic)
   }
 
   // A refused publish keeps what was typed, so the drawer staying open has to say why.
@@ -122,6 +128,7 @@
 
       // Passing something on leaves the user's own draft where it was.
       if (!about) {
+        topic = undefined
         content = ""
         title = ""
         summary = ""
@@ -180,6 +187,30 @@
                   <Mark class="size-4" />
                   {category.noun}
                 </DropdownMenu.RadioItem>
+              {/each}
+            </DropdownMenu.RadioGroup>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
+
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
+            {#snippet child({props})}
+              <Button {...props} variant="outline" class="w-full justify-between">
+                <span class="flex items-center gap-2">
+                  <Tag class="size-4" />
+                  {filed ? filed.label : "No topic"}
+                </span>
+                <ChevronDown class="size-4 text-muted-foreground" />
+              </Button>
+            {/snippet}
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content>
+            <DropdownMenu.RadioGroup
+              value={topic ?? none}
+              onValueChange={picked => (topic = picked === none ? undefined : picked)}>
+              <DropdownMenu.RadioItem value={none}>No topic</DropdownMenu.RadioItem>
+              {#each topics as option (option.id)}
+                <DropdownMenu.RadioItem value={option.id}>{option.label}</DropdownMenu.RadioItem>
               {/each}
             </DropdownMenu.RadioGroup>
           </DropdownMenu.Content>

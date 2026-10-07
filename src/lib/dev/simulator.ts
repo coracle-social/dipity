@@ -22,7 +22,17 @@ import {faker} from "@faker-js/faker"
 import {blake3} from "@noble/hashes/blake3.js"
 import {sha256} from "@noble/hashes/sha2.js"
 import {bytesToHex} from "@noble/hashes/utils.js"
-import {COMMENT, NOTE, REACTION, REPOST, getPubkey, hash, makeSecret} from "@welshman/util"
+import {
+  COMMENT,
+  NOTE,
+  REACTION,
+  REPOST,
+  getPubkey,
+  hash,
+  makeSecret,
+  tagValue,
+  topicTags,
+} from "@welshman/util"
 import type {HashedEvent} from "@welshman/util"
 import {nip19} from "nostr-tools"
 import type {Blob, Bluetooth, DipCore, NotificationPermission, Pref, Query} from "$lib/core"
@@ -107,6 +117,9 @@ const fromImeta = (tag: string[]): Blob | undefined => {
  */
 const boostOf = (about: HashedEvent) =>
   (about.kind === NOTE ? boost : genericBoost).writer().setEvent(about).setContent("")
+
+/** The topic something is filed under, which a comment or a boost on it inherits. */
+const topicOf = (about: HashedEvent) => tagValue(topicTags("t"), about.tags)
 
 /** An identity transfer running on one link, from whichever side started it. */
 type Transfer = {
@@ -231,12 +244,15 @@ export class Simulator extends WebPlugin implements DipCore {
       {weight: 2, value: REPOST},
     ])
 
+    const topic = topicOf(about)
     const writer =
       shape === REACTION
         ? reaction.writer().setEvent(about).setContent(emoji())
         : shape === COMMENT
           ? comment.writer().replyTo(about).setContent(remark())
           : boostOf(about)
+
+    if (shape !== REACTION && topic) writer.addTags(["t", topic])
 
     const written = hash({
       ...(await writer.renderTemplate()),

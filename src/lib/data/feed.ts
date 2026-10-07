@@ -11,7 +11,7 @@ import {randomId, uniq} from "@welshman/lib"
 import {COMMENT, DELETE, PICTURE_NOTE, POLL_RESPONSE, REACTION} from "@welshman/util"
 import type {HashedEvent} from "@welshman/util"
 import {Dip, type EventDetail, type Order} from "$lib/core"
-import {muted, social} from "$lib/data/contacts"
+import {muted, mutedTopics, social} from "$lib/data/contacts"
 import {trashed} from "$lib/data/trash"
 import {peopleNamed, wordsOf} from "$lib/data/search"
 import {attachment, pictureOf, shrink} from "$lib/data/media"
@@ -39,6 +39,8 @@ import {
   reaction,
   responseKinds,
   timeEvent,
+  topicOf,
+  withTopic,
 } from "$lib/kinds"
 import {CONTACT} from "$lib/kinds/contact"
 
@@ -70,8 +72,8 @@ export type Response = {
 /** Every response in the store, by what it responds to. */
 export type Responses = {to: Map<string, Response>}
 
-/** What the board is showing: the order, and the categories left switched on. */
-export type View = {order: Order; showing: string[]}
+/** What the board shows: the order, the categories switched on, and the topic it is narrowed to. */
+export type View = {order: Order; showing: string[]; topic?: string}
 
 /**
  * Everything about one item that is not on the event itself.
@@ -110,13 +112,17 @@ export const view = remembered<View>("ui.board", {
 export const setOrder = (order: Order) => view.set({...get(view), order})
 
 export const toggleCategory = (id: string) => {
-  const {order, showing} = get(view)
+  const current = get(view)
+  const {showing} = current
 
   view.set({
-    order,
+    ...current,
     showing: showing.includes(id) ? showing.filter(shown => shown !== id) : [...showing, id],
   })
 }
+
+/** Narrow the board to one topic, or to every topic. */
+export const setTopic = (topic?: string) => view.set({...get(view), topic})
 
 /** The kinds the switched-on categories cover. */
 const shownKinds = ({showing}: View) =>
@@ -228,10 +234,14 @@ const before = (order: Order) => (a: Item, b: Item) =>
  * author, and the two pages merge.
  */
 const page = async ({view: asked, search: words, named}: Asked): Promise<Item[]> => {
-  const kinds = shownKinds(asked)
-  const queries: Record<string, unknown>[] = [{kinds, limit: 60, ...(words ? {search: words} : {})}]
+  const narrowed = {
+    kinds: shownKinds(asked),
+    limit: 60,
+    ...(asked.topic ? {"#t": [asked.topic]} : {}),
+  }
+  const queries: Record<string, unknown>[] = [{...narrowed, ...(words ? {search: words} : {})}]
 
-  if (named.length > 0) queries.push({kinds, limit: 60, authors: named})
+  if (named.length > 0) queries.push({...narrowed, authors: named})
 
   const found = await Promise.all(
     queries.map(filter => detailsOf({order: asked.order, filter: JSON.stringify(filter)})),
@@ -251,11 +261,21 @@ const arrived = answering(
   [] as Item[],
 )
 
-/** What the board draws, with nothing by anybody the user muted and nothing in the trash. */
+/** Whether a post is filed under a topic the user muted. */
+const topicMuted = (topics: Set<string>, event: EventDetail["event"]) => {
+  const topic = topicOf(event)
+
+  return topic !== undefined && topics.has(topic)
+}
+
+/** What the board draws, less anybody the user muted, any muted topic, and the trash. */
 export const board: Readable<Item[]> = derived(
-  [arrived, muted, trashed],
-  ([$arrived, $muted, $trashed]) =>
-    $arrived.filter(({event}) => !$muted.has(event.pubkey) && !$trashed.has(event.id)),
+  [arrived, muted, mutedTopics, trashed],
+  ([$arrived, $muted, $mutedTopics, $trashed]) =>
+    $arrived.filter(
+      ({event}) =>
+        !$muted.has(event.pubkey) && !$trashed.has(event.id) && !topicMuted($mutedTopics, event),
+    ),
 )
 
 /** Stored items by id, for a screen that knows which ones it wants. */
@@ -361,22 +381,25 @@ export const warmthOf = (item: Item, swept: number | undefined, now: number): Wa
 }
 
 /** Publish a picture, re-encoded small, with a preview standing in for it. */
-export const share = async (file: File, description: string) => {
+export const share = async (file: File, description: string, topic?: string) => {
   const {image, preview} = await shrink(file)
   const whole = await attachment(image)
   const small = await attachment(preview, [`preview-of ${whole.hash}`])
-  const writer = picture.writer().setContent(description).addImeta(whole).addImeta(small)
+  const writer = withTopic(
+    picture.writer().setContent(description).addImeta(whole).addImeta(small),
+    topic,
+  )
 
   return publish(await writer.renderTemplate(), undefined, [image.base64, preview.base64])
 }
 
 /** Write something of the user's own. */
-export const write = async (content: string) =>
-  publish(await note.writer().setContent(content).renderTemplate())
+export const write = async (content: string, topic?: string) =>
+  publish(await withTopic(note.writer().setContent(content), topic).renderTemplate())
 
 /** Ask the neighbourhood something, with the answers to choose from. */
-export const ask = async (title: string, options: string[]) => {
-  const writer = poll.writer().setTitle(title)
+export const ask = async (title: string, options: string[], topic?: string) => {
+  const writer = withTopic(poll.writer().setTitle(title), topic)
 
   for (const label of options) writer.addOption(label)
 
@@ -384,13 +407,17 @@ export const ask = async (title: string, options: string[]) => {
 }
 
 /** Put something on the calendar, at a time rather than on a date. */
-export const arrange = async (title: string, at: number, where: string, about: string) => {
-  const writer = timeEvent
-    .writer()
-    .setIdentifier(randomId())
-    .setTitle(title)
-    .setStart(at)
-    .setContent(about)
+export const arrange = async (
+  title: string,
+  at: number,
+  where: string,
+  about: string,
+  topic?: string,
+) => {
+  const writer = withTopic(
+    timeEvent.writer().setIdentifier(randomId()).setTitle(title).setStart(at).setContent(about),
+    topic,
+  )
 
   if (where) writer.setLocation(where)
 
@@ -398,8 +425,11 @@ export const arrange = async (title: string, at: number, where: string, about: s
 }
 
 /** Write something long enough to want a title. */
-export const compose = async (title: string, summary: string, body: string) => {
-  const writer = article.writer().setIdentifier(randomId()).setTitle(title).setContent(body)
+export const compose = async (title: string, summary: string, body: string, topic?: string) => {
+  const writer = withTopic(
+    article.writer().setIdentifier(randomId()).setTitle(title).setContent(body),
+    topic,
+  )
 
   if (summary) writer.setSummary(summary)
 
@@ -410,12 +440,18 @@ export const compose = async (title: string, summary: string, body: string) => {
  * Pass something on, with or without something to say about it.
  *
  * Said nothing, and it goes on unchanged as a boost. Said something, and it is
- * a comment on the thing, which is what puts it under what it answers.
+ * a comment on the thing, which is what puts it under what it answers. Either
+ * way it is filed under the topic of what it is about, so muting a topic takes
+ * the conversation about it too.
  */
-export const boostItem = async (item: Item, said = "") =>
-  said.trim()
-    ? publish(await commentOn(item.event).setContent(said.trim()).renderTemplate())
-    : publish(await boostFor(item.event.kind).writer().setEvent(item.event).renderTemplate())
+export const boostItem = async (item: Item, said = "") => {
+  const remark = said.trim()
+  const writer = remark
+    ? commentOn(item.event).setContent(remark)
+    : boostFor(item.event.kind).writer().setEvent(item.event)
+
+  return publish(await withTopic(writer, topicOf(item.event)).renderTemplate())
+}
 
 /** React, unless this device already sent that reaction. */
 export const react = async (item: Item, emoji: string) => {

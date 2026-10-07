@@ -24,6 +24,8 @@
     setRetentionDays,
     setSharing,
   } from "$lib/data/policy"
+  import {mutedTopics, setTopicMuted} from "$lib/data/contacts"
+  import {topics} from "$lib/kinds"
 
   const accepts: Record<string, string> = {
     contacts: "People you've paired with",
@@ -181,6 +183,26 @@
 
   <Separator class="my-6" />
 {/if}
+
+<h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Muted topics</h2>
+
+<p class="mt-2 text-sm text-pretty text-muted-foreground">
+  A muted topic stays off the board. Your phone still keeps those posts and still passes them on.
+</p>
+
+<ul class="mt-4 space-y-4">
+  {#each topics as topic (topic.id)}
+    <li class="flex items-center justify-between gap-4">
+      <Label for="mute-{topic.id}" class="text-sm font-semibold">{topic.label}</Label>
+      <Switch
+        id="mute-{topic.id}"
+        checked={$mutedTopics.has(topic.id)}
+        onCheckedChange={on => setTopicMuted(topic.id, on)} />
+    </li>
+  {/each}
+</ul>
+
+<Separator class="my-6" />
 
 <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Notifications</h2>
 

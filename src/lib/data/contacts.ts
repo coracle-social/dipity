@@ -8,6 +8,10 @@
 // The user's cards, block and mute are things they publish, and the core
 // derives the contact graph from them, so writing one is publishing an event
 // rather than setting a preference. `docs/policy.md#social-graph`.
+//
+// The mute list names topics as well as people, so a thing that is not a person
+// is edited here too. One event has one editor. Two of them amending it would
+// each build on the version the other replaced.
 
 import {derived, get, type Readable} from "svelte/store"
 import {spec} from "@welshman/lib"
@@ -18,7 +22,7 @@ import {links} from "$lib/data/links"
 import {answering, eventsOf, storedEvents} from "$lib/data/query"
 import {publish} from "$lib/data/publish"
 import {session} from "$lib/data/session"
-import {block, contactCard, mute} from "$lib/kinds"
+import {block, contactCard, mute, topicsIn} from "$lib/kinds"
 import {CONTACT} from "$lib/kinds/contact"
 import {BLOCK} from "$lib/kinds/people"
 
@@ -146,6 +150,12 @@ export const muted: Readable<Set<string>> = derived(
   social,
   ({people}) =>
     new Set([...people.values()].filter(contact => contact.muted).map(({pubkey}) => pubkey)),
+)
+
+/** Every topic the user muted, whose posts the board leaves out. */
+export const mutedTopics: Readable<Set<string>> = derived(
+  social,
+  ({own}) => new Set(own.mute ? topicsIn(own.mute) : []),
 )
 
 /** Somebody on the people list, and whether a link to them is up right now. */
@@ -285,18 +295,23 @@ export const name = (pubkey: string, petname: string) =>
       .renderTemplate(),
   )
 
-const amend = (kind: PeopleList, list: keyof Omit<Own, "cards">, pubkey: string, onList: boolean) =>
+const amend = (kind: PeopleList, list: keyof Omit<Own, "cards">, tag: string[], onList: boolean) =>
   edit(list, get(social).own[list], async current => {
     const writer = kind.writer(current && (await kind.reader(current).parse()))
-    const amended = onList ? writer.addPublic(["p", pubkey]) : writer.dropTags(spec(["p", pubkey]))
+    const amended = onList ? writer.addPublic(tag) : writer.dropTags(spec(tag))
 
     return amended.renderTemplate()
   })
 
 export const setBlocked = (pubkey: string, blocked: boolean) =>
-  amend(block, "block", pubkey, blocked)
+  amend(block, "block", ["p", pubkey], blocked)
 
-export const setMuted = (pubkey: string, muted: boolean) => amend(mute, "mute", pubkey, muted)
+export const setMuted = (pubkey: string, muted: boolean) =>
+  amend(mute, "mute", ["p", pubkey], muted)
+
+/** Mute a topic, which NIP-51 puts on the same list as a muted person. */
+export const setTopicMuted = (topic: string, muted: boolean) =>
+  amend(mute, "mute", ["t", topic], muted)
 
 /**
  * Forget somebody: an empty card supersedes the user's name for them, they come

@@ -2,7 +2,9 @@
 //
 // A reader is the only thing that touches tags, and a component reaches for one
 // of the configured kinds below rather than for a tag name.
-// `docs/ui.md#domain-kinds`.
+// `docs/ui.md#domain-kinds`. A topic is the exception. It is a `t` tag every
+// kind carries the same way, so no reader models it and the helpers below read
+// it through `@welshman/util`'s own tag spec.
 //
 // The resolver answers no relays, which is the truth rather than a stub: there
 // are none, a writer's routing half is never asked, and publishing is one call
@@ -31,6 +33,7 @@ import {
   TimeEvent,
   type KindContext,
 } from "@welshman/domain"
+import {uniq} from "@welshman/lib"
 import {
   COMMENT,
   EVENT_DATE,
@@ -44,6 +47,9 @@ import {
   REACTION,
   REPOST,
   Resolver,
+  tagValue,
+  tagValues,
+  topicTags,
   type HashedEvent,
 } from "@welshman/util"
 import {ContactCard} from "$lib/kinds/contact"
@@ -191,6 +197,46 @@ export const categories: Category[] = [
 /** Which category a kind belongs to, for a card that has to draw its own mark. */
 export const categoryOf = (kind: number) =>
   categories.find(category => category.kinds.includes(kind)) ?? categories[0]
+
+/**
+ * One subject a post can be filed under, and what it is called.
+ *
+ * A category is what kind of thing a post is and a topic is what it is about,
+ * so the two narrow the board independently.
+ */
+export type Topic = {id: string; label: string}
+
+/**
+ * The subjects a post can be filed under, which is a closed set.
+ *
+ * Two phones that have never met agree on what a filter and a mute mean, which
+ * free text could not give them. A `t` tag naming something outside the set is
+ * read and can be muted. It has no entry in the filter.
+ */
+export const topics: Topic[] = [
+  {id: "notices", label: "Notices"},
+  {id: "lost-and-found", label: "Lost and found"},
+  {id: "help", label: "Asking for help"},
+  {id: "spare", label: "Spare and free"},
+  {id: "for-sale", label: "For sale"},
+  {id: "meetups", label: "Getting together"},
+  {id: "recommendations", label: "Recommendations"},
+]
+
+/** The topic a post is filed under, or undefined for one filed under none. */
+export const topicOf = (event: HashedEvent) => tagValue(topicTags("t"), event.tags)
+
+/** Every topic a list names, which is how the mute list carries muted topics. */
+export const topicsIn = (event: HashedEvent) => uniq(tagValues(topicTags("t"), event.tags))
+
+/** What a topic is called, which is its own name when it came from outside the set. */
+export const topicLabel = (id: string) => topics.find(topic => topic.id === id)?.label ?? id
+
+/** File a post under a topic, which every kind carries the same way. */
+export const withTopic = <W extends {addTags: (...tags: string[][]) => W}>(
+  writer: W,
+  topic: string | undefined,
+) => (topic ? writer.addTags(["t", topic]) : writer)
 
 /**
  * One line standing for an event somewhere it is not the subject.

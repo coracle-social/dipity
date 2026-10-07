@@ -6,6 +6,10 @@
 // a person walks past and what happens when they do.
 //
 // The first version of the app carries text, so nothing here attaches a file.
+//
+// A topic is a plain `t` tag, so the slugs below are spelled again rather than
+// taken from `$lib/kinds`. A peer agrees with the app about the wire and knows
+// nothing else about it.
 
 import {faker} from "@faker-js/faker"
 import type {EventTemplate} from "@welshman/util"
@@ -41,23 +45,59 @@ export const people: Person[] = Array.from({length: 7}, (_, index) => ({
 const street = () => `${faker.location.buildingNumber()} ${faker.location.street()}`
 
 const notes = [
-  () => `${faker.food.dish()}, far too much of it. Spare portions at ${street()}.`,
-  () => `Anyone got a ${faker.number.int({min: 6, max: 19})}mm socket I can borrow for an hour?`,
-  () =>
-    `Bins move to ${faker.date.weekday()} from next week, the whole of ${faker.location.street()}.`,
-  () => `${faker.person.firstName()} is out looking for their ${faker.animal.dog()} again.`,
-  () =>
-    `Two of us at the market from ${faker.number.int({min: 7, max: 10})} if anyone wants a hand carrying.`,
-  () => `Reading group has moved to the ${faker.company.buzzNoun()}, ${faker.date.weekday()}s.`,
-  () => `Power was out on ${faker.location.street()} for an hour. Anyone else?`,
+  {
+    topic: "spare",
+    say: () => `${faker.food.dish()}, far too much of it. Spare portions at ${street()}.`,
+  },
+  {
+    topic: "help",
+    say: () =>
+      `Anyone got a ${faker.number.int({min: 6, max: 19})}mm socket I can borrow for an hour?`,
+  },
+  {
+    topic: "notices",
+    say: () =>
+      `Bins move to ${faker.date.weekday()} from next week, the whole of ${faker.location.street()}.`,
+  },
+  {
+    topic: "lost-and-found",
+    say: () => `${faker.person.firstName()} is out looking for their ${faker.animal.dog()} again.`,
+  },
+  {
+    topic: "help",
+    say: () =>
+      `Two of us at the market from ${faker.number.int({min: 7, max: 10})} if anyone wants a hand carrying.`,
+  },
+  {
+    topic: "meetups",
+    say: () =>
+      `Reading group has moved to the ${faker.company.buzzNoun()}, ${faker.date.weekday()}s.`,
+  },
+  {
+    topic: "notices",
+    say: () => `Power was out on ${faker.location.street()} for an hour. Anyone else?`,
+  },
+  {
+    topic: "for-sale",
+    say: () => `${faker.animal.type()} hutch going cheap, barely used. ${street()}.`,
+  },
+  {
+    topic: "recommendations",
+    say: () => `Anyone used a decent plumber round ${faker.location.street()}?`,
+  },
 ]
 
-const said = () => note.writer().setContent(faker.helpers.arrayElement(notes)()).renderTemplate()
+const said = () => {
+  const {topic, say} = faker.helpers.arrayElement(notes)
+
+  return note.writer().setContent(say()).addTags(["t", topic]).renderTemplate()
+}
 
 const asked = () => {
   const writer = poll
     .writer()
     .setTitle(`${faker.date.weekday()} or the weekend for the ${faker.company.buzzNoun()}?`)
+    .addTags(["t", "meetups"])
 
   for (const label of [faker.date.weekday(), "Saturday", "Either suits me"]) {
     writer.addOption(label)
@@ -79,6 +119,7 @@ const gathering = () => {
       .setLocation(street())
       .setStart(starts.toISOString().slice(0, 10))
       .setContent(faker.lorem.sentence())
+      .addTags(["t", "meetups"])
       .renderTemplate()
   }
 
@@ -89,6 +130,7 @@ const gathering = () => {
     .setLocation(street())
     .setStart(Math.floor(starts.getTime() / 1000))
     .setContent(faker.lorem.sentence())
+    .addTags(["t", "meetups"])
     .renderTemplate()
 }
 

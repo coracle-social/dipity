@@ -234,6 +234,8 @@ A kind `@welshman/domain` already models is re-exported configured rather than r
 
 **`event.tags.find(t => t[0] === "…")` does not appear in a component.** A kind's shape is stated once, in its reader, and every screen reads it through getters. Unmodeled tags survive an edit, because a writer seeded from a reader re-emits whatever it did not model.
 
+A **topic** is the one thing no reader models. It is a `t` tag every kind carries the same way, so `src/lib/kinds/index.ts` reads and writes it for all of them at once. The topics on offer are a closed set declared there, so the board's filter and the muted-topics setting mean the same thing on two phones that have never met.
+
 ### Components do not query the core
 
 **A collection of events is a store in `src/lib/data/`, and components never open a query themselves.**
