@@ -1,7 +1,7 @@
 <script lang="ts">
   import type {Component, Snippet} from "svelte"
 
-  // Grows into whatever height the screen leaves, so the message sits in the middle of it.
+  // Grows into whatever height the screen leaves so that the message sits in the middle of it.
   let {icon: Icon, children}: {icon: Component; children: Snippet} = $props()
 </script>
 

@@ -6,9 +6,9 @@ use crate::model::BlobHash;
 
 /// Where blob bytes go.
 ///
-/// Every method is keyed on a [`BlobHash`], so an implementation names a file
-/// by it without a check of its own: a hash that could reach outside the
-/// store's directory does not parse in the first place.
+/// An implementation names a file by its [`BlobHash`] without a check of its
+/// own, because every method is keyed on one and a hash that could reach
+/// outside the store's directory does not parse in the first place.
 ///
 /// A blob has two files: its content, and the outboard BLAKE3 tree a serving
 /// device proves ranges of that content with
@@ -30,8 +30,8 @@ pub trait BlobStore: Send + Sync {
     fn delete(&self, sha256: &BlobHash) -> Result<()>;
     /// Every hash the store holds bytes for.
     ///
-    /// The store is a cache of what the `blob` table records, so this is what
-    /// a sweep compares the table against to find bytes nothing references.
+    /// A sweep compares the `blob` table against this to find bytes nothing
+    /// references, because the store is a cache of what the table records.
     fn hashes(&self) -> Result<Vec<BlobHash>>;
     /// The length of the held outboard tree, or `None` if there is none.
     fn outboard_len(&self, sha256: &BlobHash) -> Result<Option<u64>>;

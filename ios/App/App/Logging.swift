@@ -4,18 +4,18 @@ import os
 /// The core's `log` records, on the unified log.
 ///
 /// The Rust module path arrives as the record's target and becomes the
-/// category, so `dip::sync::blob` filters on its own in Console without the
+/// category. `dip::sync::blob` then filters on its own in Console without the
 /// core naming a subsystem it cannot see. Records come in on whichever thread
 /// logged them, which `os.Logger` takes from any.
 ///
-/// `os.Logger` and the core's `Logger` are two protocols of that name in this
-/// module, so both are spelled out.
+/// Both `os.Logger` and the core's `Logger` are spelled out, because this
+/// module has two protocols of that name.
 final class OsLog: App.Logger {
     private static let subsystem = Bundle.main.bundleIdentifier ?? "social.coracle.dipity"
 
     /// Route the core's log here, at the level this build carries.
     ///
-    /// Called once, before the core is opened, so a failure on the way up is
+    /// Called once, before the core is opened so that a failure on the way up is
     /// logged rather than being the first thing nobody sees.
     static func install() {
         #if DEBUG
@@ -34,8 +34,8 @@ final class OsLog: App.Logger {
             .log(level: Self.severity(level), "\(message, privacy: .public)")
     }
 
-    /// The unified log has no warning, so a warning is `default` — one step
-    /// above info, which keeps the order the core logged in.
+    /// A warning is `default`, because the unified log has no warning. `default`
+    /// is one step above info, which keeps the order the core logged in.
     private static func severity(_ level: LogLevel) -> OSLogType {
         switch level {
         case .error:

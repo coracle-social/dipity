@@ -24,7 +24,7 @@
   import {session} from "$lib/data/session"
   import {categoryOf, commentedOn} from "$lib/kinds"
 
-  // Reached by id rather than handed down, so it survives the board re-reading under it.
+  // Reached by id rather than handed down so that it survives the board re-reading under it.
   let {id, onBoost}: {id: string; onBoost: (item: Item) => void} = $props()
 
   const detail = $derived(detailOf(id))

@@ -17,14 +17,14 @@ use crate::model::Provenance;
 /// How far a subscriber may fall behind before it starts missing changes.
 ///
 /// Sized for a sync burst: a peer can hand over hundreds of events in a few
-/// seconds, and a subscriber that lags is told it lagged, so it can recover by
-/// re-reading rather than by being handed the backlog.
+/// seconds, and a subscriber that lags is told it lagged, so that it can recover
+/// by re-reading rather than by being handed the backlog.
 const CAPACITY: usize = 1024;
 
 /// Something that happened to an event.
 #[derive(Debug, Clone)]
 pub enum EventChange {
-    /// An event was stored for the first time. Carries the event, so a
+    /// An event was stored for the first time. Carries the event so that a
     /// forwarder does not have to read it back to relay it. Boxed because the
     /// other variants are a handful of bytes and each subscriber gets a clone.
     Stored(Box<HashedEvent>),
@@ -57,8 +57,8 @@ pub fn subscribe(db: &Db) -> Receiver<EventChange> {
 
 /// Announce a change once `tx` commits.
 ///
-/// Deferred rather than sent, so nothing hears about a row a later error rolled
-/// back, and so a subscriber that reads on the news finds it there.
+/// Deferred rather than sent, so that nothing hears about a row a later error
+/// rolled back and a subscriber that reads on the news finds it there.
 pub(crate) fn notify(tx: &Tx<'_>, change: EventChange) {
     let sender = tx.channels.event.clone();
 

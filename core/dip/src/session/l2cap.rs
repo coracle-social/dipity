@@ -1,11 +1,11 @@
 //! The L2CAP bandwidth upgrade's half of the session: who asks, who publishes,
 //! and how the PSM crosses. `docs/transport.md#the-l2cap-bandwidth-upgrade`.
 //!
-//! The PSM is assigned at publish time, so it is not known in advance and has
-//! to travel over the GATT channel already open. Which end publishes is decided
-//! by the platform APIs rather than by who wants the bandwidth: the GATT
-//! peripheral publishes and the central connects, so the receiver publishes and
-//! the dialer opens whichever of the two raised the need.
+//! The PSM is assigned at publish time and has to travel over the GATT channel
+//! already open. Which end publishes is decided by the platform APIs rather
+//! than by who wants the bandwidth. The GATT peripheral publishes and the
+//! central connects, which makes the receiver the end that publishes and the
+//! dialer the end that opens, whichever of the two raised the need.
 //!
 //! [`Upgrade`] is the whole exchange. It holds no wire and no session: every
 //! answer it owes the peer comes back as a control payload for the caller to
@@ -13,9 +13,9 @@
 //! the session adds is the sending, and moving the outbox onto the channel once
 //! one is open.
 //!
-//! Everything here is best-effort. A link whose upgrade fails keeps working at
-//! GATT speed, so every failure path lands in [`State::Off`] rather than
-//! closing anything.
+//! Everything here is best-effort. Every failure path lands in [`State::Off`]
+//! rather than closing anything, because a link whose upgrade fails keeps
+//! working at GATT speed.
 
 use anyhow::{Result, bail};
 
@@ -88,9 +88,9 @@ impl Upgrade {
     /// Bulk is wanted on this link, which starts the exchange from whichever
     /// end this is. Answers what the peer has to be told, if anything.
     ///
-    /// The GATT peripheral publishes and the central connects, so a dialer that
-    /// wants bulk asks the peer for a PSM rather than making one. Wanting it
-    /// twice changes nothing: only an idle link can start.
+    /// A dialer that wants bulk asks the peer for a PSM rather than making one,
+    /// because the GATT peripheral publishes and the central connects. Wanting
+    /// it twice changes nothing: only an idle link can start.
     pub fn wanted(&mut self) -> Option<Vec<u8>> {
         match (self.role, self.state) {
             (Role::Receiver, State::Idle) => {
@@ -125,7 +125,7 @@ impl Upgrade {
         }
     }
 
-    /// The shell published a channel, so the PSM goes to the peer.
+    /// The shell published a channel, whose PSM goes to the peer.
     pub fn published(&mut self, psm: u16) -> Vec<u8> {
         self.state = State::Published(psm);
 
@@ -170,8 +170,8 @@ impl Upgrade {
 
     /// The peer wants bulk and cannot publish it itself.
     ///
-    /// A dialer cannot publish either, and neither end gives up a link over an
-    /// optimization, so it says as much and stays on GATT.
+    /// A dialer cannot publish either. It says as much and stays on GATT,
+    /// because neither end gives up a link over an optimization.
     fn on_request(&mut self) -> Option<Vec<u8>> {
         match (self.role, self.state) {
             (Role::Receiver, State::Idle) => {
@@ -188,10 +188,10 @@ impl Upgrade {
         }
     }
 
-    /// The peer published, so the channel behind the PSM is wanted here.
+    /// The peer published a PSM, and the channel behind it is wanted here.
     ///
-    /// A receiver that wants bulk publishes unprompted, so this arrives with no
-    /// request behind it as often as not.
+    /// This arrives with no request behind it as often as not, because a
+    /// receiver that wants bulk publishes unprompted.
     fn on_published(&mut self, body: &[u8]) -> Result<()> {
         let Some(psm) = psm(body) else {
             bail!("an L2CAP PSM arrived as {} bytes, not 2", body.len());

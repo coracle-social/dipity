@@ -1,6 +1,6 @@
 # Release
 
-A release is built, signed and published from one Mac by `just release`, so no signing key or store credential leaves it. The pipeline is `scripts/release/`, and its steps run in order.
+A release is built, signed and published from one Mac by `just release`, and no signing key or store credential leaves it. The pipeline is `scripts/release/`, and its steps run in order.
 
 | Step | Does |
 | --- | --- |
@@ -11,7 +11,7 @@ A release is built, signed and published from one Mac by `just release`, so no s
 | `gitea` | Publishes the gitea release for the tag, with the APK attached |
 | `zapstore` | Publishes the APK to zapstore |
 
-Obtainium reads the gitea release, so it needs no step of its own. `.gitea/workflows/mirror.yml` pushes `master` and the tags to [GitHub](https://github.com/coracle-social/dipity) and copies the latest published release there, for Obtainium users who add the app by its GitHub url. It needs a `GH_MIRROR_TOKEN` secret on the gitea repo. Play and the App Store finish in their consoles: the run ends by listing the review and rollout left to do by hand.
+Obtainium needs no step of its own, because it reads the gitea release. `.gitea/workflows/mirror.yml` pushes `master` and the tags to [GitHub](https://github.com/coracle-social/dipity) and copies the latest published release there, for Obtainium users who add the app by its GitHub url. It needs a `GH_MIRROR_TOKEN` secret on the gitea repo. Play and the App Store finish in their consoles: the run ends by listing the review and rollout left to do by hand.
 
 ## Cutting one
 
@@ -21,7 +21,7 @@ Obtainium reads the gitea release, so it needs no step of its own. `.gitea/workf
 4. `just release --check` lists every step and anything a step is missing, and runs nothing.
 5. `just release`.
 
-A step that fails names the command that picks up from it, such as `just release ios gitea zapstore`. Play and App Store Connect never accept a build number twice, so their steps reuse a build already uploaded rather than building again.
+A step that fails names the command that picks up from it, such as `just release ios gitea zapstore`. The Play and App Store Connect steps reuse a build already uploaded rather than building again, because neither store accepts a build number twice.
 
 ## Credentials
 
@@ -35,4 +35,4 @@ Everything goes in `.env.local` at the repo root, which is gitignored. `just rel
 | `GITEA_TOKEN` | Publishing the gitea release |
 | `SIGN_WITH` | The nostr key `zsp` signs the zapstore release with |
 
-**The distribution key can never change.** Android refuses an update signed with a different key, so every install from gitea, Obtainium or zapstore is tied to it. Back it up somewhere other than this Mac.
+**The distribution key can never change.** Every install from gitea, Obtainium or zapstore is tied to it, because Android refuses an update signed with a different key. Back it up somewhere other than this Mac.

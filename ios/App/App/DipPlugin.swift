@@ -6,9 +6,9 @@ import UIKit
 /// The webview's end of the core.
 ///
 /// A method per call the view makes, over the core `Encounters` holds for as
-/// long as the process lives. The app delegate creates that at every launch,
-/// including one into the background to deliver a Bluetooth event, so the
-/// plugin opens nothing it would have to close: it attaches as the view.
+/// long as the process lives. The plugin opens nothing it would have to close
+/// and only attaches as the view, because the app delegate creates that core at
+/// every launch, including one into the background to deliver a Bluetooth event.
 /// Everything below the bridge is `dip_ffi`; nothing here decides anything
 /// about gossip, the radio schedule or policy.
 ///
@@ -144,9 +144,9 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// The `imeta` entries an event has to carry for a peer to fetch `media`
     /// and check what it gets, base64 in.
     ///
-    /// Describing bytes stores nothing, so this is the one node call needing no
-    /// started core: the view composes the tag, signs the event, and hands both
-    /// to `publish`. `docs/storage.md#blob-store`.
+    /// This is the one node call needing no started core, because describing
+    /// bytes stores nothing. The view composes the tag, signs the event, and
+    /// hands both to `publish`. `docs/storage.md#blob-store`.
     @objc func mediaTags(_ call: CAPPluginCall) {
         guard let media = call.getString("media").flatMap({ Data(base64Encoded: $0) }) else {
             return call.reject("mediaTags needs base64 media")
@@ -198,8 +198,8 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     private func export(into call: CAPPluginCall) {
         guard let core else { return call.reject("exportKey needs a started core") }
 
-        // One sheet means one call waiting on it, so whoever this displaces is
-        // answered rather than left on a promise that never settles.
+        // Whoever this displaces is answered rather than left on a promise that
+        // never settles, because one sheet means one call waiting on it.
         exporting?.reject("another key export replaced this one")
         exporting = call
 
@@ -249,8 +249,8 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// The key is handed out once and does not cross the bridge: it is written
     /// to the Keychain here, the same custody path a generated one takes, the
     /// store is emptied of the first-run identity's data, and the node is
-    /// reopened under it. Answers what `start` answers, so the view
-    /// reads the new identity off the same field.
+    /// reopened under it. It answers what `start` answers, with the new identity
+    /// on the same field.
     @objc func takeTransferredIdentity(_ call: CAPPluginCall) {
         onMain { self.adoptTransferred(into: call) }
     }
@@ -518,9 +518,8 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
     /// The link the view named, which it only ever learned by being asked
     /// something about it.
     ///
-    /// A link is a `UInt64` the shell assigned, so a negative one is not a link
-    /// this device ever handed out — refused here rather than trapping on the
-    /// conversion.
+    /// A negative link is refused here rather than trapping on the conversion.
+    /// A link is a `UInt64` the shell assigned.
     private func link(_ call: CAPPluginCall) -> LinkId? {
         guard let value = call.getInt("link"), value >= 0 else { return nil }
 
@@ -582,6 +581,15 @@ extension DipPlugin: EncountersView {
             self?.notifyListeners("keyBackupShared", data: ["shared": completed])
             Encounters.shared.drive { try $0.keyExportFinished() }
             call.resolve()
+        }
+
+        // An iPad shows the sheet as a popover, and UIKit raises if a popover has nothing to point at.
+        if let popover = sheet.popoverPresentationController {
+            let bounds = controller.view.bounds
+
+            popover.sourceView = controller.view
+            popover.sourceRect = CGRect(x: bounds.midX, y: bounds.midY, width: 0, height: 0)
+            popover.permittedArrowDirections = []
         }
 
         controller.present(sheet, animated: true)

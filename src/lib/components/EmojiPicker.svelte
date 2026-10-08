@@ -34,7 +34,7 @@
       }
     }
 
-    // The drawer captures the pointer on whatever it lands on, and shadow DOM retargets that to the picker, so the emoji under the finger never receives the click.
+    // The emoji under the finger never receives the click, because the drawer captures the pointer on whatever it lands on and shadow DOM retargets that to the picker.
     const held = (event: PointerEvent) => event.stopPropagation()
 
     element.addEventListener("emoji-click", chosen)

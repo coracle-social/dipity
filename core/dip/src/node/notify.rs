@@ -81,7 +81,7 @@ pub struct Notifier {
 }
 
 impl Notifier {
-    /// The user opened the app, so everything so far has been seen.
+    /// The user opened the app and has seen everything so far.
     pub fn seen(&mut self) {
         self.unseen = 0;
         self.announced = 0;

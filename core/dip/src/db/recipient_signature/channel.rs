@@ -1,7 +1,7 @@
 //! Change notifications for the `recipient_signature` table.
 //!
-//! Holding a signature is what lets an event travel its second hop, so the
-//! forwarding side listens here: an event that could not be relayed to anyone
+//! The forwarding side listens here, because holding a signature is what lets
+//! an event travel its second hop. An event that could not be relayed to anyone
 //! becomes relayable the moment its signature arrives.
 
 use coracle_lib::events::EventId;
@@ -12,7 +12,7 @@ use crate::db::{Db, Tx};
 use crate::model::RecipientSignature;
 
 /// How far a subscriber may fall behind. Signatures arrive one per event per
-/// recipient, so this tracks the event channel's traffic at a lower rate.
+/// recipient and track the event channel's traffic at a lower rate.
 const CAPACITY: usize = 256;
 
 /// Something that happened to a stored signature.

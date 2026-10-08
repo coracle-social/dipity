@@ -1,15 +1,14 @@
 // The street `just dev` runs on: who keeps turning up, and what they hand over.
 //
-// Everything is faker output under a fixed seed, so a reload is the same
+// Everything is faker output under a fixed seed so that a reload is the same
 // neighborhood rather than a new one and two screenshots are comparable.
 // Nothing here knows about time or about the store — the simulator decides when
 // a person walks past and what happens when they do.
 //
-// The first version of the app carries text, so nothing here attaches a file.
+// Nothing here attaches a file, because the first version of the app carries text.
 //
-// A topic is a plain `t` tag, so the slugs below are spelled again rather than
-// taken from `$lib/kinds`. A peer agrees with the app about the wire and knows
-// nothing else about it.
+// A topic is a plain `t` tag of whatever a person typed. The slugs below are
+// what a neighbour might have filed things under.
 
 import {faker} from "@faker-js/faker"
 import type {EventTemplate} from "@welshman/util"

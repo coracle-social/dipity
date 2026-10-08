@@ -8,8 +8,8 @@ use crate::model::{Identity, PeerPolicy, Policy, Standing};
 /// A peer — the device on the other end of the session — that has completed
 /// NIP-42, and what the user's settings say about it.
 ///
-/// A device may hold several identities and prove them all over one channel,
-/// so what it proved is a set. What the user's settings say about it is not:
+/// What a device proved is a set, because it may hold several identities and
+/// prove them all over one channel. What the user's settings say about it is not:
 /// the contact graph names people, and every question the sync layer asks — what
 /// may be served, what may be stored, how much it may write — is a question
 /// about the device. The set is therefore reduced once, at binding, to the one
@@ -35,7 +35,7 @@ pub struct Peer {
 impl Peer {
     /// Bind `policy` to the device that proved `pubkeys`.
     ///
-    /// Deduplicated on the way in, so a peer cannot weigh the set by proving
+    /// Deduplicated on the way in, so that a peer cannot weigh the set by proving
     /// one pubkey twice. A peer that proved nothing binds as blocked: it is not
     /// a peer, and every path below reads that as "pass nothing".
     #[must_use]
@@ -65,7 +65,7 @@ mod tests {
 
     use crate::fixtures::author;
 
-    /// A graph with one of each tier, so a set can mix them.
+    /// A graph with one of each tier, so that a set can mix them.
     fn policy() -> Policy {
         let mut policy = Policy::new(author(1));
 
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn a_device_takes_the_best_standing_it_proved() {
-        // Proving an extra key claims more access, never less, so the set reduces to the best.
+        // The set reduces to the best, because proving an extra key claims more access, never less.
         let policy = policy();
 
         assert_eq!(
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn signing_follows_the_devices_standing() {
-        // A contact is signed for, so one proved contact's key qualifies the device.
+        // One proved contact's key qualifies the device, because a contact is signed for.
         let policy = policy();
 
         assert!(

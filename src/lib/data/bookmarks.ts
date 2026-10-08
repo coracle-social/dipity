@@ -4,9 +4,8 @@
 // retention sweep, which takes whatever stops circulating except what this list
 // names. `docs/storage.md#retention`.
 //
-// The list is one replaceable event, so bookmarking is a read of the current
-// one and a write of the next. It is the user's own, so nothing here reads
-// anybody else's.
+// Bookmarking is a read of the current list and a write of the next, because
+// the list is one replaceable event. Nothing here reads anybody else's.
 
 import {derived, get, type Readable} from "svelte/store"
 import {BOOKMARKS} from "@welshman/util"

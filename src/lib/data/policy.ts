@@ -1,8 +1,8 @@
 // What the device does on its own, which is a preference because nobody is
 // awake to be asked during a background wake.
 //
-// The core compiles the preferences into a policy and answers it with its own
-// defaults filled in, so nothing here restates them. The writes go back one key
+// Nothing here restates the defaults, because the core compiles the preferences
+// into a policy and answers it with them filled in. The writes go back one key
 // at a time as JSON documents. `docs/policy.md`.
 
 import type {Readable} from "svelte/store"
@@ -28,7 +28,7 @@ const read = (): Promise<Policy | undefined> =>
 /**
  * The policy the core is applying, once it has said what it is.
  *
- * Undefined until the first read lands, so a screen draws nothing for a frame
+ * Undefined until the first read lands so that a screen draws nothing for a frame
  * rather than a guess. A wrong retention window reads as a thing about to be
  * dropped.
  */

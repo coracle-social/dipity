@@ -8,10 +8,10 @@
 //! and [`read_handshake`](Wire::read_handshake) without the caller ever
 //! seeing a raw Noise message.
 //!
-//! A payload is sealed as it leaves the outbox, not as it is queued. Each pipe's
-//! nonce sequence keeps no window, while the scheduler lets a control frame
-//! overtake queued bulk fragments, so sealing at enqueue would hand the peer
-//! ciphertext in an order it cannot open.
+//! A payload is sealed as it leaves the outbox, not as it is queued. Sealing at
+//! enqueue would hand the peer ciphertext in an order it cannot open, because
+//! each pipe's nonce sequence keeps no window while the scheduler lets a
+//! control frame overtake queued bulk fragments.
 
 use anyhow::{Result, bail};
 use zeroize::Zeroize;
@@ -23,9 +23,10 @@ use super::{Channel, Codec, Fragment, Frame, Noise, Outbox, Pipe, Secrecy};
 
 /// The length prefix a bulk write carries.
 ///
-/// L2CAP gives a byte stream on both platforms, so the fragment boundaries GATT
-/// gets from the ATT write have to be written down. Two bytes, big-endian,
-/// ahead of the fragment. `docs/transport.md#the-l2cap-bandwidth-upgrade`.
+/// The fragment boundaries GATT gets from the ATT write have to be written
+/// down, because L2CAP gives a byte stream on both platforms. Two bytes,
+/// big-endian, ahead of the fragment.
+/// `docs/transport.md#the-l2cap-bandwidth-upgrade`.
 const BULK_PREFIX: usize = 2;
 
 /// The largest bulk write, which is what the length prefix can count.
@@ -53,7 +54,7 @@ impl Wire {
     /// A wire over a link whose negotiated MTU is `mtu` bytes, with a fresh
     /// Noise session for it.
     pub fn new(role: Role, mtu: usize) -> Result<Self> {
-        // Sealed writes are the tighter mode, so an MTU too small for one carries no session.
+        // Sealed writes are the tighter mode, and an MTU too small for one carries no session.
         if mtu <= HEADER + Noise::TAG {
             bail!("an MTU of {mtu} leaves no room for a sealed payload byte");
         }
@@ -80,12 +81,12 @@ impl Wire {
         Ok(())
     }
 
-    /// The L2CAP channel went away, so bulk goes back on GATT.
+    /// The L2CAP channel went away, and bulk goes back on GATT.
     ///
     /// Whatever was queued for it is dropped, and so is the write in flight on
-    /// it, which nobody will acknowledge: a fragment sized for the bulk MTU
-    /// would overrun an ATT write, so the transfer resumes from what the store
-    /// already holds.
+    /// it, which nobody will acknowledge. The transfer resumes from what the
+    /// store already holds, because a fragment sized for the bulk MTU would
+    /// overrun an ATT write.
     pub fn close_bulk(&mut self) {
         self.bulk_mtu = None;
         self.bulk_inbox.clear();
@@ -146,7 +147,7 @@ impl Wire {
     fn receive_on(&mut self, pipe: Pipe, write: &[u8]) -> Result<Option<Frame>> {
         let mut fragment = Fragment::decode(write)?;
 
-        // Everything after the handshake is sealed, so one that will not open is not theirs.
+        // Everything after the handshake is sealed, and one that will not open is not theirs.
         if self.noise.is_complete() {
             fragment.payload = self.noise.decrypt(pipe, &fragment.payload)?;
         }
@@ -157,7 +158,7 @@ impl Wire {
     /// The next fragment for the shell to write on `pipe`, if the last one
     /// there has been acknowledged.
     ///
-    /// This is where a payload is sealed, so ciphertext is produced in the
+    /// This is where a payload is sealed, so that ciphertext is produced in the
     /// order it goes on the wire whatever the scheduler did to the queue. A
     /// bulk write carries its length ahead of it, since L2CAP is a stream and
     /// keeps no boundaries of its own.
@@ -184,7 +185,7 @@ impl Wire {
 
     /// Take a slice off the bulk stream, returning every frame it completes.
     ///
-    /// A read is whatever the socket handed the shell, so it may hold several
+    /// A read is whatever the socket handed the shell. It may hold several
     /// fragments, part of one, or both.
     pub fn receive_bulk(&mut self, read: &[u8]) -> Result<Vec<Frame>> {
         self.bulk_inbox.extend_from_slice(read);
@@ -502,7 +503,7 @@ mod tests {
         let gatt = dialer.next_write(Pipe::Gatt).unwrap().unwrap();
         let bulk = dialer.next_write(Pipe::Bulk).unwrap().unwrap();
 
-        // The two pipes deliver independently, so the later seal can land first.
+        // The later seal can land first, because the two pipes deliver independently.
         assert_eq!(receiver.receive_bulk(&bulk).unwrap(), vec![bytes]);
         assert_eq!(receiver.receive(&gatt).unwrap(), Some(events));
     }
@@ -538,7 +539,7 @@ mod tests {
             .unwrap();
         dialer.close_bulk();
 
-        // A fragment cut to the bulk MTU would overrun an ATT write, so it goes.
+        // The queued fragment goes, because one cut to the bulk MTU would overrun an ATT write.
         assert!(!dialer.bulk_is_open());
         assert!(dialer.next_write(Pipe::Bulk).unwrap().is_none());
         assert!(dialer.next_write(Pipe::Gatt).unwrap().is_none());

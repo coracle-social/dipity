@@ -78,7 +78,7 @@ export type View = {order: Order; showing: string[]; topic?: string}
 /**
  * Everything about one item that is not on the event itself.
  *
- * One object rather than a prop each, so a card asks for what it draws and a
+ * One object rather than a prop each so that a card asks for what it draws and a
  * new fact about an item does not change every call site.
  */
 export type Standing = {
@@ -101,8 +101,8 @@ const nothing = (): Response => ({boosts: [], reactions: [], votes: []})
  * The board's own controls, kept in the store so they survive being suspended.
  *
  * Switching Articles off is a decision about what the board is for rather than
- * where the user happens to be, so coming back to everything switched on again
- * is the app forgetting something it was told.
+ * where the user happens to be. Coming back to everything switched on again is
+ * the app forgetting something it was told.
  */
 export const view = remembered<View>("ui.board", {
   order: "seenAt",
@@ -140,13 +140,13 @@ const respondedTo = (event: EventDetail["event"]): string | undefined => {
 /**
  * A page with everything whose subject this device does not hold left out.
  *
- * A boost carries no words of its own, so one that outran what it passes on
- * says nothing at all. A comment opens what it answers, so one whose parent
- * has not arrived opens onto nothing; it waits for the parent the way a boost
+ * A boost that outran what it passes on says nothing at all, because a boost
+ * carries no words of its own. A comment whose parent has not arrived opens
+ * onto nothing, because a comment opens what it answers; it waits for the parent the way a boost
  * waits for its subject. `docs/stories.md`.
  */
 const grounded = async (all: Item[]): Promise<Item[]> => {
-  // A picture is its image, so one whose bytes have not arrived has nothing to draw yet.
+  // A picture is its image. One whose bytes have not arrived has nothing to draw yet.
   const items = all.filter(
     ({event, media}) => event.kind !== PICTURE_NOTE || pictureOf(media, false),
   )
@@ -213,8 +213,9 @@ export const responses: Readable<Responses> = derived([responding, muted], ([fou
 /**
  * What the user is looking for on the board, if anything.
  *
- * A passing question rather than a choice about what the board is for, so it
- * is not remembered as a preference the way the order and the categories are.
+ * It is not remembered as a preference the way the order and the categories
+ * are, because it is a passing question rather than a choice about what the
+ * board is for.
  */
 export const search = writable("")
 
@@ -230,8 +231,8 @@ const before = (order: Order) => (a: Item, b: Item) =>
  *
  * A search matches what people wrote, and also who wrote it: a note by
  * somebody whose name matches comes back whatever it says. Names live in cards
- * rather than in the store's text index, so that half is a second query by
- * author, and the two pages merge.
+ * rather than in the store's text index. That half is a second query by author,
+ * and the two pages merge.
  */
 const page = async ({view: asked, search: words, named}: Asked): Promise<Item[]> => {
   const narrowed = {
@@ -277,6 +278,19 @@ export const board: Readable<Item[]> = derived(
         !$muted.has(event.pubkey) && !$trashed.has(event.id) && !topicMuted($mutedTopics, event),
     ),
 )
+
+/** The topics on the board, most posted first, which is what the topic filter offers. */
+export const boardTopics: Readable<string[]> = derived(board, $board => {
+  const counts = new Map<string, number>()
+
+  for (const {event} of $board) {
+    const topic = topicOf(event)
+
+    if (topic) counts.set(topic, (counts.get(topic) ?? 0) + 1)
+  }
+
+  return [...counts.keys()].sort((a, b) => counts.get(b)! - counts.get(a)!)
+})
 
 /** Stored items by id, for a screen that knows which ones it wants. */
 export const itemsByIds = (ids: string[]): Promise<Item[]> =>
@@ -339,7 +353,7 @@ export const standingOf = (
  *
  * The core's rule, restated rather than taken from `isReplaceableKind` in
  * `@welshman/util`: that one counts addressable kinds as replaceable and the
- * sweep does not, so an article would read as permanent when it is not.
+ * sweep does not, which would make an article read as permanent when it is not.
  * A bookmarked event is spared too, which is what `bookmarked` is for.
  * `core/dip/src/db/event/command.rs`.
  */
@@ -354,7 +368,7 @@ const spared = (item: Item, identity?: string) =>
 /**
  * When the sweep takes an item, or undefined for one it never will.
  *
- * `retentionDays` is read from `policy` rather than held here, so an edit on the
+ * `retentionDays` is read from `policy` rather than held here so that an edit on the
  * settings screen moves every ring on the board instead of waiting for the next
  * time the app opens. It is undefined until the core has answered, and an item
  * then reads as kept rather than as fading on a window nobody confirmed.
@@ -441,8 +455,8 @@ export const compose = async (title: string, summary: string, body: string, topi
  *
  * Said nothing, and it goes on unchanged as a boost. Said something, and it is
  * a comment on the thing, which is what puts it under what it answers. Either
- * way it is filed under the topic of what it is about, so muting a topic takes
- * the conversation about it too.
+ * way it is filed under the topic of what it is about. Muting a topic takes the
+ * conversation about it too.
  */
 export const boostItem = async (item: Item, said = "") => {
   const remark = said.trim()
@@ -468,8 +482,8 @@ export const react = async (item: Item, emoji: string) => {
 /**
  * Answer a poll, replacing whatever this device answered before.
  *
- * The reader keeps only each pubkey's newest response, so a change of mind is
- * another event rather than an edit.
+ * A change of mind is another event rather than an edit, because the reader
+ * keeps only each pubkey's newest response.
  */
 export const answer = async (item: Item, selections: string[]) => {
   const writer = pollResponse.writer().setPollId(item.event.id)
@@ -519,8 +533,8 @@ export const detailOf = (id: string): Readable<Detail> =>
 /**
  * One stored event by id, re-read whenever the store moves.
  *
- * What a line stands for can arrive after the line was drawn, so reading it
- * once says the thing is missing for as long as the screen stays open.
+ * What a line stands for can arrive after the line was drawn. Reading it once
+ * says the thing is missing for as long as the screen stays open.
  */
 export const heldEventOf = (id: string): Readable<EventDetail["event"] | null | undefined> =>
   answering(
@@ -543,8 +557,8 @@ export const heldAtAddress = (kind: number, pubkey: string, identifier: string) 
 /**
  * The page a card opens, which is its own only when it is about nothing else.
  *
- * A boost carries no words of its own and a comment belongs under what it
- * answers, so both open their subject. A comment on a comment opens that
+ * Both a boost and a comment open their subject, because a boost carries no
+ * words of its own and a comment belongs under what it answers. A comment on a comment opens that
  * comment, which is the page the conversation above it is drawn on.
  */
 export const opensId = (item: Item) =>

@@ -17,7 +17,7 @@
   const here = $derived(tabOf(place))
 </script>
 
-<!-- The card runs under the home indicator, so nothing scrolls past beneath the bar. -->
+<!-- The card runs under the home indicator so that nothing scrolls past beneath the bar. -->
 <nav class="pointer-events-auto border-t border-border bg-card pb-safe-b">
   <ul class="mx-auto flex max-w-2xl">
     {#each items as item (item.tab)}

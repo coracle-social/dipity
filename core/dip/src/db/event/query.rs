@@ -168,7 +168,7 @@ pub fn provenance_for(tx: &Tx<'_>, ids: &[EventId]) -> Result<HashMap<EventId, V
          ORDER BY seen_at ASC, pubkey ASC"
     ))?;
 
-    // Ordered across the whole set, so each event's sightings keep `provenance` order.
+    // Ordered across the whole set, so that each event's sightings keep `provenance` order.
     let mut sightings: HashMap<EventId, Vec<Provenance>> = HashMap::new();
 
     for sighting in prepared
@@ -205,7 +205,7 @@ pub fn shares_for(tx: &Tx<'_>, ids: &[EventId]) -> Result<HashMap<EventId, Vec<S
          ORDER BY shared_at ASC, pubkey ASC"
     ))?;
 
-    // Ordered across the whole set, so each event's handoffs keep that order.
+    // Ordered across the whole set, so that each event's handoffs keep that order.
     let mut shares: HashMap<EventId, Vec<Share>> = HashMap::new();
 
     for share in prepared
@@ -288,7 +288,7 @@ pub fn seen_from(tx: &Tx<'_>, id: &EventId) -> Result<Vec<PublicKey>> {
 /// Whether a stored request, not itself retracted, has asked for this event to be deleted.
 ///
 /// The mirror of the sweep in [`command`](super::command), which runs when the
-/// request is the event arriving. Both ask [`DeleteReader::matches`], so who
+/// request is the event arriving. Both ask [`DeleteReader::matches`]. Who
 /// may speak for an event is decided in one place — `coracle-kinds`, where it
 /// is authorship for most kinds and the recipient for a gift wrap, whose
 /// signing key was thrown away. SQL narrows to the requests naming this event
@@ -433,7 +433,7 @@ fn push_tag(conditions: &mut Conditions, key: &str, values: &BTreeSet<String>) {
     let (mode, name) = match key.split_at_checked(1) {
         Some(("#", name)) => (TagMatch::Any, name),
         Some(("&", name)) => (TagMatch::All, name),
-        // Not a key any builder produces, so matching nothing is the honest reading.
+        // Matching nothing is the honest reading of a key no builder produces.
         _ => {
             conditions.push_never();
             return;
@@ -444,7 +444,7 @@ fn push_tag(conditions: &mut Conditions, key: &str, values: &BTreeSet<String>) {
         match mode {
             // Membership of the empty set; `matches_nothing` catches it before the query.
             TagMatch::Any => conditions.push_never(),
-            // Every value of an empty list is present in any event, so this requires nothing.
+            // This requires nothing, because every value of an empty list is present in any event.
             TagMatch::All => {}
         }
 
@@ -547,10 +547,10 @@ fn push_policy(conditions: &mut Conditions, policy: &PeerPolicy) {
         return;
     }
 
-    // The trash is this device's to look through, so nothing in it is handed on.
+    // Nothing in the trash is handed on, because it is this device's to look through.
     conditions.push("e.id NOT IN (SELECT event_id FROM event_trashed)");
 
-    // What this device carries for others goes only to contacts, so a second hop stays among people somebody paired with.
+    // What this device carries for others goes only to contacts, keeping a second hop among people somebody paired with.
     if !policy.is_contact() {
         conditions.push_set("e.pubkey", vec![text(policy.policy.identity.to_hex())]);
     }
@@ -629,7 +629,7 @@ fn fts_query(search: &str) -> Option<String> {
     let terms: Vec<String> = SearchQuery::parse(search)
         .terms
         .iter()
-        // Each term matches as a prefix, so a search typed a letter at a time finds as it goes.
+        // Each term matches as a prefix, so that typing a letter at a time finds as it goes.
         .map(|term| format!("\"{}\"*", term.replace('"', "\"\"")))
         .collect();
 
@@ -828,7 +828,7 @@ mod tests {
 
         store(&tx, 1, 100, Tags::new().add("t", ["town"]));
 
-        // The builder drops an empty `All`, so this is a filter that arrived off the wire.
+        // This is a filter that arrived off the wire, because the builder drops an empty `All`.
         let mut requires_nothing = Filter::new();
         requires_nothing
             .tags
@@ -1101,7 +1101,7 @@ mod tests {
             },
         ];
 
-        // Every ordering of the four, so a rule shadowing another is covered too.
+        // Every ordering of the four, which covers a rule shadowing another too.
         for order in permutations(rules.len()) {
             for default in [Scope::Nothing, Scope::Public] {
                 let visibility = Visibility {
@@ -1167,7 +1167,7 @@ mod tests {
         let carried = note(author(1), 100, "carried around", Tags::new());
         let once = note(author(1), 200, "seen once", Tags::new());
 
-        // Sightings recorded out of time order, so grouping cannot be passing rows through.
+        // Sightings recorded out of time order, to keep grouping from passing rows through.
         command::save(&tx, &carried, &[author(5)], 900).unwrap();
         command::save(&tx, &once, &[peer()], 400).unwrap();
         command::save(&tx, &carried, &[author(3)], 300).unwrap();

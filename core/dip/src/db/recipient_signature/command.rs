@@ -17,9 +17,9 @@ use super::channel::{self, RecipientSignatureChange};
 
 /// Store a signature. Returns whether it was new.
 ///
-/// Signatures are immutable — BIP-340 signing is deterministic, so the same
-/// author, event and recipient produce the same 64 bytes — so a repeat is
-/// ignored rather than overwritten.
+/// A repeat is ignored rather than overwritten. Signatures are immutable,
+/// because BIP-340 signing is deterministic and the same author, event and
+/// recipient produce the same 64 bytes.
 pub fn save(tx: &Tx<'_>, signature: &RecipientSignature) -> Result<bool> {
     let written = tx
         .prepare_cached(

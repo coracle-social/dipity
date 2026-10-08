@@ -1,6 +1,6 @@
 //! Every change channel a store carries, one per group of tables.
 //!
-//! Held by the [`Db`](super::Db) rather than by statics, so a subscriber hears
+//! Held by the [`Db`](super::Db) rather than by statics. A subscriber hears
 //! the writes of the store it subscribed to and no other's.
 //!
 //! Each group owns its change type and how far a subscriber may fall behind.

@@ -11,13 +11,13 @@ import Security
 ///   would kill pocket-to-pocket gossip silently.
 /// - `ThisDeviceOnly` so it stays out of iCloud Keychain and encrypted backups.
 ///   Moving an identity is login-with-device, an explicit flow, never a sync.
-/// - No `SecAccessControl`, so no biometric gate on the signing path. There is
+/// - No `SecAccessControl`, and with it no biometric gate on the signing path. There is
 ///   no user present during a background wake, and a phone that cannot sign
 ///   cannot authenticate.
 ///
-/// What is stored is key bytes protected at rest. The Secure Enclave does NIST
-/// P-256 and nostr is secp256k1, so a hardware-backed key is not available on
-/// either platform.
+/// What is stored is key bytes protected at rest. A hardware-backed key is not
+/// available on either platform, because the Secure Enclave does NIST P-256 and
+/// nostr is secp256k1.
 enum Keychain {
     /// The one item, under the app's own service name.
     private static let service = "social.coracle.dipity.identity"

@@ -3,7 +3,7 @@
 //!
 //! A [`Db`] is one open store: a SQLite connection, and the channels its writes
 //! announce on. It is an instance rather than a global, and every query and
-//! command takes one, so a process can hold two stores that share nothing. The
+//! command takes one. A process can hold two stores that share nothing. The
 //! shell opens one over the directory it owns at startup ([`Db::open`]) and
 //! hands it around; everything after that is core-side.
 //!
@@ -23,10 +23,10 @@
 //! | `channel.rs` | The change channel commands announce on |
 //!
 //! A group owns every table it touches and no table is touched from two of
-//! them, so the invariants between tables — an event and its indexes, a blob
+//! them. The invariants between tables — an event and its indexes, a blob
 //! and the events referencing it — have exactly one place they can be broken.
 //! Every function down here takes a [`Tx`] rather than reaching for the
-//! database itself, so several of them compose into one atomic write.
+//! database itself. Several of them compose into one atomic write.
 //!
 //! The types the answers are expressed in are [`crate::model`]'s, organized by
 //! what they mean rather than by which table holds them.

@@ -27,7 +27,7 @@
   let savedShowing = $state<string[]>(everything)
   let binnedShowing = $state<string[]>(everything)
 
-  // Emptying retracts the user's own writing, so it takes a second tap.
+  // Emptying takes a second tap because it retracts the user's own writing.
   let confirming = $state(false)
 
   const toggle = (showing: string[], id: string) =>

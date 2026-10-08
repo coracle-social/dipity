@@ -16,10 +16,10 @@ private const val TAKEN = "social.coracle.dipity.BACKUP_TAKEN"
  * The chooser a key backup is offered through, and the one honest answer it
  * gives.
  *
- * Android returns `RESULT_CANCELED` from a share chooser whether or not an app
- * took the file, so the activity result says only that the chooser is gone.
- * `docs/keys.md#backup` gates the flow on the download having happened, so a
- * `shared` read off the result code would be false forever and the user could
+ * The activity result says only that the chooser is gone, because Android
+ * returns `RESULT_CANCELED` from a share chooser whether or not an app took the
+ * file. `docs/keys.md#backup` gates the flow on the download having happened. A
+ * `shared` read off the result code would be false forever, and the user could
  * never get past the screen. The chooser's own report of what was picked is the
  * signal, and [taken] is it.
  *

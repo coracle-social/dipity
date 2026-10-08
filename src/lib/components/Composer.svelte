@@ -7,6 +7,7 @@
   import {Button} from "$lib/components/ui/button"
   import * as Drawer from "$lib/components/ui/drawer"
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu"
+  import * as InputGroup from "$lib/components/ui/input-group"
   import {Input} from "$lib/components/ui/input"
   import {Label} from "$lib/components/ui/label"
   import {Textarea} from "$lib/components/ui/textarea"
@@ -14,7 +15,7 @@
   import {dismissable} from "$lib/data/nav"
   import type {Sharing} from "$lib/core"
   import {policy} from "$lib/data/policy"
-  import {categories, summaryOf, topics} from "$lib/kinds"
+  import {categories, summaryOf, topicFrom} from "$lib/kinds"
 
   let {
     open = $bindable(false),
@@ -29,7 +30,7 @@
     if (open) return dismissable(() => (open = false))
   })
 
-  // What the user says about something they pass on is about that one thing, so it goes when the drawer does.
+  // What the user says about something they pass on goes when the drawer does, because it is about that one thing.
   let remark = $state("")
 
   $effect(() => {
@@ -42,7 +43,7 @@
   type Shape = (typeof shapes)[number]
 
   let shape = $state<Shape>("notes")
-  let topic = $state<string | undefined>(undefined)
+  let typed = $state("")
   let content = $state("")
   let title = $state("")
   let summary = $state("")
@@ -73,9 +74,7 @@
 
   const chosen = $derived(nounOf(shape))
 
-  const none = "none"
-
-  const filed = $derived(topics.find(({id}) => id === topic))
+  const topic = $derived(topicFrom(typed))
 
   const reaches: Record<Sharing, string> = {
     contacts: "Only people you've paired with will see this.",
@@ -87,7 +86,7 @@
 
   const answers = $derived(options.map(option => option.trim()).filter(Boolean))
 
-  // Saying nothing is a boost, so passing something on is always ready to send.
+  // Passing something on is always ready to send, because saying nothing is a boost.
   const ready = $derived.by(() => {
     if (about) return true
 
@@ -118,7 +117,7 @@
     return compose(title.trim(), summary.trim(), content, topic)
   }
 
-  // A refused publish keeps what was typed, so the drawer staying open has to say why.
+  // A refused publish keeps what was typed. The drawer staying open has to say why.
   const send = async () => {
     sending = true
     failed = false
@@ -128,7 +127,7 @@
 
       // Passing something on leaves the user's own draft where it was.
       if (!about) {
-        topic = undefined
+        typed = ""
         content = ""
         title = ""
         summary = ""
@@ -192,29 +191,12 @@
           </DropdownMenu.Content>
         </DropdownMenu.Root>
 
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger>
-            {#snippet child({props})}
-              <Button {...props} variant="outline" class="w-full justify-between">
-                <span class="flex items-center gap-2">
-                  <Tag class="size-4" />
-                  {filed ? filed.label : "No topic"}
-                </span>
-                <ChevronDown class="size-4 text-muted-foreground" />
-              </Button>
-            {/snippet}
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Content>
-            <DropdownMenu.RadioGroup
-              value={topic ?? none}
-              onValueChange={picked => (topic = picked === none ? undefined : picked)}>
-              <DropdownMenu.RadioItem value={none}>No topic</DropdownMenu.RadioItem>
-              {#each topics as option (option.id)}
-                <DropdownMenu.RadioItem value={option.id}>{option.label}</DropdownMenu.RadioItem>
-              {/each}
-            </DropdownMenu.RadioGroup>
-          </DropdownMenu.Content>
-        </DropdownMenu.Root>
+        <InputGroup.Root>
+          <InputGroup.Addon>
+            <Tag />
+          </InputGroup.Addon>
+          <InputGroup.Input bind:value={typed} placeholder="Topic, if any" aria-label="Topic" />
+        </InputGroup.Root>
 
         {#if shape === "notes"}
           <Textarea bind:value={content} class="min-h-32" placeholder="Type it out" />

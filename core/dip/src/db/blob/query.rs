@@ -92,7 +92,7 @@ pub fn list_for_events(tx: &Tx<'_>, event_ids: &[EventId]) -> Result<HashMap<Eve
          ORDER BY b.sha256 ASC"
     ))?;
 
-    // Ordered by hash, so each event's blobs arrive in `list_for_event` order.
+    // Ordered by hash, so that each event's blobs arrive in `list_for_event` order.
     let mut blobs: HashMap<EventId, Vec<Blob>> = HashMap::new();
 
     for (event_id, blob) in prepared
@@ -133,7 +133,7 @@ pub fn all_hashes(tx: &Tx<'_>) -> Result<HashSet<BlobHash>> {
 /// hold, previews first.
 ///
 /// There is no per-blob decision to make — the anchoring event already passed
-/// the accept policy, so its blobs are in scope for the same reason its text
+/// the accept policy, and its blobs are in scope for the same reason its text
 /// is. See `docs/sync.md`.
 pub fn wanted(tx: &Tx<'_>, limit: usize) -> Result<Vec<Blob>> {
     let mut prepared = tx.prepare_cached(&wanted_sql())?;

@@ -1,7 +1,7 @@
 // One person, as somebody calls them.
 //
 // A card is addressed to the person it names and carries the name as its
-// content, so its only tag is the `d` its address is made of.
+// content. Its only tag is the `d` its address is made of.
 // `docs/policy.md#social-graph`.
 
 import {EventQuery, EventReader, EventWriter, KindFactory} from "@welshman/domain"
@@ -29,7 +29,7 @@ export class ContactCardWriter extends EventWriter<ContactCardReader> {
 }
 
 export class ContactCardQuery extends EventQuery {
-  /** There are no relays here, so a query routes nowhere. */
+  /** A query routes nowhere, because there are no relays here. */
   protected renderRoutes() {
     return []
   }

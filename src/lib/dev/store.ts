@@ -187,8 +187,8 @@ export class Store {
   /**
    * The events matching a query, narrowed and ordered the way the core would.
    *
-   * The NIP-01 half is `matchFilter`, so tags narrow here the way they narrow
-   * on a device. Its `search` is a substring where the core's is NIP-50 over an
+   * The NIP-01 half is `matchFilter`, which narrows tags here the way they
+   * narrow on a device. Its `search` is a substring where the core's is NIP-50 over an
    * FTS index — the one constraint whose answer differs.
    */
   list(query: Query = {}): EventDetail[] {

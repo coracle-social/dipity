@@ -1,9 +1,9 @@
 // What a search matches, wherever the screen searching is.
 //
 // The core searches what people wrote, word by word, each word matching as the
-// start of one (`core/dip/src/db/event/query.rs`). People's names are not in
-// the store's text index, since nobody publishes a profile and a name is a card
-// somebody wrote about somebody else, so they are matched here the same way.
+// start of one (`core/dip/src/db/event/query.rs`). People's names are matched
+// here the same way. They are not in the store's text index, since nobody
+// publishes a profile and a name is a card somebody wrote about somebody else.
 
 import type {Social} from "$lib/data/contacts"
 

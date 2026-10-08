@@ -16,10 +16,10 @@ import kotlin.concurrent.thread
  * flight and no queue behind it —
  * `docs/transport.md#the-l2cap-bandwidth-upgrade`.
  *
- * A socket's reads and writes both block, so each gets a thread of its own and
- * every report leaves on one — the radio is what puts it back on the radio's own
- * thread. Reporting a write from the writer rather than from the caller is also
- * what keeps a whole blob transfer off one stack.
+ * Reads and writes each get a thread of their own because both block on a
+ * socket, and every report leaves on one — the radio is what puts it back on the
+ * radio's own thread. Reporting a write from the writer rather than from the
+ * caller is also what keeps a whole blob transfer off one stack.
  */
 class BulkChannel(
     val link: ULong,

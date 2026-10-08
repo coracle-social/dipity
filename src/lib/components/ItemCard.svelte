@@ -6,7 +6,7 @@
   import Smile from "@lucide/svelte/icons/smile"
   import Trash from "@lucide/svelte/icons/trash-2"
   import VolumeOff from "@lucide/svelte/icons/volume-off"
-  import {Badge} from "$lib/components/ui/badge"
+  import {badgeVariants} from "$lib/components/ui/badge"
   import {Button} from "$lib/components/ui/button"
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu"
   import Byline from "$lib/components/Byline.svelte"
@@ -16,7 +16,7 @@
   import Reactions from "$lib/components/Reactions.svelte"
   import {toggleBookmark} from "$lib/data/bookmarks"
   import {nameOf, setTopicMuted, type Social} from "$lib/data/contacts"
-  import {opensId, react, type Item, type Standing, type Warmth} from "$lib/data/feed"
+  import {opensId, react, setTopic, type Item, type Standing, type Warmth} from "$lib/data/feed"
   import {go} from "$lib/data/nav"
   import type {Session} from "$lib/data/session"
   import {restore, trash} from "$lib/data/trash"
@@ -109,7 +109,15 @@
     {/if}
     <span class="flex flex-none items-center gap-2">
       {#if topic}
-        <Badge variant="secondary">{topicLabel(topic)}</Badge>
+        <button
+          type="button"
+          class={badgeVariants({variant: "secondary"})}
+          onclick={() => {
+            setTopic(topic)
+            go({at: "board"})
+          }}>
+          {topicLabel(topic)}
+        </button>
       {/if}
       <Cooling {warmth} {sweptAt} />
       <Mark class="size-4 text-muted-foreground" aria-label={category.noun} />
@@ -123,7 +131,7 @@
 
 <article class="relative rounded-lg bg-card shadow-sm">
   {#if !detailed}
-    <!-- The card opens the thing from underneath, so a control drawn on it is still its own tap. -->
+    <!-- A control drawn on the card is still its own tap, because the card opens the thing from underneath. -->
     <button
       type="button"
       class="absolute inset-0 rounded-lg"

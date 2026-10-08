@@ -17,7 +17,7 @@ export const notifyPairing = remembered("notifications.pairing", false)
 /** Notify that new writing arrived. */
 export const notifyContent = remembered("notifications.content", false)
 
-/** Whether the user has been offered notifications, so they are offered once. */
+/** Whether the user has been offered notifications so that they are offered once. */
 const offered = remembered("notifications.asked", false)
 
 /** What the phone says about letting the app notify. */

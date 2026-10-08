@@ -10,7 +10,7 @@ The setting it is designed around is a neighborhood or a town: local gossip prop
 
 It differs from its closest relatives:
 
-- **Samiz** sits closest: a Bluetooth mesh for nostr, running beside a local relay and an ordinary client, reconciling with negentropy. Once a peer with internet joins the mesh, their device republishes what it synced to its own relays, so a note reaches people who were never nearby.
+- **Samiz** sits closest: a Bluetooth mesh for nostr, running beside a local relay and an ordinary client, reconciling with negentropy. Once a peer with internet joins the mesh, their device republishes what it synced to its own relays. A note then reaches people who were never nearby.
 - **bitchat** gets local mesh right but is a chat app, and its "global reach" path bridges distant peers over public relays — precisely what this design excludes.
 - **Briar** is the closest on framing: offline-first, with forums and blogs rather than only chat, syncing over Bluetooth and Wi-Fi. Its escape hatch is Tor rather than public relays, it runs on Android only, and its data model is its own rather than nostr's.
 - **Manyverse** (SSB) gets offline gossip right but bridges freely over rooms and pubs, and its data model is SSB's append-only log rather than nostr's signed events.
@@ -38,14 +38,14 @@ This project is time-biased. It treats distance as something to articulate rathe
 
 4. **Communication requires rich content types.** Communication should not be limited to chat. Different types of communication should be presented in different ways.
 
-5. **The mesh is the only wire.** Bluetooth carries everything — discovery, sync, and blobs alike. There is no internet path, so nothing reaches a device except through someone who was physically there.
+5. **The mesh is the only wire.** Bluetooth carries everything — discovery, sync, and blobs alike. Nothing reaches a device except through someone who was physically there, because there is no internet path.
 
 ## Non-goals
 
 - No relay fallback, no hole punching, no global discovery, no DHT.
 - No bridging of peers who have not been co-present.
 - **No unbounded flooding.** Reach is capped at two hops by construction, not by a policy each device is trusted to apply. See [`proofs.md`](./proofs.md#authorship-proofs).
-- **No compatibility with public relays.** Content events carry no signature, so relays reject them and no existing client can read them. See [`proofs.md`](./proofs.md#events-are-not-signed).
+- **No compatibility with public relays.** Relays reject content events and no existing client can read them, because they carry no signature. See [`proofs.md`](./proofs.md#events-are-not-signed).
 
 ## Tech stack
 
@@ -75,7 +75,7 @@ Because gossip has to happen in the background with peers over bluetooth while t
 
 The shell depends on the core at link time, and the core depends on nothing platform-specific. Where the core needs a platform capability it declares a trait and the shell hands it an implementation.
 
-Only one of those boundaries is expensive. SQLite is in-process C, and uniffi passes scalars directly and everything else as a compact binary buffer, so the cost lives at the Capacitor bridge, which marshals as JSON.
+Only one of those boundaries is expensive. The cost lives at the Capacitor bridge, which marshals as JSON. SQLite is in-process C, and uniffi passes scalars directly and everything else as a compact binary buffer.
 
 ## Storage
 
@@ -113,9 +113,9 @@ Read more at [`sync.md`](./sync.md) and [`policy.md`](./policy.md).
 
 ## Privacy
 
-A passive radio observer learns only that some device running this app is nearby. An active one can always complete a handshake, so nothing that handshake discloses outlives the session, and the user's pubkey goes to a stranger freely only while the app is open, and otherwise only as often as the [disclosure bucket](./policy.md#discoverability) allows. A peer who completes a session learns the user's pubkey, that they were physically present at a time and place, and whatever the sharing setting serves — which is why the consent gate sits before authentication.
+A passive radio observer learns only that some device running this app is nearby. An active one can always complete a handshake. Nothing that handshake discloses outlives the session, and the user's pubkey goes to a stranger freely only while the app is open, and otherwise only as often as the [disclosure bucket](./policy.md#discoverability) allows. A peer who completes a session learns the user's pubkey, that they were physically present at a time and place, and whatever the sharing setting serves — which is why the consent gate sits before authentication.
 
-`seen_at` and provenance are records of the user's movements, so they never leave the device. An authorship proof convinces its recipient and nobody else, so a second-hop recipient knows where an event came from and cannot prove it — though the peer the author handed it to holds a signature that does, which is where that guarantee stops.
+`seen_at` and provenance never leave the device, because they are records of the user's movements. An authorship proof convinces its recipient and nobody else. A second-hop recipient therefore knows where an event came from and cannot prove it — though the peer the author handed it to holds a signature that does, which is where that guarantee stops.
 
 Read more at [`privacy.md`](./privacy.md)
 
@@ -123,7 +123,7 @@ Read more at [`privacy.md`](./privacy.md)
 
 shadcn-svelte over bits-ui and Tailwind 4, vendored by CLI rather than taken as a dependency.
 
-Design values live in exactly one file: color, elevation, motion and radius are Tailwind tokens in `src/app.css`, and the standard scales are redefined rather than supplemented, so the vendored components restyle without being edited. The look is restrained claymorphism.
+Design values live in exactly one file: color, elevation, motion and radius are Tailwind tokens in `src/app.css`. The standard scales are redefined rather than supplemented, which lets the vendored components restyle without being edited. The look is restrained claymorphism.
 
 An event kind is a `KindFactory` in `src/lib/kinds/`, a collection of events is a store in `src/lib/data/`, and nothing outside them pokes at tags or opens a query.
 

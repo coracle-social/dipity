@@ -2,8 +2,8 @@
 //
 // `@welshman/domain`'s `Repost` owns NIP-18's tags. What it cannot own is the
 // content: NIP-18 embeds the boosted event there as JSON and a boost here
-// carries a reference alone. Reconciliation diffs id sets, so a peer in scope
-// for the boost is in scope for the thing it names and gets both. An embedded
+// carries a reference alone. A peer in scope for the boost is in scope for the
+// thing it names and gets both, because reconciliation diffs id sets. An embedded
 // copy would also arrive with no authorship proof of its own, which is why
 // `RepostWriter` validates the signature on one and dip's unsigned events could
 // never satisfy it. A boost whose subject never turned up is a real state the

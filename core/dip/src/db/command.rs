@@ -3,7 +3,7 @@
 //!
 //! Each function takes the [`Db`] it is acting on, opens a write transaction on
 //! it with [`Db::write`] and threads that through whatever domain commands the
-//! change takes, so a change spanning models commits/notifies atomically.
+//! change takes. A change spanning models commits/notifies atomically.
 
 use anyhow::Result;
 use coracle_lib::events::{EventId, HashedEvent};
@@ -29,7 +29,7 @@ use crate::model::{Blob, BlobHash, BlobRole, Charge, Policy, RecipientSignature}
 /// event and the media it names. The author's signature arrives on its own path
 /// and is taken by [`receive_signature`].
 ///
-/// `seen_from` is every pubkey the peer proved on the session, so a peer
+/// `seen_from` is every pubkey the peer proved on the session. A peer
 /// holding more than one identity is recorded from all of them rather than
 /// arbitrarily from one.
 pub fn receive_event(
@@ -51,8 +51,8 @@ pub fn receive_event(
 
 /// Store an event this device wrote. Returns whether it was new.
 ///
-/// The author's own pubkey stands in for the peer it was seen from, so a local
-/// event has provenance and a seen time.
+/// A local event has provenance and a seen time, with the author's own pubkey
+/// standing in for the peer it was seen from.
 pub fn publish_event(db: &Db, event: &HashedEvent, identity: &PublicKey, at: i64) -> Result<bool> {
     db.write(|tx| {
         let stored = event::save(tx, event, &[*identity], at)?;
@@ -86,7 +86,7 @@ pub fn record_shares(db: &Db, shares: &[(EventId, bool)], to: &[PublicKey], at: 
     })
 }
 
-/// Forget the pairing with a pubkey, so its device is met as a stranger until
+/// Forget the pairing with a pubkey. Its device is met as a stranger until
 /// the two next sync. Returns whether one was held. `docs/discovery.md#recognition`.
 pub fn forget_pairing(db: &Db, pubkey: &PublicKey) -> Result<bool> {
     db.write(|tx| pairing::forget_secret(tx, pubkey))
@@ -118,9 +118,8 @@ pub fn spend_disclosure(db: &Db, per_day: u32, at: i64) -> Result<()> {
 ///
 /// For the case where the two arrive separately. Returns whether it was stored.
 ///
-/// The author comes off the stored event rather than from the caller: it is the
-/// only party whose signature over that event means anything, so there is
-/// nothing for a caller to get wrong.
+/// The author comes off the stored event rather than from the caller, because
+/// it is the only party whose signature over that event means anything.
 pub fn receive_signature(
     db: &Db,
     event_id: &EventId,
@@ -139,7 +138,7 @@ pub fn receive_signature(
             sig: *sig,
         };
 
-        // A row here is the forwarding capability itself, so it is verified at the write.
+        // Verified at the write, because a row here is the forwarding capability itself.
         if !signature.verifies() {
             return Ok(false);
         }

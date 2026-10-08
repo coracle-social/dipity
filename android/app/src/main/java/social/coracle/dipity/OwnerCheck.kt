@@ -11,8 +11,8 @@ import com.getcapacitor.PluginCall
 /**
  * Asks whoever holds the phone to prove they own it before the key leaves.
  *
- * Export and transfer both hand the identity to somebody, so both sit behind
- * the device's own biometric or credential. A phone with neither set has
+ * Export and transfer both sit behind the device's own biometric or
+ * credential. A phone with neither set has
  * nothing to ask and goes straight through. `docs/keys.md#backup`.
  */
 object OwnerCheck {

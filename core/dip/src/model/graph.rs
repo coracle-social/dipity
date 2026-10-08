@@ -24,8 +24,8 @@ impl Standing {
     /// asymmetry is the point: blocking is a decision about a person, and a
     /// device holding a blocked key is that person's device whatever else it
     /// also signs with. Access runs the other way — proving an extra key is a
-    /// claim to more, never less, and the peer could have made the better claim
-    /// alone, so the union is simply the best of them.
+    /// claim to more, never less. The union is simply the best of them, because
+    /// the peer could have made the better claim alone.
     #[must_use]
     pub fn combine(self, other: Self) -> Self {
         match (self, other) {

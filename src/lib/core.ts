@@ -17,9 +17,9 @@ import type {HashedEvent} from "@welshman/util"
  * A question the core put to the user, waiting on an answer.
  *
  * `code` is the pairing comparison value, derived from the same handshake hash
- * `TransferPrompt` derives its six digits from under a label of its own. The
- * gate runs before either side has named a pubkey, so there is nothing else
- * here to identify the peer by — the code is what the two users compare, and
+ * `TransferPrompt` derives its six digits from under a label of its own. There
+ * is nothing else here to identify the peer by, because the gate runs before
+ * either side has named a pubkey. The code is what the two users compare, and
  * the pet name is for the person in front of them.
  * `docs/discovery.md#the-consent-gate`.
  */
@@ -38,7 +38,7 @@ export type PeerIdentity = {
   recognized: boolean
 }
 
-/** A link that is no longer there, so nothing can be offered over it. */
+/** A link that is no longer there. Nothing can be offered over it. */
 export type LinkClosed = {link: number}
 
 /**
@@ -152,9 +152,8 @@ export type NotificationPermission = "granted" | "denied" | "prompt"
 /**
  * Which group of tables moved.
  *
- * The names are the core's, answered by `change_name` and put on the event by
- * whichever shell is running, so this union restates them rather than deciding
- * them.
+ * This union restates the core's names rather than deciding them. They are
+ * answered by `change_name` and put on the event by whichever shell is running.
  */
 export type Change = {group: "events" | "blobs" | "preferences"}
 
@@ -196,8 +195,8 @@ export type DipCore = {
    * The `imeta` entries an event has to carry for a peer to fetch `media` and
    * check what it gets, base64 in.
    *
-   * Describing bytes stores nothing, so this is the one node call that needs no
-   * started core. It is also the only way media reaches an event: `publish`
+   * This is the one node call that needs no started core, because describing
+   * bytes stores nothing. It is also the only way media reaches an event: `publish`
    * reads `imeta` off what the view already signed, and the BLAKE3 root has to
    * be in the tag before the id is computed.
    */
@@ -216,8 +215,8 @@ export type DipCore = {
    * The same events, each with the media it references, the peers it arrived
    * from and the peers it has been handed to.
    *
-   * Three reads for the page rather than three per event, so a feed asks for this
-   * rather than looping over `listEvents`.
+   * A feed asks for this rather than looping over `listEvents`, because it is
+   * three reads for the page rather than three per event.
    */
   listDetails(options?: Query): Promise<{details: string[]}>
 
@@ -269,8 +268,8 @@ export type DipCore = {
   /**
    * Everything the user has said about who gets what, JSON, defaults filled in.
    *
-   * The compiled policy every live session is bound to, so a screen shows what
-   * the gossip path obeys. `docs/policy.md`.
+   * A screen shows what the gossip path obeys, because this is the compiled
+   * policy every live session is bound to. `docs/policy.md`.
    */
   policy(): Promise<{policy: string}>
 
@@ -283,12 +282,12 @@ export type DipCore = {
   /**
    * Write a preference, a JSON document, and rebind live sessions under it.
    *
-   * Policy is stored as preferences and compiled by the core, so the write and
-   * the rebind are one call rather than two the view can get out of order.
+   * The write and the rebind are one call rather than two the view can get out
+   * of order, because policy is stored as preferences and compiled by the core.
    */
   setPreference(options: {key: string; value: string}): Promise<void>
 
-  /** Remove a preference, so its default applies again. */
+  /** Remove a preference so that its default applies again. */
   clearPreference(options: {key: string}): Promise<{existed: boolean}>
 
   /**
@@ -315,7 +314,7 @@ export type DipCore = {
    * Adopt the identity an `identityTransfer` of `received` announced.
    *
    * The key never crosses the bridge: the shell writes it to secure storage and
-   * reopens the core under it, so this answers what `start` answers.
+   * reopens the core under it. This answers what `start` answers.
    */
   takeTransferredIdentity(options: {link: number}): Promise<{identity: string}>
 
@@ -323,8 +322,8 @@ export type DipCore = {
    * Whether the view has anywhere to go back to.
    *
    * Android closes an app on a back press nothing claims, which is right at the
-   * root and wrong everywhere else, so the shell claims the press only while
-   * this is true. iOS has no such button and does nothing with it.
+   * root and wrong everywhere else. The shell claims the press only while this
+   * is true. iOS has no such button and does nothing with it.
    */
   setCanGoBack(options: {can: boolean}): Promise<void>
 
@@ -351,7 +350,7 @@ export type DipCore = {
    * The peer on a link named a pubkey.
    *
    * A pet name is entered at the gate, which is before anyone has identified
-   * themselves, so this is what binds the two together.
+   * themselves. This is what binds the two together.
    */
   addListener(
     event: "peerIdentified",
@@ -388,7 +387,7 @@ export type DipCore = {
   /**
    * Whether an app took the backup, or the user backed out.
    *
-   * Backing out is not downloaded rather than an error, so the screen it gates
+   * Backing out is not downloaded rather than an error. The screen it gates
    * stays where it is and the user can try again.
    */
   addListener(

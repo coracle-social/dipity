@@ -1,9 +1,9 @@
 //! The codec: one characteristic carrying three channels, fragmented to the
 //! MTU and scheduled by priority.
 //!
-//! The ATT queue is per connection, so separate characteristics would not give
-//! QoS isolation. The sender interleaves instead, so the heartbeat stays alive
-//! through a media transfer.
+//! Separate characteristics would not give QoS isolation, because the ATT queue
+//! is per connection. The sender interleaves instead, which keeps the heartbeat
+//! alive through a media transfer.
 //!
 //! Everything here deals in plaintext. The outbox holds fragments rather than
 //! finished writes because the scheduler reorders them across channels, while
@@ -77,15 +77,15 @@ const FLAG_RESERVED: u8 = !FLAG_MORE;
 
 /// The header, which every fragment carries.
 ///
-/// It stays in the clear: the receiver routes and reassembles on it before
-/// there is a channel to hand the payload to, so it cannot be sealed.
+/// It stays in the clear, because the receiver routes and reassembles on it
+/// before there is a channel to hand the payload to.
 pub const HEADER: usize = 2;
 
 /// The largest reassembled frame the codec accepts.
 ///
-/// A message envelope around the largest stored event fits comfortably in this,
-/// so a peer that exceeds it is misbehaving: the link that let it through is
-/// dropped rather than fed. `docs/sync.md` caps events at 64 KB; this is the
+/// A peer that exceeds this is misbehaving, because a message envelope around
+/// the largest stored event fits comfortably in it. The link that let it
+/// through is dropped rather than fed. `docs/sync.md` caps events at 64 KB; this is the
 /// reassembly ceiling for whatever carries them.
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
@@ -206,7 +206,7 @@ impl Codec {
     pub fn absorb(&mut self, fragment: Fragment) -> Result<Option<Frame>> {
         let buffered = self.partial.entry(fragment.channel).or_default();
 
-        // Fragments past the frame cap are an attack on memory, so the link ends.
+        // The link ends on fragments past the frame cap, which are an attack on memory.
         if buffered.len() + fragment.payload.len() > MAX_FRAME_BYTES {
             self.partial.remove(&fragment.channel);
             bail!(
@@ -235,7 +235,7 @@ impl Codec {
 
 /// What is waiting to go out on one link, and the order it goes.
 ///
-/// Holds fragments rather than frames, so a bulk transfer already cut up does
+/// Holds fragments rather than frames, so that a bulk transfer already cut up does
 /// not have to be re-fragmented when the heartbeat jumps the queue.
 #[derive(Debug, Default)]
 pub struct Outbox {

@@ -23,7 +23,7 @@ const runsIn = file => {
 
       while (isComment(lines[i + 1] ?? "")) i++
 
-      // A header describes the file it opens, so it runs as long as it needs to.
+      // A header runs as long as it needs to, because it describes the file it opens.
       const header = lines.slice(0, start).every(line => !line.trim() || line.startsWith("#!"))
 
       if (i > start && !header) {

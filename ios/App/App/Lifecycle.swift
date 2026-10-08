@@ -10,9 +10,9 @@ import UIKit
 /// `WakeAt` nobody acts on leaves a session holding one of six link slots until
 /// the radio happens to fire.
 ///
-/// The `WakeAt` timer is honest about what it can do. iOS runs no timer for a
-/// suspended app, so this covers the foreground and the next radio callback
-/// covers the rest — which is why the action is advisory rather than a promise.
+/// The `WakeAt` timer is honest about what it can do. It covers the foreground,
+/// and the next radio callback covers the rest, because iOS runs no timer for a
+/// suspended app. That is why the action is advisory rather than a promise.
 final class Lifecycle {
     /// What to do when one of the three moves.
     private let foregrounded: () -> Void

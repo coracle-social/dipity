@@ -10,7 +10,7 @@ const encode = value => Buffer.from(JSON.stringify(value)).toString("base64url")
 export const appStore = async ({keyId, issuerId, keyPath}) => {
   const key = await readFile(keyPath, "utf-8")
 
-  // Tokens live at most 20 minutes and waiting on a build can take longer, so each call signs anew
+  // Each call signs anew, because tokens live at most 20 minutes and waiting on a build can take longer
   const token = () => {
     const header = encode({alg: "ES256", kid: keyId, typ: "JWT"})
     const payload = encode({
@@ -56,8 +56,8 @@ export const appStore = async ({keyId, issuerId, keyPath}) => {
     api,
 
     upload: async ipa => {
-      // altool only reads the api key from a `private_keys` directory beside its working directory
-      // or under $HOME, so give it a private one rather than leaving the key in the repo or home dir
+      // The api key gets a private `private_keys` directory rather than sitting in the repo or home
+      // dir, because altool only reads it from one beside its working directory or under $HOME
       const directory = await mkdtemp(join(tmpdir(), "dipity-appstore-"))
 
       try {

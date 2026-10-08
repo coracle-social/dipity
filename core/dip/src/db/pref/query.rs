@@ -55,7 +55,7 @@ pub fn get_as<T: DeserializeOwned>(tx: &Tx<'_>, key: &str) -> Result<Option<T>> 
 /// Replace `setting` with the written preference, if there is one.
 ///
 /// The unwritten case leaves the value alone rather than substituting a
-/// default here, so the defaults live only in [`Policy::new`] and cannot drift
+/// default here. The defaults live only in [`Policy::new`] and cannot drift
 /// between the two.
 fn override_with<T: DeserializeOwned>(tx: &Tx<'_>, key: &str, setting: &mut T) -> Result<()> {
     if let Some(value) = get_as(tx, key)? {
@@ -157,7 +157,7 @@ fn named(tx: &Tx<'_>, pubkey: &PublicKey) -> Result<BTreeSet<PublicKey>> {
 
 /// The pubkeys the list `pubkey` published at `kind` names.
 ///
-/// Both kinds are replaceable, so this is one indexed lookup and the current
+/// This is one indexed lookup because both kinds are replaceable. The current
 /// list is whatever last superseded the address.
 fn listed<const KIND: u16>(tx: &Tx<'_>, pubkey: &PublicKey) -> Result<BTreeSet<PublicKey>> {
     let address = Address::new(KIND, *pubkey, "");
@@ -166,7 +166,7 @@ fn listed<const KIND: u16>(tx: &Tx<'_>, pubkey: &PublicKey) -> Result<BTreeSet<P
         return Ok(BTreeSet::new());
     };
 
-    // The event came back from the address, so its kind is KIND and cannot fail here.
+    // Cannot fail, because the event came back from the address and its kind is KIND.
     Ok(PeopleListReader::<_, KIND>::read(&list)
         .map(|list| list.pubkeys().iter().copied().collect())
         .unwrap_or_default())
@@ -212,7 +212,7 @@ mod tests {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        // Nothing written, so nothing overridden: exactly what `Policy::new` says.
+        // Nothing written means nothing overridden: exactly what `Policy::new` says.
         assert_eq!(policy(&tx, &author(1)).unwrap(), Policy::new(author(1)));
     }
 
@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn a_contact_whose_cards_have_not_arrived_contributes_nobody() {
-        // The tier is derived from what this device holds, so a missing part shrinks it.
+        // A missing part shrinks the tier, because it is derived from what this device holds.
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
         let us = author(1);
@@ -412,7 +412,7 @@ mod tests {
         );
         assert!(ours.graph.muted.contains(&author(2)));
 
-        // Muting is a display filter, so it moves nobody in the tiers.
+        // Muting is a display filter and moves nobody in the tiers.
         assert_eq!(ours.graph.standing(&author(2)), Standing::Stranger);
 
         // Someone else's mute list is not the user's.

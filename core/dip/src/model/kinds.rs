@@ -13,8 +13,8 @@
 //!
 //! **Neither is encrypted.** NIP-51 keeps private entries as ciphertext in
 //! `content`, which would put a list beyond reach of the peers who need it —
-//! these travel to contacts by design, so what governs who
-//! sees them is [`Visibility`](crate::model::Visibility) rather than a key.
+//! these travel to contacts by design. What governs who sees them is
+//! [`Visibility`](crate::model::Visibility) rather than a key.
 //! That is why no `Sealed` payload appears below, where the library's own list
 //! kinds carry one. `docs/policy.md#social-graph`.
 
@@ -48,8 +48,8 @@ pub const CONTACT: u16 = 36_017;
 
 /// The `p` pubkeys in a tag set, deduplicated and in tag order.
 ///
-/// A value that is not a pubkey names nobody, so it contributes nothing and
-/// the rest of the list reads normally.
+/// A value that is not a pubkey names nobody and contributes nothing, and the
+/// rest of the list reads normally.
 fn pubkeys(tags: &Tags) -> Vec<PublicKey> {
     let mut pubkeys: Vec<PublicKey> = Vec::new();
 
@@ -132,7 +132,7 @@ impl<const KIND: u16> HasTagsMut for PeopleListWriter<KIND> {
 impl<const KIND: u16> Writer for PeopleListWriter<KIND> {
     const KIND: u16 = KIND;
 
-    /// A writer carrying every tag the stored list held, so editing one from
+    /// A writer carrying every tag the stored list held, so that editing one from
     /// here does not destroy what another client wrote.
     fn read_impl<E>(event: &E) -> Result<Self, ReaderError>
     where
@@ -143,7 +143,7 @@ impl<const KIND: u16> Writer for PeopleListWriter<KIND> {
         })
     }
 
-    /// Empty. The list is public, so there is nothing sealed to carry.
+    /// Empty, because the list is public and there is nothing sealed to carry.
     fn render_content(&self) -> Result<String, ValidationError> {
         Ok(String::new())
     }
@@ -263,7 +263,7 @@ mod tests {
 
         assert_eq!(template.tags.value("title"), Some("people I have met"));
         assert_eq!(template.kind, BLOCK);
-        // Public, so nothing rides in content.
+        // Nothing rides in content, because the list is public.
         assert!(template.content.is_empty());
 
         let rebuilt = event(author(1), BLOCK, 100, "", template.tags);
@@ -279,7 +279,7 @@ mod tests {
         let list = BlockListWriter::new()
             .add_pubkey(author(2))
             .add_pubkey(author(3))
-            // Already named, so this is not a second tag.
+            // Not a second tag, because it is already named.
             .add_pubkey(author(2));
 
         assert_eq!(list.pubkeys(), [author(2), author(3)]);

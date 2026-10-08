@@ -31,7 +31,7 @@ export const release = async (command, steps) => {
   const problems = selected.map(step => ({step, missing: step.missing?.() ?? []}))
   const warnings = []
 
-  // pnpm keeps a copy of the lockfile it last installed from, so any difference means a pull or
+  // Any difference from pnpm's copy of the lockfile it last installed from means a pull or
   // checkout since then changed dependencies the build would silently go without
   const installed = join(root, "node_modules/.pnpm/lock.yaml")
 

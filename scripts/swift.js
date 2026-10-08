@@ -74,7 +74,7 @@ for (const file of readdirSync(SHELL).filter(name => name.endsWith(".swift"))) {
         }
       }
 
-      // A bare pattern carries no type, so all it can be held to is its spelling.
+      // A bare pattern is held only to its spelling, because it carries no type.
       for (const [, member] of line.matchAll(/\bcase\s+\.(\w+)\b/g)) {
         const spelled = spellings.get(member.toLowerCase())
 

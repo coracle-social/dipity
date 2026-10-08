@@ -1,7 +1,7 @@
 // Moving the identity to a second phone, from either end of it.
 //
-// This is deliberate key exfiltration, so both users act and both compare the
-// same six digits before anything moves. Either may answer first, and the core
+// Both users act and both compare the same six digits before anything moves,
+// because this is deliberate key exfiltration. Either may answer first, and the core
 // releases the key once the second one has. `docs/keys.md#login-with-device`.
 //
 // One flow at a time, whichever phone started it. The two ends see the same
@@ -23,7 +23,7 @@ export type Step =
   | {at: "comparing"; link: number; code: number; source: boolean}
   /** This user said yes and the other one has not. */
   | {at: "waiting"; link: number; source: boolean}
-  /** The key left, so the other phone is this person too. */
+  /** The key left, and the other phone is this person too. */
   | {at: "sent"}
   /** The key arrived and this phone is now the identity it carries. */
   | {at: "arrived"}
@@ -71,7 +71,7 @@ export const compare = async (confirmed: boolean) => {
 /**
  * Put the screen away once the flow has ended, however the screen was left.
  *
- * A flow still running keeps its step, so leaving mid-comparison does not take
+ * A flow still running keeps its step so that leaving mid-comparison does not take
  * the question away from a user who has yet to answer it.
  */
 export const clear = () => {
@@ -85,8 +85,8 @@ export const clear = () => {
  * answers to anything a screen asked.
  *
  * An offer arriving from the other phone is the whole of the target's side, and
- * a link going down while the flow runs ends it with nothing announced — the
- * core has closed the session by then, so this is the only notice of it.
+ * a link going down while the flow runs ends it with nothing announced. This is
+ * the only notice of it, because the core has closed the session by then.
  */
 export const watchTransfers = async () => {
   const handles: PluginListenerHandle[] = []

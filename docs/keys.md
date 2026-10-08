@@ -10,7 +10,7 @@ The Noise static key that encrypts the BLE channel is a separate key with a sepa
 
 ### The key is not confined
 
-The gossip protocol isolates *events*, not identities. The nsec is an ordinary secp256k1 key, so the same pubkey can sign and post on the open network from any other nostr client.
+The gossip protocol isolates *events*, not identities. The nsec is an ordinary secp256k1 key. The same pubkey can sign and post on the open network from any other nostr client.
 
 That is fine — it is the same person either way — but proximity activity and open-network activity under one pubkey are trivially linkable by anyone who sees both.
 
@@ -40,14 +40,14 @@ Requirements, because this is deliberate key exfiltration:
 
 - **Explicit on both ends.** Initiated by user action on the source and confirmed by user action on the target. Never automatic, never a background capability — this is the one flow the core will not run during a background wake, whatever the session state says.
 - **Short authentication string.** Both devices display a comparison value derived from the transcript, which the user checks by eye before the key moves. Nothing else authenticates this flow: the Noise handshake authenticates nobody ([`transport.md`](./transport.md#the-static-key-is-generated-per-session)), and NIP-42 cannot help, because the target authenticates as the identity it made at first run, which says nothing about whether it is the user's own phone. Same mechanism as Bluetooth numeric comparison or Signal safety numbers. The value is six decimal digits, the first four bytes of `SHA-256("dip/login-with-device/sas" ‖ handshake_hash)`, read big-endian and taken modulo a million. Both users are asked the same question — does the other device show this number — and either may answer first; the key moves once both have said yes.
-- **Only an unused phone receives.** The target needs a key of its own to authenticate the session, so first run offers to make a stand-in one and wait for the user's other phone. The core turns an offer away without asking its user once the store holds anything the target's own identity wrote, because adopting another key would orphan it — names, lists and bookmarks published under the old key would read as nobody's, and retention would stop sparing the old posts. A phone that has been used logs out first.
+- **Only an unused phone receives.** First run offers to make a stand-in key and wait for the user's other phone, because the target needs a key of its own to authenticate the session. The core turns an offer away without asking its user once the store holds anything the target's own identity wrote, because adopting another key would orphan it — names, lists and bookmarks published under the old key would read as nobody's, and retention would stop sparing the old posts. A phone that has been used logs out first.
 - **The stand-in identity goes.** The target adopts the transferred key in place of the stand-in, and empties its store, since whatever it gathered belongs to an identity nobody uses again.
 
 Logging out deletes the key and empties the store in the same way, and returns the phone to first run.
 
 ## Backup
 
-Multi-device is the happy path — two devices holding the same key means losing one costs nothing. But most users have one phone, so there is also a file export, following Flotilla's `KeyDownload.svelte`.
+Multi-device is the happy path — two devices holding the same key means losing one costs nothing. There is also a file export, following Flotilla's `KeyDownload.svelte`, because most users have one phone.
 
 A single text file containing prose instructions and the key itself:
 
@@ -56,4 +56,4 @@ A single text file containing prose instructions and the key itself:
 - **Minimum 12-character password**, stated in the UI, with "write this down" guidance. There is no recovery for a forgotten backup password either.
 - **Instructions, not just a key.** The copy explains what a keypair is, why the private half matters, and what to do with the file — following Flotilla's, with one adjustment. Flotilla tells the user to "import into a Nostr Signer app," which is misleading here, because this app holds the key itself. The wording instead says the key restores this app, and separately identifies them on the open network via other clients.
 
-The core writes the file to the cache directory and the shell presents the share sheet, so the key never crosses the bridge. Android carries a FileProvider entry (`android/app/src/main/res/xml/file_paths.xml`) for the cache directory. Returning a path instead would not help, since `Capacitor.convertFileSrc` lets the view fetch any path back.
+The key never crosses the bridge, because the core writes the file to the cache directory and the shell presents the share sheet. Android carries a FileProvider entry (`android/app/src/main/res/xml/file_paths.xml`) for the cache directory. Returning a path instead would not help, since `Capacitor.convertFileSrc` lets the view fetch any path back.

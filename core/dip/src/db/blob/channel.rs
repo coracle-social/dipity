@@ -9,8 +9,8 @@ use tokio::sync::broadcast::{self, Receiver, Sender};
 use crate::db::{Db, Tx};
 use crate::model::{Blob, BlobHash};
 
-/// How far a subscriber may fall behind. Progress is reported per group of
-/// chunks rather than per chunk, so this is not the busy channel it looks like.
+/// How far a subscriber may fall behind. This is not the busy channel it looks
+/// like, because progress is reported per group of chunks rather than per chunk.
 const CAPACITY: usize = 256;
 
 /// Something that happened to a blob.

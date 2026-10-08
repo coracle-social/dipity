@@ -12,7 +12,7 @@ export const keystoreEnv = prefix => ({
     process.env[`${prefix}_KEYSTORE_ALIAS_PASSWORD`] ?? process.env[`${prefix}_KEYSTORE_PASSWORD`],
 })
 
-// A fresh jvm per build, so a reused daemon can't hand one gradle run the other's signing key
+// A fresh jvm per build so that a reused daemon can't hand one gradle run the other's signing key
 export const gradle = (task, signing) =>
   run("./gradlew", ["--no-daemon", task], {
     cwd: join(root, "android"),

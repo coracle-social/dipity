@@ -16,8 +16,8 @@ use zeroize::Zeroizing;
 
 /// The shortest password the backup will encrypt under.
 ///
-/// There is no recovery for a forgotten one, so a short password is a lost key
-/// rather than a weak one.
+/// A short password is a lost key rather than a weak one, because a forgotten
+/// password has no recovery.
 pub const MINIMUM_PASSWORD_LENGTH: usize = 12;
 
 /// What the file is called, which is what the share sheet offers.

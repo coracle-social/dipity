@@ -11,9 +11,8 @@ use crate::model::BlobHash;
 /// An in-memory store, for tests and tooling.
 ///
 /// Answers exactly what [`FileBlobStore`] answers, out-of-range reads
-/// included: the sync layer is tested against this one and shipped against
-/// that one, so a difference between them is a bug that only appears on a
-/// phone.
+/// included. The sync layer is tested against this one and shipped against
+/// that one. A difference between them is a bug that only appears on a phone.
 ///
 /// [`FileBlobStore`]: crate::blobs::FileBlobStore
 #[derive(Debug, Default)]

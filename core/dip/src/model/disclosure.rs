@@ -2,9 +2,9 @@
 //!
 //! Every time the device answers a stranger's `AUTH` challenge it hands over a
 //! pubkey at a place and a time, which is one sample for anybody trying to
-//! follow it. Nothing else the protocol discloses outlives a session, so the
-//! rate of these samples is what tracking costs, whoever and however many the
-//! strangers are. A token bucket bounds that rate twice: a few at once, and on
+//! follow it. The rate of these samples is what tracking costs, whoever and
+//! however many the strangers are, because nothing else the protocol discloses
+//! outlives a session. A token bucket bounds that rate twice: a few at once, and on
 //! average no more than [`STRANGERS_PER_DAY`], spread across the day rather
 //! than spent in one place. It applies only while the app is not in front: a
 //! user looking at the screen is there to meet whoever is nearby.

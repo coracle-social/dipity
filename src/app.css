@@ -9,7 +9,8 @@
  *
  * Warm taupe neutrals under a terracotta accent. Nothing here is pure white or
  * pure black: the page is paper, and surfaces sit lighter than it in both
- * themes, so the clay elevation below reads as lift rather than as a border.
+ * themes. That makes the clay elevation below read as lift rather than as a
+ * border.
  *
  * `--secondary-accent` is a second hue, not a second surface: shadcn's
  * `--secondary` (neutral fill) and `--accent` (hover state) are both wired
@@ -57,10 +58,10 @@
   --sidebar-ring: oklch(0.58 0.148 52);
 
   /* `--clay-rim` is calibrated for near-white card stock, where an opaque
-   * white edge reads as a lit rim. On a saturated fill it reads as a hard
-   * gloss line, so filled controls get their own softer rim. */
+   * white edge reads as a lit rim. Filled controls get their own softer rim,
+   * because on a saturated fill it reads as a hard gloss line. */
 
-  /* Clay elevation primitives. Warm-tinted rather than neutral black, so a
+  /* Clay elevation primitives. Warm-tinted rather than neutral black so that a
    * shadow reads as the paper darkening under a surface rather than as gray
    * fog over it. `rim` is the lit top edge, `base` the shaded bottom edge —
    * together they give a surface thickness rather than mere separation. */
@@ -122,9 +123,9 @@
 
 /* ----------------------------------------------------------------- theme ---
  *
- * Everything below is a Tailwind token. shadcn components are written against
- * `shadow-sm`, `rounded-lg` and bare `transition`, so redefining the scales
- * here restyles the whole component set without touching a component file.
+ * Everything below is a Tailwind token. Redefining the scales here restyles the
+ * whole component set without touching a component file, because shadcn
+ * components are written against `shadow-sm`, `rounded-lg` and bare `transition`.
  */
 
 @theme inline {
@@ -269,8 +270,8 @@
   }
 }
 
-/* Every animation here is a fade, a slide or a lift, and none of them gates an
- * interaction, so collapsing them removes nothing but polish. */
+/* Collapsing the animations here removes nothing but polish, because each is a
+ * fade, a slide or a lift and none of them gates an interaction. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -282,7 +283,7 @@
   }
 }
 
-/* The emoji picker is a custom element, so its theme crosses as properties its
+/* The emoji picker is a custom element. Its theme crosses as properties its
    shadow root reads rather than as utilities. */
 emoji-picker {
   --background: var(--color-popover);

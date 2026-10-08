@@ -31,7 +31,7 @@ export default {
 
     console.log(dim(`  ${url}`))
 
-    // A draft is invisible to Obtainium, so the release goes public only once its APK is on it
+    // The release goes public only once its APK is on it, because a draft is invisible to Obtainium
     if (release.draft) {
       await api.publish(release.id)
     }

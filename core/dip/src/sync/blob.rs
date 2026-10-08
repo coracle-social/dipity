@@ -10,7 +10,7 @@
 //!
 //! Both directions are metered against the session's [`Quota`]: a transfer is
 //! an unbounded write to the user's disk in one direction and an unbounded
-//! read of their battery in the other, so neither runs on trust alone.
+//! read of their battery in the other.
 //! `docs/sync.md#quotas-1`.
 //!
 //! A fetch is two stages: a `HEAD` for the length and how much of it the peer
@@ -43,8 +43,8 @@ use crate::sync::relay;
 
 /// The bytes one `GET` asks for, and the bytes one slice proves.
 ///
-/// Sixteen BLAKE3 chunks, so a group is a whole number of them and a slice
-/// over one carries no chunk the fetch does not need. [`CHUNK_BYTES`] is
+/// Sixteen BLAKE3 chunks. A group is a whole number of them, and a slice over
+/// one carries no chunk the fetch does not need. [`CHUNK_BYTES`] is
 /// Bao's and is not ours to raise; this is ours, and is what one round trip
 /// over BLE is worth.
 ///
@@ -145,9 +145,9 @@ pub struct BlobExchange {
     battery: Option<u8>,
     /// Whether a bulk channel has been asked for and not yet taken.
     wants_l2cap: bool,
-    /// Whether it has been asked for at all. One link, one request: the
-    /// channel outlives a group, so re-arming per group would ask again every
-    /// few seconds of a large transfer.
+    /// Whether it has been asked for at all. There is one request per link,
+    /// because the channel outlives a group and re-arming per group would ask
+    /// again every few seconds of a large transfer.
     asked_l2cap: bool,
     /// Hashes this peer answered badly — a miss, a refusal, or bytes that
     /// failed their hash — skipped for the rest of the session.
@@ -195,7 +195,7 @@ impl BlobExchange {
     }
 
     /// Start this session's count from what the window already charged the
-    /// peer, so reconnecting refills nothing. `docs/sync.md#quotas`.
+    /// peer, which keeps reconnecting from refilling anything. `docs/sync.md#quotas`.
     pub fn carry_fetched(&mut self, bytes: u64) {
         self.fetched_bytes = self.fetched_bytes.max(bytes);
     }
@@ -213,7 +213,7 @@ impl BlobExchange {
     }
 
     /// Give up the fetch in flight, whose request or answer was lost with the
-    /// pipe it rode, so the next [`poll`](Self::poll) resumes from the store.
+    /// pipe it rode. The next [`poll`](Self::poll) resumes from the store.
     pub fn abandon_in_flight(&mut self) {
         self.active = None;
     }
@@ -244,7 +244,7 @@ impl BlobExchange {
     ) -> Result<BlossomResponse> {
         let budget = quota.blob_bytes.saturating_sub(self.served_bytes);
 
-        // A stranger's blob budget is zero, so this also tells it there are no bytes here.
+        // This also tells a stranger, whose blob budget is zero, that there are no bytes here.
         if budget == 0 {
             return Ok(status(&request.id, 429));
         }
@@ -275,7 +275,7 @@ impl BlobExchange {
             return Ok(missing(&request.id));
         }
 
-        // A range is proved out of the outboard over the whole file, so a prefix serves raw.
+        // A prefix serves raw, because a range is proved out of the outboard over the whole file.
         let provable = self.store.outboard_len(&blob.sha256)?.is_some();
 
         match request.method.as_str() {
@@ -287,8 +287,8 @@ impl BlobExchange {
 
     /// Answer a `HEAD`: the content type, and how much of the blob is here.
     ///
-    /// A partial holding answers 206 with the range that is available, so the
-    /// fetcher learns the whole length without mistaking a prefix for it.
+    /// A partial holding answers 206 with the range that is available, which
+    /// tells the fetcher the whole length without passing a prefix off as it.
     /// `docs/sync.md#blob-sync`.
     fn head(
         &self,
@@ -357,7 +357,7 @@ impl BlobExchange {
         let len = (last - start + 1).min(budget);
 
         if header(&request.headers, "accept-encoding") == Some(PROOF_ENCODING) {
-            // A range is proved out of the outboard over the whole file, so a prefix cannot.
+            // A prefix cannot be proved; a range is proved out of the outboard over the whole file.
             if provable {
                 return self.prove(db, request, blob, holding, start, len);
             }
@@ -405,9 +405,9 @@ impl BlobExchange {
     /// Answer a `GET` with the range as a Bao slice: the subtree hashes on the
     /// path down to those bytes, then the bytes.
     ///
-    /// The peer checks the whole answer against the root its own copy of the
-    /// event names, so nothing here has to be believed — which device sent it
-    /// included.
+    /// Nothing here has to be believed, including which device sent it,
+    /// because the peer checks the whole answer against the root its own copy
+    /// of the event names.
     fn prove(
         &mut self,
         db: &Db,
@@ -419,7 +419,7 @@ impl BlobExchange {
     ) -> Result<BlossomResponse> {
         let body = verified::slice(self.store.as_ref(), &blob.sha256, start, len)?;
 
-        // The proof rides the same radio as the bytes, so the budget covers what was sent.
+        // The budget covers the proof too, because it rides the same radio as the bytes.
         self.served(db, &blob.sha256, body.len() as u64)?;
 
         let mut headers = vec![
@@ -447,8 +447,8 @@ impl BlobExchange {
     /// Note bytes going out to the peer: the read that orders eviction, and the
     /// spend against the peer's budget.
     ///
-    /// Both answers pay for what went on the radio rather than for the content
-    /// they carry, so a proof is charged for like the bytes it proves.
+    /// A proof is charged for like the bytes it proves, because both answers
+    /// pay for what went on the radio rather than for the content they carry.
     fn served(&mut self, db: &Db, sha256: &BlobHash, bytes: u64) -> Result<()> {
         command::touch_blob(db, sha256, clock::now())?;
 
@@ -490,7 +490,7 @@ impl BlobExchange {
     ///
     /// Bytes fetched with no root to check them against were never verified
     /// group by group, and a store that disagrees with the record cannot be
-    /// resumed into either, so both start over rather than corrupt a re-fetch.
+    /// resumed into either. Both start over rather than corrupt a re-fetch.
     fn resume_from(&self, db: &Db, blob: &Blob) -> Result<u64> {
         let recorded = blob.stored();
         let held = self.store.len(&blob.sha256)?.unwrap_or(0);
@@ -537,7 +537,7 @@ impl BlobExchange {
             return Ok(None);
         }
 
-        // The peer has no blob budget left, so nothing else asked this session is answered.
+        // Nothing else asked this session is answered once the peer has no blob budget left.
         if response.status == 429 {
             self.refused = true;
             return Ok(None);
@@ -657,7 +657,7 @@ impl BlobExchange {
         self.store.append(&fetch.blob.sha256, &content)?;
         fetch.stored += content.len() as u64;
 
-        // A proof rides the same radio as the bytes, so the budget covers what arrived.
+        // The budget covers the proof too, because it rides the same radio as the bytes.
         self.fetched_bytes = self
             .fetched_bytes
             .saturating_add(response.body.len() as u64);
@@ -686,7 +686,7 @@ impl BlobExchange {
         let end = fetch.stored + wanted - 1;
         let mut headers = vec![("range".to_string(), format!("bytes={}-{end}", fetch.stored))];
 
-        // Groups are a whole number of chunks, so every start lands on a chunk boundary.
+        // Every start lands on a chunk boundary, because groups are a whole number of chunks.
         if fetch.root.is_some() {
             headers.push(("accept-encoding".to_string(), PROOF_ENCODING.to_string()));
         }
@@ -699,13 +699,13 @@ impl BlobExchange {
         if self.assembled(fetch)? {
             command::complete_blob(db, &fetch.blob.sha256, fetch.stored, clock::now())?;
 
-            // A completed fetch is the only thing that grows the cache, so the ceiling is here.
+            // The ceiling is checked here, the only place the cache grows.
             command::evict_originals(db, ORIGINAL_CACHE_BYTES)?;
 
             return Ok(());
         }
 
-        // The bytes do not hash to their address, so they go and the peer is not asked again.
+        // Bytes that do not hash to their address are deleted, and the peer is not asked again.
         self.store.delete(&fetch.blob.sha256)?;
         command::record_blob_progress(db, &fetch.blob.sha256, 0)?;
         self.give_up(
@@ -719,8 +719,8 @@ impl BlobExchange {
 
     /// Whether the assembled bytes are the file the anchoring event named.
     ///
-    /// The address is a SHA-256 over the whole file however the bytes were
-    /// proved on the way in, so it is weighed here either way. A blob that
+    /// The address is weighed here however the bytes were proved on the way
+    /// in, because it is a SHA-256 over the whole file. A blob that
     /// named a root has to fold to that too, and building the tree that proves
     /// it is what leaves this device able to serve the blob on verified.
     fn assembled(&self, fetch: &BlobFetch) -> Result<bool> {
@@ -787,7 +787,7 @@ fn request(fetch: &BlobFetch, method: &str, headers: &[(String, String)]) -> Blo
 /// The BLAKE3 root a blob's `imeta` committed to, when it named one that
 /// parses.
 ///
-/// A root that does not parse names nothing, so a blob carrying one is fetched
+/// A root that does not parse names nothing. A blob carrying one is fetched
 /// as though the event had claimed none — unproved, and starting over rather
 /// than resuming, which is the direction that trusts less.
 fn declared_root(blob: &Blob) -> Option<verified::Root> {
@@ -819,9 +819,9 @@ fn content_of(fetch: &BlobFetch, response: &BlossomResponse) -> Option<Vec<u8>> 
 ///
 /// A 206 means the peer holds a prefix. A prefix is only worth having if each
 /// group of it can be checked as it arrives — and only a device holding the
-/// whole file has the outboard tree that proves any of it, so in practice a
-/// rooted blob is fetched from a whole holding and the prefix is refused at
-/// the proof check. Otherwise the hash waits for a peer that holds the file.
+/// whole file has the outboard tree that proves any of it. A rooted blob is
+/// therefore fetched from a whole holding, and the prefix is refused at the
+/// proof check. Otherwise the hash waits for a peer that holds the file.
 fn probed(fetch: &BlobFetch, response: &BlossomResponse) -> Option<(u64, u64)> {
     let available: u64 = header(&response.headers, "content-length")?.parse().ok()?;
     let total = match response.status {
@@ -934,7 +934,7 @@ fn verifies(blob: &Blob, store: &dyn BlobStore) -> Result<bool> {
     while read < len {
         let group = store.read(&blob.sha256, read, GROUP_BYTES)?;
 
-        // The store is shorter than it just said it was, so there is nothing to verify.
+        // An empty read means the store is shorter than it just said it was.
         if group.is_empty() {
             return Ok(false);
         }
@@ -1115,7 +1115,7 @@ mod tests {
             )
             .unwrap();
 
-        // Whole, so a 200 — and the content type the event declared, as much as the length.
+        // A whole holding answers 200, with the content type the event declared and the length.
         assert_eq!(head.status, 200);
         assert_eq!(header(&head.headers, "content-length"), Some("19"));
         assert_eq!(header(&head.headers, "content-type"), Some("image/jpeg"));
@@ -1161,7 +1161,7 @@ mod tests {
         assert_eq!(header(&get.headers, "content-range"), None);
     }
 
-    /// Serving bytes is a read, so eviction orders on it, not on completion.
+    /// Eviction orders on serving bytes, which is a read, not on completion.
     #[test]
     fn serving_a_blob_moves_it_off_the_head_of_the_eviction_queue() {
         let db = Db::open_in_memory().unwrap();
@@ -1303,7 +1303,7 @@ mod tests {
             )
             .unwrap();
 
-        // A prefix cannot be verified or resumed, so it is not started.
+        // A prefix that cannot be verified or resumed is not started.
         assert!(next.is_none());
         assert!(blobs.poll(&db, quota).unwrap().is_none());
     }
@@ -1679,7 +1679,7 @@ mod tests {
             )
             .unwrap();
 
-        // The event id commits to the size in `imeta`, so another length is another file.
+        // Another length is another file, because the event id commits to the size in `imeta`.
         assert!(next.is_none());
         assert!(blobs.poll(&db, quota).unwrap().is_none());
     }
@@ -1780,7 +1780,7 @@ mod tests {
             .on_response(&db, &peer(), &answer(&head.id, 429, &[], &[]), quota)
             .unwrap();
 
-        // The peer's budget is spent, so no other hash will fare better.
+        // No other hash will fare better once the peer's budget is spent.
         assert!(blobs.poll(&db, quota).unwrap().is_none());
     }
 
@@ -1810,8 +1810,8 @@ mod tests {
         assert!(blobs.poll(&db, quota).unwrap().is_none());
     }
 
-    /// An uppercase hash is stored lowercase, so the row a peer's event writes
-    /// is the row this device can read back, complete and evict.
+    /// An uppercase hash is stored lowercase, which makes the row a peer's
+    /// event writes the row this device can read back, complete and evict.
     #[test]
     fn an_uppercase_hash_from_a_peer_is_stored_the_way_it_is_read() {
         let db = Db::open_in_memory().unwrap();
@@ -2006,7 +2006,7 @@ mod tests {
         assert_eq!(store.read(&hash, 0, u64::MAX).unwrap(), bytes);
         assert!(db_query::get_blob(&db, &hash).unwrap().unwrap().complete);
 
-        // The tree is beside the bytes, so the next peer to ask is answered in kind.
+        // The tree is beside the bytes, ready to answer the next peer in kind.
         assert!(store.outboard_len(&hash).unwrap().is_some());
     }
 
@@ -2114,7 +2114,7 @@ mod tests {
 
         assert_eq!(blob.stored_bytes, GROUP_BYTES as i64);
         assert!(!blob.complete);
-        // Nothing else is asked of this peer, so the slot does not livelock.
+        // Nothing else is asked of this peer, which keeps the slot from livelocking.
         assert!(blobs.poll(&db, quota).unwrap().is_none());
     }
 
@@ -2172,7 +2172,7 @@ mod tests {
             header(&response.headers, "content-encoding"),
             Some(PROOF_ENCODING)
         );
-        // The proof rides with the bytes, so the answer is longer than the range it carries.
+        // The answer is longer than the range it carries, because the proof rides with the bytes.
         assert!(response.body.len() > GROUP_BYTES as usize);
 
         let proved = verified::verify(

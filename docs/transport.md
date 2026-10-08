@@ -27,7 +27,7 @@ The Noise key is not the nostr identity; mutual NIP-42 binds the two for the lif
 Our own, directly over GATT. The codec is core-side — pure byte manipulation that has to agree exactly with a peer running the other platform's build — while the writes, the MTU, and the ATT queue belong to CoreBluetooth and `android.bluetooth`:
 
 - **Multiplexed.** A channel id in the frame header lets control traffic, event sync, and blob transfer share the one link.
-- **Priority-scheduled.** The ATT queue is per-connection, so separate characteristics would not give QoS isolation. The sender interleaves instead: control frames pre-empt bulk fragments, which keeps the heartbeat alive during a media transfer.
+- **Priority-scheduled.** Separate characteristics would not give QoS isolation, because the ATT queue is per-connection. The sender interleaves instead: control frames pre-empt bulk fragments, which keeps the heartbeat alive during a media transfer.
 - **Fragmented.** Chunked to `maximumWriteValueLength(for:)` minus the header, and minus the AEAD tag once the channel is encrypted — roughly 480 bytes usable at a 512-byte MTU, often less.
 - **Reliable.** Acknowledged ATT writes give ordered reliable delivery on the control and sync channels. The blob channel uses `writeWithoutResponse` with application-level acking and pacing, at 25–30 ms between fragments to avoid loss.
 - **Resumable.** Blob transfers survive disconnection and resume by group, each of which is verified as it arrives. See [`sync.md`](./sync.md#blob-sync).
@@ -42,7 +42,7 @@ Every write is one fragment: a two-byte header, then the payload.
 | 1 | Flags. Bit 0 set means more fragments follow for this frame; the rest are reserved, must be zero, and a fragment that sets one is refused |
 | 2.. | Payload, sealed once the channel is encrypted |
 
-A frame is the concatenation of its fragments' payloads. Reassembly is per channel, so an interleaved control frame does not disturb a blob transfer mid-frame. A frame whose fragments exceed 1 MiB is refused rather than buffered, and the link is dropped.
+A frame is the concatenation of its fragments' payloads. Reassembly is per channel so that an interleaved control frame does not disturb a blob transfer mid-frame. A frame whose fragments exceed 1 MiB is refused rather than buffered, and the link is dropped.
 
 No frame is empty. The heartbeat is a control frame carrying only [its discriminant](#the-control-channels-header).
 
@@ -69,7 +69,7 @@ Both directions of `AUTH` share one byte, because the message names itself. The 
 | GATT | 5–15 KB/s, measured |
 | L2CAP | 50–150 KB/s expected, not yet measured here |
 
-**Bandwidth is the only thing the upgrade changes.** Round trips are set by the BLE connection interval, which both paths share, so latency is identical and a drive-by still ends before a multi-round negotiation converges.
+**Bandwidth is the only thing the upgrade changes.** Latency is identical, because round trips are set by the BLE connection interval, which both paths share. A drive-by still ends before a multi-round negotiation converges.
 
 ### The L2CAP bandwidth upgrade
 
@@ -79,12 +79,12 @@ What opening one takes:
 
 - **The APIs.** iOS 11+: the peripheral calls `publishL2CAPChannel(withEncryption:)` and the central `openL2CAPChannel(_:)`, both ending at a `CBL2CAPChannel` that exposes an `inputStream` / `outputStream` pair. Android 10+: `listenUsingInsecureL2capChannel()` and `createInsecureL2capChannel(psm)`, which puts L2CAP's own floor at API 29. The Android floor is 33, set by the GATT write and notify calls: below that they take their payload through the characteristic's mutable `value` rather than as an argument.
 - **Unencrypted at the link layer, deliberately.** The encrypted variants require LE Secure Connections bonding, and a bond is a durable pairing record on both devices. Confidentiality is Noise's job, and the channel is already inside a Noise session.
-- **The PSM is assigned at publish time**, so it is not known in advance and goes to the peer over the existing GATT channel once there is bulk to move.
+- **The PSM is assigned at publish time** and is not known in advance. It goes to the peer over the existing GATT channel once there is bulk to move.
 - **Opened on demand**, once outstanding blob bytes justify the setup round trip, rather than on connect — a drive-by would not recover the cost.
-- **Control frames stay on GATT**, so the heartbeat keeps defining session lifetime. Blob fragments — channel 2 — move across, and nothing else does: a fragment naming another channel on the bulk pipe is a peer misbehaving and ends the link.
-- **Framing is unchanged**, with one addition. The codec already fragments and multiplexes and only the chunk size moves, but L2CAP is a byte stream on both platforms, so a bulk write carries its length ahead of it as two big-endian bytes. GATT needs no prefix: one ATT write is one fragment.
-- **The two pipes are independent.** Each has one write in flight at a time, acknowledged separately, so a slow ATT write does not stall the transfer and vice versa.
-- **The bulk MTU is the shell's to report,** and only one platform is told it. Android reads `getMaxTransmitPacketSize()` off the socket; CoreBluetooth negotiates the channel's MTU and exposes it nowhere, so iOS reports the size it cuts writes to instead. Either way it is the size of one write, length prefix included.
+- **Control frames stay on GATT**, so that the heartbeat keeps defining session lifetime. Blob fragments — channel 2 — move across, and nothing else does: a fragment naming another channel on the bulk pipe is a peer misbehaving and ends the link.
+- **Framing is unchanged**, with one addition. The codec already fragments and multiplexes and only the chunk size moves. A bulk write carries its length ahead of it as two big-endian bytes, because L2CAP is a byte stream on both platforms. GATT needs no prefix: one ATT write is one fragment.
+- **The two pipes are independent.** Each has one write in flight at a time, acknowledged separately. A slow ATT write does not stall the transfer, and vice versa.
+- **The bulk MTU is the shell's to report,** and only one platform is told it. Android reads `getMaxTransmitPacketSize()` off the socket; iOS reports the size it cuts writes to instead, because CoreBluetooth negotiates the channel's MTU and exposes it nowhere. Either way it is the size of one write, length prefix included.
 
 #### Who publishes, and how the PSM crosses
 
@@ -94,6 +94,6 @@ The platform decides, not whoever wants the bandwidth: the GATT peripheral publi
 | --- | --- | --- |
 | `0x01` request | The dialer | It wants bulk and cannot publish |
 | `0x02` published | The receiver | A channel is open at this PSM |
-| `0x03` unavailable | Either | This end cannot, so the link stays on GATT |
+| `0x03` unavailable | Either | This end cannot. The link stays on GATT |
 
-A receiver that wants bulk publishes without being asked, so a `published` may arrive with no request behind it. Every failure path is `unavailable` rather than a teardown: the upgrade is bandwidth, and a link that never gets one still syncs. If an open channel goes away, bulk returns to GATT and whatever had been cut to the larger MTU is dropped — the fragments would overrun an ATT write, and the transfer resumes from what the store already holds.
+A `published` may arrive with no request behind it, because a receiver that wants bulk publishes without being asked. Every failure path is `unavailable` rather than a teardown: the upgrade is bandwidth, and a link that never gets one still syncs. If an open channel goes away, bulk returns to GATT and whatever had been cut to the larger MTU is dropped — the fragments would overrun an ATT write, and the transfer resumes from what the store already holds.

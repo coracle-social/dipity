@@ -12,4 +12,4 @@ blake3 <64-hex>
 
 ## Why
 
-`x` is a SHA-256 over the whole file, so a receiver learns nothing until the last byte arrives: an unbounded stream cannot be capped, bad bytes cannot be rejected early, and a failed transfer cannot be attributed. BLAKE3 is a merkle tree, so the root alone permits [verified streaming](https://github.com/oconnor663/bao): every chunk checks on arrival, with no chunk list on the wire. This matters wherever a file is assembled from several untrusted sources.
+`x` is a SHA-256 over the whole file. A receiver learns nothing from it until the last byte arrives: an unbounded stream cannot be capped, bad bytes cannot be rejected early, and a failed transfer cannot be attributed. BLAKE3 is a merkle tree, whose root alone permits [verified streaming](https://github.com/oconnor663/bao): every chunk checks on arrival, with no chunk list on the wire. This matters wherever a file is assembled from several untrusted sources.

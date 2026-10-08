@@ -1,22 +1,22 @@
 //! BLAKE3 verified streaming over a blob's bytes, through the `bao` crate.
 //!
-//! A blob's address is the SHA-256 of the whole file, so it says nothing until
+//! A blob's address is the SHA-256 of the whole file and says nothing until
 //! the last byte lands: a peer can feed a transfer rubbish for a megabyte and
 //! only be caught at the end, and a transfer that drops has no trustworthy
 //! prefix to resume from. The BLAKE3 root the `imeta` tag carries
-//! (`docs/nips/imeta-blake3.md`) is a merkle root instead, so any range of the
-//! file can be proved against it on its own.
+//! (`docs/nips/imeta-blake3.md`) is a merkle root instead, against which any
+//! range of the file can be proved on its own.
 //!
 //! Bao is that proof format. A serving device keeps an outboard tree beside
 //! the content — the merkle nodes, with the bytes left where they are — and
 //! answers a range with a [slice](slice): the subtree hashes on the path to
 //! those bytes, then the bytes. A fetching device [verifies](verify) the slice
-//! against the root alone, which the event id already commits to, so nothing
+//! against the root alone, which the event id already commits to. Nothing
 //! about the tree has to be trusted or fetched first.
 //!
-//! Verification is per [`CHUNK_BYTES`], and a group of bytes is a whole number
-//! of chunks, so every byte that reaches the disk has been checked and the
-//! bytes already there are where the next session resumes.
+//! Every byte that reaches the disk has been checked, and the bytes already
+//! there are where the next session resumes, because verification is per
+//! [`CHUNK_BYTES`] and a group of bytes is a whole number of chunks.
 
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
 
@@ -51,9 +51,9 @@ pub fn hash(bytes: &[u8]) -> Root {
 /// Build the outboard tree over the bytes the store holds, returning the root
 /// they hash to.
 ///
-/// The tree is derived from the content, so it is written rather than fetched:
-/// a device that has the whole file can always compute it, and one that cannot
-/// serves the file unverified instead.
+/// The tree is written rather than fetched, because it is derived from the
+/// content: a device that has the whole file can always compute it, and one
+/// that cannot serves the file unverified instead.
 pub fn build(store: &dyn BlobStore, sha256: &BlobHash) -> Result<Root> {
     let mut encoder = Encoder::new_outboard(Cursor::new(Vec::new()));
 
@@ -93,9 +93,9 @@ pub fn slice(store: &dyn BlobStore, sha256: &BlobHash, start: u64, len: u64) -> 
 
 /// The content bytes a slice carries, once the slice verifies against `root`.
 ///
-/// An error is a peer that sent bytes belonging to some other file, or none:
-/// the decoder checks every chunk against the tree on the way past, so there
-/// is no unverified byte in the answer.
+/// An error is a peer that sent bytes belonging to some other file, or none.
+/// The answer holds no unverified byte, because the decoder checks every chunk
+/// against the tree on the way past.
 pub fn verify(slice: &[u8], root: &Root, start: u64, len: u64) -> Result<Vec<u8>> {
     let mut decoder = SliceDecoder::new(slice, root, start, len);
     let mut content = Vec::new();
@@ -112,8 +112,8 @@ pub fn verify(slice: &[u8], root: &Root, start: u64, len: u64) -> Result<Vec<u8>
 /// The store answers ranged reads rather than handing out file handles, since
 /// an implementation may hold bytes anywhere; bao wants a reader it can seek.
 /// Every read is one call into the store, and bao makes them a chunk at a
-/// time, so a slice costs a handful of small reads rather than the whole file
-/// in memory.
+/// time. A slice costs a handful of small reads rather than the whole file in
+/// memory.
 struct StoreCursor<'a> {
     /// Where the bytes are.
     store: &'a dyn BlobStore,
@@ -199,7 +199,7 @@ mod tests {
 
     use crate::blobs::MemoryBlobStore;
 
-    /// Big enough to span several chunks, so a slice has a real proof in it.
+    /// Big enough to span several chunks, so that a slice has a real proof in it.
     fn blob(store: &MemoryBlobStore, len: usize) -> (BlobHash, Vec<u8>) {
         let bytes: Vec<u8> = (0..len).map(|index| (index % 251) as u8).collect();
         let hash = BlobHash::digest(&bytes);

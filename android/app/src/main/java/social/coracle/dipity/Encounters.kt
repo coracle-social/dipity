@@ -21,9 +21,9 @@ import uniffi.dip_ffi.outcomeName
 /**
  * The core for as long as the process lives, whether or not a screen shows it.
  *
- * Gossip happens with both phones in pockets, after Android may have destroyed
- * the activity and the plugin with it, so the store, the node, the radio and the
- * lifecycle live here and [EncounterService] keeps the process alive. The
+ * The store, the node, the radio and the lifecycle live here, and
+ * [EncounterService] keeps the process alive. Gossip happens with both phones in
+ * pockets, after Android may have destroyed the activity and the plugin with it. The
  * service opens them on its own after a restart; the plugin opens them when the
  * view starts, and attaches as the [View] while it exists.
  *
@@ -34,9 +34,9 @@ import uniffi.dip_ffi.outcomeName
  * ## The loop
  *
  * Every core entry point answers a list of `Action`, and [apply] is the one place
- * they are carried out. The core calls nothing back but custody, so this is never
- * re-entered from inside a call: an action that produces more actions produces
- * them on the next entry point, not underneath this one.
+ * they are carried out. This is never re-entered from inside a call, because the
+ * core calls nothing back but custody. An action that produces more actions
+ * produces them on the next entry point, not underneath this one.
  */
 object Encounters : Radio.Delegate {
     /** What only a screen can do with what the core says. */
@@ -99,7 +99,7 @@ object Encounters : Radio.Delegate {
 
         core = Core(store, node)
 
-        // Registered before the first tick, so nothing the core does on the way up goes unheard.
+        // Registered before the first tick so that nothing the core does on the way up goes unheard.
         watching = store.observe(StoreChanges)
 
         EncounterService.start(this.context)
@@ -142,10 +142,10 @@ object Encounters : Radio.Delegate {
     }
 
     /**
-     * Drop the node and everything driving it, so [open] can run again.
+     * Drop the node and everything driving it so that [open] can run again.
      *
-     * Every field [open] set is cleared, so closing twice is closing once and the
-     * receivers are unregistered exactly as often as they were registered.
+     * Closing twice is closing once, and the receivers are unregistered exactly
+     * as often as they were registered, because every field [open] set is cleared.
      */
     @Synchronized
     fun close() {
@@ -275,7 +275,7 @@ object Encounters : Radio.Delegate {
         return directory
     }
 
-    /** Tells the view which group of tables moved, so it re-reads what it shows. */
+    /** Tells the view which group of tables moved so that it re-reads what it shows. */
     private object StoreChanges : StoreObserver {
         override fun changed(group: Change) {
             notify("storeChanged", JSObject().put("group", changeName(group)))

@@ -3,8 +3,8 @@
 //! At pairing both sides derive a pair secret from the authenticated session
 //! and store it against the peer. On a later encounter each proves it holds one
 //! by MACing this session's handshake hash under it, and the receiver
-//! trial-MACs its own secrets against the list. The handshake hash is fresh
-//! every time, so a tag is worthless outside the session it was minted in.
+//! trial-MACs its own secrets against the list. A tag is worthless outside the
+//! session it was minted in, because the handshake hash is fresh every time.
 //! `docs/discovery.md#recognition`.
 
 use anyhow::{Context, Result, bail};

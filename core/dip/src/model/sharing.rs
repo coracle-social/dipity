@@ -15,7 +15,7 @@ use crate::model::Scope;
 pub enum Sharing {
     /// Contacts are handed the user's events and nobody may carry them further.
     Contacts,
-    /// Contacts are handed the user's events with a signature, so each may
+    /// Contacts are handed the user's events with a signature, which lets each
     /// carry them on to their own contacts.
     Network,
     /// Anyone not blocked is handed the user's events, and contacts get a

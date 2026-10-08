@@ -56,7 +56,7 @@ export default {
         )
       ).data[0]
 
-    // App Store Connect never takes a build number twice, so a rerun uses the build already there
+    // A rerun uses the build already there, because App Store Connect never takes a build number twice
     if (!(await findBuild())) {
       await run(
         "pnpm",

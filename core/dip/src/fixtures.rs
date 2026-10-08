@@ -3,8 +3,8 @@
 //!
 //! Keys are real points on the curve, because `PublicKey` will not hold
 //! anything else, and ids are real hashes, because building an event through
-//! the pipeline computes one. Both are derived from a seed, so a fixture is
-//! reproducible and two seeds never collide.
+//! the pipeline computes one. Both are derived from a seed, which makes a
+//! fixture reproducible and keeps two seeds from colliding.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -87,7 +87,7 @@ pub(crate) fn settle(from: &mut Node, into: &mut Node, actions: Vec<Action>) -> 
             continue;
         };
 
-        // Acknowledging is what releases the sender's next fragment, so the shell does both.
+        // The shell does both, because acknowledging is what releases the sender's next fragment.
         let (answered, released) = if from_side {
             (into.bytes_received(link, &write), from.write_complete(link))
         } else {

@@ -1,8 +1,8 @@
 //! Change notifications for the `pref` table.
 //!
-//! Policy is read at encounter time, with nobody watching, so the session layer
-//! listens here rather than caching a value it might have read before the user
-//! changed it.
+//! The session layer listens here rather than caching a value it might have
+//! read before the user changed it, because policy is read at encounter time,
+//! with nobody watching.
 
 use tokio::sync::broadcast::{self, Receiver, Sender};
 
@@ -17,7 +17,7 @@ const CAPACITY: usize = 64;
 pub enum PrefChange {
     /// A preference was written.
     Set(Pref),
-    /// A preference was removed, so its default applies again.
+    /// A preference was removed and its default applies again.
     Removed(String),
 }
 

@@ -25,8 +25,8 @@ const CONNECT_INTERVAL_SECONDS: i64 = 1;
 /// its advertisement may be dialed again.
 pub(crate) const NEVER_ANSWERED_BACKOFF_SECONDS: i64 = 60;
 
-/// How long after a connected peer walks away before redialing. They usually
-/// come back, so this is short. `docs/discovery.md#connection-scheduling`.
+/// How long after a connected peer walks away before redialing. It is short
+/// because they usually come back. `docs/discovery.md#connection-scheduling`.
 pub(crate) const WALKED_AWAY_BACKOFF_SECONDS: i64 = 15;
 
 /// How long after the core itself dropped a link before redialing.
@@ -43,9 +43,9 @@ pub(crate) const DECLINED_BACKOFF_SECONDS: i64 = 5 * 60;
 
 /// The shortest wait before redialing a peripheral whose dial failed outright.
 ///
-/// Two phones that dial each other at the same moment both fail, so the retry
-/// is jittered by up to [`DIAL_FAILED_JITTER_SECONDS`] more, which is what stops
-/// them colliding the same way again.
+/// The retry is jittered by up to [`DIAL_FAILED_JITTER_SECONDS`] more, because
+/// two phones that dial each other at the same moment both fail and the jitter
+/// stops them colliding the same way again.
 pub(crate) const DIAL_FAILED_BACKOFF_SECONDS: i64 = 2;
 
 /// The most a failed dial's retry is pushed back by, at random.
@@ -71,7 +71,7 @@ pub(crate) const NOT_OURS_BACKOFF_SECONDS: i64 = CANDIDATE_TTL_SECONDS;
 pub(crate) const AWAIT_SECONDS: i64 = CANDIDATE_TTL_SECONDS;
 
 /// How long a sighting stays a candidate. A peripheral id rotates about every
-/// fifteen minutes, so one older than that names a device nobody can reach.
+/// fifteen minutes, and one older than that names a device nobody can reach.
 pub(crate) const CANDIDATE_TTL_SECONDS: i64 = 15 * 60;
 
 /// Everything scheduling dials from an advertisement.
@@ -84,7 +84,7 @@ pub struct Scheduler {
     backoff: BTreeMap<PeripheralId, Backoff>,
     /// Dials that went out and have not come up yet, by when they went. Each
     /// spends a link slot until it connects or its never-answered backoff
-    /// lapses, so a crowd cannot bring up more links than the cap.
+    /// lapses, which keeps a crowd from bringing up more links than the cap.
     dialing: BTreeMap<PeripheralId, i64>,
     /// Peripherals with a dialed link up, which stay candidates but are not
     /// dialed again while it lasts.
@@ -115,9 +115,9 @@ struct Backoff {
     tier: Tier,
 }
 
-/// What set a backoff, ordered by severity: a worse outcome is never
-/// overwritten by a better one, so the user's "no" survives a disconnect
-/// report arriving afterwards.
+/// What set a backoff, ordered by severity. A worse outcome is never
+/// overwritten by a better one, which lets the user's "no" survive a
+/// disconnect report arriving afterwards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Tier {
     /// A dial that never answered.
@@ -162,14 +162,14 @@ impl Scheduler {
             || self.linked.contains(peripheral)
     }
 
-    /// A dial came up, so it no longer holds a slot as a pending one.
+    /// A dial came up and no longer holds a slot as a pending one.
     pub fn connected(&mut self, peripheral: &PeripheralId) {
         self.dialing.remove(peripheral);
         self.awaiting.remove(peripheral);
         self.linked.insert(peripheral.clone());
     }
 
-    /// A dial failed outright, which the radio reports, so it is retried in a
+    /// A dial failed outright, which the radio reports. It is retried in a
     /// few seconds rather than after a never-answered minute. A worse outcome
     /// already recorded stands.
     pub fn dial_failed(&mut self, peripheral: &PeripheralId) {
@@ -192,7 +192,7 @@ impl Scheduler {
         );
     }
 
-    /// A link that duplicated another to the same person closed, so its
+    /// A link that duplicated another to the same person closed. Its
     /// peripheral is left alone while the other carries the session.
     pub fn duplicate(&mut self, peripheral: &PeripheralId) {
         self.linked.remove(peripheral);
@@ -264,7 +264,7 @@ impl Scheduler {
     }
 
     /// Forget candidates nobody has heard from in a rotation, dials that never
-    /// came up, and backoffs that have lapsed, so none of them grows with every
+    /// came up, and backoffs that have lapsed. None of them grows with every
     /// peripheral id a crowd rotates through.
     fn forget_stale(&mut self, now: i64) {
         self.candidates
@@ -281,8 +281,8 @@ impl Scheduler {
         self.record(peripheral, Tier::WalkedAway, WALKED_AWAY_BACKOFF_SECONDS);
     }
 
-    /// A peer this device dropped rather than lost: hold off longer than a
-    /// walk-away, so the redial does not undo the decision.
+    /// A peer this device dropped rather than lost. Holding off longer than a
+    /// walk-away keeps the redial from undoing the decision.
     pub fn refused(&mut self, peripheral: &PeripheralId) {
         self.linked.remove(peripheral);
         self.record(peripheral, Tier::Refused, REFUSED_BACKOFF_SECONDS);
@@ -295,8 +295,8 @@ impl Scheduler {
         self.record(peripheral, Tier::Declined, HARVESTED_BACKOFF_SECONDS);
     }
 
-    /// The radio is waiting for a peer that walked away, which is a standing
-    /// connect rather than a dial, so it spends no link slot until it lands.
+    /// The radio is waiting for a peer that walked away. A standing connect is
+    /// not a dial and spends no link slot until it lands.
     pub fn awaiting(&mut self, peripheral: &PeripheralId) {
         self.awaiting.insert(peripheral.clone(), clock::now());
     }

@@ -1,16 +1,16 @@
 // Who the device knows, and the name each one is known by.
 //
-// Nobody publishes a profile, so every name here is one somebody gave somebody
+// Nobody publishes a profile. Every name here is one somebody gave somebody
 // else — the user's own card for a person, or a card that arrived from a
 // neighbour. A name therefore always has a claimant, and the screen says whose
 // it is.
 //
-// The user's cards, block and mute are things they publish, and the core
-// derives the contact graph from them, so writing one is publishing an event
-// rather than setting a preference. `docs/policy.md#social-graph`.
+// Writing the user's cards, block or mute is publishing an event rather than
+// setting a preference, because the core derives the contact graph from them.
+// `docs/policy.md#social-graph`.
 //
-// The mute list names topics as well as people, so a thing that is not a person
-// is edited here too. One event has one editor. Two of them amending it would
+// A thing that is not a person is edited here too, because the mute list names
+// topics as well as people. One event has one editor. Two of them amending it would
 // each build on the version the other replaced.
 
 import {derived, get, type Readable} from "svelte/store"
@@ -31,7 +31,7 @@ export type Contact = {
   pubkey: string
   /** What the user calls them, which only somebody they paired with has. */
   petname?: string
-  /** What other people call them, newest card first. */
+  /** What the user's contacts call them, newest card first. */
   aliases: {by: string; petname: string}[]
   muted: boolean
   blocked: boolean
@@ -118,11 +118,12 @@ const collate = async (events: HashedEvent[], identity?: string): Promise<Social
   }
 
   for (const {by, about, petname} of named) {
-    if (by === identity) {
-      at(about).petname = petname
-    } else {
-      at(about).aliases.push({by, petname})
-    }
+    if (by === identity) at(about).petname = petname
+  }
+
+  // A stranger's cards name nobody, because a name is only worth showing from somebody the user has named.
+  for (const {by, about, petname} of named) {
+    if (by !== identity && people.get(by)?.petname) at(about).aliases.push({by, petname})
   }
 
   for (const pubkey of [...blocked, ...muted]) at(pubkey)
@@ -216,8 +217,8 @@ export const slugify = (name: string) =>
 
 /**
  * The names other people have given the user, one entry per name however it
- * was spelled, most given first. Each comes from a card somebody published
- * about the user, so each has a claimant.
+ * was spelled, most given first. Each comes from a card one of their contacts
+ * published about the user, which is its claimant.
  */
 export const aliases: Readable<Alias[]> = derived([social, session], ([{people}, $session]) => {
   const given = $session.identity ? (people.get($session.identity)?.aliases ?? []) : []
@@ -256,13 +257,13 @@ export const nameOf = ({people}: Social, pubkey: string): Named => {
 /** The last version of each of the user's own events written from here, by address. */
 const written = new Map<string, HashedEvent>()
 
-/** Edits run one at a time, so each reads what the one before it wrote. */
+/** Edits run one at a time so that each reads what the one before it wrote. */
 let edits: Promise<unknown> = Promise.resolve()
 
 /**
  * Supersede the user's event at `address`.
  *
- * The store answers a write only after a round trip, so an edit reading it
+ * The store answers a write only after a round trip. An edit reading it
  * straight after another would build on the version that one replaced and undo
  * it. Each builds on whichever is newer: what the store holds, or what the edit
  * before it wrote.
@@ -325,7 +326,7 @@ export const forget = async (pubkey: string) => {
   if (contact?.petname) await name(pubkey, "")
   if (contact?.muted) await setMuted(pubkey, false)
 
-  // Dropped rather than refused, so a card that arrives again names them again.
+  // A card that arrives again names them again, because theirs is dropped rather than refused.
   const theirs = await eventsOf({filter: JSON.stringify({kinds: [CONTACT], "#d": [pubkey]})})
 
   for (const card of theirs) {

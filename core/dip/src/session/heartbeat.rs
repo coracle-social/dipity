@@ -1,8 +1,8 @@
 //! Liveness for one link: when to prove this device is alive, and when to
 //! conclude the peer no longer is.
 //!
-//! Liveness, not authorization: proximity is already guaranteed by the
-//! transport, so the beat's only job is cleanup and it can afford to be
+//! Liveness, not authorization. The transport already guarantees proximity,
+//! which leaves the beat only cleanup to do, and cleanup can afford to be
 //! lenient. `docs/discovery.md#heartbeat-and-teardown`.
 
 use anyhow::{Context, Result};
@@ -23,7 +23,7 @@ pub const MAX_INTERVAL_SECONDS: i64 = 30;
 pub struct Heartbeat {
     /// When a frame was last heard from the peer.
     pub last_heard: i64,
-    /// When the next beat is due, so a quiet session still proves it is alive
+    /// When the next beat is due, so that a quiet session still proves it is alive
     /// before the peer's own timeout drains it.
     pub next_beat_at: i64,
 }
@@ -57,7 +57,7 @@ impl Heartbeat {
     }
 
     /// Push the next beat out one jittered interval — after beating, or after
-    /// skipping one, so a long transfer does not emit a beat the moment it
+    /// skipping one, so that a long transfer does not emit a beat the moment it
     /// drains.
     pub fn reschedule(&mut self) -> Result<()> {
         self.next_beat_at = clock::now() + jittered_interval()?;

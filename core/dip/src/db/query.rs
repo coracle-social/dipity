@@ -2,7 +2,7 @@
 //!
 //! Each function takes the [`Db`] it is asking, opens a read transaction on it
 //! with [`Db::read`] and threads that through whatever domain queries the
-//! answer takes, so a caller never holds a transaction, never names a table,
+//! answer takes. A caller never holds a transaction, never names a table,
 //! and never gets a half-consistent answer assembled from two of them.
 //!
 //! Every question about events is [`list_events`], because what separates the
@@ -112,10 +112,10 @@ pub fn reconciliation_set(db: &Db, query: &Query) -> Result<SyncSet> {
 }
 
 /// What this device opens a reconciliation with: everything it holds under
-/// `query`, and every id it has refused, so neither is reported missing.
+/// `query`, and every id it has refused, so that neither is reported missing.
 ///
-/// A refused id carries no kind or author, so it joins the set whatever the
-/// filter says. That costs nothing: an id the peer does not hold under the
+/// A refused id joins the set whatever the filter says, because it carries no
+/// kind or author. That costs nothing: an id the peer does not hold under the
 /// filter lands in the unused `have` side of the diff.
 pub fn initiator_set(db: &Db, query: &Query) -> Result<SyncSet> {
     let held = list_events(db, query)?.into_iter().map(|event| Item {

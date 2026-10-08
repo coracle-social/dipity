@@ -4,7 +4,7 @@ Sessions authenticate with [NIP-42](https://github.com/nostr-protocol/nips/blob/
 
 ## What was added upstream
 
-NIP-42's `relay` tag names the party that issued the challenge, and on WebSocket that name is a URL. A BLE link has no URL, so there was nothing to put in the tag. Leaving it out is not an option: without it an auth event is a bearer token for the pubkey that signed it, and here every participant is a relay, so every participant that receives one is in a position to replay it.
+NIP-42's `relay` tag names the party that issued the challenge, and on WebSocket that name is a URL. A BLE link has no URL to put in the tag. Leaving it out is not an option: without it an auth event is a bearer token for the pubkey that signed it, and here every participant is a relay, which puts every participant that receives one in a position to replay it.
 
 ### Transport identities
 
@@ -34,7 +34,7 @@ A challenge carries at least 128 bits from a CSPRNG, is scoped to a single conne
 
 Both parties may act as relay. Each may send `["AUTH", <challenge>]` as soon as the connection opens without waiting for the peer, the two directions are independent, and neither party may treat its own success as evidence about the other.
 
-Independence also means a party may **defer** its own exchange until the peer's has completed, and condition it on the result. Neither direction draws evidence from the other, so the ordering weakens nothing.
+Independence also means a party may **defer** its own exchange until the peer's has completed, and condition it on the result. The ordering weakens nothing, because neither direction draws evidence from the other.
 
 ### Verification
 
@@ -44,10 +44,10 @@ Transports should also provide confidentiality. Not against replay, which the ru
 
 ## What it means here
 
-- **The session identifier is `noise://<hex static key>`.** It names a key the BLE handshake established, so the tag is checked against something the handshake produced rather than something the peer claimed. That key is [generated per session](../transport.md#the-static-key-is-generated-per-session), so the identifier is fresh every time and the auth event names a channel that ceases to exist with the session. This app registers no other scheme; the table above is the general registry.
+- **The session identifier is `noise://<hex static key>`.** It names a key the BLE handshake established. The tag is therefore checked against something the handshake produced rather than something the peer claimed. The identifier is fresh every time, and the auth event names a channel that ceases to exist with the session, because that key is [generated per session](../transport.md#the-static-key-is-generated-per-session). This app registers no other scheme; the table above is the general registry.
 - **The messages are NIP-42's, on the control channel.** `["AUTH", <challenge>]` and `["AUTH", <event>]` as written, carried on [channel 0](../transport.md#the-control-channels-header) rather than alongside `REQ` and `EVENT`. Only the channel is ours; the message is unmodified.
 - **The party that dialed authenticates first.** A local ordering rule, permitted by the independence of the two directions above. It lets the dialed side evaluate policy against a known pubkey before disclosing its own — see [`discovery.md`](../discovery.md#the-consent-gate).
-- **A captured auth event is useless against a relay.** On these transports the `relay` tag never holds a URL, so no relay will ever match it.
+- **A captured auth event is useless against a relay.** No relay will ever match it, because on these transports the `relay` tag never holds a URL.
 - **A peer may authenticate as several pubkeys**, since NIP-42 allows a sequence of `AUTH` messages. Ingest therefore tests set membership rather than equality — see [`sync.md`](../sync.md#authorship).
 - **Authentication sits behind the consent gate**, because it discloses presence. Sessions are never established automatically with unknown peers, and since the gate is usually evaluated with nobody looking at the screen, the decision comes from stored preferences rather than a prompt — see [`discovery.md`](../discovery.md#the-consent-gate).
 - **The signature is produced in the background, by us.** This exchange is the reason custody is limited to a key the device holds: it runs during a CoreBluetooth wake, with the view suspended and possibly with no network, and a peer that cannot complete it can neither send nor receive. It is also why the identity key must be readable while the device is locked — see [`keys.md`](../keys.md#key-custody).

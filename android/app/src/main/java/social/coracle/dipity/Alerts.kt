@@ -12,8 +12,8 @@ import uniffi.dip_ffi.Announcement
   * Local notifications. The core decides what to say and when, and the shell
  * posts it.
  *
- * Each announcement has one id, so a newer count replaces the last rather than
- * stacking. `docs/storage.md#notifications`.
+ * A newer count replaces the last rather than stacking, because each
+ * announcement has one id. `docs/storage.md#notifications`.
  */
 object Alerts {
     private const val CHANNEL = "social.coracle.dipity.alerts"
@@ -66,7 +66,7 @@ object Alerts {
         }
     }
 
-    /** The user is looking, so what was announced has been seen. */
+    /** What was announced has been seen, because the user is looking. */
     fun clear(context: Context) {
         val manager = NotificationManagerCompat.from(context)
 

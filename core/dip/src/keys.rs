@@ -11,7 +11,7 @@
 //!
 //! [`KeyCustody::identity`] is called at the moment a signature is wanted, and
 //! what it answers is dropped at the end of that expression. `SecretKey` zeroes
-//! its scalar on drop, so nothing holds key bytes between encounters — a
+//! its scalar on drop. Nothing holds key bytes between encounters — a
 //! [`Node`](crate::Node) and a [`Session`](crate::session::Session) keep the
 //! pubkey and this trait, and no more than that.
 //!
@@ -40,8 +40,8 @@ pub trait KeyCustody: Send + Sync {
 /// The identity as serving a peer needs it: the pubkey always, and the key only
 /// when there is something to sign.
 ///
-/// Forwarding signs nothing, so a batch that only forwards never reads secure
-/// storage. `docs/proofs.md#hygiene`.
+/// A batch that only forwards never reads secure storage, because forwarding
+/// signs nothing. `docs/proofs.md#hygiene`.
 pub trait Signer {
     /// The identity's pubkey, which costs no read.
     fn pubkey(&self) -> PublicKey;
@@ -102,8 +102,8 @@ impl Signer for SecretKey {
 
 /// A key already in hand, which is what the host and `cargo test` have.
 ///
-/// No shell, no Keychain and nothing to read out of, so the key was handed over
-/// at construction and is answered unchanged.
+/// The key was handed over at construction and is answered unchanged, because
+/// there is no shell, no Keychain and nothing to read out of.
 impl KeyCustody for SecretKey {
     fn identity(&self) -> Result<SecretKey> {
         Ok(self.clone())

@@ -71,7 +71,7 @@
   </div>
 
   {#if request.pubkey && $session.identity}
-    <!-- Each pair of phones has its own shapes, so the two people check they are on each other's request. -->
+    <!-- Each pair of phones has its own shapes. The two people check they are on each other's request. -->
     <p class="-mt-4 mb-8 text-center text-xs text-muted-foreground">
       Their phone <span class="font-mono text-foreground">{short(request.pubkey)}</span>
       · Your phone <span class="font-mono text-foreground">{short($session.identity)}</span>

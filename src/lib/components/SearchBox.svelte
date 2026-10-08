@@ -3,7 +3,7 @@
   import X from "@lucide/svelte/icons/x"
   import * as InputGroup from "$lib/components/ui/input-group"
 
-  // One search box for every screen that searches, so they look and clear alike.
+  // One search box for every screen that searches so that they look and clear alike.
   let {
     value = $bindable(""),
     label,

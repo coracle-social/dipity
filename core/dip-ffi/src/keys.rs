@@ -9,8 +9,8 @@
 //! The bytes are not a hex string, because a `String` handed over from Swift or
 //! Kotlin is a copy nothing on this side can find to wipe. What crosses is a
 //! byte array the shell can zero as soon as the call returns. `secret_bytes`
-//! and `secret_key` are the only two conversions in this crate, so the same
-//! rule holds on this side of the boundary.
+//! and `secret_key` are the only two conversions in this crate, which keeps the
+//! same rule on this side of the boundary.
 
 use std::fmt;
 use std::sync::Arc;
@@ -60,8 +60,8 @@ pub trait KeyCustody: Send + Sync {
 
 /// The 32 secret bytes of a key, in the form this boundary carries.
 ///
-/// `coracle_lib` exports a key as hex and parses it back the same way, so the
-/// string in the middle is unavoidable. Every conversion in this crate goes
+/// The string in the middle is unavoidable, because `coracle_lib` exports a key
+/// as hex and parses it back the same way. Every conversion in this crate goes
 /// through this and its inverse below, which is what keeps that string to one
 /// place and wiped.
 pub(crate) fn secret_bytes(key: &SecretKey) -> Vec<u8> {

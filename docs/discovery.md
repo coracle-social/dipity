@@ -6,7 +6,7 @@ How peers find each other, decide to connect, identify each other, and decide wh
 
 The BLE advertisement is a bare presence beacon: our service UUID and nothing else. iOS imposes this: there is no payload to put an identifier in once the app is backgrounded.
 
-When an iOS app advertises in the background, the local name and service data are stripped, and the 128-bit service UUID moves to the "overflow" area: Apple manufacturer data of type `0x01`, a bitmask with one bit per backgrounded service. iOS matches it against a scan for that exact UUID. Android cannot, and which bit is ours is undocumented, so an Android scan matches every overflow advertisement and a dial that finds no service of ours sets that device aside until its address rotates. In the background-to-background case, which is the case that matters, there is no payload to read. Any scheme that puts a resolvable identifier in the advertisement works in the foreground and silently stops working in the pocket.
+When an iOS app advertises in the background, the local name and service data are stripped, and the 128-bit service UUID moves to the "overflow" area: Apple manufacturer data of type `0x01`, a bitmask with one bit per backgrounded service. iOS matches it against a scan for that exact UUID. Android cannot, because which bit is ours is undocumented. An Android scan matches every overflow advertisement, and a dial that finds no service of ours sets that device aside until its address rotates. In the background-to-background case, which is the case that matters, there is no payload to read. Any scheme that puts a resolvable identifier in the advertisement works in the foreground and silently stops working in the pocket.
 
 Bluetooth's own answer (Resolvable Private Addresses with a shared IRK) is also unavailable: it operates at the address layer, requires bonding, and CoreBluetooth never exposes peer MAC addresses to apps — you get a per-app `CBPeripheral` identifier instead.
 
@@ -14,9 +14,9 @@ Bluetooth's own answer (Resolvable Private Addresses with a shared IRK) is also 
 
 Every identification costs a connection.
 
-`CBPeripheral` identifiers are stable per-app-per-device until the peer's BLE address rotates — roughly 15 minutes for non-bonded devices. What was resolved for a peripheral identifier is cached with a TTL matched to that, so the same person is not re-identified on every rediscovery. bitchat's `BLERecentPeripheralCache` is exactly this.
+`CBPeripheral` identifiers are stable per-app-per-device until the peer's BLE address rotates — roughly 15 minutes for non-bonded devices. What was resolved for a peripheral identifier is cached with a TTL matched to that, so that the same person is not re-identified on every rediscovery. bitchat's `BLERecentPeripheralCache` is exactly this.
 
-Nothing the handshake establishes outlives the session ([`transport.md`](./transport.md#the-static-key-is-generated-per-session)), so rate limiting works at BLE-address granularity or not at all.
+Rate limiting works at BLE-address granularity or not at all, because nothing the handshake establishes outlives the session ([`transport.md`](./transport.md#the-static-key-is-generated-per-session)).
 
 Attempts are rate-limited, candidates are ordered by RSSI so the nearest stranger is tried first, and peers already identified and declined get a hard backoff.
 
@@ -27,13 +27,13 @@ Attempts are rate-limited, candidates are ordered by RSSI so the nearest strange
 - Connect rate limiting, one attempt per second globally.
 - Distinct backoff for "never answered a connect" versus "was connected and walked away." The second recovers fast, because those peers usually come back.
 - A dial that fails before a link comes up is retried within a few seconds, jittered, because the usual cause is two phones dialing each other at the same moment.
-- A peer stays queued after it is dialed, so a dropped link is redialed when its backoff lapses without waiting for the radio to report the peer again.
+- A dropped link is redialed when its backoff lapses, without waiting for the radio to report the peer again, because a peer stays queued after it is dialed.
 - Two phones that dial each other end up with two links to one person. Both keep the one the lower pubkey dialed and close the other, which needs no message between them.
-- A peripheral that took a disclosure and left before syncing is not redialed until its address rotates, so a harvester cannot drain the [disclosure bucket](./policy.md#discoverability) by being dialed again.
-- A peer that synced and then walked away is waited for: a standing connect that does not time out and survives the app being suspended, `connect` on iOS and an auto-connect on Android, given up once the peer's address has rotated. A suspended iPhone runs no timer, so without one a peer coming back is reached only if somebody happens to scan. A link that never synced gets no wait, since a peer that refused us would be reconnected the moment it was back.
+- A peripheral that took a disclosure and left before syncing is not redialed until its address rotates, so that a harvester cannot drain the [disclosure bucket](./policy.md#discoverability) by being dialed again.
+- A peer that synced and then walked away is waited for: a standing connect that does not time out and survives the app being suspended, `connect` on iOS and an auto-connect on Android, given up once the peer's address has rotated. A suspended iPhone runs no timer. Without the standing connect, a peer coming back is reached only if somebody happens to scan. A link that never synced gets no wait, since a peer that refused us would be reconnected the moment it was back.
 - A walk-away in the background restarts the scan, because iOS reports each peripheral once per scan there and a peer it already reported would otherwise never be seen again.
 - A Bluetooth relaunch keeps the connects still pending and tears down only the connected peripherals, whose sessions did not survive.
-- A teardown this device decided is not a walk-away and does not recover fast. Policy blocking the peer, a consent gate lapsing, a frame the wire cannot carry: redialing in fifteen seconds only reaches the same refusal, so it waits a minute. A gate the user refused outright waits longer still.
+- A teardown this device decided is not a walk-away and does not recover fast. Policy blocking the peer, a consent gate lapsing, a frame the wire cannot carry: each waits a minute, because redialing in fifteen seconds only reaches the same refusal. A gate the user refused outright waits longer still.
 
 bitchat's `BLEConnectionScheduler.swift` is the reference for this.
 
@@ -83,15 +83,15 @@ Every state above IDENTIFIED has a deadline of its own as well, independent of t
 
 The first frames on the secured channel are a recognition exchange, and the consent gate reads its result. At pairing, both sides derive a **pair secret** from the authenticated session and store it against the peer. On a later encounter, each proves it holds one without naming it, by sending a tag that is an HMAC over the session's handshake hash, keyed on the pair secret. The sender emits one tag per pair secret it holds; the receiver trial-MACs its own secrets against the list. A match identifies the relationship.
 
-The dialer sends first, and the peer answers only if a tag resolves or its disclosure bucket admits a stranger. A harvester that dials gets a list of random-looking bytes. A peer who would rather not be recognized omits their tag and arrives as a stranger. Forgetting somebody drops the pair secret held for them, so the two meet as strangers until a session completes and pairs them again.
+The dialer sends first, and the peer answers only if a tag resolves or its disclosure bucket admits a stranger. A harvester that dials gets a list of random-looking bytes. A peer who would rather not be recognized omits their tag and arrives as a stranger. Forgetting somebody drops the pair secret held for them. The two then meet as strangers until a session completes and pairs them again.
 
-The list is padded to a fixed count, so its length does not disclose how many peers the device has paired with, and a long history does not put more on the wire. Resolution stays cheap against the full set.
+The list is padded to a fixed count so that its length does not disclose how many peers the device has paired with, and a long history does not put more on the wire. Resolution stays cheap against the full set.
 
 #### On the wire
 
-The list is 32 tags of 32 bytes concatenated, so every device sends 1024 bytes on every encounter. Raw bytes rather than JSON, because the MTU is what binds this link and an array of decimal integers costs three times as much.
+The list is 32 tags of 32 bytes concatenated, which is 1024 bytes from every device on every encounter. Raw bytes rather than JSON, because the MTU is what binds this link and an array of decimal integers costs three times as much.
 
-A device holding fewer than 32 pair secrets fills the rest with bytes from the CSPRNG. One holding more sends a random sample, redrawn each session, so a peer left out of one list is in the running for the next rather than permanently invisible. The list is shuffled either way, so a peer that finds its own tag learns nothing from where it sat.
+A device holding fewer than 32 pair secrets fills the rest with bytes from the CSPRNG. One holding more sends a random sample, redrawn each session, so that a peer left out of one list is in the running for the next rather than permanently invisible. The list is shuffled either way, so that a peer that finds its own tag learns nothing from where it sat.
 
 A list of any other length is refused and the link dropped: a short one is malformed, and a long one is an invitation to trial-MAC against an unbounded set.
 
@@ -102,7 +102,7 @@ pair_secret = SHA256("dip/pair-secret" ‖ h)      # h at pairing time
 tag         = HMAC-SHA256(pair_secret, h)        # h at this encounter
 ```
 
-Domain-separated, so the secret cannot collide with any other use of the handshake hash. A session that recognized the peer leaves the secret alone. One that authenticated the peer without recognizing it replaces the secret on both sides, so a pairing that one device did not finish is repaired the next time the two meet.
+Domain-separated so that the secret cannot collide with any other use of the handshake hash. A session that recognized the peer leaves the secret alone. One that authenticated the peer without recognizing it replaces the secret on both sides, so that a pairing that one device did not finish is repaired the next time the two meet.
 
 ### The consent gate
 
@@ -114,11 +114,11 @@ If a peer isn't recognized, the app may refuse to connect depending on the user'
 
 A receiver that would hold a stranger first lets the exchange run until the dialer has proved its pubkey, which the dialer discloses first. A pubkey the user has named, which is a [contact](./policy.md#social-graph), passes without a prompt and without spending a disclosure, which repairs a pair secret only one of the two phones kept. Anybody else is held, and the prompt names the key they proved.
 
-The prompt carries a comparison value, derived from the session's handshake hash under its own domain label the way [login with device](./keys.md#login-with-device) derives its six digits. Noise XX authenticates nobody, and the gate runs before either side has named a pubkey, so this is the only thing the two users have to check: a device in the middle completes two handshakes and the two screens then disagree. A gate that cannot derive one asks nothing and stays held.
+The prompt carries a comparison value, derived from the session's handshake hash under its own domain label the way [login with device](./keys.md#login-with-device) derives its six digits. That value is the only thing the two users have to check, because Noise XX authenticates nobody and the gate runs before either side has named a pubkey. A device in the middle completes two handshakes and the two screens then disagree. A gate that cannot derive one asks nothing and stays held.
 
 The value the gate shows is five shapes drawn from an alphabet of eight in three tints, which is 24^5 and a little over 23 bits. The screen draws the whole space rather than a prefix of it.
 
-The pubkey each side proves afterwards is announced to the shell as it is proved. The gate runs first, so a pet name the user typed there is for the person in front of them, and this is what says which key that person holds.
+The pubkey each side proves afterwards is announced to the shell as it is proved. The gate runs first. A pet name the user typed there is for the person in front of them, and this is what says which key that person holds.
 
 If neither party drops the connection, the dialer identifies itself first via [NIP 42 AUTH](./nips/p2p-auth.md#mutual-authentication). This gives the receiver the chance to drop the connection without identifying itself.
 
@@ -132,7 +132,7 @@ So once a peer the user has not named identifies itself, the device asks to pair
 
 ## Heartbeat and teardown
 
-The heartbeat is **liveness, not authorization**. Proximity is already guaranteed by transport configuration (see [`transport.md`](./transport.md)), so the heartbeat's only job is cleanup, and it can afford to be lenient.
+The heartbeat is **liveness, not authorization**. The heartbeat's only job is cleanup, because proximity is already guaranteed by transport configuration (see [`transport.md`](./transport.md)), and it can afford to be lenient.
 
 Interval: 15–30 s when connected, jittered. A 60 s timeout is 2–4 missed beacons, matching bitchat's reachability window.
 
@@ -141,4 +141,4 @@ Interval: 15–30 s when connected, jittered. A 60 s timeout is 2–4 missed bea
 | BLE link healthy | Nothing. |
 | Heartbeat missed, session idle | After 60 s → DRAINING → CLOSED. |
 | Heartbeat missed, transfer in flight | DRAINING: accept no new work, let in-flight transfers finish. Hard cap 5 min. Do not kill a working transfer over two missed beacons — radio contention during bulk transfer and iOS background throttling both cause them. |
-| Clean BLE disconnect event | Immediate close. Disconnects are reliable when they fire, and nothing in flight can finish on a dead link, so there is no drain to wait out; the timeout is for the ambiguous case. |
+| Clean BLE disconnect event | Immediate close. There is no drain to wait out, because disconnects are reliable when they fire and nothing in flight can finish on a dead link. The timeout is for the ambiguous case. |

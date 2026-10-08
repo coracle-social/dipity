@@ -42,7 +42,7 @@ export const notes = (nextHeading < 0 ? remainder : remainder.slice(0, nextHeadi
 export const versionName = gradleConfig.match(/versionName "(.+)"/)[1]
 export const versionCode = Number(gradleConfig.match(/versionCode (\d+)/)[1])
 
-// Play caps release notes at 500 characters, so cut at the last whole line under it
+// Release notes are cut at the last whole line under Play's 500-character cap
 const noteLines = notes.split("\n")
 
 while (noteLines.join("\n").length > 500) {

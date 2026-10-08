@@ -1,7 +1,7 @@
 //! The store through its public surface: the use cases in `db::query` and
 //! `db::command`, against a real file, reached the way the shell reaches it.
 //!
-//! The unit tests each build their own in-memory store, so nothing there
+//! The unit tests each build their own in-memory store. Nothing there
 //! touches [`dip::db::Db::open`], the migrations against a file, WAL, or the
 //! transaction each use case opens.
 
@@ -35,8 +35,8 @@ fn database_directory(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("dip-store-test-{}-{name}", std::process::id()))
 }
 
-/// A key from a seed, so a fixture is reproducible. `PublicKey` holds nothing
-/// that is not a point on the curve, so these are real keys.
+/// A key from a seed so that a fixture is reproducible. These are real keys,
+/// because `PublicKey` holds nothing that is not a point on the curve.
 fn secret(seed: u8) -> SecretKey {
     SecretKey::from_hex(&hex::encode([seed; 32])).unwrap()
 }
@@ -267,7 +267,7 @@ fn the_store_serves_its_use_cases() {
         .is_empty()
     );
 
-    // WAL, so the sidecars sit beside the database, all three in one class. docs/storage.md.
+    // Under WAL the sidecars sit beside the database, all three in one class. docs/storage.md.
     assert!(directory.join("dip.sqlite").exists());
     assert!(directory.join("dip.sqlite-wal").exists());
 
@@ -298,7 +298,7 @@ fn one_event_can_be_dropped_outright() {
     assert!(query::get_event(&db, &id(&theirs)).unwrap().is_none());
     assert!(query::get_event(&db, &id(&keeping)).unwrap().is_some());
 
-    // The proof went with it, so nothing is left claiming this device may pass it on.
+    // The proof went with it, and nothing is left claiming this device may pass it on.
     assert!(
         query::get_signature(&db, &id(&theirs), &us())
             .unwrap()
@@ -345,7 +345,7 @@ fn two_stores_in_one_process_share_nothing() {
         "a write to one store was announced on the other's channel"
     );
 
-    // And the row is one store's alone, so the same event is new to the other.
+    // The row is one store's alone, and the same event is new to the other.
     assert_eq!(
         query::list_events(&alice, &Query::new()).unwrap(),
         vec![note.clone()]

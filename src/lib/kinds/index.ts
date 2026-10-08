@@ -3,7 +3,7 @@
 // A reader is the only thing that touches tags, and a component reaches for one
 // of the configured kinds below rather than for a tag name.
 // `docs/ui.md#domain-kinds`. A topic is the exception. It is a `t` tag every
-// kind carries the same way, so no reader models it and the helpers below read
+// kind carries the same way. No reader models it, and the helpers below read
 // it through `@welshman/util`'s own tag spec.
 //
 // The resolver answers no relays, which is the truth rather than a stub: there
@@ -95,7 +95,7 @@ export const mute = MuteList.configure(context)
  * What the user bookmarked.
  *
  * Only the public half is reachable: NIP-51 keeps private entries as ciphertext
- * and there is no signer here, so nothing could read them back. The list is
+ * and there is no signer here to read them back. The list is
  * served to no peer instead, which is what keeps it private.
  * `docs/policy.md#sharing`.
  */
@@ -145,8 +145,8 @@ export const commentedOn = (event: HashedEvent) =>
 /**
  * A comment on something, addressed to its parent and to the thread root.
  *
- * A comment on a comment keeps the root its parent named, so however deep a
- * conversation goes it still says what it started from.
+ * A comment on a comment keeps the root its parent named. However deep a
+ * conversation goes, it still says what it started from.
  */
 export const commentOn = (parent: HashedEvent) => comment.writer().replyTo(parent)
 
@@ -199,29 +199,14 @@ export const categoryOf = (kind: number) =>
   categories.find(category => category.kinds.includes(kind)) ?? categories[0]
 
 /**
- * One subject a post can be filed under, and what it is called.
+ * A topic as the user typed it, in the one spelling every phone files it under.
  *
- * A category is what kind of thing a post is and a topic is what it is about,
- * so the two narrow the board independently.
+ * Topics are free text. Two people typing `#Garden` and `garden` have to land
+ * on the same tag for a filter or a mute to catch both, and both match a tag
+ * exactly, as the core does. Undefined for nothing.
  */
-export type Topic = {id: string; label: string}
-
-/**
- * The subjects a post can be filed under, which is a closed set.
- *
- * Two phones that have never met agree on what a filter and a mute mean, which
- * free text could not give them. A `t` tag naming something outside the set is
- * read and can be muted. It has no entry in the filter.
- */
-export const topics: Topic[] = [
-  {id: "notices", label: "Notices"},
-  {id: "lost-and-found", label: "Lost and found"},
-  {id: "help", label: "Asking for help"},
-  {id: "spare", label: "Spare and free"},
-  {id: "for-sale", label: "For sale"},
-  {id: "meetups", label: "Getting together"},
-  {id: "recommendations", label: "Recommendations"},
-]
+export const topicFrom = (text: string) =>
+  text.trim().replace(/^#+/, "").trim().toLowerCase().replace(/\s+/g, "-") || undefined
 
 /** The topic a post is filed under, or undefined for one filed under none. */
 export const topicOf = (event: HashedEvent) => tagValue(topicTags("t"), event.tags)
@@ -229,8 +214,8 @@ export const topicOf = (event: HashedEvent) => tagValue(topicTags("t"), event.ta
 /** Every topic a list names, which is how the mute list carries muted topics. */
 export const topicsIn = (event: HashedEvent) => uniq(tagValues(topicTags("t"), event.tags))
 
-/** What a topic is called, which is its own name when it came from outside the set. */
-export const topicLabel = (id: string) => topics.find(topic => topic.id === id)?.label ?? id
+/** How a topic is shown, which is how it would be written in a post. */
+export const topicLabel = (topic: string) => `#${topic}`
 
 /** File a post under a topic, which every kind carries the same way. */
 export const withTopic = <W extends {addTags: (...tags: string[][]) => W}>(
@@ -260,8 +245,8 @@ export const summaryOf = (event: HashedEvent) => {
 /**
  * The kinds that put a count or a mark on something rather than standing alone.
  *
- * A comment is not among them. It carries words of its own, so it is a card on
- * the board as well as a line under what it answers, and the screen that
+ * A comment is not among them. It is a card on the board as well as a line
+ * under what it answers, because it carries words of its own. The screen that
  * collects it reads the parent tag instead.
  */
 export const responseKinds = [REPOST, REACTION, GENERIC_REPOST, POLL_RESPONSE]

@@ -14,7 +14,7 @@
 // it from: a peer offering this device its identity is `dip.receiveOffer(link)`,
 // since nothing in a neighborhood should volunteer a key on a timer.
 //
-// Loaded by a dynamic import under `import.meta.env.DEV`, so neither this
+// Loaded by a dynamic import under `import.meta.env.DEV` so that neither this
 // module nor faker reaches the bundle the shells load.
 
 import {WebPlugin} from "@capacitor/core"
@@ -160,7 +160,7 @@ export class Simulator extends WebPlugin implements DipCore {
       this.paired.add(person.pubkey)
     }
 
-    // Reachable as `dip` in the console, so a gate with no screen yet can still be answered.
+    // Reachable as `dip` in the console so that a gate with no screen yet can still be answered.
     Object.assign(window, {dip: this})
   }
 
@@ -327,7 +327,7 @@ export class Simulator extends WebPlugin implements DipCore {
    * over.
    *
    * Announced the way the core announces it, and closed ninety seconds later
-   * when they have walked far enough — the view is told both, so a screen
+   * when they have walked far enough — the view is told both so that a screen
    * naming a link knows when there is nothing behind it.
    */
   private open(link: number, person: Person, recognized: boolean) {
@@ -636,7 +636,7 @@ export class Simulator extends WebPlugin implements DipCore {
     const held = this.media.get(wanted)
     const mime = this.store.blob(wanted)?.mime_type ?? "application/octet-stream"
 
-    // A browser has no files of ours to point at, so the bytes ride in the URL.
+    // The bytes ride in the URL, because a browser has no files of ours to point at.
     return {path: held ? `data:${mime};base64,${held}` : null}
   }
 

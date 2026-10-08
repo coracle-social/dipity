@@ -87,11 +87,11 @@
       <Pairing request={asked} />
     {/if}
   </div>
-  <!-- The bar grows by the home indicator's strip, so the page's last line clears it too. -->
+  <!-- The bar grows by the home indicator's strip so that the page's last line clears it too. -->
   <div class="h-safe-b flex-none"></div>
 </div>
 
-<!-- One stack along the bottom, so the bar, the tray and the button cannot overlap. -->
+<!-- One stack along the bottom so that the bar, the tray and the button cannot overlap. -->
 <div class={["pointer-events-none fixed inset-x-0 bottom-0 z-20", $session.receiving && "hidden"]}>
   {#if $place.at === "board"}
     <div class="mx-auto flex max-w-2xl justify-end px-5 pb-4">

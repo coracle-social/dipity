@@ -4,8 +4,8 @@ import UserNotifications
 /// Local notifications. The core decides what to say and when, and the shell
 /// posts it.
 ///
-/// Each announcement has one identifier, so a newer count replaces the last
-/// rather than stacking. `docs/storage.md#notifications`.
+/// A newer count replaces the last rather than stacking, because each
+/// announcement has one identifier. `docs/storage.md#notifications`.
 enum Alerts {
     /// Post what the core asked for.
     static func post(_ announcement: Announcement) {
@@ -29,7 +29,7 @@ enum Alerts {
         UNUserNotificationCenter.current().add(request)
     }
 
-    /// The user is looking, so what was announced has been seen.
+    /// What was announced has been seen, because the user is looking.
     static func clear() {
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
     }

@@ -10,10 +10,10 @@
   import {logOut, npubOf, session} from "$lib/data/session"
   import {clear, compare, offer, step} from "$lib/data/transfer"
 
-  // The phone's own back button leaves without passing through here, so the ending goes on the way out.
+  // The ending goes on the way out, because the phone's own back button leaves without passing through here.
   $effect(() => clear)
 
-  // A stand-in identity has nowhere to go back to, so leaving gives it up.
+  // Leaving gives up a stand-in identity, which has nowhere to go back to.
   const leave = () => ($session.receiving ? logOut() : back())
 
   const done = () => back() || swap({at: "board"})

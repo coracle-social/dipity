@@ -1,7 +1,7 @@
 // Writing the key down, which the core and the shell do on the view's behalf.
 //
-// The core writes the file and the shell puts it in front of the user, so the
-// view never holds the key or the path. What comes back is whether anything
+// The view never holds the key or the path, because the core writes the file
+// and the shell puts it in front of the user. What comes back is whether anything
 // took a copy, through a listener, since the sheet answers after the call that
 // opened it. `docs/keys.md#backup`.
 

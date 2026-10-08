@@ -134,7 +134,7 @@ pub fn remove(tx: &Tx<'_>, sha256: &BlobHash) -> Result<bool> {
 /// every blob no other event still references.
 ///
 /// The reference rows would go by cascade anyway, and silently — nothing would
-/// announce the blobs they were the last claim on, so nothing would reclaim the
+/// announce the blobs they were the last claim on, and nothing would reclaim the
 /// bytes. Dropping them here is what makes the deletion say so.
 pub fn remove_for_event(tx: &Tx<'_>, event_id: &EventId) -> Result<()> {
     let referenced = query::list_for_event(tx, event_id)?;
@@ -212,7 +212,7 @@ mod tests {
         let second = store_event(&tx, "one blob");
         let bare = store_event(&tx, "no blobs at all");
 
-        // Recorded out of hash order, so grouping cannot be passing by accident.
+        // Recorded out of hash order, to keep grouping from passing by accident.
         for (sha256, event_id) in [
             (blob_hash(3), &first),
             (blob_hash(1), &first),
@@ -304,7 +304,7 @@ mod tests {
         assert!(mark_complete(&tx, &hash, 8_192, 100).unwrap());
         assert!(query::wanted(&tx, 10).unwrap().is_empty());
 
-        // Already whole, so there is nothing to announce a second time.
+        // Nothing to announce a second time, because it is already whole.
         assert!(!mark_complete(&tx, &hash, 8_192, 200).unwrap());
 
         let blob = query::get(&tx, &hash).unwrap().unwrap();
@@ -338,7 +338,7 @@ mod tests {
         record(&tx, &Blob::new(hash.clone(), BlobRole::Original), &event_id).unwrap();
         record_progress(&tx, &hash, 4_096).unwrap();
 
-        // Nothing could evict it, so counting it would hold the cache over its ceiling for good.
+        // Counting it would hold the cache over its ceiling for good, as nothing could evict it.
         assert_eq!(query::stored_bytes(&tx, BlobRole::Original).unwrap(), 0);
     }
 
@@ -395,7 +395,7 @@ mod tests {
         assert!(query::events_referencing(&tx, &hash).unwrap().is_empty());
     }
 
-    /// The bytes are reclaimed off this notification, so a deletion that goes
+    /// The bytes are reclaimed off this notification. A deletion that goes
     /// by cascade and announces nothing leaves them on disk forever. A blob
     /// another event still wants must not be announced at all.
     #[test]

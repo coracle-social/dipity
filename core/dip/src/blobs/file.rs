@@ -10,8 +10,8 @@ use crate::blobs::BlobStore;
 use crate::model::BlobHash;
 
 /// What an outboard tree's file is called, over the name of the content it
-/// proves. Not 64 hex characters, so it is never mistaken for a blob by
-/// [`hashes`](BlobStore::hashes) or by the sweep that reads it.
+/// proves. It is never mistaken for a blob by [`hashes`](BlobStore::hashes)
+/// or by the sweep that reads it, because it is not 64 hex characters.
 const OUTBOARD_SUFFIX: &str = ".obao";
 
 /// A blob store over a directory the shell provides.
@@ -154,7 +154,7 @@ impl BlobStore for FileBlobStore {
                 .context("reading a blob store directory entry")?
                 .file_name();
 
-            // A name that is not a hash was not written by `append`, so it is not the store's.
+            // A name that is not a hash is not the store's, because `append` did not write it.
             if let Some(hash) = name.to_str().and_then(|name| BlobHash::parse(name).ok()) {
                 hashes.push(hash);
             }

@@ -1,7 +1,7 @@
 // Xcode compiles a list, not a directory, and that list is `project.pbxproj`. A
 // Swift file on disk that nothing references builds nowhere, with no error — see
-// core/README.md#the-xcode-project. Nothing on Linux can open the project, so these
-// are the parts of it a machine can still check.
+// core/README.md#the-xcode-project. These are the parts of it a machine can still
+// check, because nothing on Linux can open the project.
 
 import {existsSync, readdirSync, readFileSync} from "node:fs"
 

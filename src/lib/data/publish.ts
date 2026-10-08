@@ -19,8 +19,8 @@ const now = () => Math.floor(Date.now() / 1000)
  * the core stores beside it.
  *
  * `replacing` is the event this one supersedes, for a replaceable kind. Two
- * versions stamped in the same second are settled by the lower id, so an edit
- * made within a second of the last is refused and nothing says so — the store
+ * versions stamped in the same second are settled by the lower id. An edit made
+ * within a second of the last is therefore refused, and nothing says so — the store
  * answers with the old one and the screen redraws it. Stamping after the
  * version being replaced is what makes the write land.
  * `core/dip/src/db/event/command.rs`.

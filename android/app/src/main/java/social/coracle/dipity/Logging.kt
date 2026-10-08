@@ -30,7 +30,7 @@ class Logcat : Logger {
         /**
          * Route the core's log here, at the level this build carries.
          *
-         * Called once, before the core is opened, so a failure on the way up is
+         * Called once, before the core is opened so that a failure on the way up is
          * logged rather than being the first thing nobody sees. Debuggable is
          * read off the manifest rather than `BuildConfig`, which the app module
          * does not generate.

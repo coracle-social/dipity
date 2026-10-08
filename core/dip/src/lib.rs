@@ -13,14 +13,14 @@
 //! which table holds them.
 //!
 //! Nostr's own types are `coracle-lib`'s, not this crate's: events, keys, tags,
-//! kinds, addresses, filters and NIP-77 items. They have to agree byte for byte
-//! with a peer running the other platform's build, so there is one definition
-//! of each and it is not here.
+//! kinds, addresses, filters and NIP-77 items. There is one definition of each
+//! and it is not here, because they have to agree byte for byte with a peer
+//! running the other platform's build.
 //!
 //! [`db::query`] and [`db::command`] are the way in, and they are the only way
 //! in: one function per question asked and per thing that happens, each opening
 //! a transaction and threading it through however many tables the answer takes.
-//! Nothing outside them holds a transaction, so a change that spans tables
+//! Nothing outside them holds a transaction. A change that spans tables
 //! cannot half-happen and a caller cannot assemble an answer in the wrong
 //! order.
 //!

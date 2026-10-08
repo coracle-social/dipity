@@ -1,12 +1,12 @@
 //! The comparison value two users read off their screens to prove that nothing
 //! sits between them.
 //!
-//! Noise XX authenticates nobody on its own, so both of dip's rituals end in two
-//! people comparing something: the consent gate before either side has named a
-//! pubkey (`docs/discovery.md#the-consent-gate`), and login with device before
-//! the key moves (`docs/keys.md#login-with-device`). A machine in the middle
-//! completes two handshakes and holds two transcripts, so the two devices show
-//! different values.
+//! Both of dip's rituals end in two people comparing something, because Noise
+//! XX authenticates nobody on its own: the consent gate before either side has
+//! named a pubkey (`docs/discovery.md#the-consent-gate`), and login with device
+//! before the key moves (`docs/keys.md#login-with-device`). A machine in the
+//! middle completes two handshakes and holds two transcripts, and the two
+//! devices show different values.
 //!
 //! The label is what stops one ritual's value standing in for the other's, and
 //! `space` is how many values the screen it lands on can actually draw.
@@ -26,8 +26,8 @@ pub const PAIRING_LABEL: &[u8] = b"dip/pairing/sas";
 /// How many values the pairing gate can show: five shapes drawn from an
 /// alphabet of eight in three tints.
 ///
-/// The screen draws the whole space rather than a prefix of it, so a wider one
-/// here shows the user nothing and a narrower one throws entropy away.
+/// The screen draws the whole space rather than a prefix of it. A wider one
+/// here shows the user nothing, and a narrower one throws entropy away.
 pub const PAIRING_SPACE: u32 = 24 * 24 * 24 * 24 * 24;
 
 /// The value both devices display, derived from the transcript they share.

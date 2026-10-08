@@ -1,7 +1,7 @@
 // Asking the core something, and asking it again when the answer changed.
 //
-// The core announces the group of tables that moved and not the rows, so a
-// query is the only thing that knows what belongs on screen: everything here
+// A query is the only thing that knows what belongs on screen, because the core
+// announces the group of tables that moved and not the rows. Everything here
 // re-reads rather than patches. `docs/ui.md#components-do-not-query-the-core`.
 
 import {derived, readable, writable, type Readable} from "svelte/store"
@@ -82,7 +82,7 @@ export const parsed = <Value>(key: string, value: string | null, fallback: Value
  *
  * `docs/ui.md#held-by-review` puts durable state in the plugin rather than in
  * the view, and a preference is the plugin's own vocabulary for one. A value set
- * here is answered at once, ahead of the store's round trip, so two changes in
+ * here is answered at once, ahead of the store's round trip so that two changes in
  * quick succession build on each other rather than both on the value before.
  */
 export const remembered = <Value>(key: string, fallback: Value) => {

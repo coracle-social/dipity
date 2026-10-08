@@ -6,8 +6,8 @@ use crate::model::Standing;
 
 /// The tiers every policy setting is expressed on, narrowest first.
 ///
-/// Ordered, so a wider scope admits everyone a narrower one does and
-/// [`admits`](Self::admits) is a comparison rather than a table.
+/// The tiers are ordered. A wider scope admits everyone a narrower one does,
+/// and [`admits`](Self::admits) is a comparison rather than a table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {
@@ -61,7 +61,7 @@ mod tests {
             );
         }
 
-        // Block is not a tier, so it is outside even the widest scope.
+        // Block is not a tier and is outside even the widest scope.
         assert!(!Scope::Public.admits(Standing::Blocked));
         assert!(Scope::Contacts.admits(Standing::Contact));
         assert!(!Scope::Contacts.admits(Standing::Network));

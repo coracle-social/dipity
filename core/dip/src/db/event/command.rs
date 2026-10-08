@@ -2,7 +2,7 @@
 //! `event_shared`, `event_trashed` and `event_refused`.
 //!
 //! [`save`] is the whole of ingest below the policy layer: it enforces what the
-//! tables mean to each other, so an event, its indexes, its sightings and the
+//! tables mean to each other. An event, its indexes, its sightings and the
 //! refusals that keep a deleted or superseded one out change together.
 
 use anyhow::{Context, Result};
@@ -27,7 +27,7 @@ use super::query;
 ///
 /// Both come from the same session: a peer may prove more than one identity,
 /// and each of them is a true sighting. A locally authored event goes through
-/// here too, naming the author's own pubkey in `from`, so every stored event
+/// here too, naming the author's own pubkey in `from`, so that every stored event
 /// has provenance and a seen time.
 ///
 /// Nothing is stored when the event is ephemeral, when this device already
@@ -74,8 +74,8 @@ pub fn save(tx: &Tx<'_>, event: &HashedEvent, from: &[PublicKey], seen_at: i64) 
     Ok(true)
 }
 
-/// Remember that this device declined `event`, so reconciliation counts it as
-/// held and no peer delivers it again. `by_policy` marks a refusal the user's
+/// Remember that this device declined `event`, so that reconciliation counts it
+/// as held and no peer delivers it again. `by_policy` marks a refusal the user's
 /// settings made, which [`forget_policy_refusals`] undoes.
 pub fn refuse(tx: &Tx<'_>, event: &HashedEvent, by_policy: bool, at: i64) -> Result<()> {
     tx.prepare_cached(
@@ -113,7 +113,7 @@ fn record_seen_all(
 /// Record that an event was seen from a peer, if that pair is not already
 /// recorded. Returns whether this was a new sighting.
 ///
-/// The one place a sighting is written, so it is the one place `event.seen_at`
+/// The one place a sighting is written, and the one place `event.seen_at`
 /// is kept at the earliest of them.
 pub fn record_seen(
     tx: &Tx<'_>,
@@ -154,7 +154,7 @@ pub fn record_seen(
 /// recorded. Returns whether this is the first time it went there.
 ///
 /// The one place a handoff is written. A peer this device has already served an
-/// event to is left alone, so a row says the device carried the event to
+/// event to is left alone. A row says the device carried the event to
 /// somebody rather than how many times it answered for it.
 pub fn record_shared(
     tx: &Tx<'_>,
@@ -238,7 +238,7 @@ fn restore(tx: &Tx<'_>, id: &EventId) -> Result<bool> {
 /// The tag, provenance, signature and blob rows go by cascade; the full-text row is
 /// deleted by hand, since a virtual table has no foreign keys.
 pub fn delete(tx: &Tx<'_>, id: &EventId) -> Result<bool> {
-    // Ahead of the row the foreign key hangs off, so each blob announces its own removal.
+    // Ahead of the row the foreign key hangs off, so that each blob announces its own removal.
     blob::remove_for_event(tx, id)?;
 
     tx.prepare_cached("DELETE FROM event_fts WHERE event_id = ?1")?
@@ -260,7 +260,7 @@ pub fn delete(tx: &Tx<'_>, id: &EventId) -> Result<bool> {
 }
 
 /// The most refusals a sweep keeps, newest first. Each is an id reconciliation
-/// counts as held, so an event the sweep let go is not taken back from the peer
+/// counts as held. An event the sweep let go is not taken back from the peer
 /// it was handed to. `docs/storage.md#retention`.
 pub const REFUSALS_KEPT: i64 = 50_000;
 
@@ -268,13 +268,13 @@ pub const REFUSALS_KEPT: i64 = 50_000;
 /// remembering each as refused so it is not taken back.
 /// `docs/storage.md#retention`.
 ///
-/// Arrival rather than age, so a post written long ago is new here when it
-/// lands, and arrival rather than circulation, so two phones handing a post
-/// back and forth cannot keep it alive between them.
+/// The cutoff is on arrival rather than age, which makes a post written long ago
+/// new here when it lands. It is on arrival rather than circulation, which keeps
+/// two phones handing a post back and forth from keeping it alive between them.
 ///
-/// A bookmarked event stays. The user's own bookmark list is the only thing
-/// that says to keep something somebody else wrote, so the sweep reads it
-/// rather than taking the note and leaving the bookmark naming nothing.
+/// A bookmarked event stays, rather than the note going and the bookmark naming
+/// nothing. The user's own bookmark list is the only thing that says to keep
+/// something somebody else wrote.
 pub fn forget_seen_before(
     tx: &Tx<'_>,
     identity: &PublicKey,
@@ -318,7 +318,7 @@ pub fn forget_seen_before(
         .with_context(|| format!("remembering that {id} was forgotten"))?;
     }
 
-    // What settings refused is cheap to refuse again, so it ages out with the window.
+    // What settings refused ages out with the window, because it is cheap to refuse again.
     tx.prepare_cached("DELETE FROM event_refused WHERE by_policy = 1 AND refused_at < ?1")?
         .execute(params![cutoff])
         .context("forgetting old policy refusals")?;
@@ -391,7 +391,7 @@ pub fn evict_authors(
 /// little it circulates.
 ///
 /// `is_replaceable` covers kind 0, kind 3 and the 10000s. A contact card is
-/// addressable, so it is named here, and so is a deletion request, which is
+/// addressable and is named here, as is a deletion request, which is
 /// what keeps the event it deleted out. `docs/storage.md#retention`.
 fn is_state(kind: u16) -> bool {
     is_replaceable(kind) || kind == CONTACT || kind == delete::KIND
@@ -505,7 +505,7 @@ fn apply_deletion(tx: &Tx<'_>, event: &HashedEvent, at: i64) -> Result<()> {
 }
 
 /// Take back out of the trash what a now-retracted kind 5 put there, and
-/// forget the refusals it made, so what it named can arrive again.
+/// forget the refusals it made, so that what it named can arrive again.
 fn undo_deletion(tx: &Tx<'_>, retracted: &HashedEvent) -> Result<()> {
     let restored = tx
         .prepare_cached("DELETE FROM event_trashed WHERE deletion = ?1 RETURNING event_id")?
@@ -570,7 +570,7 @@ mod tests {
         let tags = Tags::new()
             .add("t", ["town"])
             .add("A", ["upper"])
-            // Single character, but not alphanumeric, so not filterable.
+            // Single character, but not filterable because it is not alphanumeric.
             .add("-", ["protected"])
             .add("imeta", ["url https://example.com/x.jpg"]);
         let subject = note(author(1), 100, "hello neighbor", tags);
@@ -687,7 +687,7 @@ mod tests {
         save(&tx, &first, &[peer()], 10).unwrap();
         save(&tx, &second, &[peer()], 20).unwrap();
 
-        // Different identifiers, so neither replaces the other.
+        // Neither replaces the other, because their identifiers differ.
         assert_eq!(query::count(&tx, &everything()).unwrap(), 2);
 
         let replacement = event(
@@ -881,7 +881,7 @@ mod tests {
         assert!(!save(&tx, &subject, &[peer()], 20).unwrap());
         assert!(query::get(&tx, &id(&subject)).unwrap().is_none());
 
-        // Remembered as refused, so reconciliation stops reporting it missing.
+        // Reconciliation stops reporting it missing once it is remembered as refused.
         let refused: Vec<_> = query::refused(&tx)
             .unwrap()
             .into_iter()
@@ -916,7 +916,7 @@ mod tests {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        // An address names a slot, so a request bounds what it reaches by its own timestamp.
+        // A request bounds what it reaches by its own timestamp, because an address names a slot.
         let address = event(
             author(1),
             30_023,
@@ -985,7 +985,7 @@ mod tests {
 
         let shares = query::shares_for(&tx, &[stored]).unwrap();
 
-        // The first handoff is the one kept, so its time survives the second.
+        // The first handoff is the one kept, and its time survives the second.
         assert_eq!(
             shares[&stored],
             vec![
@@ -1055,7 +1055,7 @@ mod tests {
         );
     }
 
-    /// Both have one sighting that never refreshes, so both read as stale.
+    /// Both read as stale, with one sighting that never refreshes.
     #[test]
     fn a_sweep_keeps_own_events_and_replaceable_state() {
         let mut db = Db::open_in_memory().unwrap();
@@ -1076,8 +1076,8 @@ mod tests {
         assert!(query::get(&tx, &id(&their_note)).unwrap().is_none());
     }
 
-    /// A card is addressable rather than replaceable, so `is_replaceable`
-    /// answers no for it and the sweep has to spare it by name.
+    /// A card is addressable rather than replaceable. `is_replaceable` answers
+    /// no for it, and the sweep has to spare it by name.
     #[test]
     fn a_sweep_keeps_somebody_elses_name_for_a_person() {
         let mut db = Db::open_in_memory().unwrap();
@@ -1123,7 +1123,7 @@ mod tests {
         assert!(!save(&tx, &subject, &[peer()], 600).unwrap());
     }
 
-    /// Bookmarking is the only way to say "keep this", so the sweep reads it.
+    /// The sweep reads bookmarks, because bookmarking is the only way to say "keep this".
     #[test]
     fn a_sweep_keeps_what_the_user_bookmarked() {
         let mut db = Db::open_in_memory().unwrap();
@@ -1263,7 +1263,7 @@ mod tests {
         save(&tx, &subject, &[author(3)], 900).unwrap();
         assert_eq!(cached(), Some(500));
 
-        // One that arrives out of order lowers it, so cache and rows cannot part company.
+        // One that arrives out of order lowers it, keeping cache and rows together.
         save(&tx, &subject, &[author(4)], 200).unwrap();
         assert_eq!(cached(), Some(200));
 

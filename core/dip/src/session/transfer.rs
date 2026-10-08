@@ -1,11 +1,11 @@
 //! Login with device: handing the nostr identity to a second device over an
 //! established session. `docs/keys.md#login-with-device`.
 //!
-//! This is deliberate key exfiltration, so nothing about it is implicit. Both
-//! users act — the source starts the flow, the target answers a prompt, and the
-//! source answers one more — and both compare the six digits
-//! [`sas`](crate::session::sas) derives from the Noise transcript before the key
-//! moves.
+//! Nothing about this is implicit, because it is deliberate key exfiltration.
+//! Both users act — the source starts the flow, the target answers a prompt,
+//! and the source answers one more — and both compare the six digits
+//! [`sas`](crate::session::sas) derives from the Noise transcript before the
+//! key moves.
 //!
 //! The comparison is what authenticates the flow, and it is the only thing that
 //! does. NIP-42 cannot help: the target authenticates as the identity it made
@@ -53,7 +53,7 @@ pub struct IdentityTransfer {
 /// Where an identity transfer has got to.
 ///
 /// Both users answer the same question — does the other device show this
-/// number — and either may answer first, so the source carries whether its own
+/// number — and either may answer first. The source carries whether its own
 /// user has already said yes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Step {
@@ -80,7 +80,7 @@ enum Step {
 pub enum Outcome {
     /// The key arrived and is waiting for the shell to take it.
     Received,
-    /// The key left this device, so the peer now holds this identity too.
+    /// The key left this device, and the peer now holds this identity too.
     Sent,
     /// One of the two users said no, or the peer could not run the flow.
     Refused,
@@ -166,7 +166,7 @@ impl IdentityTransfer {
 
                 Ok(None)
             }
-            // Either user may answer first, so an accept lands on a source already confident.
+            // Either user may answer first, and this accept finds the source already confident.
             (
                 message::ACCEPT,
                 Some(Step::Offered {
@@ -275,8 +275,8 @@ impl IdentityTransfer {
 
 /// A `KEY` frame: the discriminant and the 32 secret key bytes.
 ///
-/// `coracle-lib` opens one door out of a `SecretKey` and it is hex, so the
-/// round trip lives here rather than at the call site.
+/// The round trip lives here rather than at the call site, because
+/// `coracle-lib` opens one door out of a `SecretKey` and it is hex.
 fn key_frame(identity: &SecretKey) -> Vec<u8> {
     let hex = Zeroizing::new(identity.to_hex());
     let bytes = Zeroizing::new(hex::decode(&*hex).expect("a key is 32 bytes of hex"));

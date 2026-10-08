@@ -39,9 +39,9 @@ export default {
       packageName: gradleConfig.match(/applicationId "(.+)"/)[1],
     })
 
-    // Play never takes a version code twice, so a rerun after an upload goes on to finish the
-    // release with that bundle. Rebuilding would change its bytes, so it only counts as this
-    // build while the aab on disk is the one that went up.
+    // A rerun after an upload goes on to finish the release with that bundle, because Play never
+    // takes a version code twice. That bundle counts as this build only while the aab on disk is
+    // the one that went up, because rebuilding would change its bytes.
     const uploaded = (await api.bundles()).find(spec({versionCode}))
 
     if (uploaded) {

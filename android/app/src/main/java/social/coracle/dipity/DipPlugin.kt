@@ -41,8 +41,8 @@ private const val SHARE_GRACE = 5 * 60 * 1000L
  * The webview's end of the core.
  *
  * A method per call the view makes, over the core [Encounters] holds for as long
- * as the process lives. The plugin lives only as long as its activity, so it
- * opens nothing it would have to close: it attaches to [Encounters] as the view,
+ * as the process lives. The plugin opens nothing it would have to close, because
+ * it lives only as long as its activity. It attaches to [Encounters] as the view,
  * and detaches when the activity goes. Everything below the bridge is
  * `dip_ffi`; nothing here decides anything about gossip, the radio schedule or
  * policy.
@@ -178,9 +178,9 @@ class DipPlugin : Plugin(), Encounters.View {
      * The `imeta` entries an event has to carry for a peer to fetch `media` and
      * check what it gets, base64 in.
      *
-     * Describing bytes stores nothing, so this is the one node call needing no
-     * started core: the view composes the tag, signs the event, and hands both
-     * to [publish]. `docs/storage.md#blob-store`.
+     * This is the one node call needing no started core, because describing
+     * bytes stores nothing. The view composes the tag, signs the event, and
+     * hands both to [publish]. `docs/storage.md#blob-store`.
      */
     @PluginMethod
     fun mediaTags(call: PluginCall) {
@@ -254,8 +254,8 @@ class DipPlugin : Plugin(), Encounters.View {
      *
      * The key is handed out once and does not cross the bridge: it is written to
      * the Keystore here, the same custody path a generated one takes, and the
-     * node is reopened under it. Answers what `start` answers, so the view reads
-     * the new identity off the same field.
+     * node is reopened under it. It answers what `start` answers, with the new
+     * identity on the same field.
      */
     @PluginMethod
     fun takeTransferredIdentity(call: PluginCall) {
@@ -303,8 +303,8 @@ class DipPlugin : Plugin(), Encounters.View {
     private fun export(call: PluginCall) {
         val core = this.core ?: return call.reject("exportKey needs a started core")
 
-        // One chooser means one call waiting on it, so whoever this displaces
-        // is answered rather than left on a promise that never settles.
+        // Whoever this displaces is answered rather than left on a promise that
+        // never settles, because one chooser means one call waiting on it.
         exporting?.reject("another key export replaced this one")
         exporting = call
 
@@ -319,7 +319,7 @@ class DipPlugin : Plugin(), Encounters.View {
     }
 
     /**
-     * The chooser closed, taken or dismissed, so the file goes.
+     * The file goes once the chooser closes, taken or dismissed.
      *
      * `result` says only that the chooser is gone: Android answers
      * `RESULT_CANCELED` whether or not an app took the file. What the view is
@@ -362,8 +362,8 @@ class DipPlugin : Plugin(), Encounters.View {
     /**
      * The press, while the view has somewhere to go.
      *
-     * Disabled at the root, so a press nobody claims is Android's own and closes
-     * the app.
+     * A press nobody claims is Android's own and closes the app, because this is
+     * disabled at the root.
      */
     private val back =
         object : OnBackPressedCallback(false) {
@@ -375,8 +375,8 @@ class DipPlugin : Plugin(), Encounters.View {
     /**
      * Claim the back button, or hand it back.
      *
-     * A plugin call arrives on Capacitor's own thread and the dispatcher is the
-     * main thread's, so the flip is posted rather than made here.
+     * The flip is posted rather than made here, because a plugin call arrives on
+     * Capacitor's own thread and the dispatcher is the main thread's.
      */
     @PluginMethod
     fun setCanGoBack(call: PluginCall) {
@@ -598,9 +598,8 @@ class DipPlugin : Plugin(), Encounters.View {
      * The link the view named, which it only ever learned by being asked
      * something about it.
      *
-     * A link is a `ULong` the shell assigned, so a negative one is not a link
-     * this device ever handed out — refused here rather than wrapping into one
-     * it never issued.
+     * A negative link is refused here rather than wrapping into one this device
+     * never issued. A link is a `ULong` the shell assigned.
      */
     private fun link(call: PluginCall) =
         call.getInt("link")?.takeIf { it >= 0 }?.let { LinkId(it.toULong()) }

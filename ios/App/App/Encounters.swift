@@ -28,9 +28,9 @@ protocol EncountersView: AnyObject {
 /// # The loop
 ///
 /// Every core entry point answers a list of `Action`, and `apply` is the one
-/// place they are carried out. The core calls nothing back but custody, so this
-/// is never re-entered from inside a call: an action that produces more actions
-/// produces them on the next entry point, not underneath this one.
+/// place they are carried out. This is never re-entered from inside a call,
+/// because the core calls nothing back but custody. An action that produces
+/// more actions produces them on the next entry point, not underneath this one.
 final class Encounters {
     /// The one per process.
     static let shared = Encounters()
@@ -88,7 +88,7 @@ final class Encounters {
 
         core = Core(store: store, node: node)
 
-        // Registered before the first tick, so nothing the core does on the way up goes unheard.
+        // Registered before the first tick so that nothing the core does on the way up goes unheard.
         watching = store.observe(observer: StoreChanges())
 
         lifecycle = Lifecycle(
@@ -109,7 +109,7 @@ final class Encounters {
         return try node.identity()
     }
 
-    /// Drop the node and everything driving it, so `open` can run again.
+    /// Drop the node and everything driving it so that `open` can run again.
     ///
     /// The store observer and the lifecycle go with their references; the radio
     /// keeps its GATT service, which is registered once at power-on and would
@@ -227,10 +227,10 @@ final class Encounters {
 
 // --------------------------------------------------------------------- Store
 
-/// Tells the view which group of tables moved, so it re-reads what it shows.
+/// Tells the view which group of tables moved so that it re-reads what it shows.
 ///
-/// Store changes arrive on the store's own thread, so they hop to the main
-/// queue the view lives on.
+/// Store changes hop to the main queue the view lives on, because they arrive
+/// on the store's own thread.
 private final class StoreChanges: StoreObserver {
     func changed(group: Change) {
         let name = App.changeName(group: group)

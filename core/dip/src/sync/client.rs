@@ -24,8 +24,8 @@ use crate::sync::{Message, Quota, SubscriptionId};
 /// `docs/sync.md#quotas`.
 pub const MAX_EVENT_BYTES: usize = 64 * 1024;
 
-/// The cap on one negentropy frame, so a reply stays a few fragments rather
-/// than a torrent; reconciliation resumes on the next round.
+/// The cap on one negentropy frame, which keeps a reply to a few fragments
+/// rather than a torrent; reconciliation resumes on the next round.
 const NEG_FRAME_BYTES: usize = 4 * 1024;
 
 /// How many forwarded events may wait on their proofs at once.
@@ -39,7 +39,7 @@ const MAX_PENDING: usize = 64;
 /// Why an event this device was offered was not stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rejected {
-    /// The id is not the hash of the event, so nothing that commits to the id
+    /// The id is not the hash of the event. Nothing that commits to the id
     /// says anything about these bytes.
     Forged,
     /// Neither authored by the peer nor carrying a proof designated to this
@@ -76,20 +76,20 @@ impl Negotiation {
     ///
     /// The local set is everything this device **holds** under the filter, not
     /// what it would serve this peer. The question a reconciliation answers is
-    /// what this device is missing, so an event it already holds has to be in
+    /// what this device is missing. An event it already holds has to be in
     /// the set whether or not this peer could be offered it — otherwise every
     /// second-hop event, which sits in the `Held` register and is offerable to
     /// nobody, is reported missing on every encounter, re-fetched, and
     /// re-dropped as a duplicate. Reconciliation would never converge, and the
     /// peer would spend its quota redelivering what this device already has.
     ///
-    /// Ids this device refused join the set for the same reason: a deleted
+    /// Ids this device refused join the set for the same reason. A deleted
     /// event, a superseded version or an author outside Accept is never stored,
-    /// so without them it too would be fetched and dropped on every encounter.
+    /// and without them it too would be fetched and dropped on every encounter.
     ///
-    /// The relay half bounds its own answers separately, in
-    /// [`reconcilable`](crate::sync::relay::reconcilable), so nothing here
-    /// widens what this device will serve.
+    /// Nothing here widens what this device will serve, because the relay half
+    /// bounds its own answers separately, in
+    /// [`reconcilable`](crate::sync::relay::reconcilable).
     pub fn begin(db: &Db, filter: Filter) -> Result<(Self, Message)> {
         let held = crate::model::Query::new().with_filter(filter.clone());
         let local = db_query::initiator_set(db, &held)?;
@@ -181,7 +181,7 @@ pub struct Client {
     live: Option<SubscriptionId>,
     /// Events the peer forwarded that are waiting on their authorship proof,
     /// with the subscription each arrived on. A proof follows its event on the
-    /// same subscription, so one still waiting at that subscription's `EOSE`
+    /// same subscription, and one still missing at that subscription's `EOSE`
     /// is not coming.
     pending_events: BTreeMap<EventId, (SubscriptionId, HashedEvent)>,
     /// Authorship proofs waiting on the event they prove.
@@ -200,8 +200,8 @@ impl Client {
     /// for: a reconciliation round, or a page of a fetch, which includes the
     /// proofs for the events that page has already delivered.
     ///
-    /// An event held on the standing subscription has no `EOSE` to end the
-    /// wait, so it does not hold a drain open; it is bounded by count instead.
+    /// An event held on the standing subscription does not hold a drain open,
+    /// because it has no `EOSE` to end the wait; it is bounded by count instead.
     #[must_use]
     pub fn is_awaiting(&self) -> bool {
         !self.negotiations.is_empty() || !self.fetches.is_empty()
@@ -237,7 +237,7 @@ impl Client {
         quota: Quota,
         spending: &mut SessionSpending,
     ) -> Result<Vec<Message>> {
-        // The quota is tested against the rolling window, so a reconnect refills nothing.
+        // A reconnect refills nothing because the quota is tested against the rolling window.
         let spent = spending.spent(peer);
 
         // Store what passes, and remember what Accept refused so reconciliation stops offering it.
@@ -376,8 +376,8 @@ impl Client {
 /// Whether a forwarded event is worth holding while its proof is outstanding.
 ///
 /// [`admits`] cannot run yet — the proof is the missing half — but everything
-/// it tests that a proof could not change runs now, so a peer cannot make this
-/// device buffer what it could never store. Only the two-register
+/// it tests that a proof could not change runs now, which keeps a peer from
+/// making this device buffer what it could never store. Only the two-register
 /// authorization is deferred.
 fn holdable(peer: &Peer, event: &HashedEvent, quota: Quota, spent: Spent) -> bool {
     admissible(peer, event, quota, spent).is_ok()
@@ -405,12 +405,12 @@ fn store_signature(db: &Db, peer: &Peer, local: &Identity, event_id: EventId, si
         return;
     };
 
-    // The signature is the author's, so only the author sends it.
+    // Only the author sends its own signature.
     if !peer.pubkeys.contains(&event.pubkey) {
         return;
     }
 
-    // Nothing on the wire says which identity the author named, so verification answers.
+    // Verification answers which identity the author named, because nothing on the wire says.
     let named = local.iter().find_map(|identity| {
         let signature = RecipientSignature {
             event_id,
@@ -463,7 +463,7 @@ fn admissible(
     quota: Quota,
     spent: Spent,
 ) -> Result<(), Rejected> {
-    // Both registers authorize an id, not a body, so an id that is not its own hash carries none.
+    // Both registers authorize an id, not a body. An id that is not its own hash carries none.
     if !event.verify_id() {
         return Err(Rejected::Forged);
     }
@@ -500,7 +500,7 @@ fn admissible(
 /// Take in an event a peer offered, once [`admits`] has passed it.
 ///
 /// The author's signature is stored only when this device is the recipient it
-/// names, so the event travels one more hop and no further.
+/// names, which lets the event travel one more hop and no further.
 pub fn ingest(
     db: &Db,
     peer: &Peer,
@@ -510,7 +510,7 @@ pub fn ingest(
 ) -> Result<bool> {
     // A proof must be designated to this device; an author's own session needs none.
     if let Some(proof) = proof {
-        // Neither holder nor verifier is named on the wire, so the pair it verifies under is it.
+        // The wire names neither holder nor verifier; any pair the proof verifies under is it.
         let verified = peer.pubkeys.iter().any(|holder| {
             local.iter().any(|verifier| {
                 proof.verifies(&AuthorshipClaim {
@@ -1109,7 +1109,7 @@ mod tests {
                 .unwrap();
         }
 
-        // No proof came before the EOSE, so none is coming and nothing waits on one.
+        // A proof that did not come before the EOSE is not coming, and nothing waits on one.
         assert!(!client.pending_events.contains_key(&forwarded.id));
         assert!(!client.is_awaiting());
         assert!(

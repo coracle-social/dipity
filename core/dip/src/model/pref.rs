@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 /// One stored preference.
 ///
-/// Values are JSON documents, so a preference can grow from a scalar into a
-/// structure without a migration, and so the view and the core agree on what a
+/// Values are JSON documents. A preference can grow from a scalar into a
+/// structure without a migration, and the view and the core agree on what a
 /// value means without a per-key encoding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pref {

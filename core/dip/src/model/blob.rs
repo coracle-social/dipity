@@ -19,8 +19,8 @@ const SHORT_CHARS: usize = 16;
 /// A blob's address: the SHA-256 of the whole file, 64 lowercase hex
 /// characters.
 ///
-/// The value arrives from a peer, in the `x` of an `imeta` tag on a gossiped
-/// event, so it is parsed there and nowhere later. An unchecked hash that
+/// The value is parsed where it arrives from a peer, in the `x` of an `imeta`
+/// tag on a gossiped event, and nowhere later. An unchecked hash that
 /// reached the store would be a durable row on the want list that no reader
 /// could match back — every read normalizes — and a shorter one would be a
 /// panic anywhere the code took a prefix of it.
@@ -35,8 +35,8 @@ impl BlobHash {
     /// Parse a hash, lowercasing it.
     ///
     /// Anything that is not 64 hex characters is an error rather than a miss:
-    /// it can address no file and no row, so a caller carrying one has a bug
-    /// and a peer sending one is not to be answered from the store.
+    /// it can address no file and no row. A caller carrying one has a bug, and a
+    /// peer sending one is not to be answered from the store.
     pub fn parse(value: &str) -> Result<Self> {
         if value.len() != HASH_CHARS || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             bail!("{value} is not 32 bytes of hex");
@@ -77,7 +77,7 @@ impl fmt::Display for BlobHash {
 /// A [`BlobHash`] taken a piece at a time.
 ///
 /// The address covers the whole file, and a blob is as large as whatever the
-/// user attached, so the check that a transfer landed the right bytes reads the
+/// user attached. The check that a transfer landed the right bytes reads the
 /// store the same way the transfer wrote it — a group at a time — rather than
 /// holding a copy of the file in memory to hash it.
 #[derive(Default)]
@@ -225,7 +225,7 @@ impl Blob {
     ///
     /// The role is the tag's own: a `preview-of` naming the original it stands
     /// in for makes it a preview, and anything else is the file as published.
-    /// A `preview-of` that is not a hash names no original, so it is read as
+    /// A `preview-of` that is not a hash names no original, and the entry is read as
     /// the original it claims not to be — the direction that grants nothing.
     #[must_use]
     pub fn from_imeta(tag: &Tag) -> Option<Self> {
@@ -237,7 +237,7 @@ impl Blob {
             })
             .unwrap_or(BlobRole::Original);
 
-        // The first `x` wins, so a second one cannot redirect the blob.
+        // The first `x` wins, and a second one cannot redirect the blob.
         let sha256 = entries().find_map(|(key, value)| (key == "x").then_some(value))?;
         let mut blob = Self::new(BlobHash::parse(sha256).ok()?, role);
 
@@ -261,8 +261,8 @@ impl Blob {
 
     /// The whole file's length as the anchoring event committed to it.
     ///
-    /// The columns are SQLite's signed integers and the transfer counts bytes,
-    /// so the two unit systems meet here rather than at each of the half-dozen
+    /// The columns are SQLite's signed integers and the transfer counts bytes.
+    /// The two unit systems meet here rather than at each of the half-dozen
     /// places a fetch weighs a length. A negative size names no file and is
     /// read as no claim at all.
     #[must_use]
@@ -287,7 +287,7 @@ impl Blob {
 }
 
 /// One `imeta` entry as its key and its value; only the first space separates
-/// them, so a value may carry spaces of its own.
+/// them, and a value may carry spaces of its own.
 fn split_entry(entry: &str) -> Option<(&str, &str)> {
     entry
         .split_once(' ')
@@ -410,7 +410,7 @@ mod tests {
 
     #[test]
     fn a_hash_is_lowercase_however_it_arrived() {
-        // SQLite compares TEXT byte for byte, so an uppercase hash is a row nothing reads back.
+        // An uppercase hash is a row nothing reads back, as SQLite compares TEXT byte for byte.
         let upper = hash(0xab).to_uppercase();
         let blob = Blob::from_imeta(&tag(&[&format!("x {upper}")])).unwrap();
 
@@ -424,7 +424,7 @@ mod tests {
         assert!(BlobHash::parse(&"ab".repeat(31)).is_err());
         assert!(BlobHash::parse(&"ab".repeat(33)).is_err());
         assert!(BlobHash::parse(&format!("{}zz", "ab".repeat(31))).is_err());
-        // 64 characters of non-ASCII, so byte length and character length disagree.
+        // 64 characters of non-ASCII, whose byte length and character length disagree.
         assert!(BlobHash::parse(&"é".repeat(64)).is_err());
         assert!(BlobHash::parse("../../etc/passwd").is_err());
     }

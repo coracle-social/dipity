@@ -46,7 +46,7 @@
     {/if}
 
     {#if covered && !revealed}
-      <!-- Drawn over the card's own tap target, so the first tap shows the picture rather than opening the post. -->
+      <!-- Drawn over the card's own tap target so that the first tap shows the picture rather than opening the post. -->
       <button
         type="button"
         class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-background/30

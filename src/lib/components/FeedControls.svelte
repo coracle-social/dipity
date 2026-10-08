@@ -2,7 +2,7 @@
   import CategoryFilter from "$lib/components/CategoryFilter.svelte"
   import SearchBox from "$lib/components/SearchBox.svelte"
   import TopicFilter from "$lib/components/TopicFilter.svelte"
-  import {search, setOrder, setTopic, toggleCategory, type View} from "$lib/data/feed"
+  import {boardTopics, search, setOrder, setTopic, toggleCategory, type View} from "$lib/data/feed"
 
   let {view}: {view: View} = $props()
 
@@ -33,7 +33,7 @@
 </div>
 
 <div class="mt-2 flex justify-end">
-  <TopicFilter topic={view.topic} onPick={setTopic} />
+  <TopicFilter topic={view.topic} offered={$boardTopics} onPick={setTopic} />
 </div>
 
 <SearchBox class="mt-3" label="Search the board" bind:value={$search} />

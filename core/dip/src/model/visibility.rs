@@ -33,11 +33,11 @@ impl Visibility {
     /// everything else to whoever `sharing` reaches.
     ///
     /// The block and mute lists say who the user wants nothing to do with. They
-    /// are not encrypted, because contacts are meant to read them, so that rule
+    /// are not encrypted, because contacts are meant to read them. That rule
     /// is the whole of what keeps them from a stranger.
     ///
-    /// A bookmark list cannot be encrypted, so serving it to nobody is what
-    /// keeps it private. `docs/policy.md#sharing`.
+    /// Serving a bookmark list to nobody is what keeps it private, because it
+    /// cannot be encrypted. `docs/policy.md#sharing`.
     #[must_use]
     pub fn for_sharing(sharing: Sharing) -> Self {
         Self {
@@ -102,7 +102,7 @@ mod tests {
             default: Scope::Nothing,
         };
 
-        // The profile matches the first rule, so the catch-all below is never reached.
+        // The profile matches the first rule and never reaches the catch-all below.
         let profile = event(author(1), profile::KIND, 1, "", Tags::new());
         let note = event(author(1), 1, 1, "", Tags::new());
 

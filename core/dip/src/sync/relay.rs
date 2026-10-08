@@ -4,7 +4,7 @@
 //! becomes a filter, the user's Sharing setting and the relaying rule become a
 //! [`PeerPolicy`](crate::model::PeerPolicy), and the two authorship registers
 //! that may travel become [`Registers::offerable`]. `db::query::list_events`
-//! takes all three, so there is no second place where what a peer may see is
+//! takes all three, and it is the only place where what a peer may see is
 //! decided.
 
 use std::collections::BTreeMap;
@@ -267,8 +267,8 @@ pub fn record_shares(db: &Db, peer: &Peer, events: &[HashedEvent]) -> Result<()>
 /// peer that proved no pubkey — which cannot happen once identified — simply
 /// gets the bare event. The live-push path
 /// ([`Session::offer_event`](crate::session::Session::offer_event)) attaches
-/// through here too, so what accompanies an event cannot drift between the
-/// serve and the offer.
+/// through here too, which keeps what accompanies an event from drifting
+/// between the serve and the offer.
 pub fn attach(
     db: &Db,
     peer: &Peer,
@@ -279,7 +279,7 @@ pub fn attach(
 ) -> Result<()> {
     // One artifact per identity the peer proved, since nothing on the wire says which it uses.
     if event.pubkey == identity.pubkey() {
-        // The signature is transferable evidence, so who gets one is a policy question.
+        // Who gets the signature is a policy question, because it is transferable evidence.
         if !peer.policy.signs() {
             return Ok(());
         }
@@ -294,7 +294,7 @@ pub fn attach(
             ));
         }
     } else if let Some(signature) = db_query::get_signature(db, &event.id, &identity.pubkey())? {
-        // A proof is designated to one peer and worthless to anyone else, so it is not gated.
+        // A proof is not gated, because it is worthless to anyone but the peer it is designated to.
         for verifier in peer.pubkeys.iter() {
             let proof = AuthorshipProof::prove(&signature, *verifier)?;
 

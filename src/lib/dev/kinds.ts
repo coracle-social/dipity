@@ -3,8 +3,8 @@
 // Not `$lib/kinds`: a stand-in for the core must not reach for the app that
 // calls it, or driving the view through the simulator would only prove the view
 // agrees with itself. What both sides do share is `@welshman/domain`, which owns
-// every tag layout here but the contact card's, so the two agree on the wire
-// without either importing the other.
+// every tag layout here but the contact card's. That is how the two agree on
+// the wire without either importing the other.
 //
 // The resolver answers no relays for the same reason the view's does: a
 // simulated peer hands events over in person and routes nothing.

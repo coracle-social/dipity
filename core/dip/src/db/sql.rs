@@ -5,8 +5,8 @@
 //! columns. Hex is what the wire, the logs and the test fixtures use, and the
 //! store is a phone's.
 //!
-//! Time needs nothing. `coracle-lib` counts seconds in `i64`, which is SQLite's
-//! integer, so a timestamp binds and reads as itself.
+//! Time needs nothing. A timestamp binds and reads as itself because
+//! `coracle-lib` counts seconds in `i64`, which is SQLite's integer.
 
 use coracle_lib::events::EventId;
 use coracle_lib::keys::PublicKey;
@@ -17,8 +17,8 @@ use crate::model::BlobHash;
 
 /// A blob hash binds and reads as the hex the column holds.
 ///
-/// SQLite compares `TEXT` byte for byte, so an uppercase or truncated hash is
-/// not another spelling of a row, it is a row that is not there — a read
+/// An uppercase or truncated hash is not another spelling of a row, because
+/// SQLite compares `TEXT` byte for byte. It is a row that is not there — a read
 /// misses, a write fails its foreign key, and neither says why. Which is why
 /// the column takes [`BlobHash`] and nothing else: the value is canonical
 /// before it reaches a statement, and a legacy row that is not fails its read
@@ -49,9 +49,9 @@ pub(crate) fn event_id_from_sql(hex: &str, column: usize) -> rusqlite::Result<Ev
 /// `?1, ?2, …` for `count` parameters, the first of them numbered `from`.
 ///
 /// For an `IN` over a set whose size is only known at runtime, which is what a
-/// read batched over a page of events is. Empty in, empty out — and `IN ()` is
-/// not valid SQL, so a caller that can be handed an empty set answers for it
-/// before building a statement.
+/// read batched over a page of events is. Empty in, empty out. A caller that can
+/// be handed an empty set answers for it before building a statement, because
+/// `IN ()` is not valid SQL.
 pub(crate) fn placeholders(from: usize, count: usize) -> String {
     (from..from + count)
         .map(|index| format!("?{index}"))

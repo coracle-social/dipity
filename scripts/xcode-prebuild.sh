@@ -2,8 +2,8 @@
 #
 # Everything an iOS build needs that Xcode does not build itself: the Rust core
 # for the platform being built, the uniffi bindings that name it, and the web
-# assets the webview loads. The App target runs this as its first build phase,
-# so opening the project is the whole setup — see
+# assets the webview loads. Opening the project is the whole setup, because the
+# App target runs this as its first build phase. See
 # core/README.md#the-xcode-project.
 #
 # Xcode's environment is the input: PLATFORM_NAME and ARCHS say what to
@@ -67,8 +67,8 @@ trap 'rm -rf "$staging"' EXIT
 
 lipo -create "${libraries[@]}" -output "$staging/libdip_ffi.a"
 
-# uniffi reads the compiled library rather than the source, so the bindings
-# cannot describe anything but what was just built.
+# The bindings cannot describe anything but what was just built, because uniffi
+# reads the compiled library rather than the source.
 (cd "$root/core" && cargo run -q --bin uniffi-bindgen -- generate \
     --library "${libraries[0]}" --language swift --out-dir "$staging" --no-format)
 
@@ -86,7 +86,7 @@ if [ -n "${BUILT_PRODUCTS_DIR:-}" ]; then
         "$BUILT_PRODUCTS_DIR/include/module.modulemap" "$BUILT_PRODUCTS_DIR/include/dip_ffiFFI.h"
 fi
 
-# Only what changed is replaced, so an unchanged core does not send Xcode back to recompile.
+# Only what changed is replaced so that an unchanged core does not send Xcode back to recompile.
 for file in libdip_ffi.a dip_ffi.swift dip_ffiFFI.h module.modulemap; do
     cmp -s "$staging/$file" "$generated/$file" || mv -f "$staging/$file" "$generated/$file"
 done

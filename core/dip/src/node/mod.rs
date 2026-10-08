@@ -1,8 +1,9 @@
 //! The core as the shell sees it: bytes and radio events in, actions out.
 //!
 //! One object owning every live session, the store, and the identity key.
-//! Sans-io: it performs no I/O and reads no clock, so the whole stack above the
-//! radio runs in `cargo test` with two nodes handing each other bytes.
+//! It is sans-io, performing no I/O and reading no clock, which lets the whole
+//! stack above the radio run in `cargo test` with two nodes handing each other
+//! bytes.
 //!
 //! # The call shape
 //!
@@ -113,15 +114,15 @@ pub enum Action {
     /// Who the peer on a link proved to be, once per pubkey it proves, and the
     /// value the two users compare to be sure of it.
     ///
-    /// The gate runs before either side names a pubkey, so a pet name the user
-    /// typed there is for a person rather than for a key. This is what says
+    /// A pet name the user typed at the gate is for a person rather than for a
+    /// key, because the gate runs before either side names a pubkey. This is what says
     /// which key that person turned out to hold. The value is the one a held
-    /// gate shows, so a peer the gate let through can be named over the same
-    /// comparison. `docs/discovery.md#meeting-somebody`.
+    /// gate shows, which lets a peer the gate let through be named over the
+    /// same comparison. `docs/discovery.md#meeting-somebody`.
     ///
     /// A peer the user named but this device did not recognize has forgotten
-    /// them, or holds a pair secret this one does not, so it is asked about
-    /// again rather than passed over. `docs/discovery.md#meeting-somebody`.
+    /// them, or holds a pair secret this one does not. It is asked about again
+    /// rather than passed over. `docs/discovery.md#meeting-somebody`.
     PeerIdentified {
         /// The link the peer proved itself over.
         link: LinkId,
@@ -130,7 +131,7 @@ pub enum Action {
         /// The value both users compare.
         code: u32,
         /// Whether this device dialed the link. Two links to one person
-        /// resolve to the one the lower pubkey dialed, so a view showing one of
+        /// resolve to the one the lower pubkey dialed. A view showing one of
         /// them before that happens can pick the same one the core will keep.
         dialed: bool,
         /// Whether this device recognized the pubkey by its pair secret.
@@ -146,7 +147,8 @@ pub enum Action {
     /// because the channel is a byte stream.
     ///
     /// Answered with [`Node::bulk_write_complete`], which releases the next —
-    /// separately from GATT, so a slow ATT write does not stall the transfer.
+    /// separately from GATT, which keeps a slow ATT write from stalling the
+    /// transfer.
     SendBulk(LinkId, Vec<u8>),
     /// Publish an L2CAP channel and report its PSM with
     /// [`Node::l2cap_published`], or [`Node::l2cap_unavailable`] if the
@@ -175,8 +177,9 @@ pub enum Action {
     Notify(Notification),
     /// Call [`Node::tick`] at or after this unix second.
     ///
-    /// Advisory: iOS runs no timer for a suspended app, so the heartbeat and
-    /// the connection scheduler both recover on the next radio callback.
+    /// This is advisory. The heartbeat and the connection scheduler both
+    /// recover on the next radio callback, because iOS runs no timer for a
+    /// suspended app.
     WakeAt(i64),
 }
 
@@ -208,22 +211,24 @@ pub struct Node {
     /// Where the app is, which an identity transfer needs. `None` until the
     /// shell first reports it.
     presence: Option<Presence>,
-    /// This store's event channel, so a stored own event is offered to every
-    /// connected peer without the writer knowing.
+    /// This store's event channel, through which a stored own event is offered
+    /// to every connected peer without the writer knowing.
     events: broadcast::Receiver<EventChange>,
-    /// This store's blob channel, so bytes are reclaimed when their record
-    /// goes without whoever removed it holding the blob store.
+    /// This store's blob channel, through which bytes are reclaimed when their
+    /// record goes without whoever removed it holding the blob store.
     blob_changes: broadcast::Receiver<BlobChange>,
-    /// This store's preference channel, so a written preference rebinds every
-    /// live session without the writer knowing a node exists.
+    /// This store's preference channel, through which a written preference
+    /// rebinds every live session without the writer knowing a node exists.
     pref_changes: broadcast::Receiver<PrefChange>,
-    /// This store's signature channel, so an event becomes forwardable to every
-    /// connected peer the moment its author's signature lands.
+    /// This store's signature channel, through which an event becomes
+    /// forwardable to every connected peer the moment its author's signature
+    /// lands.
     signature_changes: broadcast::Receiver<RecipientSignatureChange>,
-    /// When the retention sweep last ran, so ticking often sweeps rarely.
+    /// When the retention sweep last ran, which keeps frequent ticks from
+    /// sweeping often.
     events_swept_at: Option<i64>,
-    /// The backup file waiting on a share sheet, so the core can delete it
-    /// whichever way the sheet ends.
+    /// The backup file waiting on a share sheet, kept so that the core can
+    /// delete it whichever way the sheet ends.
     key_backup: Option<PathBuf>,
     /// Whether the shell has been told to scan and advertise, which the first
     /// tick does once. `docs/discovery.md#session-lifecycle`.
@@ -232,10 +237,11 @@ pub struct Node {
     /// session so a link dropping before the shell takes one does not lose it.
     transferred: BTreeMap<LinkId, SecretKey>,
     /// Links closed because another link to the same person carries the
-    /// session, so their peripheral is not redialed while it does.
+    /// session. Their peripheral is not redialed while it does.
     duplicates: std::collections::BTreeSet<LinkId>,
-    /// Who each peripheral this device dialed turned out to be, so a person
-    /// already connected over a link they dialed is not dialed a second time.
+    /// Who each peripheral this device dialed turned out to be, which keeps a
+    /// person already connected over a link they dialed from being dialed a
+    /// second time.
     dialed_as: BTreeMap<PeripheralId, PublicKey>,
     /// What has arrived since the user last looked, and what was announced.
     notifier: Notifier,
@@ -290,7 +296,7 @@ impl Node {
             log::error!("sweeping the blob store at open failed: {error:#}");
         }
 
-        // A device that meets nobody never ticks, so opening is the sure sweep.
+        // Opening sweeps, because a device that meets nobody never ticks.
         node.sweep_events();
 
         Ok(node)
@@ -357,8 +363,8 @@ impl Node {
 
     /// A GATT connection came up, with the MTU the link negotiated.
     ///
-    /// `peripheral` is the one this device dialed, so the scheduler can grade
-    /// the link's outcome; a link the peer dialed has none.
+    /// `peripheral` is the one this device dialed, and the scheduler grades the
+    /// link's outcome by it; a link the peer dialed has none.
     pub fn link_up(
         &mut self,
         link: LinkId,
@@ -396,8 +402,8 @@ impl Node {
     }
 
     /// A link went away. The shell only reports a disconnect that fired, which is
-    /// reliable: the link is gone and nothing on it will ever finish, so the
-    /// session closes rather than waiting out a drain that cannot complete.
+    /// reliable. The session closes rather than waiting out a drain that cannot
+    /// complete, because the link is gone and nothing on it will ever finish.
     ///
     /// A peer that walked away is redialed soon: they usually come back. A
     /// teardown this device decided has already been graded by then, in
@@ -423,8 +429,8 @@ impl Node {
 
     /// A slice arrived off this link's L2CAP channel.
     ///
-    /// The channel is a byte stream, so a read may hold several fragments, part
-    /// of one, or both; the wire keeps what does not complete one.
+    /// A read may hold several fragments, part of one, or both, because the
+    /// channel is a byte stream; the wire keeps what does not complete one.
     pub fn bulk_received(&mut self, link: LinkId, read: &[u8]) -> Vec<Action> {
         let received = self.receive_bulk(link, read);
 
@@ -510,8 +516,8 @@ impl Node {
     /// The link may already be down — a channel the shell was opening comes
     /// back after a disconnect as readily as before one — and an answer with no
     /// session left to hear it is dropped rather than being an error. One the
-    /// session cannot take ends it, the way a frame it cannot read does, so the
-    /// shell is told to disconnect and the session does not hold its slot.
+    /// session cannot take ends it, the way a frame it cannot read does. The
+    /// shell is told to disconnect, and the session does not hold its slot.
     fn on_session(
         &mut self,
         link: LinkId,
@@ -550,7 +556,7 @@ impl Node {
 
         self.sweep_events();
 
-        // A peripheral id rotates, so who one turned out to be is kept only while it is still heard.
+        // Who a peripheral turned out to be is kept only while it is heard, because its id rotates.
         let scheduler = &self.scheduler;
         self.dialed_as
             .retain(|peripheral, _| scheduler.knows(peripheral));
@@ -683,8 +689,8 @@ impl Node {
         self.transferred.remove(&link)
     }
 
-    /// The user changed a preference, so re-read the policy and rebind it on
-    /// every live session.
+    /// Re-read the policy and rebind it on every live session after the user
+    /// changed a preference.
     ///
     /// Every entry point does this on its own once the store announces a
     /// preference, a contact card, or a block or mute list, because a session that cached
@@ -748,7 +754,7 @@ impl Node {
         cache: impl AsRef<Path>,
         password: Option<&str>,
     ) -> Result<Vec<Action>> {
-        // A retry writes over the last attempt's file, so only the newest is ever on disk.
+        // Only the newest file is ever on disk, because a retry writes over the last attempt's.
         let path = backup::write(&self.custody.identity()?, cache.as_ref(), password)?;
 
         Ok(self.key_backup_written(path))
@@ -773,7 +779,7 @@ impl Node {
         Arc::clone(&self.custody)
     }
 
-    /// The share sheet closed, shared or dismissed, so the file goes.
+    /// Delete the file once the share sheet closes, shared or dismissed.
     ///
     /// Dismissing counts as not downloaded rather than an error, and the user
     /// can export again.
@@ -833,10 +839,10 @@ impl Node {
 
     /// How many links this device dialed.
     ///
-    /// `docs/discovery.md` caps *central* links, so a peer dialing us must not
-    /// spend one of our slots — six inbound connections would otherwise stop
-    /// this device dialing anyone, which in a crowd is the moment it most
-    /// wants to.
+    /// A peer dialing us must not spend one of our slots, because
+    /// `docs/discovery.md` caps *central* links. Six inbound connections would
+    /// otherwise stop this device dialing anyone, which in a crowd is the
+    /// moment it most wants to.
     fn central_links(&self) -> usize {
         self.link_peripheral.len()
     }
@@ -861,8 +867,8 @@ impl Node {
     /// Sweep every session for work: fragments to write, links to tear down,
     /// and the earliest deadline worth waking for.
     ///
-    /// The one place actions are produced, so an entry point cannot forget to
-    /// flush a session it advanced.
+    /// This is the one place actions are produced, which keeps an entry point
+    /// from forgetting to flush a session it advanced.
     fn collect(&mut self) -> Vec<Action> {
         self.close_duplicates();
 
@@ -884,7 +890,7 @@ impl Node {
 
         self.reclaim_removed_blobs();
 
-        // Heartbeats go out before writes are drained, so a quiet session still proves alive.
+        // Heartbeats go out before writes are drained, which keeps a quiet session proving alive.
         for session in self.sessions.values_mut() {
             if let Err(error) = session.maybe_heartbeat() {
                 log::error!(
@@ -905,7 +911,7 @@ impl Node {
                 asking.push((session.link, None));
             }
 
-            // Who the link turned out to be, so a name typed at the gate lands, or one can be given now.
+            // Identifying the link lands a name typed at the gate, or lets one be given now.
             let code = session.pairing_code();
             let identified = session.take_identified();
 
@@ -951,7 +957,7 @@ impl Node {
                 actions.push(Action::IdentityTransfer(session.link, outcome));
             }
 
-            // Out of the session before it can close, so a link dropping now does not lose the key.
+            // Taken out before the session can close, so that a link dropping now keeps the key.
             if let Some(key) = session.transfer.take_identity() {
                 self.transferred.insert(session.link, key);
             }
@@ -991,7 +997,7 @@ impl Node {
 
         let mut rescan = false;
 
-        // Every teardown passes through here, so grading is one decision.
+        // Grading is one decision because every teardown passes through here.
         for (link, ending, harvested, synced) in closed {
             self.sessions.remove(&link);
 
@@ -1019,7 +1025,7 @@ impl Node {
             actions.push(Action::Disconnect(link));
         }
 
-        // A suspended phone gets no tick to redial from, so a fresh scan is what brings the peer back to it.
+        // A fresh scan brings the peer back to a suspended phone, which has no tick to redial from.
         if rescan && self.radio_started {
             actions.push(Action::Scan(true));
         }
@@ -1034,9 +1040,9 @@ impl Node {
     /// Close all but one of several syncing links to the same person, which is
     /// what two phones dialing each other at once leaves behind.
     ///
-    /// Both ends keep the link the lower of the two pubkeys dialed, so both
-    /// close the same one without a word passing between them. Two links dialed
-    /// by the same side cannot be told apart that way, so both stay.
+    /// Both ends keep the link the lower of the two pubkeys dialed, which lets
+    /// both close the same one without a word passing between them. Two links
+    /// dialed by the same side cannot be told apart that way, and both stay.
     fn close_duplicates(&mut self) {
         let identity = self.identity;
         let mut kept: BTreeMap<PublicKey, (PublicKey, LinkId)> = BTreeMap::new();
@@ -1089,8 +1095,8 @@ impl Node {
     /// Drains the store's event channel, which anything that stores an event
     /// announces on — a publish, or an ingest — so the writer never has to know a
     /// peer is attached. Each session decides what it may be offered, by the
-    /// same query a fresh `REQ` would run, so an event held for this device alone
-    /// goes nowhere.
+    /// same query a fresh `REQ` would run, and an event held for this device
+    /// alone goes nowhere.
     ///
     /// Answers whether a contact card, block or mute list arrived, which the policy is
     /// compiled from, or whether changes were missed and one might have.
@@ -1167,8 +1173,8 @@ impl Node {
     /// Delete the bytes of blobs whose record has gone.
     ///
     /// Drains the store's blob channel, which eviction and event deletion both
-    /// announce on. The record is what references the file, so a store holds
-    /// bytes for exactly as long as the `blob` table says to — and whoever
+    /// announce on. A store holds bytes for exactly as long as the `blob` table
+    /// says to, because the record is what references the file — and whoever
     /// removed the row does not have to hold the blob store to say so.
     fn reclaim_removed_blobs(&mut self) {
         loop {
@@ -1181,7 +1187,7 @@ impl Node {
                 // Recording, progress and completion are the transfer layer's and the view's.
                 Ok(_) => {}
                 Err(TryRecvError::Empty | TryRecvError::Closed) => break,
-                // A dropped removal would orphan its bytes for good, so the sweep answers for it.
+                // The sweep reclaims what a dropped removal would orphan for good.
                 Err(TryRecvError::Lagged(_)) => {
                     if let Err(error) = self.sweep_blobs() {
                         log::error!("sweeping the blob store after a lag failed: {error:#}");
@@ -1195,8 +1201,8 @@ impl Node {
     ///
     /// The channel is the prompt path and it is lossy: a subscriber that falls
     /// behind misses removals, and nothing is listening at all while the app is
-    /// closed. The table is the record either way, so it is what settles which
-    /// files may stay.
+    /// closed. The table is the record either way, and it settles which files
+    /// may stay.
     fn sweep_blobs(&self) -> Result<()> {
         let recorded = query::recorded_blob_hashes(&self.db)?;
 
@@ -1377,7 +1383,7 @@ fn retraction(event: &HashedEvent, at: i64) -> HashedEvent {
 
 /// Everything one session has ready to write, on each of its [`Pipe`]s.
 ///
-/// Sealing fails only on a wire that can no longer carry the session, so a
+/// Sealing fails only on a wire that can no longer carry the session. A
 /// failure stops that pipe and leaves the other to finish what it has.
 fn writes(session: &mut Session) -> Vec<Action> {
     let link = session.link;
@@ -1404,7 +1410,7 @@ fn writes(session: &mut Session) -> Vec<Action> {
 
 /// Whether the store holds anything `identity` wrote, which is what makes a
 /// phone's own key worth keeping. A store that cannot be read counts as one
-/// that does, so a failure never costs the user what they published.
+/// that does, which keeps a failure from costing the user what they published.
 /// `docs/keys.md#login-with-device`.
 fn published_as(db: &Db, identity: &PublicKey) -> bool {
     let mine = Query::new().with_filter(Filter::new().add_authors([*identity]).add_limit(1));
@@ -1559,7 +1565,8 @@ mod tests {
         assert!(query::wanted_blobs(&node.db, 10).unwrap().is_empty());
     }
 
-    /// The sweep at open takes every file the table does not know, so the device's own media has to be in it.
+    /// The device's own media has to be in the table, because the sweep at open
+    /// takes every file the table does not know.
     #[test]
     fn own_media_survives_the_sweep_at_open() {
         let db = db();
@@ -1780,7 +1787,7 @@ mod tests {
     fn a_weaker_reading_sorts_a_candidate_behind_a_nearer_one() {
         let mut node = node();
 
-        // The first sighting takes the rate limit, so the rest queue.
+        // The first sighting takes the rate limit and the rest queue.
         clock::at(1_000, || {
             node.peripheral_seen(&peripheral(1), -60);
             node.peripheral_seen(&peripheral(2), -70);
@@ -1801,7 +1808,7 @@ mod tests {
     fn a_candidate_unheard_for_a_rotation_is_forgotten() {
         let mut node = node();
 
-        // The first sighting takes the rate limit, so the second queues.
+        // The first sighting takes the rate limit and the second queues.
         clock::at(1_000, || {
             node.peripheral_seen(&peripheral(9), -80);
             node.peripheral_seen(&peripheral(1), -80);
@@ -1885,7 +1892,7 @@ mod tests {
             node.link_down(LinkId(1));
         });
 
-        // A radio reporting each device once never reports this one again, so the queue has to remember it.
+        // A radio reporting each device once never reports this one again; the queue remembers it.
         let redialed = clock::at(1_000 + scheduler::WALKED_AWAY_BACKOFF_SECONDS, || {
             node.tick()
         });
@@ -2037,7 +2044,7 @@ mod tests {
         one.notify_foregrounded();
         two.notify_foregrounded();
 
-        // One dialed two once, so it knows whose that peripheral is.
+        // One dialed two once and knows whose that peripheral is.
         clock::at(1_000, || {
             one.peripheral_seen(&peripheral(1), -60);
             two.link_up(LinkId(1), None, Role::Receiver, 4096).unwrap();
@@ -2068,7 +2075,7 @@ mod tests {
 
     #[test]
     fn a_link_the_core_closed_frees_its_slot_without_a_disconnect_report() {
-        // The shell may never report back, so the slot returns when the session goes.
+        // The slot returns when the session goes, because the shell may never report back.
         let mut node = node();
 
         for index in 0..MAX_LINKS {
@@ -2371,7 +2378,7 @@ mod tests {
         .unwrap();
         let event = note(author(1), 100, "hello", Tags::new());
 
-        // Everything a session writes is sealed, so reading one back takes its peer.
+        // Reading a session's writes back takes its peer, because they are sealed.
         let policy = Arc::new(Policy::new(author(1)));
         let mut session = Session::open(
             LinkId(2),
@@ -2559,7 +2566,7 @@ mod tests {
             );
         });
 
-        // The peer sends something the wire cannot carry, so this device drops the link.
+        // The peer sends something the wire cannot carry, and this device drops the link.
         clock::at(1_030, || {
             node.link_up(LinkId(9), Some(peer.clone()), Role::Dialer, 100)
                 .unwrap();

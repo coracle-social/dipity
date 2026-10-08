@@ -22,10 +22,11 @@ export const links: Readable<Link[]> = open
 /**
  * Follow links as they are identified and as they close.
  *
- * Started once, from the shell, rather than by the screen that lists them: a
- * peer is announced once, so a screen opened after it would never hear of it.
- * A device may prove several pubkeys over one link, so the newest announcement
- * for a link replaces the one before it rather than adding a row.
+ * Started once, from the shell, rather than by the screen that lists them,
+ * because a peer is announced once and a screen opened after it would never
+ * hear of it. The newest announcement for a link replaces the one before it
+ * rather than adding a row, because a device may prove several pubkeys over
+ * one link.
  */
 export const watchLinks = async () => {
   const identified = await Dip.addListener("peerIdentified", ({link, pubkey}) =>

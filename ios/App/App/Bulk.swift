@@ -8,9 +8,9 @@ import Foundation
 /// will not follow until this one is acknowledged. So there is one write in
 /// flight and no queue behind it — `docs/transport.md#the-l2cap-bandwidth-upgrade`.
 ///
-/// Both streams run on the main run loop, which is where CoreBluetooth's own
-/// callbacks land with a nil queue, so a channel and the radio holding it are
-/// never on two threads at once.
+/// A channel and the radio holding it are never on two threads at once, because
+/// both streams run on the main run loop, which is where CoreBluetooth's own
+/// callbacks land with a nil queue.
 final class BulkChannel: NSObject, StreamDelegate {
     /// The link this channel belongs to, which is how the radio names it back.
     let link: UInt64

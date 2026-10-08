@@ -9,7 +9,7 @@ import Foundation
 /// from them are:
 ///
 /// - **Dual role, simultaneously.** A `CBPeripheralManager` and a
-///   `CBCentralManager` at once, over one service and one characteristic, so a
+///   `CBCentralManager` at once, over one service and one characteristic. A
 ///   meeting connects whichever way round the two phones happen to be.
 /// - **Nothing here is a policy.** The RSSI floor, the six-link cap, the rate
 ///   limiting and the backoff tiers are `node::scheduler`'s. Reimplementing any
@@ -22,7 +22,7 @@ import Foundation
 /// The main queue owns the state: `links`, `seen`, `bulk`, `publishing`,
 /// `published`, `pending` and `nextLink` are read and written there and none of
 /// them is locked. Nothing enforces that — it is what `queue: nil` means on both
-/// managers, plus `BulkChannel` scheduling its streams on `.main`, so a delegate
+/// managers, plus `BulkChannel` scheduling its streams on `.main`. A delegate
 /// built with a queue of its own would break every one of them with no compiler
 /// complaint. `Radio.kt` has the same rule and has to say so with a
 /// single-thread executor.
@@ -47,10 +47,10 @@ final class Radio: NSObject {
     /// Every live link, both roles, keyed the way the core names them.
     private var links: [UInt64: Link] = [:]
 
-    /// Peripherals seen, so a `Connect` can name one, including a redial.
+    /// Peripherals seen so that a `Connect` can name one, including a redial.
     private var seen: [String: CBPeripheral] = [:]
 
-    /// When each peripheral was last reported, so one advertising many times a
+    /// When each peripheral was last reported so that one advertising many times a
     /// second is reported once a second.
     private var reported: [String: Date] = [:]
 
@@ -60,9 +60,9 @@ final class Radio: NSObject {
     /// Links that have asked the peripheral manager for a channel, oldest
     /// first.
     ///
-    /// `publishL2CAPChannel` names no link and its callback answers with a PSM
-    /// and nothing else, so the order they were asked in is the only thing
-    /// tying a PSM back to whoever wanted it.
+    /// The order they were asked in is the only thing tying a PSM back to
+    /// whoever wanted it, because `publishL2CAPChannel` names no link and its
+    /// callback answers with a PSM and nothing else.
     private var publishing: [UInt64] = []
 
     /// The PSM each publishing link is waiting for its peer at.
@@ -73,10 +73,10 @@ final class Radio: NSObject {
 
     /// One connection, from either side.
     private enum Link {
-        /// This device dialed, so CoreBluetooth hands us a `CBPeripheral`.
+        /// This device dialed, and CoreBluetooth hands us a `CBPeripheral`.
         case dialed(CBPeripheral, CBCharacteristic?)
-        /// The peer dialed, so it is a `CBCentral` subscribed to our
-        /// characteristic and writes reach us as ATT requests.
+        /// The peer dialed and is a `CBCentral` subscribed to our
+        /// characteristic, and writes reach us as ATT requests.
         case received(CBCentral)
     }
 
@@ -136,8 +136,8 @@ final class Radio: NSObject {
         central.connect(target, options: nil)
     }
 
-    /// Wait for a peer to come back. A CoreBluetooth connect never times out
-    /// and survives suspension, so it is the same call as a dial.
+    /// Wait for a peer to come back. It is the same call as a dial, because a
+    /// CoreBluetooth connect never times out and survives suspension.
     func waitFor(_ peripheralId: String) {
         connect(peripheralId)
     }
@@ -257,7 +257,7 @@ final class Radio: NSObject {
 
     /// Drop a link and everything hanging off it.
     ///
-    /// The link goes first, so the channel closing on its way out is not
+    /// The link goes first so that the channel closing on its way out is not
     /// reported as an upgrade this device lost.
     /// A pending publication is left in the queue rather than dropped: the
     /// order is what pairs a PSM with whoever asked for it, and the callback
@@ -289,9 +289,9 @@ final class Radio: NSObject {
 
     /// What one bulk write carries, length prefix included.
     ///
-    /// CoreBluetooth negotiates the channel's MTU and exposes it nowhere, and
-    /// the streams take a write of any size, so this is the size the core cuts
-    /// fragments to rather than a ceiling the radio was given.
+    /// This is the size the core cuts fragments to rather than a ceiling the
+    /// radio was given. CoreBluetooth negotiates the channel's MTU and exposes
+    /// it nowhere, and the streams take a write of any size.
     private static let bulkMtu: UInt32 = 8192
 }
 
@@ -324,8 +324,8 @@ extension Radio: CBCentralManagerDelegate {
     }
 
     func centralManager(_ manager: CBCentralManager, willRestoreState state: [String: Any]) {
-        // Relaunched into an encounter. The peripherals are back; the sessions
-        // are not, so each connected one is torn down and met again from the top.
+        // Relaunched into an encounter with the peripherals back and the sessions
+        // not. Each connected one is torn down and met again from the top.
         let restored = state[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
 
         // A connect still pending is a wait for a peer to come back, which is what relaunched us; it stays.
@@ -392,7 +392,7 @@ extension Radio: CBCentralManagerDelegate {
 extension Radio: CBPeripheralDelegate {
     func peripheral(_ target: CBPeripheral, didDiscoverServices error: Error?) {
         guard let found = target.services?.first(where: { $0.uuid == service }) else {
-            // Apple's overflow area is shared with other apps, so a background iPhone that matched may not be ours.
+            // A background iPhone that matched may not be ours, because Apple's overflow area is shared with other apps.
             if error == nil { foreign.insert(target.identifier) }
             return central.cancelPeripheralConnection(target)
         }

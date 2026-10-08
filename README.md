@@ -12,7 +12,7 @@ Dipity is a nostr client whose transport is proximity. It takes Manyverse's sync
 
 **Sync.** Each device is both a nostr relay and a nostr client, reusing the relay wire protocol in both directions. Content events carry an id and no `sig` — authorship comes from the authenticated session at the first hop and a designated-verifier proof at the second. Event reconciliation uses negentropy; blob sync uses sha256 hashes.
 
-**Storage.** SQLite in the core stores everything. `seen_at` and provenance are records of the user's movements and never leave the device. Keys live in platform secure storage and are readable while the device is locked, so pocket-to-pocket gossip works.
+**Storage.** SQLite in the core stores everything. `seen_at` and provenance are records of the user's movements and never leave the device. Keys live in platform secure storage. They are readable while the device is locked, which is what lets pocket-to-pocket gossip work.
 
 ## Architecture
 

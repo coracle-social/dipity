@@ -1,7 +1,7 @@
 //! The nostr relay protocol, used unmodified as the peer protocol.
 //!
-//! Every device is a client and a relay at once, so both halves of NIP-01 move
-//! in both directions over one link. A [`Req`](Message::Req) arriving is a
+//! Both halves of NIP-01 move in both directions over one link, because every
+//! device is a client and a relay at once. A [`Req`](Message::Req) arriving is a
 //! question for this device's relay half; an [`Event`](Message::Event)
 //! arriving is an answer for its client half.
 //!

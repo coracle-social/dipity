@@ -10,22 +10,22 @@
 //! | The stranger pool | nothing | every peer who is not a contact, together |
 //!
 //! The per-peer meter is the one that means something when identity does. A
-//! contact holds a key the user chose, so metering it bounds that
-//! person; every accept lands in the window, so dropping the link and
+//! contact holds a key the user chose, and metering it bounds that person.
+//! Every accept lands in the window, which means dropping the link and
 //! reconnecting refills nothing.
 //!
 //! Against a stranger it bounds very little, and the reason is structural:
-//! content events carry no signature, so an identity costs an attacker one
+//! content events carry no signature, and an identity costs an attacker one
 //! keypair. Metering per pubkey assumes identity is expensive, and here it is
-//! free. The pool is the answer — it is not keyed on identity, so there is
+//! free. The pool is the answer. It is not keyed on identity, which leaves
 //! nothing for a burner to reset. `docs/sync.md#quotas`.
 //!
 //! Both are read from memory and written through to the store's `spending`
 //! table, which a ledger opened over a store reads back at startup. A
 //! background relaunch is routine on both platforms, and a window that died
-//! with the process would refill the pool every time it happened. The window
-//! prunes on every write, in memory and in the table, so neither grows without
-//! bound.
+//! with the process would refill the pool every time it happened. Neither
+//! grows without bound, because the window prunes on every write, in memory
+//! and in the table.
 //!
 //! Blob bytes taken from a peer and served to one are two more meters over the
 //! same window, per peer only: a stranger is allowed no blob bytes at all, so
@@ -114,8 +114,8 @@ impl Ledger {
     }
 }
 
-/// Drop entries that fell out of the window. Arrival order, so the expired
-/// ones are always at the front.
+/// Drop entries that fell out of the window. Entries are in arrival order,
+/// which keeps the expired ones at the front.
 fn prune_queue(queue: &mut VecDeque<Entry>, cutoff: i64) {
     while queue.front().is_some_and(|(at, _)| *at < cutoff) {
         queue.pop_front();
@@ -276,8 +276,8 @@ pub struct Spent {
 /// One session's view onto the shared rolling window.
 ///
 /// A device proving several identities is charged against every one of them
-/// and read at the highest, so dropping a key from the set next time carries
-/// the history forward rather than shedding it. A wholly fresh set still gets
+/// and read at the highest. Dropping a key from the set next time carries the
+/// history forward rather than shedding it. A wholly fresh set still gets
 /// a fresh meter — that is what the pool is for.
 pub struct SessionSpending {
     /// The rolling window, shared with every other session.
@@ -307,7 +307,7 @@ impl SessionSpending {
                 (events.max(their_events), bytes.max(their_bytes))
             });
 
-        // A contact is not measured against the pool, so reading it would only cost a lock.
+        // A contact is not measured against the pool; reading it would only cost a lock.
         let (pooled_events, pooled_bytes) = if peer.policy.is_contact() {
             (0, 0)
         } else {

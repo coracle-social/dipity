@@ -22,9 +22,9 @@ struct Migration {
     sql: &'static str,
 }
 
-/// Every migration, oldest first. Append only — the index in this slice is the
-/// `user_version` a database is left at, so reordering or removing an entry
-/// re-runs the wrong statements against an existing store.
+/// Every migration, oldest first. Append only: reordering or removing an entry
+/// re-runs the wrong statements against an existing store, because the index in
+/// this slice is the `user_version` a database is left at.
 const MIGRATIONS: &[Migration] = &[
     Migration {
         name: "0001_init",
@@ -137,8 +137,8 @@ impl Db {
     /// Begin a write transaction directly, for the tests down the tree that
     /// exercise one group's queries and commands against a store of their own.
     ///
-    /// Takes `&mut self` and skips the lock, so it cannot be reached through
-    /// the shared handle the rest of the core holds. [`read`](Self::read) and
+    /// Cannot be reached through the shared handle the rest of the core holds,
+    /// because it takes `&mut self` and skips the lock. [`read`](Self::read) and
     /// [`write`](Self::write) are the way in.
     #[cfg(test)]
     pub(crate) fn begin_write(&mut self) -> Result<Tx<'_>> {
@@ -182,7 +182,7 @@ pub fn migrate(connection: &mut Connection) -> Result<()> {
         tx.execute_batch(migration.sql)
             .with_context(|| format!("applying migration {}", migration.name))?;
 
-        // Bound by MIGRATIONS.len(), so the cast cannot wrap in any real build.
+        // The cast cannot wrap in any real build, because it is bound by MIGRATIONS.len().
         tx.pragma_update(None, "user_version", index as i64 + 1)?;
         tx.commit()?;
     }
@@ -207,13 +207,13 @@ fn configure_connection(connection: &Connection) -> Result<()> {
 ///
 /// Commands announce their writes through their domain's `channel` module, which
 /// registers the send here rather than firing it. Draining happens in
-/// [`commit`](Tx::commit), so a subscriber never hears about a row that a later
+/// [`commit`](Tx::commit). A subscriber never hears about a row that a later
 /// error rolled back, and a reactive read always finds what it was told about.
 ///
-/// The channels come from the [`Db`] the transaction was opened on, so a write
-/// is announced to that store's subscribers and to no other's.
+/// A write is announced to the subscribers of the [`Db`] the transaction was
+/// opened on and to no other store's.
 ///
-/// Derefs to [`rusqlite::Transaction`], so `tx.prepare(…)` and `tx.execute(…)`
+/// Derefs to [`rusqlite::Transaction`]. `tx.prepare(…)` and `tx.execute(…)`
 /// work as they would on a bare connection.
 pub struct Tx<'a> {
     inner: Transaction<'a>,
@@ -226,9 +226,9 @@ pub struct Tx<'a> {
 impl<'a> Tx<'a> {
     /// Begin a transaction on `connection`, announcing on `channels`.
     ///
-    /// Deferred takes no write lock, so a reader never blocks a writer under
-    /// WAL; Immediate takes it up front, so a busy database fails here rather
-    /// than halfway through.
+    /// A deferred transaction takes no write lock and never blocks a writer
+    /// under WAL. An immediate one takes the lock up front and fails here on a
+    /// busy database rather than halfway through.
     fn begin(
         connection: &'a mut Connection,
         channels: &'a Channels,

@@ -1,14 +1,14 @@
 // Where the user is, and how they leave.
 //
-// View state, so it survives nothing — the app is suspended in the background
+// View state, which survives nothing. The app is suspended in the background
 // and anything that has to outlive that lives in the core.
 // `docs/ui.md#held-by-review`.
 //
 // The trail is what back walks, and there is one of it: the button on a screen
-// and the phone's own button leave by the same door. Android closes an app on a
-// back press nobody claims, so the shell is told whether there is anywhere to go
-// before the press rather than asked during one — at the root the press stays
-// Android's and the app closes the way it always has.
+// and the phone's own button leave by the same door. The shell is told whether
+// there is anywhere to go before the press rather than asked during one,
+// because Android closes an app on a back press nobody claims. At the root the
+// press stays Android's and the app closes the way it always has.
 
 import {derived, get, writable} from "svelte/store"
 import {tick} from "svelte"
@@ -53,7 +53,7 @@ const same = (a: Place, b: Place) => a.at === b.at && about(a) === about(b)
 /**
  * Put the page back where it was, once there is page enough to hold it.
  *
- * A screen re-reads its query as it mounts, so its content lands a frame or two
+ * A screen re-reads its query as it mounts. Its content lands a frame or two
  * after the place changes and scrolling any earlier clamps to the top.
  */
 const restore = (scroll: number) => {
@@ -99,7 +99,7 @@ export const swap = (to: Place) => {
 /**
  * Leave the top thing: whatever is open over the screen, then the screen.
  *
- * Answers whether there was anything to leave, so a caller at the root can tell.
+ * Answers whether there was anything to leave so that a caller at the root can tell.
  */
 export const back = () => {
   const open = get(overlays).at(-1)
@@ -133,8 +133,7 @@ export const reset = (to: Place) => {
 /**
  * Have back close this while it is open, and answer how to stop saying so.
  *
- * A drawer sits over the screen, so back closes the drawer and leaves the screen
- * under it where it is.
+ * Back closes a drawer and leaves the screen under it where it is.
  */
 export const dismissable = (close: () => void) => {
   overlays.update(open => [...open, close])

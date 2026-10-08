@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Sets the version in package.json, android and ios, and advances each platform's build number
-// only when its version actually changes, so rerunning with the same version is a no-op.
+// only when its version actually changes. Rerunning with the same version is a no-op.
 import {readFileSync, writeFileSync} from "node:fs"
 import {join} from "node:path"
 import {fileURLToPath} from "node:url"

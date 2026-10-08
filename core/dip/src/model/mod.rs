@@ -2,7 +2,7 @@
 //!
 //! One file per type — with [`kinds`] the exception, which holds the kinds
 //! this app defines, a reader and a writer each — and every type
-//! re-exported here, so a caller writes `crate::model::Policy` and where a
+//! re-exported here. A caller writes `crate::model::Policy`, and where a
 //! type is defined stays an implementation
 //! detail. It has to be organized this way round because the reads and writes
 //! are organized the other: [`crate::db`] groups by table, and what a type
@@ -11,9 +11,9 @@
 //! from each of three.
 //!
 //! Nostr's own types are `coracle-lib`'s, not this crate's: events, keys, tags,
-//! kinds, addresses and filters. They have to agree byte for byte with a peer
-//! running the other platform's build, so there is one definition of each and
-//! it is not here. What is here is what the store adds — where an event came
+//! kinds, addresses and filters. There is one definition of each and it is not
+//! here, because they have to agree byte for byte with a peer running the other
+//! platform's build. What is here is what the store adds — where an event came
 //! from ([`Provenance`], [`ProvenanceFilter`]), how far it may travel
 //! ([`Register`]), who may be served it ([`Policy`]), and the metadata for the
 //! files it references ([`Blob`]).

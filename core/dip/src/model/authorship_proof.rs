@@ -1,8 +1,8 @@
 //! Authorship proofs: what carries an event its second hop.
 //!
-//! Content events are unsigned, so authorship at the first hop is the
-//! authenticated session and nothing else. At the second hop there is no
-//! session with the author, so the forwarder proves in zero knowledge —
+//! Authorship at the first hop is the authenticated session and nothing else,
+//! because content events are unsigned. At the second hop, where there is no
+//! session with the author, the forwarder proves in zero knowledge —
 //! designated to exactly one verifier — that it holds the author's signature
 //! over this event and its own pubkey. `docs/proofs.md` carries the reasoning;
 //! this is the arithmetic.
@@ -16,8 +16,8 @@
 //! | B, forwarding to C | [`AuthorshipProof::prove`] | **no** |
 //! | C, on ingest | [`AuthorshipProof::verifies`] | no |
 //!
-//! Forwarding proves knowledge of A's signature scalar, which B already holds,
-//! so it never opens secure storage and cannot be steered into signing as B.
+//! Forwarding never opens secure storage and cannot be steered into signing as
+//! B, because it proves knowledge of A's signature scalar, which B already holds.
 //! B reads its key in an encounter only to sign as an author: its auth event,
 //! and the signatures over its own events.
 //!
@@ -28,15 +28,15 @@
 //! # The construction
 //!
 //! A's signature is BIP-340 `(R, s)` under key `A`, verifying as
-//! `s·G = R + e·A`. Every term but `s` is public, so the verifier computes
+//! `s·G = R + e·A`. Every term but `s` is public. The verifier computes
 //! `S = R + e·A` itself and the forwarder proves knowledge of `dlog(S)`,
 //! OR-composed with knowledge of `dlog(C)` — a Cramer–Damgård–Schoenmakers
 //! OR-proof made non-interactive with Fiat–Shamir. The prover runs the branch
 //! it can and simulates the other; the verifier cannot tell which, and knows
-//! it did not produce the proof itself, so it must be the first.
+//! it did not produce the proof itself, which leaves only the first.
 //!
-//! The two branches are ordered by role, never by which one is real, so the
-//! transcript is byte-shaped identically whichever side built it.
+//! The transcript is byte-shaped identically whichever side built it, because
+//! the two branches are ordered by role, never by which one is real.
 //!
 //! ## The two hashes
 //!
@@ -148,18 +148,18 @@ impl AuthorshipProof {
     /// Prove to `verifier` that this device holds the author's signature over
     /// the event the signature names.
     ///
-    /// Reads no secret key. The witness is the signature's own scalar, which
-    /// the caller already holds, so this cannot act as a signing oracle for
-    /// anyone.
+    /// Reads no secret key. This cannot act as a signing oracle for anyone,
+    /// because the witness is the signature's own scalar, which the caller
+    /// already holds.
     ///
     /// Fails if the signature is not one over that event, by that author,
     /// naming this device — the check is the proof's own statement asked of the
-    /// arithmetic it is about to run on, so a proof that would be rejected by
+    /// arithmetic it is about to run on. A proof that would be rejected by
     /// the peer is refused here instead.
     pub fn prove(signature: &RecipientSignature, verifier: PublicKey) -> Result<Self> {
         let claim = AuthorshipClaim::from_signature(signature, verifier);
 
-        // R.x is public and the scalar beside it is the whole capability, so it is wrapped.
+        // Wrapped, because R.x is public and the scalar beside it is the whole capability.
         let mut nonce_point = [0u8; 32];
         nonce_point.copy_from_slice(&signature.sig[..32]);
 
@@ -340,7 +340,7 @@ impl Statement {
 
     /// Prove `branch` and simulate the other.
     ///
-    /// One body for both directions, so a real proof and a simulated one differ
+    /// One body for both directions. A real proof and a simulated one differ
     /// in nothing but which branch the witness belongs to — which is the whole
     /// deniability argument, and worth having the compiler enforce rather than
     /// two functions that have to be read side by side.
@@ -406,23 +406,24 @@ impl Statement {
 
     /// The nonce, and the simulated branch's challenge and response.
     ///
-    /// Everything feeding the Fiat–Shamir challenge feeds the nonce, so the
-    /// nonce cannot hold still while the challenge moves — two proofs of one
-    /// statement are then the same proof, which reveals nothing, rather than
-    /// two proofs under one nonce, which reveals the witness. Nothing the
-    /// verifier supplies per session goes in, so the verifier cannot pin one
-    /// input while another varies. Auxiliary randomness is mixed in on top: it
+    /// The nonce cannot hold still while the challenge moves, because everything
+    /// feeding the Fiat–Shamir challenge feeds it. Two proofs of one statement
+    /// are then the same proof, which reveals nothing, rather than two proofs
+    /// under one nonce, which reveals the witness. Nothing the verifier supplies
+    /// per session goes in, which keeps the verifier from pinning one input
+    /// while another varies. Auxiliary randomness is mixed in on top: it
     /// makes repeat proofs distinct, and a failing OS RNG degrades to the
     /// deterministic case rather than to a repeated nonce.
-    /// Everything on the way to the nonce reconstructs the witness given one
-    /// other value, so all of it is wrapped: `aux` and `mask` recover it from
-    /// `masked`, and `seed` and the nonce give it up alongside a second proof.
+    /// Everything on the way to the nonce is wrapped, because each piece
+    /// reconstructs the witness given one other value: `aux` and `mask` recover
+    /// it from `masked`, and `seed` and the nonce give it up alongside a second
+    /// proof.
     /// Only the two simulated values are safe to hand back bare, because they
     /// go on the wire.
     fn nonces(&self, witness: &Scalar) -> Result<(Zeroizing<Scalar>, Scalar, Scalar)> {
         let mut aux = Zeroizing::new([0u8; 32]);
 
-        // Deterministic anyway, so carrying on is safe; an RNG that never works is worth saying.
+        // Carrying on is safe because it is deterministic; an RNG that never works is worth saying.
         if let Err(error) = getrandom::getrandom(&mut *aux) {
             log::error!("the OS RNG refused ({error}); proof nonces are deterministic");
         }
@@ -452,14 +453,14 @@ impl RecipientSignature {
     /// Sign `event_id` for `recipient`, as its author.
     ///
     /// This is the commitment that lets the recipient forward the event, and
-    /// the only thing that does. It is verifiable by anyone, so it goes to the
-    /// peer it names and to nobody else.
+    /// the only thing that does. It goes to the peer it names and to nobody
+    /// else, because anyone can verify it.
     ///
     /// Signing goes through the audited binding's own nonce derivation.
-    /// Deterministic under BIP-340 and over a message distinct per event and
-    /// recipient, so no two of these share a nonce — reuse across two messages
-    /// would hand the identity key to anyone holding both, and recipients hold
-    /// them by design.
+    /// No two of these share a nonce, because signing is deterministic under
+    /// BIP-340 and over a message distinct per event and recipient. Reuse across
+    /// two messages would hand the identity key to anyone holding both, and
+    /// recipients hold them by design.
     ///
     /// The caller holds the key across a batch: an encounter signs one of these
     /// per event per peer, and that is one read from the Keychain or Keystore,
@@ -807,7 +808,7 @@ mod tests {
 
     #[test]
     fn out_of_range_scalars_are_rejected() {
-        // The group order is under 2^256, so all-ones is not a scalar.
+        // All-ones is not a scalar, because the group order is under 2^256.
         for field in 1..5 {
             let mut bytes = proof().to_bytes();
             bytes[field * 32..(field + 1) * 32].copy_from_slice(&[0xff; 32]);
@@ -834,7 +835,7 @@ mod tests {
 
     #[test]
     fn a_nonce_point_above_the_field_prime_is_rejected() {
-        // All-ones exceeds p, so it is not a field element and never reaches the curve.
+        // All-ones exceeds p, is not a field element, and never reaches the curve.
         assert!(!with_nonce_point([0xff; 32]).verifies(&claim()));
     }
 
@@ -846,7 +847,7 @@ mod tests {
 
     #[test]
     fn a_nonce_point_that_is_not_the_signature_is_rejected() {
-        // On the curve, so it lifts, and wrong, so its discrete log is nobody's.
+        // On the curve, which lets it lift, and wrong, which makes its discrete log nobody's.
         assert!(!with_nonce_point(x_of(1)).verifies(&claim()));
     }
 
@@ -974,7 +975,7 @@ mod tests {
     fn real_and_simulated_proofs_are_drawn_alike() {
         // The distributional half: no field should look like anything but coin flips.
         const SAMPLES: usize = 64;
-        // 64 x 256 bits a field, so one standard error is ~0.004 and this is seven sigma.
+        // One standard error over 64 x 256 bits a field is ~0.004, and this is seven sigma.
         const TOLERANCE: f64 = 0.03;
 
         let signature = signature();

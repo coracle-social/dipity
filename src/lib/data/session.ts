@@ -1,8 +1,8 @@
 // Opening the core, which every other read here waits on.
 //
-// `listDetails` and friends answer only once the shell has opened the store and
-// the node, so a screen's first question is not "what arrived" but "is there
-// anything to ask". The four states below are the whole of that.
+// A screen's first question is not "what arrived" but "is there anything to
+// ask", because `listDetails` and friends answer only once the shell has opened
+// the store and the node. The four states below are the whole of that.
 
 import {writable, type Readable} from "svelte/store"
 import {nip19} from "nostr-tools"
@@ -94,8 +94,8 @@ export const logOut = async () => {
 /**
  * Take the identity another phone handed over.
  *
- * The shell has already written the key and reopened the core under it, so this
- * answers what `start` answers and there is nothing left to open.
+ * The shell has already written the key and reopened the core under it. This
+ * answers what `start` answers, and there is nothing left to open.
  */
 export const takeIdentity = async (link: number) => {
   const {identity} = await Dip.takeTransferredIdentity({link})

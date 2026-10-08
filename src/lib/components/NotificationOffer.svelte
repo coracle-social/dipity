@@ -3,7 +3,7 @@
   import * as Drawer from "$lib/components/ui/drawer"
   import {declineOffer, enableAll, offering} from "$lib/data/notifications"
 
-  // Dismissing by dragging the sheet away is a no as well, so the offer is not made again.
+  // Dragging the sheet away is a no as well, and the offer is not made again.
   const changed = (open: boolean) => {
     if (!open) declineOffer()
   }

@@ -31,7 +31,7 @@ pub fn at<T>(instant: i64, f: impl FnOnce() -> T) -> T {
     f()
 }
 
-/// Puts the previous instant back, including while unwinding, so a failing test
+/// Puts the previous instant back, including while unwinding, so that a failing test
 /// cannot leave the clock pinned for the ones after it.
 struct Restore(Option<i64>);
 

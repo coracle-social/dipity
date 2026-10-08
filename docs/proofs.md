@@ -8,11 +8,11 @@ A content event carries an id and no `sig`. Authorship is established by the cha
 
 Three things follow:
 
-- **Reach is capped by construction.** A signed event is self-authenticating, so anyone holding one can convince anyone else and the hop count is whatever the network's topology allows. An unsigned event is worth nothing to a party that cannot be shown authorship some other way, and the only two ways are a session and a designated-verifier proof, neither of which survives a second forwarding.
+- **Reach is capped by construction.** A signed event is self-authenticating. Anyone holding one can convince anyone else, and the hop count is whatever the network's topology allows. An unsigned event is worth nothing to a party that cannot be shown authorship some other way, and the only two ways are a session and a designated-verifier proof, neither of which survives a second forwarding.
 - **Nothing leaks to the open network.** A bug that publishes proximity content to a public relay produces something the relay rejects and no existing client renders.
 - **The author keeps deniability by default.** Signing every event would hand every recipient permanent, transferable attribution. Here the author chooses, per recipient, whether to hand over that evidence at all.
 
-**The id is the only thing an authorization commits to**, so the id has to be the hash of the event. Both registers name an event by id — the session says the peer authored the event with this id, and a recipient signature is over `event_id ‖ recipient_pubkey`. An id that named content it was not the hash of would let one genuine proof authorize anything a forwarder cared to attach to it, so an inbound event whose id is not its own NIP-01 hash is refused before authorization runs.
+**The id is the only thing an authorization commits to.** It therefore has to be the hash of the event. Both registers name an event by id — the session says the peer authored the event with this id, and a recipient signature is over `event_id ‖ recipient_pubkey`. An id that named content it was not the hash of would let one genuine proof authorize anything a forwarder cared to attach to it. An inbound event whose id is not its own NIP-01 hash is therefore refused before authorization runs.
 
 ## Session AUTH carries the first hop
 
@@ -64,7 +64,7 @@ Each property falls out of one part of the construction:
 
 ## Implementation
 
-The authorship proof arithmetic needs explicit scalars and points, which the `secp256k1` binding deliberately does not expose, so the OR-proof uses `k256` from RustCrypto. Signing and signature verification stay on the audited binding.
+The OR-proof uses `k256` from RustCrypto, because the authorship proof arithmetic needs explicit scalars and points, which the `secp256k1` binding deliberately does not expose. Signing and signature verification stay on the audited binding.
 
 ### Nonce derivation
 
@@ -93,7 +93,7 @@ Leaking `s` exposes nobody's private key. It costs the two-hop bound and the aut
 a = (s₁ − s₂) / (e₁ − e₂)
 ```
 
-which is the author's identity key, recoverable by anyone holding both signatures — and recipients hold them by design. Signing volume here is high: one signature per event per recipient, so handing 500 events to three peers is 1500 signatures inside a background wake, on a phone whose entropy pool may be thin shortly after boot. BIP-340's deterministic derivation makes reuse impossible across distinct messages, and the messages are distinct, so the rule is simply that signing goes through the audited binding's own nonce derivation and never a hand-rolled one.
+which is the author's identity key, recoverable by anyone holding both signatures — and recipients hold them by design. Signing volume here is high: one signature per event per recipient, which makes handing 500 events to three peers 1500 signatures inside a background wake, on a phone whose entropy pool may be thin shortly after boot. BIP-340's deterministic derivation makes reuse impossible across distinct messages, and the messages are distinct. The rule is simply that signing goes through the audited binding's own nonce derivation and never a hand-rolled one.
 
 A bad proof nonce costs one event. A bad signing nonce costs an identity permanently, since nostr has no revocation ([`privacy.md`](./privacy.md#what-we-do-not-defend-against)).
 

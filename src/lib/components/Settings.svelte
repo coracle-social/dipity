@@ -8,6 +8,8 @@
   import {Separator} from "$lib/components/ui/separator"
   import {Switch} from "$lib/components/ui/switch"
   import KeyBackup from "$lib/components/KeyBackup.svelte"
+  import TopicSelect from "$lib/components/TopicSelect.svelte"
+  import {boardTopics} from "$lib/data/feed"
   import type {Scope, Sharing} from "$lib/core"
   import {blurring, type Blurring} from "$lib/data/media"
   import {go} from "$lib/data/nav"
@@ -27,25 +29,24 @@
   } from "$lib/data/policy"
   import {mutedTopics, setTopicMuted} from "$lib/data/contacts"
   import {logOut} from "$lib/data/session"
-  import {topics} from "$lib/kinds"
 
   let leaving = $state(false)
 
   const accepts: Record<string, string> = {
-    contacts: "People you've paired with",
-    network: "People you've paired with, and people they've paired with",
+    contacts: "Your contacts",
+    network: "Your contacts, and their contacts",
     lenient: "Anyone not blocked",
   }
 
   const shares: Record<Sharing, string> = {
-    contacts: "People you've paired with",
-    network: "People you've paired with, who can pass it on",
-    anyone: "Anyone you meet, and people you've paired with can pass it on",
+    contacts: "Your contacts",
+    network: "Your contacts, who can pass it on",
+    anyone: "Anyone you meet, and your contacts can pass it on",
   }
 
   const blurs: Record<Blurring, string> = {
     strangers: "People outside your network",
-    others: "Everyone except people you've paired with",
+    others: "Everyone except your contacts",
     everyone: "Everyone",
   }
 
@@ -85,7 +86,7 @@
     },
   ])
 
-  // The phone's answer changes in its own settings, so it is read again whenever this screen opens.
+  // Read again whenever this screen opens, because the phone's answer changes in its own settings.
   $effect(() => {
     refreshPermission()
   })
@@ -194,17 +195,14 @@
   A muted topic stays off the board. Your phone still keeps those posts and still passes them on.
 </p>
 
-<ul class="mt-4 space-y-4">
-  {#each topics as topic (topic.id)}
-    <li class="flex items-center justify-between gap-4">
-      <Label for="mute-{topic.id}" class="text-sm font-semibold">{topic.label}</Label>
-      <Switch
-        id="mute-{topic.id}"
-        checked={$mutedTopics.has(topic.id)}
-        onCheckedChange={on => setTopicMuted(topic.id, on)} />
-    </li>
-  {/each}
-</ul>
+<div class="mt-4">
+  <TopicSelect
+    selected={[...$mutedTopics].sort()}
+    offered={$boardTopics}
+    label="Search for a topic to mute"
+    onAdd={topic => setTopicMuted(topic, true)}
+    onRemove={topic => setTopicMuted(topic, false)} />
+</div>
 
 <Separator class="my-6" />
 

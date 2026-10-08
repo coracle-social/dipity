@@ -2,7 +2,7 @@
 #
 # Two halves, matching the plugin boundary in docs/overview.md: a TypeScript
 # webview and a Rust core reached through uniffi. The core builds before the
-# native shells, so `sync` chains them in that order and the mobile recipes go
+# native shells. `sync` chains them in that order, and the mobile recipes go
 # through `sync` rather than around it.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
@@ -10,12 +10,12 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 core := "core"
 ffi := "dip_ffi"
 
-# uniffi-bindgen reads the host build of the library, so the extension is the
-# host's: a Mac generating the Swift half, Linux generating the Kotlin one.
+# The extension is the host's, because uniffi-bindgen reads the host build of
+# the library: a Mac generates the Swift half, and Linux the Kotlin one.
 cdylib := if os() == "macos" { "dylib" } else { "so" }
 
-# Staging for everything generated. Under target/, so `cargo clean` and
-# `just clean` both take it and nothing generated is ever committed.
+# Staging for everything generated. It is under target/, where `cargo clean`
+# and `just clean` both take it and nothing generated is ever committed.
 out := "core/target/ffi"
 
 # Where the Android shell picks its half up. Gitignored: what a native build
@@ -47,7 +47,7 @@ setup:
 
 # ---------------------------------------------------------------- development
 
-# Vite dev server. Browser only, so `src/lib/dev` stands in for the core and its peers.
+# Vite dev server, in the browser only, where `src/lib/dev` stands in for the core and its peers.
 dev:
     pnpm exec vite
 
@@ -59,8 +59,8 @@ website:
 website-build:
     cd website && pnpm install --frozen-lockfile && pnpm exec astro build
 
-# Components are copied into the repo rather than depended on, so this is the
-# only way one arrives. See docs/ui.md.
+# This is the only way a component arrives, because components are copied into
+# the repo rather than depended on. See docs/ui.md.
 
 # Vendor shadcn-svelte components into src/lib/components/ui. No args to choose.
 ui *components:
@@ -92,9 +92,9 @@ core-fmt:
 core-lint:
     cd {{core}} && cargo clippy --workspace --all-targets -- -D warnings
 
-# uniffi reads the compiled cdylib rather than the source, so the library is
-# always built first. Stale bindings against a fresh library is the failure this
-# ordering exists to prevent.
+# The library is always built first, because uniffi reads the compiled cdylib
+# rather than the source. Stale bindings against a fresh library is the failure
+# this ordering exists to prevent.
 
 # Regenerate Swift and Kotlin bindings from the built library.
 bindings:
@@ -130,9 +130,9 @@ android-lib: android-bindings
 
 # Run these rather than `cap sync`: ordering is the whole point, and skipping the
 # core's steps leaves the Android shell linked against whatever was there
-# before. iOS builds the core and the web assets in Xcode's own first build
-# phase, so syncing it only needs Capacitor's config and plugins copied over,
-# and needs no NDK.
+# before. Syncing iOS only needs Capacitor's config and plugins copied over,
+# and needs no NDK, because Xcode's own first build phase builds the core and
+# the web assets.
 
 # Both platforms.
 sync: sync-android sync-ios
@@ -198,13 +198,13 @@ xcode:
     node scripts/xcode.js
 
 # The names the Swift shell takes from the generated bindings. No compiler reads
-# that Swift anywhere, so a stale one is found by running the app on a Mac.
+# that Swift anywhere, and a stale one is found by running the app on a Mac.
 swift: bindings
     node scripts/swift.js
 
-# Kotlin resolves against the generated bindings, not the jniLibs, so this wants
-# the Android SDK and not the NDK. The APK is thrown away; compiling it is the
-# only thing that reads the shell's Kotlin at all.
+# This wants the Android SDK and not the NDK, because Kotlin resolves against
+# the generated bindings, not the jniLibs. The APK is thrown away; compiling it
+# is the only thing that reads the shell's Kotlin at all.
 android-check: android-bindings build
     pnpm exec cap sync android
     cd android && ./gradlew --no-daemon assembleDebug
@@ -216,8 +216,9 @@ fmt:
     cd {{core}} && cargo fmt
 
 # Everything a change has to pass. CI runs one step per recipe listed here except
-# android-check: provisioning the SDK costs the shared runner more than the
-# compile does, so the Kotlin is compiled before the push rather than after it.
+# android-check. The Kotlin is compiled before the push rather than after it,
+# because provisioning the SDK costs the shared runner more than the compile
+# does.
 qa: check lint format comments xcode core-fmt core-lint core-test swift android-check
 
 # --------------------------------------------------------------------- cleanup

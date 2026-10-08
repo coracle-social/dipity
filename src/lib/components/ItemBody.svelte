@@ -61,7 +61,7 @@
 
   const written = $derived(event.kind === LONG_FORM ? article.reader(event).parse() : undefined)
 
-  // The page it opens on heads the parent with its own section, so the card does not.
+  // The card does not head the parent, because the page it opens on does that with its own section.
   const about = $derived(detailed ? undefined : commentedOn(event))
 </script>
 
@@ -71,7 +71,7 @@
     <Quoted {id} {social} absent="The original post isn't on this phone." />
   {/if}
 {:else if about}
-  <!-- A comment reaches people who never got its subject, so its own words come first. -->
+  <!-- A comment's own words come first, because it reaches people who never got its subject. -->
   <Prose {event} />
   <div class="mt-2">
     <Quoted id={about} {social} absent="The post this replies to isn't on this phone." />

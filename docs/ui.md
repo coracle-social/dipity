@@ -12,7 +12,7 @@ The view layer: component framework, design tokens, and the conventions a linter
 | `bits-ui` | Headless behavior — focus traps, roving tabindex, ARIA wiring, dismissal. |
 | `tailwindcss` | The token system. Every design decision below is a Tailwind theme variable. |
 | `tailwind-variants` | Variant tables (`tv`) inside components. |
-| `tailwind-merge`, `clsx` | `cn()` — conflict-aware class merging, so a caller's `class` can override. |
+| `tailwind-merge`, `clsx` | `cn()` — conflict-aware class merging, so that a caller's `class` can override. |
 | `@lucide/svelte` | Icons, tree-shaken per import. |
 | `mode-watcher` | Light/dark class on `<html>`, persisted. |
 | `@fontsource-variable/figtree` | The typeface, as an npm package rather than a CDN link. |
@@ -38,7 +38,7 @@ The cost: nothing updates itself. A fix upstream reaches us only if someone re-r
 
 ## The browser has a core
 
-A device reaches the real one through [the plugin boundary](./overview.md#architecture), and a browser reaches nothing: `registerPlugin` answers a proxy with no implementation behind it, so every call rejects and a screen can only render its empty state.
+A device reaches the real one through [the plugin boundary](./overview.md#architecture), and a browser reaches nothing: `registerPlugin` answers a proxy with no implementation behind it. Every call rejects, and a screen can only render its empty state.
 
 `src/lib/dev/` is the other half of that boundary — the same surface over an in-memory store, a faker-generated neighborhood, and a clock that walks it past the device. People turn up, strangers ask to pair, bursts of events arrive, and something already stored is seen again from somebody new. What the view publishes is stored and comes back out of a query.
 
@@ -48,22 +48,22 @@ It refuses what the core refuses, and that half matters more than what it answer
 
 The shapes themselves are declared once, in `core.ts`, and the simulator answers with them rather than with types of its own — a stored event is `@welshman/util`'s `HashedEvent`, the same unsigned event `coracle-lib` stores, and a query narrows through `matchFilter`. A fixture that restates the contract in its own words is a fixture that can drift from it.
 
-What a simulated peer writes comes out of `@welshman/domain` too, bound in `src/lib/dev/kinds.ts` rather than taken from `src/lib/kinds/`. The dependency points one way: a stand-in for the core that reached for the app would only prove the app agrees with itself. Sharing the library instead means neither side spells a tag out, so a kind the view learns to read is a kind a peer already writes correctly.
+What a simulated peer writes comes out of `@welshman/domain` too, bound in `src/lib/dev/kinds.ts` rather than taken from `src/lib/kinds/`. The dependency points one way: a stand-in for the core that reached for the app would only prove the app agrees with itself. Sharing the library instead means neither side spells a tag out. A kind the view learns to read is then a kind a peer already writes correctly.
 
-`src/lib/core.ts` loads it by dynamic import under `import.meta.env.DEV`, so the branch is dead code in a shipped bundle and neither the simulator nor faker is in one. It is also `window.dip`, because a browser has no second phone: a peer offering this device its identity is started from the console with `dip.receiveOffer(link)`.
+`src/lib/core.ts` loads it by dynamic import under `import.meta.env.DEV`. The branch is dead code in a shipped bundle, and neither the simulator nor faker is in one. It is also `window.dip`, because a browser has no second phone: a peer offering this device its identity is started from the console with `dip.receiveOffer(link)`.
 
 **Nothing but `core.ts` may import it**, which `just lint` enforces. A view that reaches past the boundary for a fixture has a code path that only ever runs in a browser, and the screen it draws there is not the screen a device draws.
 
 ## The vendored seam
 
-`src/lib/components/ui/` is written by the CLI, so it is fenced off from our conventions:
+`src/lib/components/ui/` is fenced off from our conventions because the CLI writes it:
 
 - **Prettier ignores it** (`.prettierignore`). It stays in upstream's formatting — tabs, double quotes — so that re-adding a component is a clean diff instead of a whitespace conflict.
 - **Lint is relaxed there** (`eslint.config.js`). Correctness and accessibility rules still apply; the house conventions do not, because the next `add` would overwrite them.
 - **Add with `just ui <name>`**, never by hand-copying from the website.
 - **Edit deliberately or not at all.** Restyling belongs in `app.css`, where it reaches every component at once. If a vendored file has to change, say so in the commit; it no longer tracks upstream.
 
-App components go in `src/lib/components/`. The `ui/` directory is a boundary rather than a filing convention, so nothing app-specific belongs in it.
+App components go in `src/lib/components/`. Nothing app-specific belongs in the `ui/` directory, which is a boundary rather than a filing convention.
 
 ## The composition rule
 
@@ -79,7 +79,7 @@ Outside components, layout, spacing and type utilities remain available. The all
 
 ### Runes stay in components
 
-`$state`, `$derived`, `$effect`, `$props` and friends are compiler syntax, and the compiler only runs on `.svelte` files. In a plain `.ts` module they are an undefined global that fails at runtime rather than at build, so the linter rejects them there.
+`$state`, `$derived`, `$effect`, `$props` and friends are compiler syntax, and the compiler only runs on `.svelte` files. The linter rejects them in a plain `.ts` module, where they are an undefined global that fails at runtime rather than at build.
 
 Shared reactive state goes in a store from `svelte/store` instead, which works identically in a module and in a component. That also keeps `.svelte.ts` out of the tree, where a rune-bearing module would be a second reactivity system running alongside the controller's stores.
 
@@ -100,7 +100,7 @@ Semantic tokens only. `bg-card`, `text-muted-foreground`, `border-border` — ne
 | Token | Use |
 | --- | --- |
 | `background` / `foreground` | The page. Warm off-white, warm near-black — never `#fff` or `#000`. |
-| `card` / `card-foreground` | Raised surfaces. Lighter than the page in *both* themes, so they read as lift. |
+| `card` / `card-foreground` | Raised surfaces. Lighter than the page in *both* themes, which reads as lift. |
 | `popover` | Floating surfaces. Lighter again. |
 | `muted` / `muted-foreground` | Recessed fills and secondary text. |
 | `accent` / `accent-foreground` | Hover and active states on neutral surfaces. |
@@ -109,11 +109,11 @@ Semantic tokens only. `bg-card`, `text-muted-foreground`, `border-border` — ne
 | `destructive` | Irreversible actions only. |
 | `border` / `input` / `ring` | Hairlines and focus. |
 
-Values are `oklch`, so lightness is perceptually even: `oklch(0.7 …)` reads as the same brightness at every hue, which makes the dark theme derivable rather than hand-tuned. Both themes are defined in `app.css`, and dark mode is a `.dark` class on `<html>` set before first paint by an inline script in `index.html` — `ModeWatcher` runs after the bundle parses, which on a cold launch is a white flash on a dark-mode phone.
+Values are `oklch`, in which lightness is perceptually even: `oklch(0.7 …)` reads as the same brightness at every hue, which makes the dark theme derivable rather than hand-tuned. Both themes are defined in `app.css`, and dark mode is a `.dark` class on `<html>` set before first paint by an inline script in `index.html` — `ModeWatcher` runs after the bundle parses, which on a cold launch is a white flash on a dark-mode phone.
 
 **`primary` is rationed.** One primary action per screen. Terracotta at scale stops being warm and starts being loud. A state the user set themselves wears it too, and the lit bookmark is the only one. `secondary-accent` at 0.07 chroma is too quiet to find among four grey icons.
 
-`secondary-accent` is what carries color everywhere else. It sits at roughly half the chroma of `primary` (0.07 against 0.148), which is what makes it read as subordinate — not lower contrast, which would just make it hard to read, but less saturated, so it recedes while staying legible.
+`secondary-accent` is what carries color everywhere else. It sits at roughly half the chroma of `primary` (0.07 against 0.148), which is what makes it read as subordinate — not lower contrast, which would just make it hard to read, but less saturated, which lets it recede while staying legible.
 
 Three tokens have confusable names, and only one of them is a hue:
 
@@ -123,7 +123,7 @@ Three tokens have confusable names, and only one of them is a hue:
 | `accent` | A neutral hover/active state. Drives every dropdown and menu item. |
 | `secondary-accent` | The teal. The only one of the three that is a color. |
 
-`secondary` and `accent` are wired into the vendored components, so neither could be repurposed without restyling every secondary button and every menu hover.
+Neither `secondary` nor `accent` could be repurposed without restyling every secondary button and every menu hover, because both are wired into the vendored components.
 
 ### Elevation
 
@@ -141,22 +141,22 @@ Six steps. A component picks one by **what it is**, not by how much lift looks g
 | `shadow-control-raised` | The same control under the pointer |
 | `inset-shadow-clay` | Pressed *into* the page — toggles, wells, active segments |
 
-A button is not a small card, and gets its own two steps. Both `--clay-rim` and `--clay-base` are calibrated for near-white card stock, where a near-opaque white edge reads as a lit rim and 5% warm gray reads as a shaded one. On a saturated fill the first is a hard gloss line and the second is invisible, so `shadow-control` works over `--clay-rim-fill` and `--clay-base-fill` instead, and tightens the penumbra — a card-sized one under a button reads as a floating tile.
+A button is not a small card, and gets its own two steps. Both `--clay-rim` and `--clay-base` are calibrated for near-white card stock, where a near-opaque white edge reads as a lit rim and 5% warm gray reads as a shaded one. On a saturated fill the first is a hard gloss line and the second is invisible. `shadow-control` works over `--clay-rim-fill` and `--clay-base-fill` instead, and tightens the penumbra — a card-sized one under a button reads as a floating tile.
 
-The thickness comes from edges rather than curvature: a lit hairline along the top, a shaded one along the bottom, and only a trace of interior shading above it. A blurred highlight falling away from the top edge is what makes a surface read as a bubble, so there isn't one — a button is a slab with soft corners, not a blown shape.
+The thickness comes from edges rather than curvature: a lit hairline along the top, a shaded one along the bottom, and only a trace of interior shading above it. There is no blurred highlight falling away from the top edge, because that is what makes a surface read as a bubble — a button is a slab with soft corners, not a blown shape.
 
 Buttons press. `shadow-control` at rest, `shadow-control-raised` under the pointer, and on `:active` the drop shadow collapses to `shadow-2xs` while `inset-shadow-clay` pushes the surface into the page, alongside the 1px translate the base already carries. `ghost` and `link` stay flat, because a button with no surface has nothing to lift.
 
 Each step is built from four primitives in `app.css`: `--clay-umbra` (the tight contact shadow), `--clay-penumbra` (the wide diffuse one), `--clay-rim` (a lit top edge) and `--clay-base` (a shaded bottom edge). The rim and base give a surface thickness rather than mere separation.
 
-The standard scale is redefined rather than supplemented with a `shadow-clay` utility: shadcn components are written against `shadow-sm` and `shadow-lg`, so overriding the scale restyles the entire vendored set without editing a component file. The same applies to `--radius` and to the default transition.
+The standard scale is redefined rather than supplemented with a `shadow-clay` utility: shadcn components are written against `shadow-sm` and `shadow-lg`. Overriding the scale restyles the entire vendored set without editing a component file. The same applies to `--radius` and to the default transition.
 
 ### Motion
 
 **Liberal, and subtle.** Almost every state change is animated; no animation asks to be noticed. If a user would describe the app as "animated", it is too much.
 
 - **One curve.** `ease-clay` — `cubic-bezier(0.32, 0.72, 0, 1)` — quick to leave, slow to settle, **no overshoot**. Bounce and spring make an interface ask to be looked at. `ease-exit` is the counterpart for dismissals, which are faster and less interesting than entrances.
-- **A bare `transition` is already correct.** `--default-transition-duration` is 180ms and the default timing function is `ease-clay`, so `transition-colors` with no modifiers picks up the house feel. Set an explicit duration only when 180ms is wrong.
+- **A bare `transition` is already correct.** `transition-colors` with no modifiers picks up the house feel, because `--default-transition-duration` is 180ms and the default timing function is `ease-clay`. Set an explicit duration only when 180ms is wrong.
 - **Transform and opacity only.** Animating layout properties forces reflow, and this app has a Rust core doing crypto and a radio scanning in the background. The frame budget is not ours alone.
 - **Movement carries meaning.** Sheets slide because they come from an edge. Tab panels cross-fade, because sliding would imply a spatial relationship between tabs that does not exist.
 - **Never gate an interaction on an animation.** The reduced-motion rule in `app.css` collapses every duration to 1ms, and is safe precisely because nothing waits on one.
@@ -192,7 +192,7 @@ Whose pictures are blurred until tapped is a preference, `display.blur`: people 
 | --- | --- |
 | `no-restricted-classes` → arbitrary values | `bg-[#3a2f28]` outside [`src/lib/components/`](#the-composition-rule). |
 | `no-restricted-classes` → palette, easings | `bg-white`, `text-gray-500`, `ease-in-out`. |
-| `no-unknown-classes` | Typos, and utilities for tokens that do not exist. Resolved against `app.css`, so the theme *is* the vocabulary. |
+| `no-unknown-classes` | Typos, and utilities for tokens that do not exist. Resolved against `app.css`, which makes the theme the vocabulary. |
 | `no-conflicting-classes` | `px-2 px-3` and friends, where the winner depends on stylesheet order. |
 | `no-restricted-syntax` → `SvelteStyleElement` | Component-scoped `<style>`. See below. |
 | `no-restricted-syntax` → runes in `.ts` | [Runes outside components.](#runes-stay-in-components) |
@@ -210,7 +210,7 @@ Styling happens in Tailwind utilities, or in the theme. A component-scoped rule 
 - **`cn()` last, always.** `class={cn(variants({size}), className)}` — the caller's class has to be able to win, and `twMerge` is what makes that deterministic.
 - **`tv()` for variants, not conditionals.** If a component has more than two visual states, it gets a variant table.
 - **Semantic HTML before ARIA.** bits-ui handles the wiring for anything interactive; hand-rolled `role` attributes are a sign the wrong primitive was used.
-- **The UI owns no durable state.** The view is suspended in the background, so anything that must survive that lives in the core. Where the user is does not survive; a choice they made about what a screen is for does, as a preference under a `ui.` key (`remembered` in `src/lib/data/query.ts`).
+- **The UI owns no durable state.** Anything that must survive the view being suspended in the background lives in the core. Where the user is does not survive; a choice they made about what a screen is for does, as a preference under a `ui.` key (`remembered` in `src/lib/data/query.ts`).
 - **Never claim posts only reach nearby people.** Copy may say the phone trades with devices in range, since every link is physical. Copy about who ends up with a post says reach is bounded at two hops, because a second-hop recipient may be anywhere.
 
 ## Organizing against welshman
@@ -230,11 +230,11 @@ export const Post = new KindFactory({kind: NOTE, reader: PostReader, writer: Pos
 
 Every factory is configured once, in `src/lib/kinds/index.ts`, against a resolver that answers no relays — which is the truth rather than a stub, since there are none and a writer's routing half is never asked. Components read through the getters that configuration mints.
 
-A kind `@welshman/domain` already models is re-exported configured rather than redeclared, and the rest are its classes at a kind number or a reader of its own it has none of. Block (`people.ts`) is a kind of ours spelled the way NIP-51's mute list is, so it uses its reader and writer. A contact card (`contact.ts`) is ours, addressed to the person it names and carrying that name as its content. A boost (`repost.ts`) is NIP-18 without the embedded copy of what it names, since an event on the gossip path carries no signature to embed.
+A kind `@welshman/domain` already models is re-exported configured rather than redeclared, and the rest are its classes at a kind number or a reader of its own it has none of. Block (`people.ts`) uses the reader and writer of NIP-51's mute list, because it is a kind of ours spelled the way that list is. A contact card (`contact.ts`) is ours, addressed to the person it names and carrying that name as its content. A boost (`repost.ts`) is NIP-18 without the embedded copy of what it names, since an event on the gossip path carries no signature to embed.
 
 **`event.tags.find(t => t[0] === "…")` does not appear in a component.** A kind's shape is stated once, in its reader, and every screen reads it through getters. Unmodeled tags survive an edit, because a writer seeded from a reader re-emits whatever it did not model.
 
-A **topic** is the one thing no reader models. It is a `t` tag every kind carries the same way, so `src/lib/kinds/index.ts` reads and writes it for all of them at once. The topics on offer are a closed set declared there, so the board's filter and the muted-topics setting mean the same thing on two phones that have never met.
+A **topic** is the one thing no reader models. It is a `t` tag every kind carries the same way. `src/lib/kinds/index.ts` reads and writes it for all of them at once. A topic is free text, written lowercase with no `#` and with hyphens for spaces, so that two people typing the same word file under the same tag. It is read back as the core reads it, with a leading `#` stripped and nothing else changed. A filter or a mute therefore matches a tag exactly. The board's filter offers the topics on the board.
 
 ### Components do not query the core
 
@@ -244,7 +244,7 @@ A component takes a store and renders it; it does not know a bridge exists. `plu
 
 ### Replacing a list
 
-**A replaceable event is published with the one it replaces, and `publish` stamps it a second later.** Two versions carrying the same second are settled by the lower id, so a rename or a bookmark made within a second of the last is refused by the store while `publish` still answers ([`storage.md`](./storage.md#the-schema)). The screen then redraws the version it thought it had just replaced.
+**A replaceable event is published with the one it replaces, and `publish` stamps it a second later.** Two versions carrying the same second are settled by the lower id. A rename or a bookmark made within a second of the last is refused by the store while `publish` still answers ([`storage.md`](./storage.md#the-schema)). The screen then redraws the version it thought it had just replaced.
 
 ### What does not transfer
 
@@ -254,7 +254,7 @@ Flotilla is still worth reading for Svelte idiom and for how readers are used in
 
 ## Formatting
 
-Prettier, in the [Coracle house style](https://github.com/coracle-social/coracle/blob/master/.prettierrc): no semicolons, double quotes, no bracket spacing, brackets on the same line, 100 columns. `prettier-plugin-tailwindcss` sorts class lists, so class order is never a review comment.
+Prettier, in the [Coracle house style](https://github.com/coracle-social/coracle/blob/master/.prettierrc): no semicolons, double quotes, no bracket spacing, brackets on the same line, 100 columns. Class order is never a review comment, because `prettier-plugin-tailwindcss` sorts class lists.
 
 Markdown is excluded. Prettier pads every table to its widest cell and rewrites `*emphasis*` to `_emphasis_`, which turns a one-line edit to a design doc into a hundred-line diff.
 

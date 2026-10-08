@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// For hand-written `Debug` impls, where a field is a rendering rather than a
 /// value: a redaction, a hex encoding, an abbreviation. `debug_struct` takes
-/// `&dyn Debug` for each field, so a bare `&str` there would come out quoted
+/// `&dyn Debug` for each field. A bare `&str` there would come out quoted
 /// and a `<redacted>` would read as a string someone stored.
 pub(crate) struct Bare<'a>(pub &'a str);
 
@@ -25,7 +25,7 @@ impl fmt::Debug for Bare<'_> {
 
 /// A stretch of the day as minutes from local midnight.
 ///
-/// Half-open: `start` is inside the window and `end` is not, so two windows
+/// Half-open: `start` is inside the window and `end` is not, and two windows
 /// meeting at a minute do not overlap on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Window {
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn a_window_that_opens_and_closes_together_is_empty() {
-        // Half-open, so the one minute it names is excluded by its own end.
+        // The one minute it names is excluded by its own end, because the window is half-open.
         let instant = Window {
             start: 600,
             end: 600,

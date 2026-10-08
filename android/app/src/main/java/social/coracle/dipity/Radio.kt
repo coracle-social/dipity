@@ -111,18 +111,18 @@ class Radio(private val context: Context, private val delegate: Delegate) {
      *
      * Capacitor's binder threads, the GATT callback threads, each publication's
      * accept thread and each channel's reader and writer all reach the fields
-     * below, so every one of those entries is posted here instead of being
+     * below. Every one of those entries is posted here instead of being
      * synchronized.
      */
     private val queue = Executors.newSingleThreadExecutor { work -> Thread(work, "dip-radio") }
 
-    /** Which thread that is, so a nested call runs now rather than later. */
+    /** Which thread that is so that a nested call runs now rather than later. */
     private val owner = queue.submit(Callable { Thread.currentThread() }).get()
 
     /** Every live link, both roles, keyed the way the core names them. */
     private val links = mutableMapOf<ULong, Link>()
 
-    /** Devices seen but not yet dialed, so a `Connect` can name one. */
+    /** Devices seen but not yet dialed so that a `Connect` can name one. */
     private val seen = mutableMapOf<String, BluetoothDevice>()
 
     /** The open L2CAP channel on each link, for as long as one is. */
@@ -149,7 +149,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     /** Whether the app is in front, which buys the fast scan and advertising modes. */
     private var foreground = false
 
-    /** When each device was last reported, so a peer advertising ten times a second is reported once. */
+    /** When each device was last reported so that a peer advertising ten times a second is reported once. */
     private val reported = mutableMapOf<String, Long>()
 
     /**
@@ -198,11 +198,11 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
     /** One connection, from either side. */
     private sealed interface Link {
-        /** This device dialed, so it holds the client and its characteristic. */
+        /** This device dialed and holds the client and its characteristic. */
         data class Dialed(val gatt: BluetoothGatt, val characteristic: BluetoothGattCharacteristic) :
             Link
 
-        /** The peer dialed, so it is a subscriber on our GATT server. */
+        /** The peer dialed and is a subscriber on our GATT server. */
         data class Received(val device: BluetoothDevice) : Link
     }
 
@@ -251,8 +251,8 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
     /**
      * The app came to the front or left it. In front, scanning and advertising
-     * run in their fastest modes, so a peer is found in a second or two; behind,
-     * in balanced ones, so the pocket does not pay for it.
+     * run in their fastest modes and find a peer in a second or two; behind, they
+     * run in balanced ones, which the pocket does not pay for.
      */
     fun foreground(on: Boolean) = confined {
         if (foreground == on) return@confined
@@ -295,7 +295,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     fun connect(peripheral: String) = confined {
         val device = seen[peripheral] ?: return@confined
 
-        // A direct dial is faster than a standing one, so it takes over.
+        // A direct dial takes over from a standing one because it is faster.
         awaiting.remove(peripheral)?.close()
         device.connectGatt(context, false, client, BluetoothDevice.TRANSPORT_LE)
     }
@@ -409,7 +409,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     /**
      * Drop a link and everything hanging off it.
      *
-     * The link goes first, so a channel closing on its way out is not reported
+     * The link goes first so that a channel closing on its way out is not reported
      * as an upgrade this device lost.
      */
     private fun forget(link: ULong) {
@@ -599,7 +599,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                 val subscription = found?.getDescriptor(CLIENT_CONFIGURATION)
 
                 if (found == null || subscription == null) {
-                    // Apple's overflow area is shared with other apps, so a matched iPhone may not be ours.
+                    // A matched iPhone may not be ours, because Apple's overflow area is shared with other apps.
                     if (status == BluetoothGatt.GATT_SUCCESS) foreign.add(gatt.device.address)
 
                     return@confined gatt.disconnect()
@@ -609,7 +609,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                 gatt.writeDescriptor(subscription, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
             }
 
-            // Android runs one GATT operation at a time, so the link is up once the subscription lands.
+            // The link is up once the subscription lands, because Android runs one GATT operation at a time.
             override fun onDescriptorWrite(
                 gatt: BluetoothGatt,
                 descriptor: BluetoothGattDescriptor,
@@ -715,8 +715,8 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
         /**
          * The manufacturer-data type of iOS's overflow area: a bitmask with one
-         * bit per backgrounded service UUID. Which bit is ours is undocumented,
-         * so any overflow advertisement matches and the core sets aside
+         * bit per backgrounded service UUID. Any overflow advertisement matches,
+         * because which bit is ours is undocumented, and the core sets aside
          * whatever turns out not to be ours.
          */
         const val OVERFLOW: Byte = 0x01
@@ -742,8 +742,8 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         /**
          * How long a published channel waits for its peer, in milliseconds.
          *
-         * The peer has been told the PSM and has an open GATT link to reach it
-         * over, so a wait this long means it is not coming.
+         * A wait this long means the peer is not coming, because it has been told
+         * the PSM and has an open GATT link to reach it over.
          */
         const val ACCEPT_TIMEOUT = 30_000
     }

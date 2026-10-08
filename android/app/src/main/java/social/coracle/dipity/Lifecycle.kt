@@ -15,9 +15,9 @@ private const val WAKE = "social.coracle.dipity.WAKE"
 /**
  * What the battery is at, and when the core wants ticking.
  *
- * Both are things the core asks for and nothing answered: blob transfers are
- * metered against `BLOB_MIN_BATTERY`, so with no report the core is deciding on
- * missing information, and a `WakeAt` nobody acts on leaves a session holding
+ * Both are things the core asks for and nothing answered: with no report, the
+ * core meters blob transfers against `BLOB_MIN_BATTERY` on missing information,
+ * and a `WakeAt` nobody acts on leaves a session holding
  * one of six link slots until the radio happens to fire.
  *
  * Where the app is stays with the plugin, which is where Android surfaces it —
@@ -60,9 +60,9 @@ class Lifecycle(
     /**
      * Listen, and report the battery as it is now.
      *
-     * `ACTION_BATTERY_CHANGED` is sticky, so registering for it answers the
-     * current level: a device that is launched and left alone is not waiting on
-     * a change before the core knows anything.
+     * Registering for `ACTION_BATTERY_CHANGED` answers the current level,
+     * because it is sticky. A device that is launched and left alone is not
+     * waiting on a change before the core knows anything.
      */
     fun start() {
         val filter =

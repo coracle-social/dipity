@@ -7,11 +7,12 @@
 //! bound to this channel by mutual NIP-42 instead, for the life of one
 //! session. `docs/transport.md#the-static-key-is-generated-per-session`.
 //!
-//! The transport cipher takes explicit nonces, one sequence per [`Pipe`]: the
-//! GATT characteristic and an L2CAP channel deliver independently, so a single
-//! sequence would fail to open whichever write overtook the other. GATT takes
-//! the even nonces and bulk the odd ones, so the two never collide, and each
-//! still opens strictly in order. `docs/transport.md#the-l2cap-bandwidth-upgrade`.
+//! The transport cipher takes explicit nonces, one sequence per [`Pipe`],
+//! because the GATT characteristic and an L2CAP channel deliver independently
+//! and a single sequence would fail to open whichever write overtook the
+//! other. GATT takes the even nonces and bulk the odd ones. The two never
+//! collide, and each still opens strictly in order.
+//! `docs/transport.md#the-l2cap-bandwidth-upgrade`.
 
 use anyhow::{Context, Result, bail};
 use snow::{Builder, HandshakeState, StatelessTransportState};
@@ -55,8 +56,9 @@ impl Noise {
     /// Begin a handshake, generating a fresh static key for it.
     ///
     /// The dialer is the Noise initiator. Everything here can fail on a device
-    /// whose entropy source is not answering, and a handshake begins in a
-    /// background wake with no one to see a panic, so it is reported instead.
+    /// whose entropy source is not answering. A failure is reported rather than
+    /// panicking, because a handshake begins in a background wake with no one
+    /// to see a panic.
     pub fn begin(role: Role) -> Result<Self> {
         let params = PARAMS
             .parse::<snow::params::NoiseParams>()
@@ -174,7 +176,7 @@ impl Noise {
 
     /// The handshake hash: a transcript binding of everything both sides sent.
     ///
-    /// Recognition tags are MACs over this, so a tag is worthless outside the
+    /// A recognition tag is a MAC over this, and is worthless outside the
     /// session it was minted in. `docs/discovery.md#recognition`.
     pub fn handshake_hash(&self) -> Result<[u8; 32]> {
         if let Some(hash) = self.hash {
@@ -186,8 +188,8 @@ impl Noise {
 
     /// Encrypt one fragment's payload for `pipe`.
     ///
-    /// Each pipe is a strict sequence, so calls have to happen in the order
-    /// that pipe's writes go out.
+    /// Calls have to happen in the order that pipe's writes go out, because
+    /// each pipe is a strict sequence.
     pub fn encrypt(&mut self, pipe: Pipe, payload: &[u8]) -> Result<Vec<u8>> {
         let Some(transport) = &self.transport else {
             bail!("traffic encrypts only once the handshake has completed");

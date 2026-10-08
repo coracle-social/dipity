@@ -1,10 +1,10 @@
 //! Mutual NIP-42 over the secured channel.
 //!
 //! Each side challenges the other and answers with a signed kind 22242 event
-//! whose relay tag names the channel by its Noise static key, so a response
-//! cannot be replayed onto another link. The auth event is the only signed
-//! nostr event in the app, and it is portable evidence — which is why the
-//! channel key it binds to must not be durable. `docs/nips/p2p-auth.md`,
+//! whose relay tag names the channel by its Noise static key, so that a
+//! response cannot be replayed onto another link. The auth event is the only
+//! signed nostr event in the app, and it is portable evidence — which is why
+//! the channel key it binds to must not be durable. `docs/nips/p2p-auth.md`,
 //! `docs/privacy.md#the-auth-event-is-portable-evidence`.
 
 use std::collections::BTreeSet;
@@ -93,8 +93,8 @@ impl AuthExchange {
 
     /// Verify the peer's response against our challenge and this channel,
     /// returning the pubkey it proved.
-    /// Consumes the challenge: `p2p-auth.md` requires one be "accepted once",
-    /// so a captured response cannot be replayed against it for the life of
+    /// Consumes the challenge, because `p2p-auth.md` requires one be "accepted
+    /// once". A captured response cannot be replayed against it for the life of
     /// the session.
     ///
     /// The same doc allows a peer to authenticate as several pubkeys over a
@@ -123,7 +123,7 @@ impl AuthExchange {
             bail!("the AUTH response carries a different challenge");
         }
 
-        // We issued the challenge, so the response must name our channel.
+        // The response must name our channel, because we issued the challenge.
         let relay = format!("noise://{}", hex::encode(local_static));
         let tag_relay = event
             .tags

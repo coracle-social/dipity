@@ -8,8 +8,8 @@
 //!
 //! # The lock
 //!
-//! The core takes `&mut self` and uniffi hands out `Arc`, so the mutex lives
-//! here. Each method takes it, runs one entry point, and drops it before the
+//! The mutex lives here, because the core takes `&mut self` and uniffi hands
+//! out `Arc`. Each method takes it, runs one entry point, and drops it before the
 //! actions are converted. Two callbacks can still run under it: the logger, and
 //! a read of the identity key when a session signs mid-call, which is one
 //! Keychain or Keystore read. Anything slower, the backup's scrypt above all,
@@ -18,7 +18,7 @@
 //! # The vocabulary
 //!
 //! [`LinkId`], [`PeripheralId`] and [`Role`] cross as themselves. They are
-//! one-field records rather than a `u64` and a `String`, so Swift and Kotlin get
+//! one-field records rather than a `u64` and a `String` so that Swift and Kotlin get
 //! types a call site cannot swap — which matters most at
 //! [`Node::link_up`](Node::link_up), where both appear.
 
@@ -69,7 +69,7 @@ pub enum Role {
 pub enum TransferOutcome {
     /// The key arrived. Take it with [`Node::take_transferred_identity`].
     Received,
-    /// The key left this device, so the peer holds this identity too.
+    /// The key left this device, and the peer holds this identity too.
     Sent,
     /// One of the two users said no, or the peer could not run the flow.
     Refused,
@@ -135,8 +135,8 @@ pub enum Action {
     },
     /// Who the peer on a link proved to be, once per pubkey it proves.
     ///
-    /// The gate runs before either side names a pubkey, so a pet name the user
-    /// typed there is for a person. This says which key that person holds.
+    /// A pet name the user typed at the gate is for a person, because the gate
+    /// runs before either side names a pubkey. This says which key that person holds.
     PeerIdentified {
         /// The link the peer proved itself over.
         link: LinkId,
@@ -147,8 +147,8 @@ pub enum Action {
         /// Whether this device dialed the link.
         dialed: bool,
         /// Whether this device recognized the pubkey by its pair secret. A
-        /// named peer it did not recognize has forgotten the user, so they are
-        /// asked to pair again.
+        /// named peer it did not recognize has forgotten the user. They are asked
+        /// to pair again.
         recognized: bool,
     },
     /// Present the share sheet over a key backup the core has written.
@@ -214,8 +214,8 @@ pub enum Action {
     },
     /// Call [`Node::tick`] at or after this unix second.
     ///
-    /// Advisory: iOS runs no timer for a suspended app, so the heartbeat and the
-    /// connection scheduler both recover on the next radio callback.
+    /// Advisory. The heartbeat and the connection scheduler both recover on the
+    /// next radio callback, because iOS runs no timer for a suspended app.
     WakeAt {
         /// The unix second to wake at.
         at: i64,
@@ -321,7 +321,7 @@ pub struct Node {
 
 /// Take the lock, run one entry point, and answer with the actions it returned.
 ///
-/// The guard is dropped before the conversion, so nothing crossing back into
+/// The guard is dropped before the conversion so that nothing crossing back into
 /// Swift or Kotlin happens under it.
 /// Parse an event id the view sent.
 fn event_id(hex: &str) -> Result<EventId, NodeError> {
@@ -458,7 +458,7 @@ impl Node {
             .map_err(|error| NodeError::link(link, &error))?)
     }
 
-    /// This end cannot do L2CAP on this link, so it stays on GATT.
+    /// This end cannot do L2CAP on this link and stays on GATT.
     pub fn l2cap_unavailable(&self, link: LinkId) -> Result<Vec<Action>, NodeError> {
         drive!(self, |node| node
             .l2cap_unavailable(link.into())
@@ -499,7 +499,7 @@ impl Node {
     /// Everything the user has said about who gets what, as JSON, with the
     /// core's own defaults where nothing is written.
     ///
-    /// The compiled policy every live session is bound to, so the settings
+    /// This is the compiled policy every live session is bound to. The settings
     /// screen edits what the gossip path obeys rather than a second reading of
     /// the same preference keys. `docs/policy.md`.
     pub fn policy(&self) -> Result<String, NodeError> {
@@ -510,8 +510,8 @@ impl Node {
         })
     }
 
-    /// The user's preferences changed, so every live session is rebound under
-    /// the policy they compile to.
+    /// The user's preferences changed. Every live session is rebound under the
+    /// policy they compile to.
     pub fn policy_changed(&self) -> Result<Vec<Action>, NodeError> {
         drive!(self, |node| node
             .policy_changed()
@@ -549,9 +549,9 @@ impl Node {
     /// Store and offer an event this device authored, with the media it
     /// attaches.
     ///
-    /// `event` is NIP-01 JSON with an id and no signature, built by the view —
-    /// a tag has to be in the event before its id can compute, so composing one
-    /// lives above the core.
+    /// `event` is NIP-01 JSON with an id and no signature, built by the view. A
+    /// tag has to be in the event before its id can compute, which puts composing
+    /// one above the core.
     pub fn publish(&self, event: String, media: Vec<Vec<u8>>) -> Result<Vec<Action>, NodeError> {
         let event: HashedEvent = serde_json::from_str(&event).map_err(|error| NodeError::Core {
             reason: format!("that is not a hashed event: {error}"),
@@ -624,7 +624,7 @@ impl Node {
         drive!(self, |node| node.key_backup_written(path))
     }
 
-    /// The share sheet closed, shared or dismissed, so the file goes.
+    /// The share sheet closed, shared or dismissed, and the file goes.
     pub fn key_export_finished(&self) -> Result<Vec<Action>, NodeError> {
         drive!(self, |node| node
             .key_export_finished()
@@ -844,7 +844,7 @@ mod tests {
 
         let crossed: serde_json::Value = serde_json::from_str(&node.policy().unwrap()).unwrap();
 
-        // Nothing is written, so this is the core's own defaults and not an empty document.
+        // With nothing written, this is the core's own defaults and not an empty document.
         assert_eq!(crossed["accept"], "lenient");
         assert_eq!(crossed["retention_days"], 90);
         assert_eq!(crossed["sharing"], "anyone");

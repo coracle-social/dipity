@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Builds, signs and publishes a release from this machine, so no signing key leaves it
+// Builds, signs and publishes a release from this machine so that no signing key leaves it
 import {release} from "./lib/pipeline.mjs"
 import apk from "./steps/apk.mjs"
 import gitea from "./steps/gitea.mjs"

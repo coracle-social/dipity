@@ -142,7 +142,7 @@ pub enum Change {
 ///
 /// Read rather than spelled in Swift and Kotlin, for the same reason
 /// [`service_uuid`](crate::node::service_uuid) is: both shells put this string
-/// on the same event and the view switches on it, so two copies is one place to
+/// on the same event and the view switches on it. Two copies is one place to
 /// disagree.
 #[uniffi::export]
 #[must_use]
@@ -190,7 +190,7 @@ pub struct Store {
     pub(crate) db: Arc<Db>,
     /// Where the node keeps blob bytes, for pointing the view at a whole one.
     blobs: FileBlobStore,
-    /// Every live registration, so dropping the store ends them.
+    /// Every live registration so that dropping the store ends them.
     subscriptions: Mutex<Vec<Arc<AtomicBool>>>,
 }
 
@@ -319,8 +319,8 @@ impl Store {
         Ok(command::forget_event(&self.db, &id)?)
     }
 
-    /// Forget the pairing with `pubkey`, so this device stops recognizing
-    /// theirs until the two next sync. Answers whether one was held.
+    /// Forget the pairing with `pubkey`. This device stops recognizing theirs
+    /// until the two next sync. Answers whether one was held.
     pub fn forget_pairing(&self, pubkey: String) -> Result<bool, StoreError> {
         let pubkey = PublicKey::from_hex(&pubkey).map_err(|error| malformed("pubkey", &error))?;
 
@@ -339,7 +339,7 @@ impl Store {
         Ok(command::set_preference(&self.db, &key, &value, now())?)
     }
 
-    /// Remove a preference, so its default applies again. Answers whether it
+    /// Remove a preference so that its default applies again. Answers whether it
     /// was there.
     pub fn clear_preference(&self, key: String) -> Result<bool, StoreError> {
         Ok(command::clear_preference(&self.db, &key)?)
@@ -363,7 +363,7 @@ impl Store {
     /// Hear about writes as they commit.
     ///
     /// Changes are coalesced over [`COALESCE`] and reported as the group that
-    /// moved, so the view re-reads whatever it is showing.
+    /// moved. The view re-reads whatever it is showing.
     pub fn observe(&self, observer: Arc<dyn StoreObserver>) -> Arc<Subscription> {
         let live = Arc::new(AtomicBool::new(true));
 

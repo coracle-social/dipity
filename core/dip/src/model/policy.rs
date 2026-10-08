@@ -226,7 +226,7 @@ mod tests {
             .map(String::as_str)
             .collect();
 
-        // Every preference key, so a screen reading this needs no defaults of its own.
+        // Every preference key, so that a screen reading this needs no defaults of its own.
         assert_eq!(
             named,
             [

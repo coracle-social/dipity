@@ -36,7 +36,7 @@ mod tests {
     use crate::fixtures::TempDir;
     use crate::model::BlobHash;
 
-    /// Both implementations, so a test can assert they answer alike.
+    /// Both implementations, so that a test can assert they answer alike.
     fn stores(dir: &TempDir) -> (FileBlobStore, MemoryBlobStore) {
         (
             FileBlobStore::open(&dir.0).unwrap(),
@@ -74,8 +74,8 @@ mod tests {
         assert_eq!(file.len(&hash).unwrap(), memory.len(&hash).unwrap());
     }
 
-    /// What a sweep deletes is whatever this reports, so the two stores
-    /// disagreeing here is a file that leaks on a phone and not in a test.
+    /// A sweep deletes whatever this reports. Two stores that disagree here
+    /// leak a file on a phone and not in a test.
     #[test]
     fn the_two_stores_list_the_same_hashes() {
         let dir = TempDir::new("blobs");
@@ -105,8 +105,8 @@ mod tests {
         assert_eq!(memory.hashes().unwrap(), [held[1].clone()]);
     }
 
-    /// The store names its own files, so anything else under the directory is
-    /// the shell's and a sweep must leave it alone.
+    /// Anything under the directory that the store did not name is the
+    /// shell's, and a sweep must leave it alone.
     #[test]
     fn a_file_that_is_not_a_hash_is_not_the_stores() {
         let dir = TempDir::new("blobs");

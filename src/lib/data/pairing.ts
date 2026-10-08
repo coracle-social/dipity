@@ -1,7 +1,7 @@
 // Somebody in range asking to pair, and the name they get out of it.
 //
 // A request comes one of two ways. The gate holds a stranger before either side
-// has named a pubkey, so that request carries a link and a code and nothing
+// has named a pubkey. That request carries a link and a code and nothing
 // about the person; the name typed for it is held against the link until the
 // peer identifies itself. Or the gate let a stranger through, and the request
 // comes once they have identified, carrying their pubkey: nothing waits on it,
@@ -23,7 +23,7 @@ import {session} from "$lib/data/session"
  * which is a request to admit them as well as to name them. `pubkey` is set
  * once they have said who they are, which a dialer does before the gate holds
  * them. `known` is the user's name for somebody they already named, who
- * forgot them. `formerly` holds the links it moved off, so a screen opened on
+ * forgot them. `formerly` holds the links it moved off so that a screen opened on
  * one still finds it.
  */
 export type Request = {
@@ -91,10 +91,10 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
     ),
   )
 
-  // Every identified link, so a request can move to another link to the same person when its own one closes.
+  // Every identified link so that a request can move to another link to the same person when its own one closes.
   const identified = new Map<number, {pubkey: string; code: number; dialed: boolean}>()
 
-  // Two links to one person resolve to the one the lower pubkey dialed; both phones pick it, so both show its shapes.
+  // Two links to one person resolve to the one the lower pubkey dialed; both phones pick it and show its shapes.
   const dialer = (link: number) => {
     const peer = identified.get(link)
 
@@ -121,7 +121,7 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
       const named = known.people.get(pubkey)?.petname
 
       pending.update(waiting => {
-        // A held dialer names itself before the hold, so its request learns who it is and stands for them.
+        // A held dialer's request learns who it is and stands for them, because it named itself before the hold.
         if (waiting.some(request => request.link === link && request.held)) {
           return waiting
             .filter(request => request.held || request.pubkey !== pubkey)
@@ -214,9 +214,9 @@ export const decline = async (link: number) => {
  * Started once, from the shell, because writing the card is a publish and not a
  * screen: the user may have moved on by the time the peer identifies itself.
  *
- * A device may prove several pubkeys over one link and the announcement comes
- * once per pubkey, so the name is kept until the link is answered for rather
- * than spent on the first.
+ * The name is kept until the link is answered for rather than spent on the
+ * first, because a device may prove several pubkeys over one link and the
+ * announcement comes once per pubkey.
  */
 export const watchPairings = async () => {
   const listener = await Dip.addListener("peerIdentified", ({link, pubkey}) => {

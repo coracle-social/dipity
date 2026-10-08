@@ -17,13 +17,13 @@ import uniffi.dip_ffi.KeyException
  *
  * `docs/keys.md#signing-happens-in-the-background` fixes what the wrapping key
  * may require, and it is load-bearing rather than a default to revisit: no
- * `setUserAuthenticationRequired`, so no biometric or lock-screen gate on the
- * signing path. The key signs during encounters, which happen with the screen
- * off and nobody in front of the phone; a gate there kills pocket-to-pocket
- * gossip silently.
+ * `setUserAuthenticationRequired`, and with it no biometric or lock-screen gate
+ * on the signing path. The key signs during encounters, which happen with the
+ * screen off and nobody in front of the phone; a gate there kills
+ * pocket-to-pocket gossip silently.
  *
- * Android Keystore dropped secp256k1 years ago, so the identity itself cannot
- * live in hardware. What hardware holds is an AES key that wraps it, and what
+ * The identity itself cannot live in hardware, because Android Keystore dropped
+ * secp256k1 years ago. What hardware holds is an AES key that wraps it, and what
  * is stored beside it is the ciphertext.
  */
 class Keystore(context: Context) {

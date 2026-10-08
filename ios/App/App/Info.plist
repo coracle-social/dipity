@@ -28,6 +28,8 @@
 	<string>Dipity confirms it's you before sending your key to another phone.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Dipity exchanges posts with phones nearby over Bluetooth.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Dipity uses the camera when you take a picture to post.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>

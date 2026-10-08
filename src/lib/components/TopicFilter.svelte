@@ -1,33 +1,38 @@
 <script lang="ts">
   import Tag from "@lucide/svelte/icons/tag"
+  import X from "@lucide/svelte/icons/x"
   import {Button} from "$lib/components/ui/button"
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu"
-  import {topics} from "$lib/kinds"
+  import {topicLabel} from "$lib/kinds"
 
-  let {topic, onPick}: {topic?: string; onPick: (topic?: string) => void} = $props()
-
-  const chosen = $derived(topics.find(({id}) => id === topic))
-
-  const anything = "any"
+  let {
+    topic,
+    offered,
+    onPick,
+  }: {topic?: string; offered: string[]; onPick: (topic?: string) => void} = $props()
 </script>
 
-<DropdownMenu.Root>
-  <DropdownMenu.Trigger>
-    {#snippet child({props})}
-      <Button {...props} variant={chosen ? "secondary" : "ghost"} size="sm">
-        <Tag />
-        {chosen ? chosen.label : "Any topic"}
-      </Button>
-    {/snippet}
-  </DropdownMenu.Trigger>
-  <DropdownMenu.Content align="end">
-    <DropdownMenu.RadioGroup
-      value={topic ?? anything}
-      onValueChange={picked => onPick(picked === anything ? undefined : picked)}>
-      <DropdownMenu.RadioItem value={anything}>Any topic</DropdownMenu.RadioItem>
-      {#each topics as option (option.id)}
-        <DropdownMenu.RadioItem value={option.id}>{option.label}</DropdownMenu.RadioItem>
+<!-- The only thing left to offer a board narrowed to one topic is the way back out. -->
+{#if topic}
+  <Button variant="secondary" size="sm" aria-label="Show every topic" onclick={() => onPick()}>
+    <Tag />
+    {topicLabel(topic)}
+    <X />
+  </Button>
+{:else if offered.length > 0}
+  <DropdownMenu.Root>
+    <DropdownMenu.Trigger>
+      {#snippet child({props})}
+        <Button {...props} variant="ghost" size="sm">
+          <Tag />
+          Any topic
+        </Button>
+      {/snippet}
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Content align="end">
+      {#each offered as option (option)}
+        <DropdownMenu.Item onSelect={() => onPick(option)}>{topicLabel(option)}</DropdownMenu.Item>
       {/each}
-    </DropdownMenu.RadioGroup>
-  </DropdownMenu.Content>
-</DropdownMenu.Root>
+    </DropdownMenu.Content>
+  </DropdownMenu.Root>
+{/if}

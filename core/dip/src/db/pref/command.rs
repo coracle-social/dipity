@@ -45,7 +45,7 @@ pub fn set_as<T: Serialize>(tx: &Tx<'_>, key: &str, value: &T, updated_at: i64) 
     set(tx, key, &encoded, updated_at)
 }
 
-/// Remove a preference, so its default applies again. Returns whether it was there.
+/// Remove a preference and let its default apply again. Returns whether it was there.
 pub fn remove(tx: &Tx<'_>, key: &str) -> Result<bool> {
     let removed = tx
         .prepare_cached("DELETE FROM pref WHERE key = ?1")?
@@ -61,7 +61,7 @@ pub fn remove(tx: &Tx<'_>, key: &str) -> Result<bool> {
     Ok(true)
 }
 
-/// Remove every preference, so every default applies again. Part of
+/// Remove every preference and let every default apply again. Part of
 /// [`wipe`](crate::db::command::wipe).
 pub fn clear(tx: &Tx<'_>) -> Result<()> {
     tx.execute_batch("DELETE FROM pref;")
@@ -127,7 +127,7 @@ mod tests {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
-        // Bare text reads fine and decodes into nothing, so the policy silently defaults.
+        // Bare text reads fine and decodes into nothing, leaving the policy silently defaulted.
         assert!(set(&tx, keys::ACCEPT, "lenient", 10).is_err());
         assert!(set(&tx, keys::ACCEPT, r#""lenient""#, 10).is_ok());
     }

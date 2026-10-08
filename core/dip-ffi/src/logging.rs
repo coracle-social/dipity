@@ -1,7 +1,7 @@
 //! Where the core's `log` records go on a device.
 //!
-//! `core/Cargo.toml` takes `log` as the facade only, so every `log::error!` in
-//! the core is inert until something installs a logger. Nothing in the core
+//! Every `log::error!` in the core is inert until something installs a logger,
+//! because `core/Cargo.toml` takes `log` as the facade only. Nothing in the core
 //! picks one — os_log and logcat are platform APIs, and choosing between them
 //! is the shell's job — so the facade is bridged here instead: the shell
 //! implements [`Logger`] over whichever it has and calls [`init_logging`] once
@@ -88,9 +88,9 @@ impl Log for Forwarder {
 
 /// Route the core's logs to the shell, at or above `level`.
 ///
-/// Answers whether it was installed: `log` takes one logger for the process and
-/// refuses a second, so a second call is a no-op rather than an error, and a
-/// test binary that has already installed its own keeps it.
+/// Answers whether it was installed. `log` takes one logger for the process and
+/// refuses a second. A second call is a no-op rather than an error, and a test
+/// binary that has already installed its own keeps it.
 #[uniffi::export]
 pub fn init_logging(logger: Arc<dyn Logger>, level: LogLevel) -> bool {
     let installed = log::set_boxed_logger(Box::new(Forwarder(logger))).is_ok();

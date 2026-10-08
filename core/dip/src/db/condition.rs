@@ -1,7 +1,7 @@
 //! The `WHERE` clause a query compiles to, and the parameters it binds.
 //!
 //! One type, because the two cannot be built apart: a placeholder is numbered
-//! by its parameter's position in the list, so a clause written without the
+//! by its parameter's position in the list. A clause written without the
 //! list in hand names the wrong value — and SQLite will run it anyway. Every
 //! clause here takes its numbers from [`Conditions::bind`] rather than counting
 //! for itself.
@@ -67,8 +67,8 @@ impl Conditions {
     /// rather than adding it — so a caller can negate it, or name it in more
     /// than one clause.
     ///
-    /// Parameters bind into the same list, so the placeholders inside keep
-    /// their numbers and stay valid however many times the clause is used.
+    /// The placeholders inside keep their numbers and stay valid however many
+    /// times the clause is used, because parameters bind into the same list.
     /// `1` when `f` constrains nothing, since a constraint that names nothing
     /// matches everything — the mirror of [`push_never`](Self::push_never).
     pub(crate) fn group(&mut self, f: impl FnOnce(&mut Self)) -> String {
@@ -110,8 +110,7 @@ impl Conditions {
     }
 
     /// Add a clause excluding a set. The mirror of [`push_set`](Self::push_set):
-    /// an empty set excludes nobody, so it constrains nothing and adds no
-    /// clause.
+    /// an empty set excludes nobody and adds no clause.
     pub(crate) fn push_excluded(&mut self, column: &str, values: Vec<Value>) {
         if values.is_empty() {
             return;
@@ -171,7 +170,7 @@ mod tests {
         membership.push_set("x", Vec::new());
         assert_eq!(membership.where_clause(), "WHERE 0");
 
-        // Excluding nobody is not a constraint, so it leaves no clause behind.
+        // Excluding nobody leaves no clause behind.
         let mut exclusion = Conditions::new();
         exclusion.push_excluded("x", Vec::new());
         assert_eq!(exclusion.where_clause(), "");

@@ -46,8 +46,8 @@ impl Quota {
 
     /// What every stranger together may write in the window.
     ///
-    /// The per-peer stranger budget bounds one pubkey, and a pubkey is free:
-    /// content events carry no signature, so a fresh keypair per encounter
+    /// The per-peer stranger budget bounds one pubkey, and a pubkey is free.
+    /// Content events carry no signature, and a fresh keypair per encounter
     /// costs an attacker nothing and resets their meter. This is the ceiling
     /// that does not reset, because it is not keyed on identity at all.
     /// `docs/sync.md#quotas`.
