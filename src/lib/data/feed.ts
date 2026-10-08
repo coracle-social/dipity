@@ -15,7 +15,7 @@ import {muted, mutedTopics, social} from "$lib/data/contacts"
 import {trashed} from "$lib/data/trash"
 import {peopleNamed, wordsOf} from "$lib/data/search"
 import {attachment, pictureOf} from "$lib/data/media"
-import type {Shrunk} from "$lib/data/encode"
+import type {Encoded} from "$lib/data/encode"
 import {
   answering,
   detailsOf,
@@ -148,9 +148,7 @@ const respondedTo = (event: EventDetail["event"]): string | undefined => {
  */
 const grounded = async (all: Item[]): Promise<Item[]> => {
   // A picture is its image. One whose bytes have not arrived has nothing to draw yet.
-  const items = all.filter(
-    ({event, media}) => event.kind !== PICTURE_NOTE || pictureOf(media, false),
-  )
+  const items = all.filter(({event, media}) => event.kind !== PICTURE_NOTE || pictureOf(media))
   const subjects = new Map<string, string>()
 
   for (const {event} of items) {
@@ -395,17 +393,18 @@ export const warmthOf = (item: Item, swept: number | undefined, now: number): Wa
   }
 }
 
-/** Publish a picture, shrunk since it was picked, with a preview standing in for it. */
-export const share = async (shrunk: Promise<Shrunk>, description: string, topic?: string) => {
-  const {image, preview} = await shrunk
-  const whole = await attachment(image)
-  const small = await attachment(preview, [`preview-of ${whole.hash}`])
+/** Publish a picture, shrunk since it was picked. */
+export const share = async (shrunk: Promise<Encoded>, description: string, topic?: string) => {
+  const image = await shrunk
   const writer = withTopic(
-    picture.writer().setContent(description).addImeta(whole).addImeta(small),
+    picture
+      .writer()
+      .setContent(description)
+      .addImeta(await attachment(image)),
     topic,
   )
 
-  return publish(await writer.renderTemplate(), undefined, [image.base64, preview.base64])
+  return publish(await writer.renderTemplate(), undefined, [image.base64])
 }
 
 /** Write something of the user's own. */

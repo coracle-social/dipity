@@ -91,7 +91,6 @@ export type Share = {event_id: string; pubkey: string; shared_at: number}
 /** A blob an event references, whether or not this device holds the bytes. */
 export type Blob = {
   sha256: string
-  role: "Preview" | "Original"
   url: string | null
   mime_type: string | null
   size: number | null

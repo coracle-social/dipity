@@ -11,7 +11,6 @@ use coracle_lib::keys::PublicKey;
 
 use super::{Db, Tx};
 use crate::db::blob::command as blob;
-use crate::db::blob::query as blob_query;
 use crate::db::event::command as event;
 use crate::db::event::query as event_query;
 use crate::db::pairing::command as pairing;
@@ -19,7 +18,7 @@ use crate::db::pairing::query as pairing_query;
 use crate::db::pref::command as pref;
 use crate::db::recipient_signature::command as signature;
 use crate::db::spending::command as spending;
-use crate::model::{Blob, BlobHash, BlobRole, Charge, Policy, RecipientSignature};
+use crate::model::{Blob, BlobHash, Charge, Policy, RecipientSignature};
 
 /// Take in an event from a peer, with the media it references.
 ///
@@ -155,13 +154,8 @@ pub fn record_blob_progress(db: &Db, sha256: &BlobHash, stored_bytes: u64) -> Re
 
 /// Mark a blob whole: every byte is held and the file hashes to its address.
 /// Returns whether this completed it, and `false` if it was already complete.
-pub fn complete_blob(db: &Db, sha256: &BlobHash, stored_bytes: u64, at: i64) -> Result<bool> {
-    db.write(|tx| blob::mark_complete(tx, sha256, stored_bytes, at))
-}
-
-/// Note that a blob was read, which is what eviction orders on.
-pub fn touch_blob(db: &Db, sha256: &BlobHash, at: i64) -> Result<bool> {
-    db.write(|tx| blob::touch(tx, sha256, at))
+pub fn complete_blob(db: &Db, sha256: &BlobHash, stored_bytes: u64) -> Result<bool> {
+    db.write(|tx| blob::mark_complete(tx, sha256, stored_bytes))
 }
 
 /// Write a preference. `value` is a JSON document.
@@ -245,38 +239,9 @@ pub fn set_trashed(db: &Db, id: &EventId, trashed: bool, at: i64) -> Result<bool
     db.write(|tx| event::set_trashed(tx, id, trashed, at))
 }
 
-/// Evict held originals, until the cache is under `ceiling_bytes`.
-/// Returns the hashes evicted.
-pub fn evict_originals(db: &Db, ceiling_bytes: i64) -> Result<Vec<BlobHash>> {
-    db.write(|tx| {
-        let mut held = blob_query::stored_bytes(tx, BlobRole::Original)?;
-
-        if held <= ceiling_bytes {
-            return Ok(Vec::new());
-        }
-
-        let mut evicted = Vec::new();
-
-        // Limit how many blobs we evict in one shot to avoid locking for too long
-        for candidate in blob_query::least_recently_used(tx, BlobRole::Original, 256)? {
-            if held <= ceiling_bytes {
-                break;
-            }
-
-            if blob::remove(tx, &candidate.sha256)? {
-                held -= candidate.stored_bytes;
-                evicted.push(candidate.sha256);
-            }
-        }
-
-        Ok(evicted)
-    })
-}
-
 // --------------------------------------------------- Private helper functions
 
-/// Record the media an event references using imeta, each tag in the role it
-/// claims for itself.
+/// Record the media an event references using imeta.
 fn record_media(tx: &Tx<'_>, event: &HashedEvent, id: EventId) -> Result<()> {
     for tag in event.tags.find_all("imeta") {
         if let Some(media) = Blob::from_imeta(tag) {
@@ -345,42 +310,29 @@ mod tests {
     }
 
     #[test]
-    fn an_events_media_is_recorded_in_the_role_each_tag_claims() {
+    fn every_imeta_tag_on_an_event_is_recorded_as_a_blob_it_keeps() {
         let db = Db::open_in_memory().unwrap();
-        let original = blob_hash(1);
-        let preview = blob_hash(2);
+        let first = blob_hash(1);
+        let second = blob_hash(2);
         let event = note(
             author(1),
             100,
             "hello neighbor",
             Tags::new()
-                .add("imeta", [format!("x {original}"), "m image/jpeg".into()])
+                .add("imeta", [format!("x {first}"), "m image/jpeg".into()])
                 .add(
                     "imeta",
-                    [
-                        format!("x {preview}"),
-                        format!("preview-of {original}"),
-                        "m image/jpeg".into(),
-                    ],
+                    [format!("x {second}"), format!("preview-of {first}")],
                 ),
         );
 
         assert!(receive_event(&db, &event, &[peer()], 10).unwrap());
 
-        // The preview leads even though it sorts second by hash. `docs/sync.md`.
-        let wanted = db.read(|tx| blob_query::wanted(tx, 10)).unwrap();
-        let list: Vec<_> = wanted
-            .iter()
-            .map(|blob| (&blob.sha256, blob.role))
-            .collect();
+        // A key this build no longer reads still survives in the tag as it arrived.
+        let wanted = crate::db::query::wanted_blobs(&db, 10).unwrap();
+        let second_blob = wanted.iter().find(|blob| blob.sha256 == second).unwrap();
 
-        assert_eq!(
-            list,
-            [
-                (&preview, BlobRole::Preview),
-                (&original, BlobRole::Original)
-            ]
-        );
-        assert_eq!(wanted[0].imeta_value("preview-of"), Some(original.as_str()));
+        assert_eq!(wanted.len(), 2);
+        assert_eq!(second_blob.imeta_value("preview-of"), Some(first.as_str()));
     }
 }

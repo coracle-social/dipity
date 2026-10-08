@@ -25,8 +25,8 @@ use crate::db::pref::query as pref;
 use crate::db::recipient_signature::query as signature;
 use crate::db::spending::query as spending;
 use crate::model::{
-    Blob, BlobHash, BlobRole, Charge, DisclosureBucket, NotificationPrefs, Policy, Pref,
-    Provenance, Query, RecipientSignature, Share, keys,
+    Blob, BlobHash, Charge, DisclosureBucket, NotificationPrefs, Policy, Pref, Provenance, Query,
+    RecipientSignature, Share, keys,
 };
 
 // ----------------------------------------------------- Policy and preferences
@@ -228,7 +228,7 @@ pub fn with_details(db: &Db, events: Vec<HashedEvent>) -> Result<Vec<EventDetail
 
 // ---------------------------------------------------------------------- Blobs
 
-/// Blobs a stored event references and this device does not hold, previews first.
+/// Blobs a stored event references and this device does not hold, the most nearly complete first.
 pub fn wanted_blobs(db: &Db, limit: usize) -> Result<Vec<Blob>> {
     db.read(|tx| blob::wanted(tx, limit))
 }
@@ -241,12 +241,6 @@ pub fn get_blob(db: &Db, sha256: &BlobHash) -> Result<Option<Blob>> {
 /// Every stored event that references a hash, whose permissions are the blob's.
 pub fn events_referencing_blob(db: &Db, sha256: &BlobHash) -> Result<Vec<EventId>> {
     db.read(|tx| blob::events_referencing(tx, sha256))
-}
-
-/// How many bytes of held originals the cache is carrying, which is what the
-/// ceiling in `docs/sync.md` is measured against.
-pub fn cached_bytes(db: &Db) -> Result<i64> {
-    db.read(|tx| blob::stored_bytes(tx, BlobRole::Original))
 }
 
 /// Every blob hash the store has a record for, which is every hash a blob

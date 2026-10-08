@@ -37,7 +37,7 @@ mod sharing;
 mod visibility;
 
 pub use authorship_proof::{AuthorshipClaim, AuthorshipProof};
-pub use blob::{Blob, BlobDigest, BlobHash, BlobRole};
+pub use blob::{Blob, BlobDigest, BlobHash};
 pub use charge::{Charge, Meter};
 pub use disclosure::{DisclosureBucket, STRANGERS_PER_DAY};
 pub use graph::{Graph, Standing, topic};

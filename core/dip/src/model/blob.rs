@@ -130,37 +130,6 @@ impl<'de> Deserialize<'de> for BlobHash {
     }
 }
 
-/// Whether a blob is the small version or the full one. An event tells them
-/// apart with the `preview-of` of `docs/nips/imeta-preview.md`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BlobRole {
-    /// A downscaled stand-in, cheap enough to move over BLE unconditionally.
-    Preview,
-    /// The file as published.
-    Original,
-}
-
-impl BlobRole {
-    /// How the role is stored.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Preview => "preview",
-            Self::Original => "original",
-        }
-    }
-
-    /// Read a stored role back.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "preview" => Some(Self::Preview),
-            "original" => Some(Self::Original),
-            _ => None,
-        }
-    }
-}
-
 /// A blob this device knows about, whether or not it holds the bytes.
 ///
 /// One row per hash, however many events reference it. Which events those are
@@ -170,8 +139,6 @@ impl BlobRole {
 pub struct Blob {
     /// SHA-256 of the whole file. The address it is fetched by.
     pub sha256: BlobHash,
-    /// Preview or original.
-    pub role: BlobRole,
     /// Where the author said it could be fetched.
     pub url: Option<String>,
     /// MIME type, as claimed by `imeta`.
@@ -192,17 +159,14 @@ pub struct Blob {
     pub stored_bytes: i64,
     /// Whether the whole file is held and hashes to its address.
     pub complete: bool,
-    /// When it was last read, for LRU eviction.
-    pub accessed_at: Option<i64>,
 }
 
 impl Blob {
     /// A blob known only by hash, with no metadata yet.
     #[must_use]
-    pub fn new(sha256: BlobHash, role: BlobRole) -> Self {
+    pub fn new(sha256: BlobHash) -> Self {
         Self {
             sha256,
-            role,
             url: None,
             mime_type: None,
             size: None,
@@ -213,7 +177,6 @@ impl Blob {
             imeta: Vec::new(),
             stored_bytes: 0,
             complete: false,
-            accessed_at: None,
         }
     }
 
@@ -222,24 +185,13 @@ impl Blob {
     /// `None` when the tag carries no `x` or one that is not a hash, since a
     /// blob that cannot be addressed cannot be fetched or verified either —
     /// and this is the boundary a peer's bytes are checked at.
-    ///
-    /// The role is the tag's own: a `preview-of` naming the original it stands
-    /// in for makes it a preview, and anything else is the file as published.
-    /// A `preview-of` that is not a hash names no original, and the entry is read as
-    /// the original it claims not to be — the direction that grants nothing.
     #[must_use]
     pub fn from_imeta(tag: &Tag) -> Option<Self> {
         let imeta = tag.values().to_vec();
         let entries = || imeta.iter().filter_map(|entry| split_entry(entry));
-        let role = entries()
-            .find_map(|(key, value)| {
-                (key == "preview-of" && BlobHash::parse(value).is_ok()).then_some(BlobRole::Preview)
-            })
-            .unwrap_or(BlobRole::Original);
-
         // The first `x` wins, and a second one cannot redirect the blob.
         let sha256 = entries().find_map(|(key, value)| (key == "x").then_some(value))?;
-        let mut blob = Self::new(BlobHash::parse(sha256).ok()?, role);
+        let mut blob = Self::new(BlobHash::parse(sha256).ok()?);
 
         for (key, value) in entries() {
             match key {
@@ -339,34 +291,6 @@ mod tests {
     }
 
     #[test]
-    fn a_tag_naming_the_original_it_stands_in_for_is_a_preview() {
-        let role = |values: &[&str]| Blob::from_imeta(&tag(values)).unwrap().role;
-
-        assert_eq!(
-            role(&[
-                &format!("x {}", hash(2)),
-                &format!("preview-of {}", hash(1))
-            ]),
-            BlobRole::Preview
-        );
-        assert_eq!(role(&[&format!("x {}", hash(2))]), BlobRole::Original);
-
-        // A marker naming no original it could stand in for buys neither rank nor immunity.
-        for malformed in [
-            "preview-of",
-            "preview-of ",
-            "preview-of yes",
-            "preview-of ab",
-        ] {
-            assert_eq!(
-                role(&[&format!("x {}", hash(2)), malformed]),
-                BlobRole::Original,
-                "{malformed:?} was read as a preview"
-            );
-        }
-    }
-
-    #[test]
     fn a_blob_survives_a_json_round_trip() {
         let blob = Blob::from_imeta(&tag(&[
             &format!("x {}", hash(3)),
@@ -444,14 +368,5 @@ mod tests {
 
         assert_eq!(BlobHash::parse(hash.as_str()).unwrap(), hash);
         assert_ne!(hash, BlobHash::digest(b"the quick brown fox!"));
-    }
-
-    #[test]
-    fn roles_round_trip() {
-        for role in [BlobRole::Preview, BlobRole::Original] {
-            assert_eq!(BlobRole::parse(role.as_str()), Some(role));
-        }
-
-        assert_eq!(BlobRole::parse("thumbnail"), None);
     }
 }

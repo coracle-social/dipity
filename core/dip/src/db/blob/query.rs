@@ -9,11 +9,11 @@ use crate::db::Tx;
 use coracle_lib::events::EventId;
 
 use crate::db::sql::{event_id_from_sql, placeholders};
-use crate::model::{Blob, BlobHash, BlobRole};
+use crate::model::{Blob, BlobHash};
 
 /// The blob columns, in the order [`to_blob`] reads them.
-const COLUMNS: &str = "b.sha256, b.role, b.url, b.mime_type, b.size, b.dim, b.blurhash, b.alt,
-     b.blake3, b.imeta, b.stored_bytes, b.complete, b.accessed_at";
+const COLUMNS: &str = "b.sha256, b.url, b.mime_type, b.size, b.dim, b.blurhash, b.alt, b.blake3,
+     b.imeta, b.stored_bytes, b.complete";
 
 /// One blob by hash.
 pub fn get(tx: &Tx<'_>, sha256: &BlobHash) -> Result<Option<Blob>> {
@@ -130,7 +130,7 @@ pub fn all_hashes(tx: &Tx<'_>) -> Result<HashSet<BlobHash>> {
 }
 
 /// The want list: blobs a stored event references and this device does not
-/// hold, previews first.
+/// hold, the most nearly complete first.
 ///
 /// There is no per-blob decision to make — the anchoring event already passed
 /// the accept policy, and its blobs are in scope for the same reason its text
@@ -146,74 +146,21 @@ pub fn wanted(tx: &Tx<'_>, limit: usize) -> Result<Vec<Blob>> {
     Ok(blobs)
 }
 
-/// The want list read: previews first, then whichever blob has the most bytes already on disk.
+/// The want list read: whichever blob has the most bytes already on disk first.
 fn wanted_sql() -> String {
     format!(
         "SELECT {COLUMNS} FROM blob b
          WHERE b.complete = 0
-         ORDER BY CASE b.role WHEN 'preview' THEN 0 ELSE 1 END, b.stored_bytes DESC, b.sha256 ASC
+         ORDER BY b.stored_bytes DESC, b.sha256 ASC
          LIMIT ?1"
     )
 }
 
-/// How many bytes of whole blobs a role accounts for, which is what the cache
-/// ceiling is measured against.
-///
-/// A partial blob is left out, because eviction takes only whole ones: counting
-/// bytes nothing can evict would hold the cache over its ceiling for good, and
-/// each completed fetch would evict whatever it could, itself included.
-pub fn stored_bytes(tx: &Tx<'_>, role: BlobRole) -> Result<i64> {
-    let bytes = tx
-        .prepare_cached(
-            "SELECT COALESCE(SUM(stored_bytes), 0) FROM blob WHERE role = ?1 AND complete = 1",
-        )?
-        .query_row(params![role.as_str()], |row| row.get(0))
-        .context("summing stored blob bytes")?;
-
-    Ok(bytes)
-}
-
-/// Held blobs of a role, least recently read first — eviction order.
-///
-/// Only originals are evicted; previews are kept as long as the events that
-/// reference them, which is what makes a feed still render offline.
-pub fn least_recently_used(tx: &Tx<'_>, role: BlobRole, limit: usize) -> Result<Vec<Blob>> {
-    let mut prepared = tx.prepare_cached(&least_recently_used_sql())?;
-
-    let blobs = prepared
-        .query_map(
-            params![role.as_str(), i64::try_from(limit).unwrap_or(i64::MAX)],
-            to_blob,
-        )?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .context("listing eviction candidates")?;
-
-    Ok(blobs)
-}
-
-/// The eviction read; a never-read blob sorts first, since SQLite orders NULL ahead of a timestamp.
-fn least_recently_used_sql() -> String {
-    format!(
-        "SELECT {COLUMNS} FROM blob b
-         WHERE b.role = ?1 AND b.complete = 1
-         ORDER BY b.accessed_at ASC, b.sha256 ASC
-         LIMIT ?2"
-    )
-}
-
 fn to_blob(row: &Row<'_>) -> rusqlite::Result<Blob> {
-    let role: String = row.get("role")?;
     let imeta: String = row.get("imeta")?;
 
     Ok(Blob {
         sha256: row.get("sha256")?,
-        role: BlobRole::parse(&role).ok_or_else(|| {
-            rusqlite::Error::FromSqlConversionFailure(
-                1,
-                rusqlite::types::Type::Text,
-                format!("unknown blob role {role}").into(),
-            )
-        })?,
         url: row.get("url")?,
         mime_type: row.get("mime_type")?,
         size: row.get("size")?,
@@ -223,14 +170,13 @@ fn to_blob(row: &Row<'_>) -> rusqlite::Result<Blob> {
         blake3: row.get("blake3")?,
         imeta: serde_json::from_str(&imeta).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
-                9,
+                8,
                 rusqlite::types::Type::Text,
                 Box::new(error),
             )
         })?,
         stored_bytes: row.get("stored_bytes")?,
         complete: row.get("complete")?,
-        accessed_at: row.get("accessed_at")?,
     })
 }
 
@@ -251,25 +197,14 @@ mod tests {
             .join("\n")
     }
 
-    /// Both reads take ten rows off the front of an order the index has to supply.
+    /// The want list takes ten rows off the front of an order the index has to supply.
     #[test]
-    fn the_blob_indexes_are_walked_in_the_order_their_reads_ask_for() {
+    fn the_want_list_index_is_walked_in_the_order_its_read_asks_for() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
+        let plan = plan(&tx, &wanted_sql(), params![10]);
 
-        for (name, plan) in [
-            ("blob_wanted", plan(&tx, &wanted_sql(), params![10])),
-            (
-                "blob_lru",
-                plan(
-                    &tx,
-                    &least_recently_used_sql(),
-                    params![BlobRole::Original.as_str(), 10],
-                ),
-            ),
-        ] {
-            assert!(plan.contains(name), "{name} unused:\n{plan}");
-            assert!(!plan.contains("TEMP B-TREE"), "{name} sorts:\n{plan}");
-        }
+        assert!(plan.contains("blob_wanted"), "blob_wanted unused:\n{plan}");
+        assert!(!plan.contains("TEMP B-TREE"), "blob_wanted sorts:\n{plan}");
     }
 }

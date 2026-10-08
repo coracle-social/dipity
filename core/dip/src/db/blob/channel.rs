@@ -24,8 +24,8 @@ pub enum BlobChange {
     Progressed(BlobHash, u64),
     /// Every byte is held and hashes to its address.
     Completed(BlobHash),
-    /// The record went — evicted, or the last event referencing it was
-    /// deleted. The bytes go with it, and a subscriber that misses this is why
+    /// The record went, because the last event referencing it was deleted. The
+    /// bytes go with it, and a subscriber that misses this is why
     /// [`Node`](crate::node::Node) also sweeps.
     Removed(BlobHash),
 }

@@ -828,7 +828,7 @@ impl Node {
             };
 
             if self.blobs.len(&blob.sha256)? == Some(size) {
-                db_command::complete_blob(&self.db, &blob.sha256, size, clock::now())?;
+                db_command::complete_blob(&self.db, &blob.sha256, size)?;
             }
         }
 
@@ -1172,8 +1172,7 @@ impl Node {
 
     /// Delete the bytes of blobs whose record has gone.
     ///
-    /// Drains the store's blob channel, which eviction and event deletion both
-    /// announce on. A store holds bytes for exactly as long as the `blob` table
+    /// Drains the store's blob channel, which event deletion announces on. A store holds bytes for exactly as long as the `blob` table
     /// says to, because the record is what references the file — and whoever
     /// removed the row does not have to hold the blob store to say so.
     fn reclaim_removed_blobs(&mut self) {

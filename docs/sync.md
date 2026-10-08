@@ -73,7 +73,7 @@ A background relaunch refills nothing, because the window is kept in the store a
 
 Blobs follow, on their own channel. They are addressed by the SHA-256 in the event's `imeta` tag and verified against the BLAKE3 root also included in the `imeta` tag ([`nips/imeta-blake3.md`](./nips/imeta-blake3.md)). Content addressing makes transfers resumable, dedupable across peers, and verifiable group by group as they arrive.
 
-The want list is every hash a stored event references and the device does not hold. There is no per-blob decision: [Accept](./policy.md#accept) gates ingest against the author of each inbound event. A stored event has therefore already passed the scope check, and its blobs are in scope for the same reason its text is. Previews take precedence over originals, and within a role a partly-fetched blob takes precedence over one not yet started, so that the most nearly complete transfer is the first to be finished.
+The want list is every hash a stored event references and the device does not hold. There is no per-blob decision: [Accept](./policy.md#accept) gates ingest against the author of each inbound event. A stored event has therefore already passed the scope check, and its blobs are in scope for the same reason its text is. A partly-fetched blob takes precedence over one not yet started, so that the most nearly complete transfer is the first to be finished.
 
 A bad group costs one group and names the peer that sent it, because each group verifies against the BLAKE3 root as it arrives. A forwarder cannot alter the root: it rides in `imeta`, and the event id commits to it. A transfer that drops leaves the groups that proved out on disk, and the next session picks the blob up there, from whichever peer is in range then.
 
@@ -89,7 +89,7 @@ A device proves a range out of the outboard tree over its own copy, which it bui
 
 Each exchange then travels as the two BLOSSOM verbs of [the additions](#the-additions), on the blob channel — its own queue, yielding to control and sync, and the one thing that moves to L2CAP where [an upgrade](./transport.md#the-l2cap-bandwidth-upgrade) opens.
 
-When an event references a blob, we save a record to the `blob` table which maps the sha256 to the blob's metadata - including everything in the `imeta` tag, and whether the blob is a `preview` or an `original`. A tag is a `preview` when it names the original it stands in for ([`nips/imeta-preview.md`](./nips/imeta-preview.md)); anything else is an `original`. A marker that names no blob therefore buys nothing the roles below hand out. The metadata is the first referring event's, by `seen_at` rather than `created_at`: a later event's copy of the tag says nothing about bytes the hash already addresses.
+When an event references a blob, we save a record to the `blob` table which maps the sha256 to the blob's metadata, including everything in the `imeta` tag. The record and the bytes live as long as any event references the hash, and there is no cache to evict them from. The metadata is the first referring event's, by `seen_at` rather than `created_at`: a later event's copy of the tag says nothing about bytes the hash already addresses.
 
 Which events reference a hash is `blob_reference`, one row per pair, and it is where both the blob's lifetime and its permissions come from. Deleting one event never takes media another still names, because the record and its bytes go when the last reference does ([`storage.md`](./storage.md#blob-store)).
 
@@ -97,7 +97,4 @@ A peer is served the bytes when it may be served every event that references the
 
 ### Quotas
 
-Blob quotas are separate from and much tighter than event quotas:
-
-- Per-peer bytes per rolling 24 h in each direction, counted across sessions.
-- A `original` cache ceiling in bytes, evicted LRU. Previews are kept as long as their events are. Serving a blob's bytes to a peer is what marks it used, and is the only read of them the core has.
+Blob quotas are separate from and much tighter than event quotas. Each peer has a byte budget per rolling 24 hours in each direction, counted across sessions.

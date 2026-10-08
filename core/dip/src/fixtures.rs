@@ -37,7 +37,7 @@ pub(crate) fn peer() -> PublicKey {
 }
 
 /// A blob hash for a seed. Real hex, because [`BlobHash`] holds nothing else,
-/// and ordered by the seed, because the want list and eviction sort on it.
+/// and ordered by the seed, because the want list sorts on it.
 pub(crate) fn blob_hash(seed: u8) -> crate::model::BlobHash {
     crate::model::BlobHash::parse(&hex::encode([seed; 32])).expect("a seed is 32 bytes of hex")
 }

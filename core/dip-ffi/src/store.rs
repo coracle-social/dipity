@@ -269,8 +269,8 @@ impl Store {
         Ok(query::preference(&self.db, &key)?)
     }
 
-    /// Blobs a stored event references and this device does not hold, previews
-    /// first.
+    /// Blobs a stored event references and this device does not hold, the
+    /// most nearly complete first.
     pub fn wanted_blobs(&self, limit: u32) -> Result<Vec<String>, StoreError> {
         json_each(&query::wanted_blobs(&self.db, limit as usize)?)
     }
@@ -651,7 +651,7 @@ mod tests {
         command::receive_event(&open.store.db, &picture, &[author], 1).unwrap();
         assert_eq!(open.store.blob_path(hash.to_string()).unwrap(), None);
 
-        command::complete_blob(&open.store.db, &hash, 9, 2).unwrap();
+        command::complete_blob(&open.store.db, &hash, 9).unwrap();
         let path = open.store.blob_path(hash.to_string()).unwrap().unwrap();
         assert!(path.ends_with(&format!("blobs/{hash}")));
 

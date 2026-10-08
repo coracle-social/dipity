@@ -10,16 +10,13 @@
     item,
     social,
     session,
-    detailed = false,
   }: {
     item: Item
     social: Social
     session: Session
-    /** Whether this is the post's own page, which draws the image rather than its preview. */
-    detailed?: boolean
   } = $props()
 
-  const shown = $derived(pictureOf(item.media, detailed))
+  const shown = $derived(pictureOf(item.media))
 
   const url = $derived(urlOf(shown?.sha256))
 

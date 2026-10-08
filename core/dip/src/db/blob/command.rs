@@ -28,13 +28,12 @@ pub fn record(tx: &Tx<'_>, blob: &Blob, event_id: &EventId) -> Result<bool> {
     let written = tx
         .prepare_cached(
             "INSERT OR IGNORE INTO blob (
-                 sha256, role, url, mime_type, size, dim, blurhash, alt, blake3,
-                 imeta, stored_bytes, complete, accessed_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                 sha256, url, mime_type, size, dim, blurhash, alt, blake3, imeta,
+                 stored_bytes, complete
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         )?
         .execute(params![
             blob.sha256,
-            blob.role.as_str(),
             blob.url,
             blob.mime_type,
             blob.size,
@@ -45,7 +44,6 @@ pub fn record(tx: &Tx<'_>, blob: &Blob, event_id: &EventId) -> Result<bool> {
             imeta,
             blob.stored_bytes,
             blob.complete,
-            blob.accessed_at,
         ])
         .with_context(|| format!("recording blob {}", blob.sha256))?;
 
@@ -76,14 +74,14 @@ pub fn record_progress(tx: &Tx<'_>, sha256: &BlobHash, stored_bytes: u64) -> Res
 }
 
 /// Mark a blob whole: every byte is held and the file hashes to its address.
-pub fn mark_complete(tx: &Tx<'_>, sha256: &BlobHash, stored_bytes: u64, at: i64) -> Result<bool> {
+pub fn mark_complete(tx: &Tx<'_>, sha256: &BlobHash, stored_bytes: u64) -> Result<bool> {
     let written = tx
         .prepare_cached(
             "UPDATE blob
-             SET complete = 1, stored_bytes = ?2, size = COALESCE(size, ?2), accessed_at = ?3
+             SET complete = 1, stored_bytes = ?2, size = COALESCE(size, ?2)
              WHERE sha256 = ?1 AND complete = 0",
         )?
-        .execute(params![sha256, column_bytes(stored_bytes), at])
+        .execute(params![sha256, column_bytes(stored_bytes)])
         .with_context(|| format!("completing blob {sha256}"))?;
 
     if written == 0 {
@@ -93,16 +91,6 @@ pub fn mark_complete(tx: &Tx<'_>, sha256: &BlobHash, stored_bytes: u64, at: i64)
     channel::notify(tx, BlobChange::Completed(sha256.clone()));
 
     Ok(true)
-}
-
-/// Note that a blob was read, which is what LRU eviction orders on.
-pub fn touch(tx: &Tx<'_>, sha256: &BlobHash, at: i64) -> Result<bool> {
-    let written = tx
-        .prepare_cached("UPDATE blob SET accessed_at = ?2 WHERE sha256 = ?1")?
-        .execute(params![sha256, at])
-        .with_context(|| format!("touching blob {sha256}"))?;
-
-    Ok(written > 0)
 }
 
 /// A byte count as the column holds it: SQLite's integers are signed, and no
@@ -167,7 +155,6 @@ mod tests {
     use crate::db::Db;
     use crate::db::event::command as event_command;
     use crate::fixtures::{author, blob_hash, id, note, peer};
-    use crate::model::BlobRole;
 
     /// Store an event to reference blobs from, and return its id.
     fn store_event(tx: &Tx<'_>, content: &str) -> EventId {
@@ -187,10 +174,10 @@ mod tests {
         let second = store_event(&tx, "second");
 
         let hash = blob_hash(1);
-        let mut later = Blob::new(hash.clone(), BlobRole::Original);
+        let mut later = Blob::new(hash.clone());
         later.alt = Some("read off the second event".into());
 
-        assert!(record(&tx, &Blob::new(hash.clone(), BlobRole::Original), &first).unwrap());
+        assert!(record(&tx, &Blob::new(hash.clone()), &first).unwrap());
         assert!(!record(&tx, &later, &second).unwrap());
 
         assert_eq!(query::get(&tx, &hash).unwrap().unwrap().alt, None);
@@ -219,7 +206,7 @@ mod tests {
             (blob_hash(2), &second),
             (blob_hash(4), &second),
         ] {
-            record(&tx, &Blob::new(sha256, BlobRole::Original), event_id).unwrap();
+            record(&tx, &Blob::new(sha256), event_id).unwrap();
         }
 
         let ids = [first, second, bare];
@@ -280,7 +267,7 @@ mod tests {
 
         let event_id = store_event(&tx, "with media");
         let hash = blob_hash(1);
-        record(&tx, &Blob::new(hash.clone(), BlobRole::Original), &event_id).unwrap();
+        record(&tx, &Blob::new(hash.clone()), &event_id).unwrap();
 
         assert!(record_progress(&tx, &hash, 4_096).unwrap());
 
@@ -298,73 +285,34 @@ mod tests {
 
         let event_id = store_event(&tx, "with media");
         let hash = blob_hash(1);
-        record(&tx, &Blob::new(hash.clone(), BlobRole::Original), &event_id).unwrap();
+        record(&tx, &Blob::new(hash.clone()), &event_id).unwrap();
 
         assert_eq!(query::wanted(&tx, 10).unwrap().len(), 1);
-        assert!(mark_complete(&tx, &hash, 8_192, 100).unwrap());
+        assert!(mark_complete(&tx, &hash, 8_192).unwrap());
         assert!(query::wanted(&tx, 10).unwrap().is_empty());
 
         // Nothing to announce a second time, because it is already whole.
-        assert!(!mark_complete(&tx, &hash, 8_192, 200).unwrap());
+        assert!(!mark_complete(&tx, &hash, 8_192).unwrap());
 
         let blob = query::get(&tx, &hash).unwrap().unwrap();
         assert_eq!(blob.size, Some(8_192));
-        assert_eq!(query::stored_bytes(&tx, BlobRole::Original).unwrap(), 8_192);
     }
 
     #[test]
-    fn previews_are_wanted_before_originals() {
+    fn the_most_nearly_complete_blob_is_wanted_first() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
 
         let event_id = store_event(&tx, "with media");
-        record(&tx, &Blob::new(blob_hash(1), BlobRole::Original), &event_id).unwrap();
-        record(&tx, &Blob::new(blob_hash(2), BlobRole::Preview), &event_id).unwrap();
+        record(&tx, &Blob::new(blob_hash(1)), &event_id).unwrap();
+        record(&tx, &Blob::new(blob_hash(2)), &event_id).unwrap();
+        record_progress(&tx, &blob_hash(2), 4_096).unwrap();
 
         let wanted = query::wanted(&tx, 10).unwrap();
 
-        // The preview leads whichever way the hashes sort.
+        // The started one leads whichever way the hashes sort.
         assert_eq!(wanted[0].sha256, blob_hash(2));
         assert_eq!(wanted[1].sha256, blob_hash(1));
-    }
-
-    #[test]
-    fn a_partial_original_does_not_count_against_the_cache() {
-        let mut db = Db::open_in_memory().unwrap();
-        let tx = db.begin_write().unwrap();
-
-        let event_id = store_event(&tx, "with media");
-        let hash = blob_hash(1);
-        record(&tx, &Blob::new(hash.clone(), BlobRole::Original), &event_id).unwrap();
-        record_progress(&tx, &hash, 4_096).unwrap();
-
-        // Counting it would hold the cache over its ceiling for good, as nothing could evict it.
-        assert_eq!(query::stored_bytes(&tx, BlobRole::Original).unwrap(), 0);
-    }
-
-    #[test]
-    fn eviction_order_is_least_recently_read() {
-        let mut db = Db::open_in_memory().unwrap();
-        let tx = db.begin_write().unwrap();
-
-        let event_id = store_event(&tx, "with media");
-
-        for hash in [blob_hash(1), blob_hash(2)] {
-            record(&tx, &Blob::new(hash.clone(), BlobRole::Original), &event_id).unwrap();
-            mark_complete(&tx, &hash, 1_024, 100).unwrap();
-        }
-
-        touch(&tx, &blob_hash(1), 300).unwrap();
-
-        let candidates = query::least_recently_used(&tx, BlobRole::Original, 10).unwrap();
-
-        assert_eq!(
-            candidates
-                .iter()
-                .map(|blob| blob.sha256.clone())
-                .collect::<Vec<_>>(),
-            [blob_hash(2), blob_hash(1)]
-        );
     }
 
     #[test]
@@ -376,8 +324,8 @@ mod tests {
         let second = store_event(&tx, "second");
         let hash = blob_hash(1);
 
-        record(&tx, &Blob::new(hash.clone(), BlobRole::Original), &first).unwrap();
-        record(&tx, &Blob::new(hash.clone(), BlobRole::Original), &second).unwrap();
+        record(&tx, &Blob::new(hash.clone()), &first).unwrap();
+        record(&tx, &Blob::new(hash.clone()), &second).unwrap();
 
         event_command::delete(&tx, &first).unwrap();
 
@@ -408,10 +356,10 @@ mod tests {
         let staying = store_event(&tx, "shares one of them");
 
         for hash in [blob_hash(1), blob_hash(2)] {
-            record(&tx, &Blob::new(hash, BlobRole::Original), &going).unwrap();
+            record(&tx, &Blob::new(hash), &going).unwrap();
         }
 
-        record(&tx, &Blob::new(blob_hash(2), BlobRole::Original), &staying).unwrap();
+        record(&tx, &Blob::new(blob_hash(2)), &staying).unwrap();
 
         event_command::delete(&tx, &going).unwrap();
         tx.commit().unwrap();

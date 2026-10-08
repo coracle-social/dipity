@@ -93,7 +93,6 @@ const fromImeta = (tag: string[]): Blob | undefined => {
   return claimed
     ? {
         sha256: claimed,
-        role: value("preview-of") ? "Preview" : "Original",
         url: value("url") ?? null,
         mime_type: value("m") ?? null,
         size: value("size") ? Number(value("size")) : null,

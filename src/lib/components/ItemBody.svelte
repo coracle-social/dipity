@@ -96,7 +96,7 @@
     {/if}
   </div>
 {:else if event.kind === PICTURE_NOTE}
-  <Photo {item} {social} {session} {detailed} />
+  <Photo {item} {social} {session} />
   {#if event.content.trim()}
     <Prose class="mt-2" {event} />
   {/if}

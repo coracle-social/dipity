@@ -16,9 +16,7 @@ use coracle_lib::tags::Tags;
 
 use dip::db::event::channel::{self, EventChange};
 use dip::db::{Db, command, query};
-use dip::model::{
-    BlobHash, BlobRole, Order, Query, RecipientSignature, Registers, Scope, Sharing, keys,
-};
+use dip::model::{BlobHash, Order, Query, RecipientSignature, Registers, Scope, Sharing, keys};
 
 /// The blob the event below references.
 ///
@@ -201,10 +199,8 @@ fn the_store_serves_its_use_cases() {
     assert_eq!(set.len(), 3);
     assert_eq!(set.iter().next().unwrap().id, with_media.id);
 
-    // Blob transfer: wanted, resumed, completed, then evicted under the cache ceiling.
-    let wanted = query::wanted_blobs(&db, 10).unwrap();
-    assert_eq!(wanted.len(), 1);
-    assert_eq!(wanted[0].role, BlobRole::Original);
+    // Blob transfer: wanted, resumed, completed, then kept as long as the event is.
+    assert_eq!(query::wanted_blobs(&db, 10).unwrap().len(), 1);
 
     assert!(command::record_blob_progress(&db, &blob(), 1_024).unwrap());
     assert_eq!(
@@ -213,15 +209,9 @@ fn the_store_serves_its_use_cases() {
     );
     assert_eq!(query::wanted_blobs(&db, 10).unwrap().len(), 1);
 
-    assert!(command::complete_blob(&db, &blob(), 2_048, 400).unwrap());
+    assert!(command::complete_blob(&db, &blob(), 2_048).unwrap());
     assert!(query::wanted_blobs(&db, 10).unwrap().is_empty());
-    assert_eq!(query::cached_bytes(&db).unwrap(), 2_048);
-
-    assert!(command::evict_originals(&db, 4_096).unwrap().is_empty());
-    assert_eq!(command::evict_originals(&db, 1_024).unwrap(), [blob()]);
-    assert_eq!(query::cached_bytes(&db).unwrap(), 0);
-    // An evicted blob is no longer a hash this device is entitled to hold bytes for.
-    assert!(query::recorded_blob_hashes(&db).unwrap().is_empty());
+    assert_eq!(query::recorded_blob_hashes(&db).unwrap().len(), 1);
 
     // Preferences. Bare text is not JSON, and a use case that fails leaves nothing behind.
     assert!(command::set_preference(&db, keys::ACCEPT, "lenient", 500).is_err());

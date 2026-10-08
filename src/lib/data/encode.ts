@@ -8,20 +8,11 @@
 /** One re-encoded picture, base64 for the bridge, and what it is. */
 export type Encoded = {base64: string; mime: string; dim: string}
 
-/** A picture as published: the image, and the preview standing in for it. */
-export type Shrunk = {image: Encoded; preview: Encoded}
-
 /** The longest edge of the image as published, in pixels. */
-const IMAGE_EDGE = 1600
+const IMAGE_EDGE = 1080
 
 /** How much a published image is compressed, as the encoder's quality. */
-const IMAGE_QUALITY = 0.9
-
-/** The longest edge of the preview the board draws, in pixels. */
-const PREVIEW_EDGE = 1080
-
-/** How much a preview is compressed. */
-const PREVIEW_QUALITY = 0.85
+const IMAGE_QUALITY = 0.85
 
 type Surface = OffscreenCanvas | HTMLCanvasElement
 
@@ -92,19 +83,12 @@ const encoded = async (canvas: Surface, quality: number): Promise<Encoded> => {
   }
 }
 
-/** A picked file as the image to publish and the preview, which is drawn from the image rather than the original. */
-export const encodeFile = async (file: Blob): Promise<Shrunk> => {
+/** A picked file as the one image published for it. */
+export const encodeFile = async (file: Blob): Promise<Encoded> => {
   const bitmap = await createImageBitmap(file, {imageOrientation: "from-image"})
 
   try {
-    const image = draw(bitmap, IMAGE_EDGE)
-
-    bitmap.close()
-
-    return {
-      image: await encoded(image, IMAGE_QUALITY),
-      preview: await encoded(draw(image, PREVIEW_EDGE), PREVIEW_QUALITY),
-    }
+    return await encoded(draw(bitmap, IMAGE_EDGE), IMAGE_QUALITY)
   } finally {
     bitmap.close()
   }
