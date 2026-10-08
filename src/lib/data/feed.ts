@@ -41,6 +41,7 @@ import {
   responseKinds,
   timeEvent,
   topicOf,
+  topicsByUse,
   withTopic,
 } from "$lib/kinds"
 import {CONTACT} from "$lib/kinds/contact"
@@ -73,8 +74,8 @@ export type Response = {
 /** Every response in the store, by what it responds to. */
 export type Responses = {to: Map<string, Response>}
 
-/** What the board shows: the order, the categories switched on, and the topic it is narrowed to. */
-export type View = {order: Order; showing: string[]; topic?: string}
+/** What the board shows: the order, the categories switched on, and the topics it is narrowed to, if any. */
+export type View = {order: Order; showing: string[]; topics?: string[]}
 
 /**
  * Everything about one item that is not on the event itself.
@@ -122,8 +123,26 @@ export const toggleCategory = (id: string) => {
   })
 }
 
-/** Narrow the board to one topic, or to every topic. */
-export const setTopic = (topic?: string) => view.set({...get(view), topic})
+/** The topics the board is narrowed to, where none is every topic. */
+export const topicsOf = ({topics}: View) => topics ?? []
+
+/** Narrow the board to a topic as well as those already chosen, or stop. */
+export const toggleTopic = (topic: string) => {
+  const current = get(view)
+  const chosen = topicsOf(current)
+
+  view.set({
+    ...current,
+    topics: chosen.includes(topic) ? chosen.filter(kept => kept !== topic) : [...chosen, topic],
+  })
+}
+
+/** Narrow the board to one topic alone. */
+export const showTopic = (topic: string) => view.set({...get(view), topics: [topic]})
+
+/** Every category switched on and no topic chosen. */
+export const showEverything = () =>
+  view.set({...get(view), showing: categories.map(({id}) => id), topics: []})
 
 /** The kinds the switched-on categories cover. */
 const shownKinds = ({showing}: View) =>
@@ -237,7 +256,7 @@ const page = async ({view: asked, search: words, named}: Asked): Promise<Item[]>
   const narrowed = {
     kinds: shownKinds(asked),
     limit: 60,
-    ...(asked.topic ? {"#t": [asked.topic]} : {}),
+    ...(topicsOf(asked).length > 0 ? {"#t": topicsOf(asked)} : {}),
   }
   const queries: Record<string, unknown>[] = [{...narrowed, ...(words ? {search: words} : {})}]
 
@@ -278,18 +297,21 @@ export const board: Readable<Item[]> = derived(
     ),
 )
 
-/** The topics on the board, most posted first, which is what the topic filter offers. */
-export const boardTopics: Readable<string[]> = derived(board, $board => {
-  const counts = new Map<string, number>()
+/** Topics filed under by the recent posts in the store, most posted first. */
+const recent = answering(
+  storedEvents,
+  () =>
+    eventsOf({
+      filter: JSON.stringify({kinds: categories.flatMap(({kinds}) => kinds), limit: 300}),
+    }).then(topicsByUse),
+  [] as string[],
+)
 
-  for (const {event} of $board) {
-    const topic = topicOf(event)
-
-    if (topic) counts.set(topic, (counts.get(topic) ?? 0) + 1)
-  }
-
-  return [...counts.keys()].sort((a, b) => counts.get(b)! - counts.get(a)!)
-})
+/** The topics worth offering, read past the board's own filter since narrowing it would hide the rest. */
+export const recentTopics: Readable<string[]> = derived(
+  [recent, mutedTopics],
+  ([$recent, $mutedTopics]) => $recent.filter(topic => !$mutedTopics.has(topic)),
+)
 
 /** Stored items by id, for a screen that knows which ones it wants. */
 export const itemsByIds = (ids: string[]): Promise<Item[]> =>

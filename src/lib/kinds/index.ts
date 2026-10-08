@@ -211,6 +211,19 @@ export const topicFrom = (text: string) =>
 /** The topic a post is filed under, or undefined for one filed under none. */
 export const topicOf = (event: HashedEvent) => tagValue(topicTags("t"), event.tags)
 
+/** The topics some posts are filed under, most used first. */
+export const topicsByUse = (events: HashedEvent[]) => {
+  const counts = new Map<string, number>()
+
+  for (const event of events) {
+    const topic = topicOf(event)
+
+    if (topic) counts.set(topic, (counts.get(topic) ?? 0) + 1)
+  }
+
+  return [...counts.keys()].sort((a, b) => counts.get(b)! - counts.get(a)!)
+}
+
 /** Every topic a list names, which is how the mute list carries muted topics. */
 export const topicsIn = (event: HashedEvent) => uniq(tagValues(topicTags("t"), event.tags))
 

@@ -1,8 +1,16 @@
 <script lang="ts">
-  import CategoryFilter from "$lib/components/CategoryFilter.svelte"
+  import ContentFilter from "$lib/components/ContentFilter.svelte"
   import SearchBox from "$lib/components/SearchBox.svelte"
-  import TopicFilter from "$lib/components/TopicFilter.svelte"
-  import {boardTopics, search, setOrder, setTopic, toggleCategory, type View} from "$lib/data/feed"
+  import {
+    recentTopics,
+    search,
+    setOrder,
+    showEverything,
+    toggleCategory,
+    toggleTopic,
+    topicsOf,
+    type View,
+  } from "$lib/data/feed"
 
   let {view}: {view: View} = $props()
 
@@ -29,11 +37,13 @@
     {/each}
   </div>
 
-  <CategoryFilter showing={view.showing} onToggle={toggleCategory} />
-</div>
-
-<div class="mt-2 flex justify-end">
-  <TopicFilter topic={view.topic} offered={$boardTopics} onPick={setTopic} />
+  <ContentFilter
+    showing={view.showing}
+    chosen={topicsOf(view)}
+    recent={$recentTopics}
+    onToggleCategory={toggleCategory}
+    onToggleTopic={toggleTopic}
+    onClear={showEverything} />
 </div>
 
 <SearchBox class="mt-3" label="Search the board" bind:value={$search} />

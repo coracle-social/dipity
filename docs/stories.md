@@ -47,7 +47,7 @@ Four facts about the transport decide most of the interface, and every story bel
 24. The user opens a thing and sees how far it has travelled: how many people handed it to this device, and how many this device has handed it to. — `ItemDetail`
 25. The user looks for something they half remember, and the board narrows as they type to what says it and to what was written by somebody called it; their people and their bookmarks search the same way. — `SearchBox`, in `FeedControls`, `People` and `Bookmarks`
 26. The user files what they write under a topic they type, or under none. — `Composer`
-27. The user narrows the board to one topic, picked from those on it or tapped on a post, and sees what everything is filed under as they read. — `TopicFilter`, in `FeedControls`, and `ItemCard`
+27. The user narrows the board to some topics and content types under one filter button, or to one topic tapped on a post, and sees what everything is filed under as they read. — `ContentFilter`, in `FeedControls`, and `ItemCard`
 28. The user mutes a topic from a post carrying it, and that topic leaves the board. — `ItemCard`
 
 ## Pairing

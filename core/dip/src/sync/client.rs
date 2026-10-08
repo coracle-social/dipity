@@ -36,6 +36,14 @@ const NEG_FRAME_BYTES: usize = 4 * 1024;
 /// the event comes back on the next encounter.
 const MAX_PENDING: usize = 64;
 
+/// How far back the live subscription reaches past this device's own clock.
+///
+/// The `since` is this device's now and the `created_at` it is compared with
+/// is the author's, so a peer whose clock runs behind would have whatever it
+/// writes in range filtered out until the next encounter. Thirty seconds covers
+/// ordinary drift between phones, and what it also re-asks for is stored once.
+const LIVE_GRACE_SECONDS: i64 = 30;
+
 /// Why an event this device was offered was not stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rejected {
@@ -223,7 +231,7 @@ impl Client {
 
         Ok(Some(Message::Req(
             subscription,
-            vec![Filter::new().add_since(clock::now())],
+            vec![Filter::new().add_since(clock::now() - LIVE_GRACE_SECONDS)],
         )))
     }
 

@@ -9,7 +9,7 @@
   import {Switch} from "$lib/components/ui/switch"
   import KeyBackup from "$lib/components/KeyBackup.svelte"
   import TopicSelect from "$lib/components/TopicSelect.svelte"
-  import {boardTopics} from "$lib/data/feed"
+  import {recentTopics} from "$lib/data/feed"
   import type {Scope, Sharing} from "$lib/core"
   import {blurring, type Blurring} from "$lib/data/media"
   import {go} from "$lib/data/nav"
@@ -198,7 +198,7 @@
 <div class="mt-4">
   <TopicSelect
     selected={[...$mutedTopics].sort()}
-    offered={$boardTopics}
+    offered={$recentTopics}
     label="Search for a topic to mute"
     onAdd={topic => setTopicMuted(topic, true)}
     onRemove={topic => setTopicMuted(topic, false)} />

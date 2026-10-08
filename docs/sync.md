@@ -18,7 +18,7 @@ Once a connection reached `SYNCING` status, each side can initiate synchronizati
 
 Sync begins with a NIP 77 NEGENTROPY sync. The opening filter names no authors, because the peer reads the filter and a list of authors would hand it the contact graph. The dialing side's set is everything it holds plus every id it has refused — a deleted event, a superseded version, or an author outside its Accept scope — so the peer does not deliver a refused event again on every encounter. Peers may respond with fewer than the requested events depending on their visibility and gossip policies, and every event is checked against the receiver's accept policy.
 
-Once the negentropy reconciliation is complete, a regular `REQ` is used to retrieve the desired events. Syncing is paginated in reverse chronological order by `created_at` timestamp with dynamic since/until windows.
+Once the negentropy reconciliation is complete, a regular `REQ` is used to retrieve the desired events. Syncing is paginated in reverse chronological order by `created_at` timestamp with dynamic since/until windows. Each side then holds one standing `REQ` for what the other writes while they stay in range. Its `since` reaches 30 seconds before this device's clock, because the author's clock stamps `created_at` and a phone running slightly behind would otherwise have what it writes filtered out.
 
 ### The additions
 
@@ -73,7 +73,7 @@ A background relaunch refills nothing, because the window is kept in the store a
 
 Blobs follow, on their own channel. They are addressed by the SHA-256 in the event's `imeta` tag and verified against the BLAKE3 root also included in the `imeta` tag ([`nips/imeta-blake3.md`](./nips/imeta-blake3.md)). Content addressing makes transfers resumable, dedupable across peers, and verifiable group by group as they arrive.
 
-The want list is every hash a stored event references and the device does not hold. There is no per-blob decision: [Accept](./policy.md#accept) gates ingest against the author of each inbound event. A stored event has therefore already passed the scope check, and its blobs are in scope for the same reason its text is. A partly-fetched blob takes precedence over one not yet started, so that the most nearly complete transfer is the first to be finished.
+The want list is every hash a stored event references and the device does not hold. There is no per-blob decision: [Accept](./policy.md#accept) gates ingest against the author of each inbound event. A stored event has therefore already passed the scope check, and its blobs are in scope for the same reason its text is. A partly-fetched blob takes precedence over one not yet started, so that the most nearly complete transfer is the first to be finished. A session asks for the next blob when it starts syncing, when a fetch finishes, and whenever an event stored mid-session adds to the list. An image posted while two phones are in range therefore arrives without the link coming up again.
 
 A bad group costs one group and names the peer that sent it, because each group verifies against the BLAKE3 root as it arrives. A forwarder cannot alter the root: it rides in `imeta`, and the event id commits to it. A transfer that drops leaves the groups that proved out on disk, and the next session picks the blob up there, from whichever peer is in range then.
 

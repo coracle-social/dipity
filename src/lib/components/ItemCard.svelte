@@ -16,7 +16,7 @@
   import Reactions from "$lib/components/Reactions.svelte"
   import {toggleBookmark} from "$lib/data/bookmarks"
   import {nameOf, setTopicMuted, type Social} from "$lib/data/contacts"
-  import {opensId, react, setTopic, type Item, type Standing, type Warmth} from "$lib/data/feed"
+  import {opensId, react, showTopic, type Item, type Standing, type Warmth} from "$lib/data/feed"
   import {go} from "$lib/data/nav"
   import type {Session} from "$lib/data/session"
   import {restore, trash} from "$lib/data/trash"
@@ -113,7 +113,7 @@
           type="button"
           class={badgeVariants({variant: "secondary"})}
           onclick={() => {
-            setTopic(topic)
+            showTopic(topic)
             go({at: "board"})
           }}>
           {topicLabel(topic)}

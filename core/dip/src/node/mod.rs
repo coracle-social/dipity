@@ -888,13 +888,20 @@ impl Node {
             }
         }
 
-        self.reclaim_removed_blobs();
+        let wanted_more = self.drain_blob_changes();
 
         // Heartbeats go out before writes are drained, which keeps a quiet session proving alive.
         for session in self.sessions.values_mut() {
             if let Err(error) = session.maybe_heartbeat() {
                 log::error!(
                     "sending a heartbeat on link {:?} failed: {error:#}",
+                    session.link
+                );
+            }
+
+            if wanted_more && let Err(error) = session.maybe_fetch_blob(&self.db) {
+                log::error!(
+                    "asking for a wanted blob on link {:?} failed: {error:#}",
                     session.link
                 );
             }
@@ -1172,10 +1179,16 @@ impl Node {
 
     /// Delete the bytes of blobs whose record has gone.
     ///
-    /// Drains the store's blob channel, which event deletion announces on. A store holds bytes for exactly as long as the `blob` table
-    /// says to, because the record is what references the file — and whoever
-    /// removed the row does not have to hold the blob store to say so.
-    fn reclaim_removed_blobs(&mut self) {
+    /// Drains the store's blob channel, which event deletion announces on. A
+    /// store holds bytes for exactly as long as the `blob` table says to,
+    /// because the record is what references the file — and whoever removed the
+    /// row does not have to hold the blob store to say so.
+    ///
+    /// Answers whether the want list grew, or might have, which every syncing
+    /// session has to hear before it asks for anything more.
+    fn drain_blob_changes(&mut self) -> bool {
+        let mut wanted_more = false;
+
         loop {
             match self.blob_changes.try_recv() {
                 Ok(BlobChange::Removed(sha256)) => {
@@ -1183,17 +1196,22 @@ impl Node {
                         log::error!("deleting the bytes of blob {sha256} failed: {error:#}");
                     }
                 }
-                // Recording, progress and completion are the transfer layer's and the view's.
+                Ok(BlobChange::Recorded(_)) => wanted_more = true,
+                // Progress and completion are the transfer layer's and the view's.
                 Ok(_) => {}
                 Err(TryRecvError::Empty | TryRecvError::Closed) => break,
                 // The sweep reclaims what a dropped removal would orphan for good.
                 Err(TryRecvError::Lagged(_)) => {
+                    wanted_more = true;
+
                     if let Err(error) = self.sweep_blobs() {
                         log::error!("sweeping the blob store after a lag failed: {error:#}");
                     }
                 }
             }
         }
+
+        wanted_more
     }
 
     /// Delete every byte held for a hash the `blob` table has no record of.
@@ -2668,6 +2686,91 @@ mod tests {
         assert_eq!(receiver.sessions[&LinkId(1)].state, State::Syncing);
 
         (dialer, receiver)
+    }
+
+    /// Two contacts' nodes over one link, synchronizing.
+    fn contacts_pair() -> (Node, Node) {
+        let mut dialer = Node::new(
+            db(),
+            custody(secret(1)),
+            Arc::new(crate::blobs::MemoryBlobStore::default()),
+        )
+        .unwrap();
+        let mut receiver = Node::new(
+            db(),
+            custody(secret(2)),
+            Arc::new(crate::blobs::MemoryBlobStore::default()),
+        )
+        .unwrap();
+
+        for (node, by, named) in [(&mut dialer, 1, 2), (&mut receiver, 2, 1)] {
+            let card = crate::fixtures::event(
+                author(by),
+                CONTACT,
+                100,
+                "neighbour",
+                Tags::new().add("d", [author(named).to_hex()]),
+            );
+
+            node.publish(&card, &[]).unwrap();
+        }
+
+        receiver
+            .link_up(LinkId(1), None, Role::Receiver, 4096)
+            .unwrap();
+
+        let opening = dialer
+            .link_up(LinkId(1), Some(peripheral(1)), Role::Dialer, 4096)
+            .unwrap();
+        settle(&mut dialer, &mut receiver, opening);
+
+        assert_eq!(dialer.sessions[&LinkId(1)].state, State::Syncing);
+        assert_eq!(receiver.sessions[&LinkId(1)].state, State::Syncing);
+
+        (dialer, receiver)
+    }
+
+    /// The image of a post that arrives on a link already syncing is fetched without the link coming up again.
+    #[test]
+    fn a_picture_posted_mid_session_is_fetched_on_the_same_link() {
+        let (mut dialer, mut receiver) = contacts_pair();
+        let bytes = b"a picture posted while both phones were already in range";
+        let hash = BlobHash::digest(bytes);
+        // Stamped now, since the live subscription asks for what is written from here on.
+        let post = note(
+            author(1),
+            clock::now(),
+            "look at this",
+            Tags::new().add("imeta", Node::media_tags(bytes)),
+        );
+
+        let published = dialer.publish(&post, &[bytes]).unwrap();
+        settle(&mut dialer, &mut receiver, published);
+
+        assert!(query::get_event(&receiver.db, &post.id).unwrap().is_some());
+        assert!(
+            query::get_blob(&receiver.db, &hash)
+                .unwrap()
+                .unwrap()
+                .complete
+        );
+    }
+
+    /// A phone whose clock runs a little behind still has what it writes in range gossiped live.
+    #[test]
+    fn a_post_from_a_clock_running_behind_still_arrives_live() {
+        let (mut dialer, mut receiver) = contacts_pair();
+        let post = note(
+            author(1),
+            clock::now() - 20,
+            "written a moment ago",
+            Tags::new(),
+        );
+
+        let published = dialer.publish(&post, &[]).unwrap();
+        settle(&mut dialer, &mut receiver, published);
+
+        assert!(query::get_event(&receiver.db, &post.id).unwrap().is_some());
     }
 
     #[test]

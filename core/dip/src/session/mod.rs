@@ -792,7 +792,11 @@ impl Session {
 
     /// Start the next blob fetch once the session is syncing and none is in
     /// flight.
-    fn maybe_fetch_blob(&mut self, db: &Db) -> Result<()> {
+    ///
+    /// The node calls this whenever the want list grows, because an event that
+    /// arrives mid-session names blobs nothing in the session would otherwise
+    /// ask for until the link next comes up.
+    pub fn maybe_fetch_blob(&mut self, db: &Db) -> Result<()> {
         if self.state != State::Syncing {
             return Ok(());
         }
