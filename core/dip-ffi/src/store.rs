@@ -32,7 +32,7 @@ use std::time::Duration;
 use coracle_lib::events::EventId;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::PublicKey;
-use dip::blobs::FileBlobStore;
+use dip::blobs::{BlobStore as _, FileBlobStore};
 use dip::clock::now;
 use dip::db::{Db, command, query};
 use dip::model::{BlobHash, Order as CoreOrder, ProvenanceFilter, Query as CoreQuery};
@@ -345,10 +345,17 @@ impl Store {
         Ok(command::clear_preference(&self.db, &key)?)
     }
 
-    /// Forget everything the store holds, which is what adopting a transferred
-    /// identity does with what the first-run one gathered.
+    /// Forget everything the store holds, media included, which is what
+    /// logging out or adopting a transferred identity does with what the
+    /// previous one gathered.
     pub fn wipe(&self) -> Result<(), StoreError> {
-        Ok(command::wipe(&self.db)?)
+        command::wipe(&self.db)?;
+
+        for hash in self.blobs.hashes()? {
+            self.blobs.delete(&hash)?;
+        }
+
+        Ok(())
     }
 
     // ------------------------------------------------------------ Liveness
@@ -649,6 +656,17 @@ mod tests {
         assert!(path.ends_with(&format!("blobs/{hash}")));
 
         assert!(open.store.blob_path("not a hash".to_owned()).is_err());
+    }
+
+    #[test]
+    fn a_wipe_leaves_no_media_behind() {
+        let open = Open::new("wipe-media");
+        let hash = BlobHash::digest(b"a picture");
+        open.store.blobs.append(&hash, b"a picture").unwrap();
+
+        open.store.wipe().unwrap();
+
+        assert!(open.store.blobs.hashes().unwrap().is_empty());
     }
 
     #[test]
