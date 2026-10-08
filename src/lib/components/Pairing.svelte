@@ -2,16 +2,16 @@
   import ArrowLeft from "@lucide/svelte/icons/arrow-left"
   import ChevronLeft from "@lucide/svelte/icons/chevron-left"
   import ChevronRight from "@lucide/svelte/icons/chevron-right"
+  import ShieldCheck from "@lucide/svelte/icons/shield-check"
   import UserX from "@lucide/svelte/icons/user-x"
   import {Button} from "$lib/components/ui/button"
   import {Input} from "$lib/components/ui/input"
   import {Label} from "$lib/components/ui/label"
   import EmptyState from "$lib/components/EmptyState.svelte"
   import Shapes from "$lib/components/Shapes.svelte"
-  import {short} from "$lib/data/contacts"
+  import {social} from "$lib/data/contacts"
   import {back, swap} from "$lib/data/nav"
   import {accept, decline, requests, type Request} from "$lib/data/pairing"
-  import {session} from "$lib/data/session"
 
   let {request}: {request?: Request} = $props()
 
@@ -22,6 +22,13 @@
 
   $effect(() => {
     if (link !== undefined) petname = request?.known ?? ""
+  })
+
+  // What the user's contacts call this person, which is all the app knows of anyone it has not been told about.
+  const aliases = $derived.by(() => {
+    const given = request?.pubkey ? ($social.people.get(request.pubkey)?.aliases ?? []) : []
+
+    return [...new Set(given.map(({petname}) => petname))].slice(0, 3)
   })
 
   const at = $derived(request ? $requests.findIndex(asking => asking.link === request.link) : -1)
@@ -56,34 +63,39 @@
 </header>
 
 {#if request}
+  <div class="flex gap-3 rounded-lg border border-primary bg-card p-4 text-sm text-pretty">
+    <ShieldCheck class="mt-0.5 size-5 flex-none text-primary" />
+    <div class="space-y-2">
+      <p>
+        Someone nearby wants to pair. Pairing makes them one of your contacts, and your phones will
+        trade posts whenever they are in range of each other.
+      </p>
+      <p class="font-semibold">
+        Hold the two phones side by side and check that both show the same five shapes, in the same
+        order. If they match, the phones are talking to each other and not to somebody else nearby.
+        If they don't, do not pair.
+      </p>
+    </div>
+  </div>
+
   {#if request.known}
-    <p class="mb-2 max-w-prose text-sm font-medium text-pretty">
+    <p class="mt-4 max-w-prose text-sm font-medium text-pretty">
       You already know {request.known}.
     </p>
   {/if}
-
-  <p class="max-w-prose text-sm text-pretty text-muted-foreground">
-    Check that both phones show the same five shapes in the same order.
-  </p>
 
   <div class="my-8">
     <Shapes code={request.code} />
   </div>
 
-  {#if request.pubkey && $session.identity}
-    <!-- Each pair of phones has its own shapes. The two people check they are on each other's request. -->
-    <p class="-mt-4 mb-8 text-center text-xs text-muted-foreground">
-      Their phone <span class="font-mono text-foreground">{short(request.pubkey)}</span>
-      · Your phone <span class="font-mono text-foreground">{short($session.identity)}</span>
-    </p>
-  {/if}
-
   <div class="space-y-2">
     <Label for="petname">What do you call them?</Label>
-    <Input id="petname" bind:value={petname} placeholder="Ben" autocomplete="off" />
-    <p class="text-xs text-pretty text-muted-foreground">
-      This is the only name they have on your phone.
-    </p>
+    <Input id="petname" bind:value={petname} autocomplete="off" />
+    {#if aliases.length > 0}
+      <p class="text-xs text-pretty text-muted-foreground">
+        Also known as {aliases.join(", ")}.
+      </p>
+    {/if}
   </div>
 
   <div class="mt-8 flex flex-col gap-2">

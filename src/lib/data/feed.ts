@@ -14,7 +14,8 @@ import {Dip, type EventDetail, type Order} from "$lib/core"
 import {muted, mutedTopics, social} from "$lib/data/contacts"
 import {trashed} from "$lib/data/trash"
 import {peopleNamed, wordsOf} from "$lib/data/search"
-import {attachment, pictureOf, shrink} from "$lib/data/media"
+import {attachment, pictureOf} from "$lib/data/media"
+import type {Shrunk} from "$lib/data/encode"
 import {
   answering,
   detailsOf,
@@ -394,9 +395,9 @@ export const warmthOf = (item: Item, swept: number | undefined, now: number): Wa
   }
 }
 
-/** Publish a picture, re-encoded small, with a preview standing in for it. */
-export const share = async (file: File, description: string, topic?: string) => {
-  const {image, preview} = await shrink(file)
+/** Publish a picture, shrunk since it was picked, with a preview standing in for it. */
+export const share = async (shrunk: Promise<Shrunk>, description: string, topic?: string) => {
+  const {image, preview} = await shrunk
   const whole = await attachment(image)
   const small = await attachment(preview, [`preview-of ${whole.hash}`])
   const writer = withTopic(

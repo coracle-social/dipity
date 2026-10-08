@@ -1,6 +1,7 @@
 <script lang="ts">
   import ChevronDown from "@lucide/svelte/icons/chevron-down"
   import ImagePlus from "@lucide/svelte/icons/image-plus"
+  import LoaderCircle from "@lucide/svelte/icons/loader-circle"
   import Plus from "@lucide/svelte/icons/plus"
   import Tag from "@lucide/svelte/icons/tag"
   import X from "@lucide/svelte/icons/x"
@@ -12,6 +13,7 @@
   import {Label} from "$lib/components/ui/label"
   import {Textarea} from "$lib/components/ui/textarea"
   import {arrange, ask, boostItem, compose, share, write, type Item} from "$lib/data/feed"
+  import {shrink} from "$lib/data/media"
   import {dismissable} from "$lib/data/nav"
   import type {Sharing} from "$lib/core"
   import {policy} from "$lib/data/policy"
@@ -65,6 +67,13 @@
     }
   })
 
+  // Shrinking starts on the pick, which leaves only the store's work for the press of send.
+  const shrunk = $derived(file && shrink(file))
+
+  $effect(() => {
+    shrunk?.catch(() => undefined)
+  })
+
   const pick = (event: Event & {currentTarget: HTMLInputElement}) => {
     file = event.currentTarget.files?.[0]
     event.currentTarget.value = ""
@@ -106,7 +115,7 @@
 
     if (shape === "notes") return write(content, topic)
 
-    if (shape === "images" && file) return share(file, content.trim(), topic)
+    if (shape === "images" && shrunk) return share(shrunk, content.trim(), topic)
 
     if (shape === "polls") return ask(title.trim(), answers, topic)
 
@@ -278,7 +287,12 @@
           Nevermind
         </Button>
         <Button size="lg" class="flex-1" disabled={!ready || sending} onclick={send}>
-          {about && !remark.trim() ? "Send it on as it is" : "Send it out"}
+          {#if sending}
+            <LoaderCircle class="animate-spin" />
+            Sending
+          {:else}
+            {about && !remark.trim() ? "Send it on as it is" : "Send it out"}
+          {/if}
         </Button>
       </div>
     </Drawer.Footer>

@@ -10,79 +10,32 @@ import {Capacitor} from "@capacitor/core"
 import {readable, type Readable} from "svelte/store"
 import type {Imeta} from "@welshman/domain"
 import {Dip, type Blob} from "$lib/core"
+import {encodeFile, type Encoded, type Shrunk} from "$lib/data/encode"
 import type {Social} from "$lib/data/contacts"
 import {answering, remembered, storedBlobs} from "$lib/data/query"
 
-/** One re-encoded picture, base64 for the bridge, and what it is. */
-export type Encoded = {base64: string; mime: string; dim: string}
+/** Shrink in a worker, which fails where the webview cannot draw without a document. */
+const inWorker = (file: File) =>
+  new Promise<Shrunk>((resolve, reject) => {
+    const worker = new Worker(new URL("./encode.worker.ts", import.meta.url), {type: "module"})
 
-/** The longest edge of the image as published, in pixels. */
-const IMAGE_EDGE = 1280
+    worker.onmessage = ({data}: MessageEvent<{shrunk?: Shrunk; error?: string}>) => {
+      worker.terminate()
 
-/** How much a published image is compressed, as the encoder's quality. */
-const IMAGE_QUALITY = 0.72
-
-/** The longest edge of the preview the board draws, in pixels. */
-const PREVIEW_EDGE = 640
-
-/** How much a preview is compressed. */
-const PREVIEW_QUALITY = 0.6
-
-const base64 = (bytes: Uint8Array) => {
-  let binary = ""
-
-  for (let at = 0; at < bytes.length; at += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000))
-  }
-
-  return btoa(binary)
-}
-
-const encode = async (bitmap: ImageBitmap, edge: number, quality: number): Promise<Encoded> => {
-  const scale = Math.min(1, edge / Math.max(bitmap.width, bitmap.height))
-  const width = Math.max(1, Math.round(bitmap.width * scale))
-  const height = Math.max(1, Math.round(bitmap.height * scale))
-  const canvas = document.createElement("canvas")
-  const context = canvas.getContext("2d")
-
-  if (!context) throw new Error("This phone can't draw a picture to shrink it.")
-
-  canvas.width = width
-  canvas.height = height
-  // JPEG has no transparency, which would otherwise come out black.
-  context.fillStyle = "white"
-  context.fillRect(0, 0, width, height)
-  context.drawImage(bitmap, 0, 0, width, height)
-
-  const blob = await new Promise<globalThis.Blob>((resolve, reject) =>
-    canvas.toBlob(
-      encoded =>
-        encoded ? resolve(encoded) : reject(new Error("The picture couldn't be encoded.")),
-      "image/jpeg",
-      quality,
-    ),
-  )
-
-  return {
-    base64: base64(new Uint8Array(await blob.arrayBuffer())),
-    mime: "image/jpeg",
-    dim: `${width}x${height}`,
-  }
-}
-
-/** A picked file as the image to publish and the preview standing in for it. */
-export const shrink = async (file: File) => {
-  const bitmap = await createImageBitmap(file, {imageOrientation: "from-image"})
-
-  try {
-    return {
-      image: await encode(bitmap, IMAGE_EDGE, IMAGE_QUALITY),
-      preview: await encode(bitmap, PREVIEW_EDGE, PREVIEW_QUALITY),
+      if (data.shrunk) resolve(data.shrunk)
+      else reject(new Error(data.error))
     }
-  } finally {
-    bitmap.close()
-  }
-}
+
+    worker.onerror = error => {
+      worker.terminate()
+      reject(error)
+    }
+
+    worker.postMessage(file)
+  })
+
+/** A picked file as the image to publish and the preview standing in for it, off the page's thread where possible. */
+export const shrink = (file: File): Promise<Shrunk> => inWorker(file).catch(() => encodeFile(file))
 
 /** The `imeta` attachment for a picture: the core's description of its bytes, and what it is. */
 export const attachment = async (picture: Encoded, extra: string[] = []): Promise<Imeta> => {
