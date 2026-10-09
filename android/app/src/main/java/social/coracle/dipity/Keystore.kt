@@ -29,8 +29,16 @@ import uniffi.dip_ffi.KeyException
 class Keystore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
-    /** Whether an identity has been generated or imported yet. */
-    fun has(): Boolean = prefs.contains(IDENTITY)
+    /**
+     * Whether an identity has been generated or imported yet.
+     *
+     * Ciphertext without the Keystore key that sealed it, which is what a
+     * restore onto another device leaves, can never be read and counts as no
+     * identity, so the user reaches first run rather than a dead end. A read
+     * that fails for any other reason is not taken as absence, because first
+     * run would then replace a key that may still be recoverable.
+     */
+    fun has(): Boolean = prefs.contains(IDENTITY) && keystore().containsAlias(WRAPPING_KEY)
 
     /** The identity's 32 secret bytes. */
     fun read(): ByteArray {

@@ -17,7 +17,7 @@ pub fn now() -> i64 {
 
 /// The minute of the current day, UTC.
 ///
-/// `Policy::is_discoverable_at` reads the device's local time; this is a
+/// `Policy::is_quiet_at` reads the device's local time; this is a
 /// stand-in until the shell reports a timezone offset for the core to fold in.
 #[must_use]
 pub fn minute_of_day() -> u16 {

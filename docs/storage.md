@@ -35,7 +35,7 @@ What the shell contributes is small: the database directory, the Keychain or Key
 
 On iOS the database and SQLite's `-wal` and `-shm` sidecars keep the default data-protection class for app-container files, which is the class we want. The class must not be hardened later, because a stricter class on any of the three breaks a write during a background wake on a locked phone, the failure [`AfterFirstUnlock`](./keys.md#signing-happens-in-the-background) exists to prevent.
 
-The shell excludes the database and the blob directory from device backups, with `isExcludedFromBackup` on iOS and `noBackupFilesDir` on Android. `event_seen` and `event_shared` record who the user was near, and [provenance never leaves the device](./overview.md#principles), including into a cloud backup. Android's backup rules also exclude the Keystore-wrapped identity, because its wrapping key does not travel with a backup and a restored copy cannot be read.
+The shell excludes the database and the blob directory from device backups, with `isExcludedFromBackup` on iOS and `noBackupFilesDir` on Android. `event_seen` and `event_shared` record who the user was near, and [provenance never leaves the device](./overview.md#principles), including into a cloud backup. Android's backup rules also exclude the Keystore-wrapped identity, because its wrapping key does not travel with a backup and a restored copy cannot be read. A copy that arrives anyway, without its wrapping key, counts as no identity and the app opens on first run.
 
 ## Blob store
 

@@ -124,10 +124,12 @@ impl Negotiation {
     /// Consume one `NEG-MSG` from the peer's relay, returning what comes next.
     ///
     /// The reply is the next round's frame, or the `REQ` for the accumulated
-    /// `need` once the exchange terminates.
+    /// `need` once the exchange terminates, or `NEG-CLOSE` when the frame does
+    /// not decode, which abandons this diff and nothing else.
     pub fn step(&mut self, frame: &[u8]) -> Result<Vec<Message>> {
-        let incoming = coracle_lib::sync::Message::decode(frame)
-            .context("the peer's negentropy frame is malformed")?;
+        let Ok(incoming) = coracle_lib::sync::Message::decode(frame) else {
+            return Ok(vec![Message::NegClose(self.subscription.clone())]);
+        };
         let out = coracle_lib::sync::reconcile_initiator(&self.local, &incoming, self.budget);
 
         self.have.extend(out.have);
@@ -313,7 +315,7 @@ impl Client {
             Message::NegErr(subscription, _) => {
                 self.negotiations.remove(&subscription);
 
-                Ok(Vec::new())
+                Ok(self.open_live()?.into_iter().collect())
             }
             Message::NegMsg(subscription, frame) => {
                 let Some(negotiation) = self.negotiations.get_mut(&subscription) else {
@@ -321,6 +323,13 @@ impl Client {
                 };
 
                 let mut replies = negotiation.step(&frame)?;
+
+                if matches!(replies.first(), Some(Message::NegClose(..))) {
+                    self.negotiations.remove(&subscription);
+                    replies.extend(self.open_live()?);
+
+                    return Ok(replies);
+                }
 
                 // The terminating reply is a REQ on the same subscription: the exchange is over.
                 let terminated =
@@ -905,6 +914,30 @@ mod tests {
             }
             _ => panic!("expected the terminating REQ"),
         }
+    }
+
+    #[test]
+    fn a_malformed_negentropy_frame_closes_that_diff_and_goes_live() {
+        let db = Db::open_in_memory().unwrap();
+        let (negotiation, _) = open(&db, Filter::new()).unwrap();
+        let subscription = negotiation.subscription.clone();
+        let mut client = Client::default();
+        client.open_negotiation(negotiation);
+
+        let replies = client
+            .handle(
+                &db,
+                &peer([author(2)]),
+                &local(),
+                Message::NegMsg(subscription.clone(), vec![0xff, 0xff, 0xff]),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
+
+        assert!(matches!(&replies[0], Message::NegClose(closed) if *closed == subscription));
+        assert!(matches!(replies.get(1), Some(Message::Req(..))));
+        assert!(client.negotiations.is_empty());
     }
 
     // ---------------------------------------------------------- pagination

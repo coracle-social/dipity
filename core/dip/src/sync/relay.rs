@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use coracle_lib::events::{EventId, HashedEvent};
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::PublicKey;
@@ -33,6 +33,12 @@ const PAGE_SIZE: usize = 512;
 
 /// The cap on one negentropy reply, mirroring the client's.
 const NEG_FRAME_BYTES: usize = 4 * 1024;
+
+/// The `NEG-ERR` reason for a frame this device could not decode. NIP-77.
+const MALFORMED: &str = "error: malformed negentropy frame";
+
+/// The `NEG-ERR` reason for a `NEG-MSG` naming no open negotiation. NIP-77.
+const NOT_OPEN: &str = "closed: no negotiation is open on this subscription";
 
 /// The relay half's state, held by the session for the life of the link.
 ///
@@ -107,17 +113,27 @@ impl Relay {
                 Ok(Vec::new())
             }
             Message::NegOpen(subscription, filter, frame) => {
-                self.negotiations
-                    .insert(subscription.clone(), filter.clone());
+                let replies = negotiate(db, peer, &local, &subscription, &filter, &frame)?;
 
-                negotiate(db, peer, &local, &subscription, &filter, &frame)
+                if !matches!(replies.first(), Some(Message::NegErr(..))) {
+                    self.negotiations.insert(subscription, filter);
+                }
+
+                Ok(replies)
             }
             Message::NegMsg(subscription, frame) => {
                 let Some(filter) = self.negotiations.get(&subscription).cloned() else {
-                    bail!("a NEG-MSG arrived for a negotiation that is not open");
+                    return Ok(vec![Message::NegErr(subscription, NOT_OPEN.into())]);
                 };
 
-                negotiate(db, peer, &local, &subscription, &filter, &frame)
+                let replies = negotiate(db, peer, &local, &subscription, &filter, &frame)?;
+
+                // A diff that ended in an error ends here, and the next NEG-MSG on it is answered as closed.
+                if matches!(replies.first(), Some(Message::NegErr(..))) {
+                    self.negotiations.remove(&subscription);
+                }
+
+                Ok(replies)
             }
             Message::NegClose(subscription) => {
                 self.negotiations.remove(&subscription);
@@ -166,7 +182,9 @@ pub fn reconcilable(db: &Db, peer: &Peer, local: &Identity, filter: Filter) -> R
 ///
 /// The responder is stateless: every reply follows from the peer's frame and
 /// this device's store under the subscription's filter. `reconcile_responder`
-/// answers once per round; the initiator drives until it has enough.
+/// answers once per round; the initiator drives until it has enough. A frame
+/// that does not decode is answered with `NEG-ERR`, which ends that diff and
+/// leaves the link and every other subscription on it alone.
 fn negotiate(
     db: &Db,
     peer: &Peer,
@@ -175,8 +193,12 @@ fn negotiate(
     filter: &Filter,
     frame: &[u8],
 ) -> Result<Vec<Message>> {
-    let incoming = coracle_lib::sync::Message::decode(frame)
-        .context("the peer's negentropy frame is malformed")?;
+    let Ok(incoming) = coracle_lib::sync::Message::decode(frame) else {
+        return Ok(vec![Message::NegErr(
+            subscription.clone(),
+            MALFORMED.into(),
+        )]);
+    };
     let ours = reconcilable(db, peer, local, filter.clone())?;
     let reply = coracle_lib::sync::reconcile_responder(
         &ours,
@@ -705,6 +727,50 @@ mod tests {
         let event = note(author(1), 100, "a note", Tags::new());
 
         assert_eq!(relay.matching(&event), vec![SubscriptionId("notes".into())]);
+    }
+
+    #[test]
+    fn a_malformed_negentropy_frame_is_answered_with_neg_err() {
+        let db = Db::open_in_memory().unwrap();
+        let mut relay = Relay::default();
+        let subscription = SubscriptionId("diff".into());
+
+        let replies = relay
+            .handle(
+                &db,
+                &peer(),
+                &secret(1),
+                Message::NegOpen(subscription.clone(), Filter::new(), vec![0xff, 0xff, 0xff]),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
+
+        assert!(
+            matches!(&replies[..], [Message::NegErr(sub, reason)] if *sub == subscription && reason.starts_with("error:"))
+        );
+        assert!(relay.negotiations.is_empty());
+    }
+
+    #[test]
+    fn a_neg_msg_for_no_open_negotiation_is_answered_as_closed() {
+        let db = Db::open_in_memory().unwrap();
+        let mut relay = Relay::default();
+
+        let replies = relay
+            .handle(
+                &db,
+                &peer(),
+                &secret(1),
+                Message::NegMsg(SubscriptionId("gone".into()), vec![0x61]),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
+
+        assert!(
+            matches!(&replies[..], [Message::NegErr(_, reason)] if reason.starts_with("closed:"))
+        );
     }
 
     #[test]
