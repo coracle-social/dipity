@@ -137,12 +137,22 @@ impl Upgrade {
         self.state = State::Open;
     }
 
+    /// Whether bulk rides an open channel on this link.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.state == State::Open
+    }
+
     /// The upgrade will not happen, or the channel that had it went away.
     ///
-    /// A peer waiting on a PSM is told, since a publisher that goes quiet
-    /// leaves it waiting on a channel that is never coming.
+    /// The peer is told whenever it may be counting on the channel: waiting on a
+    /// PSM, opening one, or writing to one. A channel can die at one end while
+    /// the other's streams go quiet without ever reporting it.
     pub fn unavailable(&mut self) -> Option<Vec<u8>> {
-        let owed = matches!(self.state, State::Publishing { .. } | State::Published(_));
+        let owed = matches!(
+            self.state,
+            State::Publishing { .. } | State::Published(_) | State::Opening { .. } | State::Open
+        );
 
         self.state = State::Off;
 

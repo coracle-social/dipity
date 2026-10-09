@@ -46,7 +46,7 @@ use crate::clock;
 use crate::db::Db;
 use crate::keys::{Batch, KeyCustody};
 use crate::link::{LinkId, Role};
-use crate::model::{Identity, Policy, Standing};
+use crate::model::{BlobHash, Identity, Policy, Standing};
 use crate::sync::blob::BlobExchange;
 use crate::sync::client::Client;
 use crate::sync::relay::{self, Relay};
@@ -609,6 +609,14 @@ impl Session {
                     .serve(db, &peer, &self.local(), &request, quota)?;
                 let given = self.blobs.served_bytes().saturating_sub(before);
 
+                log::debug!(
+                    "answered {} {} on {:?} with {} and {given} bytes",
+                    request.method,
+                    request.path,
+                    self.link,
+                    reply.status
+                );
+
                 if given > 0 {
                     self.spending.record_served(&peer, given);
                 }
@@ -616,6 +624,14 @@ impl Session {
                 self.send_blob(&Message::BlossomResponse(Box::new(reply)))
             }
             Message::BlossomResponse(response) => {
+                log::debug!(
+                    "blob reply {} on {:?}: {} with {} bytes",
+                    response.id,
+                    self.link,
+                    response.status,
+                    response.body.len()
+                );
+
                 let before = self.blobs.fetched_bytes();
                 let next = self.blobs.on_response(db, &peer, &response, quota)?;
                 let taken = self.blobs.fetched_bytes().saturating_sub(before);
@@ -790,6 +806,11 @@ impl Session {
         crate::db::command::pair_with(db, &pubkeys, &secret, clock::now())
     }
 
+    /// Ask for `hash` again on this link although the peer could not serve it earlier.
+    pub fn reconsider_blob(&mut self, hash: &BlobHash) {
+        self.blobs.reconsider(hash);
+    }
+
     /// Start the next blob fetch once the session is syncing and none is in
     /// flight.
     ///
@@ -804,6 +825,12 @@ impl Session {
         let quota = self.quota();
 
         if let Some(request) = self.blobs.poll(db, quota)? {
+            log::debug!(
+                "asking for {} {} on {:?}",
+                request.method,
+                request.path,
+                self.link
+            );
             self.send_blob(&Message::BlossomRequest(Box::new(request)))?;
         }
 
@@ -824,6 +851,8 @@ impl Session {
 
     /// The shell published a channel, whose PSM goes to the peer.
     pub fn l2cap_published(&mut self, psm: u16) -> Result<()> {
+        log::debug!("published L2CAP channel {psm} on {:?}", self.link);
+
         let announcement = self.upgrade.published(psm);
 
         self.send_control(control::L2CAP, &announcement)
@@ -834,6 +863,8 @@ impl Session {
     /// A channel too small to carry a fragment is one this link does without,
     /// rather than a reason to end it: the upgrade is bandwidth.
     pub fn l2cap_opened(&mut self, mtu: usize) -> Result<()> {
+        log::debug!("L2CAP open on {:?} at MTU {mtu}", self.link);
+
         if let Err(error) = self.wire.open_bulk(mtu) {
             log::warn!("staying on GATT on {:?}: {error:#}", self.link);
 
@@ -850,27 +881,47 @@ impl Session {
     /// Either way this link finishes on GATT. What the blob channel had on the
     /// bulk pipe is lost, and a fetch waiting on it starts again from the store.
     pub fn l2cap_unavailable(&mut self) -> Result<()> {
-        if self.wire.bulk_is_open() {
-            self.blobs.abandon_in_flight();
-        }
+        log::debug!("L2CAP unavailable on {:?}, staying on GATT", self.link);
 
-        self.wire.close_bulk();
+        self.fall_back_to_gatt();
 
         let owed = self.upgrade.unavailable();
 
         self.tell_l2cap(owed)
     }
 
+    /// Move bulk back onto GATT. A fetch whose bytes were on the channel is
+    /// dropped, and whoever calls this asks for the next one.
+    fn fall_back_to_gatt(&mut self) {
+        if self.wire.bulk_is_open() {
+            self.blobs.abandon_in_flight();
+        }
+
+        self.wire.close_bulk();
+    }
+
     /// Bulk is wanted on this link, from whichever end this is.
     fn want_l2cap(&mut self) -> Result<()> {
+        log::debug!("asking for L2CAP on {:?}", self.link);
+
         let owed = self.upgrade.wanted();
 
         self.tell_l2cap(owed)
     }
 
     /// One step of the upgrade exchange, off the control channel.
-    fn on_l2cap(&mut self, payload: &[u8]) -> Result<()> {
+    ///
+    /// The peer losing a channel this end still thinks is open moves this end
+    /// off it too, since nothing written to it would ever arrive.
+    fn on_l2cap(&mut self, db: &Db, payload: &[u8]) -> Result<()> {
+        let was_open = self.upgrade.is_open();
         let owed = self.upgrade.receive(payload)?;
+
+        if was_open && !self.upgrade.is_open() {
+            log::debug!("the peer lost L2CAP on {:?}, staying on GATT", self.link);
+            self.fall_back_to_gatt();
+            self.maybe_fetch_blob(db)?;
+        }
 
         self.tell_l2cap(owed)
     }
@@ -1159,7 +1210,7 @@ impl Session {
                 // The write itself proved liveness in `receive`; a beacon carries nothing else.
             }
             control::TRANSFER => self.on_transfer(payload)?,
-            control::L2CAP => self.on_l2cap(payload)?,
+            control::L2CAP => self.on_l2cap(db, payload)?,
             other => bail!("an unknown control frame {other} arrived"),
         }
 
@@ -2491,8 +2542,35 @@ mod tests {
         // The close acknowledges the write, because nobody can on a channel that is gone.
         dialer.l2cap_unavailable().unwrap();
 
+        // What is left is the notice telling the peer, and it goes on GATT.
+        assert!(dialer.wire.next_write(Pipe::Bulk).unwrap().is_none());
+        assert!(dialer.wire.next_write(Pipe::Gatt).unwrap().is_some());
+        dialer.acknowledge_write(Pipe::Gatt);
+
         assert!(dialer.wire.outbox.is_idle());
         assert!(!dialer.has_work_in_flight());
+    }
+
+    #[test]
+    fn a_channel_lost_at_one_end_moves_both_ends_back_to_gatt() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) = secured_pair(policy());
+
+        dialer.want_l2cap().unwrap();
+        pump(&mut dialer, &mut receiver, &db);
+        receiver.poll_l2cap().unwrap();
+        receiver.l2cap_published(0x0080).unwrap();
+        pump(&mut receiver, &mut dialer, &db);
+        dialer.poll_l2cap().unwrap();
+        dialer.l2cap_opened(512).unwrap();
+        receiver.l2cap_opened(512).unwrap();
+
+        // The dialer's end of the channel dies, and the receiver's streams never say so.
+        dialer.l2cap_unavailable().unwrap();
+        pump(&mut dialer, &mut receiver, &db);
+
+        assert!(!dialer.wire.bulk_is_open());
+        assert!(!receiver.wire.bulk_is_open());
     }
 
     /// Two sessions synchronizing, both with a user in front of the screen.

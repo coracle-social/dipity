@@ -203,6 +203,12 @@ impl BlobExchange {
         self.served_bytes = self.served_bytes.max(bytes);
     }
 
+    /// Ask for `hash` again although a peer could not serve it earlier, since a
+    /// new reference to it may be one the peer can.
+    pub fn reconsider(&mut self, hash: &BlobHash) {
+        self.unavailable.remove(hash);
+    }
+
     /// Give up the fetch in flight, whose request or answer was lost with the
     /// pipe it rode. The next [`poll`](Self::poll) resumes from the store.
     pub fn abandon_in_flight(&mut self) {
@@ -250,6 +256,7 @@ impl BlobExchange {
         };
 
         let Some(held) = self.store.len(&blob.sha256)? else {
+            log::debug!("blob {hash} is recorded and offerable but no bytes are held");
             return Ok(missing(&request.id));
         };
 
@@ -263,6 +270,7 @@ impl BlobExchange {
         };
 
         if holding.available == 0 {
+            log::debug!("blob {hash} has {held} bytes held and none available to serve");
             return Ok(missing(&request.id));
         }
 
@@ -450,10 +458,15 @@ impl BlobExchange {
 
         // Low battery skips the transfer; it is the one thing a fetch waits for on a phone.
         if self.battery.is_some_and(|level| level < BLOB_MIN_BATTERY) {
+            log::debug!("not fetching blobs on a battery at {:?}", self.battery);
             return Ok(None);
         }
 
         if self.fetched_bytes >= quota.blob_bytes {
+            log::debug!(
+                "not fetching blobs past a budget of {} bytes",
+                quota.blob_bytes
+            );
             return Ok(None);
         }
 
@@ -681,6 +694,11 @@ impl BlobExchange {
     /// Mark a fetch whole after verifying the assembled bytes.
     fn finish(&mut self, db: &Db, peer: &Peer, fetch: &BlobFetch) -> Result<()> {
         if self.assembled(fetch)? {
+            log::debug!(
+                "blob {} complete at {} bytes",
+                fetch.blob.sha256,
+                fetch.stored
+            );
             command::complete_blob(db, &fetch.blob.sha256, fetch.stored)?;
 
             return Ok(());
@@ -873,13 +891,24 @@ fn requested_range(request: &BlossomRequest) -> Option<Requested> {
 /// The blob a request path names, if the peer may be served every event that references it. `docs/sync.md#blob-sync`.
 fn offerable_blob(db: &Db, peer: &Peer, local: &Identity, hash: &BlobHash) -> Result<Option<Blob>> {
     let Some(blob) = db_query::get_blob(db, hash)? else {
+        log::debug!("blob {hash} has no record here");
         return Ok(None);
     };
 
     let referencing = db_query::events_referencing_blob(db, hash)?;
     let query = relay::query_for(peer, local, Filter::new().add_ids(referencing.clone()));
-    let servable = db_query::list_events(db, &query)?;
-    let offerable = !referencing.is_empty() && servable.len() == referencing.len();
+    let served = db_query::list_events(db, &query)?;
+    let audience = db_query::list_events(db, &query.including_trash())?;
+    let offerable = !served.is_empty() && audience.len() == referencing.len();
+
+    if !offerable {
+        log::debug!(
+            "blob {hash} is referenced by {} events, the peer may be served {} and may see {}",
+            referencing.len(),
+            served.len(),
+            audience.len()
+        );
+    }
 
     Ok(offerable.then_some(blob))
 }
@@ -1843,6 +1872,59 @@ mod tests {
             .unwrap();
 
         assert_eq!(narrowed.status, 404);
+    }
+
+    /// A copy the user threw away is judged by who could see it, so it does not take the live one's media.
+    #[test]
+    fn a_trashed_copy_of_a_post_does_not_withhold_the_live_ones_media() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut blobs, store) = exchange();
+        let blob = given_blob(&db, &store, b"the quick brown fox");
+        let path = format!("/{}", blob.sha256);
+        let copy = note(
+            author(1),
+            2,
+            "the same picture again",
+            Tags::new().add("imeta", [format!("x {}", blob.sha256)]),
+        );
+
+        db_command::publish_event(&db, &copy, &author(1), 2).unwrap();
+        db_command::set_trashed(&db, &copy.id, true, 3).unwrap();
+
+        let response = blobs
+            .serve(
+                &db,
+                &peer(),
+                &local(),
+                &ask("HEAD", &path, &[]),
+                quota(1024),
+            )
+            .unwrap();
+
+        assert_eq!(response.status, 200);
+    }
+
+    /// Media only the trash still references is not handed on, since nothing it belongs to is.
+    #[test]
+    fn media_only_a_trashed_post_references_is_a_404() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut blobs, store) = exchange();
+        let blob = given_blob(&db, &store, b"the quick brown fox");
+        let referencing = db_query::events_referencing_blob(&db, &blob.sha256).unwrap();
+
+        db_command::set_trashed(&db, &referencing[0], true, 3).unwrap();
+
+        let response = blobs
+            .serve(
+                &db,
+                &peer(),
+                &local(),
+                &ask("HEAD", &format!("/{}", blob.sha256), &[]),
+                quota(1024),
+            )
+            .unwrap();
+
+        assert_eq!(response.status, 404);
     }
 
     /// The BLAKE3 root of `bytes`, the way an `imeta` tag carries it.

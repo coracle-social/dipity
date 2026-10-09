@@ -13,7 +13,7 @@
   import {Label} from "$lib/components/ui/label"
   import {Textarea} from "$lib/components/ui/textarea"
   import {arrange, ask, boostItem, compose, share, write, type Item} from "$lib/data/feed"
-  import {shrink} from "$lib/data/media"
+  import {describe, shrink} from "$lib/data/media"
   import {dismissable} from "$lib/data/nav"
   import type {Sharing} from "$lib/core"
   import {policy} from "$lib/data/policy"
@@ -149,7 +149,7 @@
       open = false
     } catch (error) {
       failed = true
-      console.error("it could not be published", error)
+      console.error("it could not be published", describe(error))
     } finally {
       sending = false
     }

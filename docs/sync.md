@@ -93,7 +93,7 @@ When an event references a blob, we save a record to the `blob` table which maps
 
 Which events reference a hash is `blob_reference`, one row per pair, and it is where both the blob's lifetime and its permissions come from. Deleting one event never takes media another still names, because the record and its bytes go when the last reference does ([`storage.md`](./storage.md#blob-store)).
 
-A peer is served the bytes when it may be served every event that references them. The narrowest reference wins rather than the widest: the widest would let anyone who learned a hash publish an event naming it and be handed media they were never offered. The cost is that a reference the peer may not see withholds a blob it otherwise could have had, which is the direction that grants nothing.
+A peer is served the bytes when it may be served every event that references them. The narrowest reference wins rather than the widest: the widest would let anyone who learned a hash publish an event naming it and be handed media they were never offered. The cost is that a reference the peer may not see withholds a blob it otherwise could have had, which is the direction that grants nothing. An event in the trash is judged by who could see it rather than withheld for being there, because a copy the user threw away would otherwise take the live post's media with it. At least one reference the peer may be served now is still required.
 
 ### Quotas
 

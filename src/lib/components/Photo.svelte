@@ -18,7 +18,10 @@
 
   const shown = $derived(pictureOf(item.media))
 
-  const url = $derived(urlOf(shown?.sha256))
+  // Keyed on the hash alone, since the item is a new object on every store change and a new URL store starts empty.
+  const sha256 = $derived(shown?.sha256)
+
+  const url = $derived(urlOf(sha256))
 
   const covered = $derived(blurs($blurring, social, session.identity, item.event.pubkey))
 

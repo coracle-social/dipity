@@ -364,7 +364,7 @@ fn conditions(query: &Query) -> Conditions {
     }
 
     if let Some(policy) = &query.policy {
-        push_policy(&mut conditions, policy);
+        push_policy(&mut conditions, policy, query.trash_included);
     }
 
     conditions
@@ -541,14 +541,16 @@ fn push_registers(conditions: &mut Conditions, registers: &Registers) {
 }
 
 /// Compile the policy governing the peer being answered.
-fn push_policy(conditions: &mut Conditions, policy: &PeerPolicy) {
+fn push_policy(conditions: &mut Conditions, policy: &PeerPolicy, trash_included: bool) {
     if policy.is_blocked() {
         conditions.push_never();
         return;
     }
 
     // Nothing in the trash is handed on, because it is this device's to look through.
-    conditions.push("e.id NOT IN (SELECT event_id FROM event_trashed)");
+    if !trash_included {
+        conditions.push("e.id NOT IN (SELECT event_id FROM event_trashed)");
+    }
 
     // What this device carries for others goes only to contacts, keeping a second hop among people somebody paired with.
     if !policy.is_contact() {

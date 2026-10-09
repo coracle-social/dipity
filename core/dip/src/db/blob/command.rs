@@ -21,7 +21,8 @@ pub fn record(tx: &Tx<'_>, blob: &Blob, event_id: &EventId) -> Result<bool> {
     let imeta = serde_json::to_string(&blob.imeta)
         .with_context(|| format!("serializing the imeta tag for blob {}", blob.sha256))?;
 
-    tx.prepare_cached("INSERT OR IGNORE INTO blob_reference (sha256, event_id) VALUES (?1, ?2)")?
+    let referenced = tx
+        .prepare_cached("INSERT OR IGNORE INTO blob_reference (sha256, event_id) VALUES (?1, ?2)")?
         .execute(params![blob.sha256, event_id.to_hex()])
         .with_context(|| format!("referencing blob {} from {event_id}", blob.sha256))?;
 
@@ -48,6 +49,10 @@ pub fn record(tx: &Tx<'_>, blob: &Blob, event_id: &EventId) -> Result<bool> {
         .with_context(|| format!("recording blob {}", blob.sha256))?;
 
     if written == 0 {
+        if referenced > 0 {
+            channel::notify(tx, BlobChange::Referenced(blob.sha256.clone()));
+        }
+
         return Ok(false);
     }
 

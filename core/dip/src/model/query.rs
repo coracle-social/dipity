@@ -29,6 +29,10 @@ pub struct Query {
     pub policy: Option<PeerPolicy>,
     /// What the result is ordered by.
     pub order: Order,
+    /// Whether what is in the trash is judged under the policy like anything
+    /// else, rather than withheld. Only the blob half sets it, to ask who could
+    /// see an event rather than whether it is served now.
+    pub trash_included: bool,
 }
 
 impl Query {
@@ -70,6 +74,13 @@ impl Query {
     #[must_use]
     pub fn with_policy(mut self, policy: PeerPolicy) -> Self {
         self.policy = Some(policy);
+        self
+    }
+
+    /// Judge what is in the trash under the policy rather than withholding it.
+    #[must_use]
+    pub fn including_trash(mut self) -> Self {
+        self.trash_included = true;
         self
     }
 

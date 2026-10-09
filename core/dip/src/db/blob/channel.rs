@@ -20,6 +20,9 @@ pub enum BlobChange {
     /// puts it on the want list. Boxed because every other variant is a handful
     /// of bytes and each subscriber gets its own clone.
     Recorded(Box<Blob>),
+    /// A blob already recorded gained another referencing event, which may let
+    /// a peer serve it that could not before.
+    Referenced(BlobHash),
     /// More bytes landed, by hash and total held.
     Progressed(BlobHash, u64),
     /// Every byte is held and hashes to its address.

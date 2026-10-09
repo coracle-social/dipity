@@ -34,7 +34,16 @@ const inWorker = (file: File) =>
   })
 
 /** A picked file as the image to publish and the preview standing in for it, off the page's thread where possible. */
-export const shrink = (file: File): Promise<Encoded> => inWorker(file).catch(() => encodeFile(file))
+export const shrink = (file: File): Promise<Encoded> =>
+  inWorker(file).catch(error => {
+    console.warn("shrinking in a worker failed, trying on the page", describe(error))
+
+    return encodeFile(file)
+  })
+
+/** An error as text that survives a webview console, which prints a DOMException as its class name alone. */
+export const describe = (error: unknown) =>
+  error instanceof Error ? `${error.name}: ${error.message}` : String(error)
 
 /** The `imeta` attachment for a picture: the core's description of its bytes, and what it is. */
 export const attachment = async (picture: Encoded): Promise<Imeta> => {
@@ -59,18 +68,35 @@ const drawable = (blob: Blob) => blob.complete && Boolean(blob.mime_type?.starts
 export const pictureOf = (media: Blob[]) =>
   media.filter(drawable).sort((a, b) => (b.size ?? 0) - (a.size ?? 0))[0]
 
-/** A URL the webview can draw a whole blob from, re-read as blobs land. */
-export const urlOf = (sha256: string | undefined): Readable<string | undefined> =>
-  !sha256
-    ? readable(undefined)
-    : answering(
-        storedBlobs,
-        () =>
-          Dip.blobPath({sha256})
-            .then(({path}) => (path ? Capacitor.convertFileSrc(path) : undefined))
-            .catch(() => undefined),
-        undefined as string | undefined,
-      )
+/** URLs already resolved, by hash, which never change while the blob is held. */
+const resolved = new Map<string, string>()
+
+/** A URL the webview can draw a whole blob from, re-read as blobs land until it is found. */
+export const urlOf = (sha256: string | undefined): Readable<string | undefined> => {
+  if (!sha256) return readable(undefined)
+
+  const known = resolved.get(sha256)
+
+  if (known) return readable(known)
+
+  return answering(
+    storedBlobs,
+    async () => {
+      const held = resolved.get(sha256)
+
+      if (held) return held
+
+      const url = await Dip.blobPath({sha256})
+        .then(({path}) => (path ? Capacitor.convertFileSrc(path) : undefined))
+        .catch(() => undefined)
+
+      if (url) resolved.set(sha256, url)
+
+      return url
+    },
+    undefined as string | undefined,
+  )
+}
 
 /** Whose pictures are blurred until tapped. */
 export type Blurring = "strangers" | "others" | "everyone"

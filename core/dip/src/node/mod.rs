@@ -507,8 +507,15 @@ impl Node {
     ///
     /// Both are the same answer: this link finishes on GATT. It is not an
     /// error — L2CAP is bandwidth, and every device without it still syncs.
+    ///
+    /// A fetch the channel was carrying starts again on GATT.
     pub fn l2cap_unavailable(&mut self, link: LinkId) -> Result<Vec<Action>> {
-        self.on_session(link, Session::l2cap_unavailable)
+        let db = Arc::clone(&self.db);
+
+        self.on_session(link, move |session| {
+            session.l2cap_unavailable()?;
+            session.maybe_fetch_blob(&db)
+        })
     }
 
     /// Carry a shell answer to the session it belongs to, and collect.
@@ -888,7 +895,7 @@ impl Node {
             }
         }
 
-        let wanted_more = self.drain_blob_changes();
+        let (wanted_more, referenced) = self.drain_blob_changes();
 
         // Heartbeats go out before writes are drained, which keeps a quiet session proving alive.
         for session in self.sessions.values_mut() {
@@ -897,6 +904,10 @@ impl Node {
                     "sending a heartbeat on link {:?} failed: {error:#}",
                     session.link
                 );
+            }
+
+            for hash in &referenced {
+                session.reconsider_blob(hash);
             }
 
             if wanted_more && let Err(error) = session.maybe_fetch_blob(&self.db) {
@@ -1185,9 +1196,11 @@ impl Node {
     /// row does not have to hold the blob store to say so.
     ///
     /// Answers whether the want list grew, or might have, which every syncing
-    /// session has to hear before it asks for anything more.
-    fn drain_blob_changes(&mut self) -> bool {
+    /// session has to hear before it asks for anything more, and which hashes
+    /// gained a reference a peer may now be able to serve.
+    fn drain_blob_changes(&mut self) -> (bool, Vec<BlobHash>) {
         let mut wanted_more = false;
+        let mut referenced = Vec::new();
 
         loop {
             match self.blob_changes.try_recv() {
@@ -1197,6 +1210,10 @@ impl Node {
                     }
                 }
                 Ok(BlobChange::Recorded(_)) => wanted_more = true,
+                Ok(BlobChange::Referenced(sha256)) => {
+                    wanted_more = true;
+                    referenced.push(sha256);
+                }
                 // Progress and completion are the transfer layer's and the view's.
                 Ok(_) => {}
                 Err(TryRecvError::Empty | TryRecvError::Closed) => break,
@@ -1211,7 +1228,7 @@ impl Node {
             }
         }
 
-        wanted_more
+        (wanted_more, referenced)
     }
 
     /// Delete every byte held for a hash the `blob` table has no record of.
@@ -2690,6 +2707,11 @@ mod tests {
 
     /// Two contacts' nodes over one link, synchronizing.
     fn contacts_pair() -> (Node, Node) {
+        contacts_pair_after(|_, _| {})
+    }
+
+    /// Two contacts' nodes over one link, having done `before` to the dialer and the receiver first.
+    fn contacts_pair_after(before: impl FnOnce(&mut Node, &mut Node)) -> (Node, Node) {
         let mut dialer = Node::new(
             db(),
             custody(secret(1)),
@@ -2714,6 +2736,8 @@ mod tests {
 
             node.publish(&card, &[]).unwrap();
         }
+
+        before(&mut dialer, &mut receiver);
 
         receiver
             .link_up(LinkId(1), None, Role::Receiver, 4096)
@@ -2748,6 +2772,63 @@ mod tests {
         settle(&mut dialer, &mut receiver, published);
 
         assert!(query::get_event(&receiver.db, &post.id).unwrap().is_some());
+        assert!(
+            query::get_blob(&receiver.db, &hash)
+                .unwrap()
+                .unwrap()
+                .complete
+        );
+    }
+
+    /// The image of a post written before the two met arrives with it.
+    #[test]
+    fn a_picture_posted_before_the_link_is_fetched_once_it_syncs() {
+        let bytes = b"a picture posted before the other phone came into range";
+        let hash = BlobHash::digest(bytes);
+        let post = note(
+            author(1),
+            clock::now() - 3_600,
+            "earlier",
+            Tags::new().add("imeta", Node::media_tags(bytes)),
+        );
+        let (_, receiver) = contacts_pair_after(|dialer, _| {
+            dialer.publish(&post, &[bytes]).unwrap();
+        });
+
+        assert!(query::get_event(&receiver.db, &post.id).unwrap().is_some());
+        assert!(
+            query::get_blob(&receiver.db, &hash)
+                .unwrap()
+                .unwrap()
+                .complete
+        );
+    }
+
+    /// A hash the peer could not serve is asked for again once a post it can serve names it.
+    #[test]
+    fn media_the_peer_could_not_serve_is_fetched_once_it_posts_it() {
+        let bytes = b"a picture somebody else named before its author posted it";
+        let tags = || Tags::new().add("imeta", Node::media_tags(bytes));
+        let hash = BlobHash::digest(bytes);
+        let elsewhere = note(author(3), clock::now() - 60, "seen elsewhere", tags());
+
+        let (mut dialer, mut receiver) = contacts_pair_after(|_, receiver| {
+            db_command::receive_event(&receiver.db, &elsewhere, &[author(3)], clock::now())
+                .unwrap();
+        });
+
+        // The dialer has no record of the hash yet, so the first ask was a 404.
+        assert!(
+            !query::get_blob(&receiver.db, &hash)
+                .unwrap()
+                .unwrap()
+                .complete
+        );
+
+        let post = note(author(1), clock::now(), "mine after all", tags());
+        let published = dialer.publish(&post, &[bytes]).unwrap();
+        settle(&mut dialer, &mut receiver, published);
+
         assert!(
             query::get_blob(&receiver.db, &hash)
                 .unwrap()

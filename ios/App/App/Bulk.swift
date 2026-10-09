@@ -18,6 +18,10 @@ final class BulkChannel: NSObject, StreamDelegate {
     /// What a channel reports, which is the radio.
     weak var delegate: BulkDelegate?
 
+    /// The channel itself, held for as long as its streams are used: CoreBluetooth
+    /// closes a channel nothing references, and the streams then go quiet.
+    private let channel: CBL2CAPChannel
+
     private let input: InputStream
     private let output: OutputStream
 
@@ -31,6 +35,7 @@ final class BulkChannel: NSObject, StreamDelegate {
 
     init(_ channel: CBL2CAPChannel, on link: UInt64) {
         self.link = link
+        self.channel = channel
         self.input = channel.inputStream
         self.output = channel.outputStream
     }
