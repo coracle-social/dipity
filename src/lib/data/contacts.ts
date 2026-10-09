@@ -77,7 +77,7 @@ const namings = (events: HashedEvent[]): Naming[] =>
       return about && petname ? [{by: event.pubkey, about, petname, event}] : []
     })
 
-/** The user's newest card for each person, emptied ones included, since emptying one is forgetting them. */
+/** The user's newest card for each person, emptied ones included, since emptying one removes the contact. */
 const ownCards = (events: HashedEvent[], identity?: string) => {
   const cards = new Map<string, HashedEvent>()
 
@@ -315,23 +315,12 @@ export const setTopicMuted = (topic: string, muted: boolean) =>
   amend(mute, "mute", ["t", topic], muted)
 
 /**
- * Forget somebody: an empty card supersedes the user's name for them, they come
- * off the mute list, the names other people gave them are dropped
- * from this phone, and their device is met as a stranger until the two next
- * sync. A block stays, since it is the one thing guarding the wire.
+ * Take somebody out of the user's contacts: an empty card supersedes the user's
+ * name for them, and their device is met as a stranger next time. Mute and block
+ * stay as they were, and what they wrote stays for as long as the Accept scope
+ * admits it. `docs/policy.md#social-graph`.
  */
-export const forget = async (pubkey: string) => {
-  const contact = get(social).people.get(pubkey)
-
-  if (contact?.petname) await name(pubkey, "")
-  if (contact?.muted) await setMuted(pubkey, false)
-
-  // A card that arrives again names them again, because theirs is dropped rather than refused.
-  const theirs = await eventsOf({filter: JSON.stringify({kinds: [CONTACT], "#d": [pubkey]})})
-
-  for (const card of theirs) {
-    if (card.pubkey !== get(session).identity) await Dip.forgetEvent({id: card.id})
-  }
-
+export const removeContact = async (pubkey: string) => {
+  await name(pubkey, "")
   await Dip.forgetPairing({pubkey})
 }

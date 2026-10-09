@@ -25,7 +25,7 @@ use coracle_lib::events::{HasCreatedAt, HasId, HasKind, HasPubkey, HasTags};
 use coracle_lib::keys::PublicKey;
 use serde::Serialize;
 
-use crate::model::{Graph, Scope, Sharing, Standing, Visibility};
+use crate::model::{CONTACT, Graph, Scope, Sharing, Standing, Visibility};
 use crate::util::Window;
 
 /// Everything the user has said about who gets what, ready to apply.
@@ -67,7 +67,7 @@ impl Policy {
             quiet_times: Vec::new(),
             discover_in_background: true,
             sharing: Sharing::default(),
-            accept: Scope::Lenient,
+            accept: Scope::Named,
             retention_days: 90,
             ignored_flaggers: BTreeSet::new(),
             graph: Graph::default(),
@@ -170,17 +170,20 @@ impl PeerPolicy {
     }
 
     /// Whether an event this peer offered is one to store.
+    ///
+    /// A contact card is stored from any author not blocked, whatever the
+    /// Accept scope, because a card is what makes its subject named.
     #[must_use]
-    pub fn should_accept<E: HasPubkey>(&self, event: &E) -> bool {
+    pub fn should_accept<E: HasPubkey + HasKind>(&self, event: &E) -> bool {
         if self.is_blocked() {
             return false;
         }
 
+        let standing = self.policy.graph.standing(event.pubkey());
+
         event.pubkey() == &self.policy.identity
-            || self
-                .policy
-                .accept
-                .admits(self.policy.graph.standing(event.pubkey()))
+            || (event.kind() == CONTACT && standing != Standing::Blocked)
+            || self.policy.accept.admits(standing)
     }
 
     /// Whether an event may be handed to this peer: the user's own as
@@ -257,7 +260,7 @@ mod tests {
         );
 
         assert_eq!(crossed["sharing"], "anyone");
-        assert_eq!(crossed["accept"], "lenient");
+        assert_eq!(crossed["accept"], "named");
         assert_eq!(crossed["retention_days"], 90);
     }
 
@@ -331,12 +334,40 @@ mod tests {
     }
 
     #[test]
+    fn a_card_is_stored_from_anyone_and_names_its_subject() {
+        let mut policy = policy();
+        let card = event(
+            author(9),
+            CONTACT,
+            1,
+            "Lou",
+            Tags::new().add("d", [author(7).to_hex()]),
+        );
+        let peer = policy.clone().for_pubkey(author(9));
+
+        assert!(peer.should_accept(&card));
+        assert!(!peer.should_accept(&event(author(7), 1, 1, "", Tags::new())));
+
+        policy.graph.named.insert(author(7));
+        let peer = policy.for_pubkey(author(9));
+
+        assert!(peer.should_accept(&event(author(7), 1, 1, "", Tags::new())));
+        assert!(!peer.should_accept(&event(
+            author(4),
+            CONTACT,
+            1,
+            "Ivy",
+            Tags::new().add("d", [author(7).to_hex()])
+        )));
+    }
+
+    #[test]
     fn accept_measures_an_inbound_event_against_its_author() {
         let policy = policy();
         let peer = policy.clone().for_pubkey(author(9));
 
-        // Default accept is lenient: anyone but a blocked author.
-        assert!(peer.should_accept(&event(author(9), 1, 1, "", Tags::new())));
+        // Default accept is whoever somebody named: a stranger nobody named is refused.
+        assert!(!peer.should_accept(&event(author(9), 1, 1, "", Tags::new())));
         assert!(peer.should_accept(&event(author(2), 1, 1, "", Tags::new())));
         assert!(!peer.should_accept(&event(author(4), 1, 1, "", Tags::new())));
 

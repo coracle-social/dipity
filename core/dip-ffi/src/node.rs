@@ -845,7 +845,7 @@ mod tests {
         let crossed: serde_json::Value = serde_json::from_str(&node.policy().unwrap()).unwrap();
 
         // With nothing written, this is the core's own defaults and not an empty document.
-        assert_eq!(crossed["accept"], "lenient");
+        assert_eq!(crossed["accept"], "named");
         assert_eq!(crossed["retention_days"], 90);
         assert_eq!(crossed["sharing"], "anyone");
     }

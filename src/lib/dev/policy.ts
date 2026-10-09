@@ -11,7 +11,7 @@ import type {Policy, Scope, Sharing, Window} from "$lib/core"
 import type {Store} from "$lib/dev/store"
 
 const defaults: Policy = {
-  accept: "lenient",
+  accept: "named",
   sharing: "anyone",
   retention_days: 90,
   quiet_times: [],
@@ -28,9 +28,13 @@ const at = <Value>(store: Store, key: string, fallback: Value): Value => {
   return JSON.parse(written) as Value
 }
 
+/** Accept stops at named people, as the core clamps it. */
+const accepted = (scope: Scope): Scope =>
+  scope === "contacts" || scope === "network" ? scope : "named"
+
 /** Everything the user has said about who gets what, as the core would compile it. */
 export const compiled = (store: Store): Policy => ({
-  accept: at<Scope>(store, "policy.accept", defaults.accept),
+  accept: accepted(at<Scope>(store, "policy.accept", defaults.accept)),
   sharing: at<Sharing>(store, "policy.sharing", defaults.sharing),
   retention_days: at(store, "policy.retention_days", defaults.retention_days),
   quiet_times: at<Window[]>(store, "policy.quiet_times", defaults.quiet_times),

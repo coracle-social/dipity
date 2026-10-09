@@ -1388,6 +1388,12 @@ impl Node {
                 Err(error) => log::error!("the retention sweep failed: {error:#}"),
             }
 
+            // Catches authors the graph dropped while no node was running, and a scope an older build stored.
+            match db_command::evict_out_of_scope(&self.db, &self.policy, now) {
+                Ok(evicted) => log::debug!("the scope sweep evicted {evicted} events"),
+                Err(error) => log::error!("the scope sweep failed: {error:#}"),
+            }
+
             match self.delete_trashed(now - TRASH_SECONDS) {
                 Ok(deleted) => log::debug!("the trash sweep deleted {deleted} events"),
                 Err(error) => log::error!("the trash sweep failed: {error:#}"),
@@ -2307,9 +2313,43 @@ mod tests {
     }
 
     #[test]
+    fn opening_evicts_what_strangers_wrote_and_keeps_the_network() {
+        let db = db();
+        let card = crate::fixtures::event(
+            author(1),
+            CONTACT,
+            100,
+            "Cam",
+            Tags::new().add("d", [author(3).to_hex()]),
+        );
+        let contacts = note(author(3), 100, "from a contact", Tags::new());
+        let strangers = note(author(9), 100, "from a stranger", Tags::new());
+
+        db_command::publish_event(&db, &card, &author(1), 100).unwrap();
+        db_command::receive_event(&db, &contacts, &[author(3)], 100).unwrap();
+        db_command::receive_event(&db, &strangers, &[author(3)], 100).unwrap();
+
+        clock::at(200, || trash_node(&db));
+
+        assert!(query::get_event(&db, &contacts.id).unwrap().is_some());
+        assert!(query::get_event(&db, &strangers.id).unwrap().is_none());
+    }
+
+    #[test]
     fn the_sweep_empties_only_what_has_been_in_the_trash_a_week() {
         let db = db();
         let mut node = clock::at(1_000, || trash_node(&db));
+        let card = crate::fixtures::event(
+            author(1),
+            CONTACT,
+            100,
+            "Cam",
+            Tags::new().add("d", [author(3).to_hex()]),
+        );
+
+        // A contact, so the scope sweep running beside the trash sweep keeps what is not trashed.
+        node.publish(&card, &[]).unwrap();
+
         let old = note(author(3), 100, "a week in", Tags::new());
         let fresh = note(author(3), 100, "just trashed", Tags::new());
 

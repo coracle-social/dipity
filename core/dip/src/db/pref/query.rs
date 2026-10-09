@@ -17,7 +17,9 @@ use serde::de::DeserializeOwned;
 
 use crate::db::Tx;
 use crate::db::event::query as event;
-use crate::model::{BLOCK, CONTACT, Graph, MUTE, PeopleListReader, Policy, Pref, Query, keys};
+use crate::model::{
+    BLOCK, CONTACT, Graph, MUTE, PeopleListReader, Policy, Pref, Query, Scope, keys,
+};
 use coracle_lib::filters::Filter;
 
 /// One preference's raw JSON value, or `None` if it has never been written —
@@ -94,6 +96,8 @@ pub fn policy(tx: &Tx<'_>, identity: &PublicKey) -> Result<Policy> {
         &mut policy.discover_in_background,
     )?;
     override_with(tx, keys::ACCEPT, &mut policy.accept)?;
+    // Accept stops at named people, and a `lenient` an older build stored reads as `named`.
+    policy.accept = policy.accept.min(Scope::Named);
     override_with(tx, keys::SHARING, &mut policy.sharing)?;
     override_with(tx, keys::RETENTION_DAYS, &mut policy.retention_days)?;
     override_with(tx, keys::IGNORED_FLAGGERS, &mut policy.ignored_flaggers)?;
@@ -131,9 +135,17 @@ fn graph(tx: &Tx<'_>, identity: &PublicKey) -> Result<Graph> {
 
     network.remove(identity);
 
+    let mut everyone_named: BTreeSet<PublicKey> = named_by_anyone(tx, &blocked)?
+        .difference(&blocked)
+        .copied()
+        .collect();
+
+    everyone_named.remove(identity);
+
     Ok(Graph {
         contacts,
         network,
+        named: everyone_named,
         blocked,
         muted: listed::<MUTE>(tx, identity)?,
         muted_topics: topics::<MUTE>(tx, identity)?,
@@ -141,7 +153,7 @@ fn graph(tx: &Tx<'_>, identity: &PublicKey) -> Result<Graph> {
 }
 
 /// Everybody `pubkey` has named, which for the user is everybody they paired
-/// with. A card emptied by forgetting somebody names nobody.
+/// with. A card emptied by removing a contact names nobody.
 fn named(tx: &Tx<'_>, pubkey: &PublicKey) -> Result<BTreeSet<PublicKey>> {
     let cards = event::list(
         tx,
@@ -151,6 +163,21 @@ fn named(tx: &Tx<'_>, pubkey: &PublicKey) -> Result<BTreeSet<PublicKey>> {
     Ok(cards
         .iter()
         .filter(|card| !card.content.trim().is_empty())
+        .filter_map(|card| card.tags.iter().find(|tag| tag.name() == "d"))
+        .filter_map(|tag| PublicKey::from_hex(tag.value()).ok())
+        .collect())
+}
+
+/// Everybody named by a card this device holds from an author not blocked.
+fn named_by_anyone(tx: &Tx<'_>, blocked: &BTreeSet<PublicKey>) -> Result<BTreeSet<PublicKey>> {
+    let cards = event::list(
+        tx,
+        &Query::new().with_filter(Filter::new().add_kinds([CONTACT])),
+    )?;
+
+    Ok(cards
+        .iter()
+        .filter(|card| !blocked.contains(&card.pubkey) && !card.content.trim().is_empty())
         .filter_map(|card| card.tags.iter().find(|tag| tag.name() == "d"))
         .filter_map(|tag| PublicKey::from_hex(tag.value()).ok())
         .collect())
@@ -229,7 +256,7 @@ mod tests {
 
         assert_eq!(policy.sharing, Sharing::Network);
         assert!(!policy.discover_in_background);
-        assert_eq!(policy.accept, Scope::Lenient);
+        assert_eq!(policy.accept, Scope::Named);
     }
 
     #[test]
@@ -325,14 +352,15 @@ mod tests {
         name(&tx, us, author(3), "Ana", 100);
         name(&tx, author(2), author(5), "Sam", 100);
         name(&tx, author(3), author(6), "Kit", 100);
-        // A stranger's cards reach nobody, however many people they name.
+        // A stranger's card names somebody, but puts them no closer than named.
         name(&tx, author(9), author(7), "Lou", 100);
 
         let graph = policy(&tx, &us).unwrap().graph;
 
         assert_eq!(graph.standing(&author(5)), Standing::Network);
         assert_eq!(graph.standing(&author(6)), Standing::Network);
-        assert_eq!(graph.standing(&author(7)), Standing::Stranger);
+        assert_eq!(graph.standing(&author(7)), Standing::Named);
+        assert_eq!(graph.standing(&author(8)), Standing::Stranger);
     }
 
     #[test]
@@ -349,7 +377,23 @@ mod tests {
         let graph = policy(&tx, &us).unwrap().graph;
 
         assert_eq!(graph.standing(&author(3)), Standing::Network);
-        assert_eq!(graph.standing(&author(4)), Standing::Stranger);
+        assert_eq!(graph.standing(&author(4)), Standing::Named);
+    }
+
+    #[test]
+    fn a_blocked_authors_card_and_an_emptied_card_name_nobody() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let us = author(1);
+
+        publish_list(&tx, us, BLOCK, &[author(9)], 100);
+        name(&tx, author(9), author(7), "Lou", 100);
+        name(&tx, author(8), author(6), "", 100);
+
+        let graph = policy(&tx, &us).unwrap().graph;
+
+        assert_eq!(graph.standing(&author(7)), Standing::Stranger);
+        assert_eq!(graph.standing(&author(6)), Standing::Stranger);
     }
 
     #[test]

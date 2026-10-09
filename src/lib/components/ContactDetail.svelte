@@ -5,7 +5,15 @@
   import {Label} from "$lib/components/ui/label"
   import {Separator} from "$lib/components/ui/separator"
   import {Switch} from "$lib/components/ui/switch"
-  import {forget, name, nameOf, setBlocked, setMuted, short, social} from "$lib/data/contacts"
+  import {
+    name,
+    nameOf,
+    removeContact,
+    setBlocked,
+    setMuted,
+    short,
+    social,
+  } from "$lib/data/contacts"
   import {back, go} from "$lib/data/nav"
   import {setFlagsTrusted} from "$lib/data/policy"
   import {ignoredFlaggers} from "$lib/data/reports"
@@ -26,22 +34,19 @@
     typed = undefined
   }
 
-  let forgetting = $state(false)
+  let removing = $state(false)
 
-  // Somebody is worth forgetting while the user has named or muted them.
-  const known = $derived(Boolean(contact?.petname || contact?.muted))
-
-  const confirmForget = async () => {
-    forgetting = false
+  const confirmRemove = async () => {
+    removing = false
     typed = undefined
-    await forget(pubkey)
+    await removeContact(pubkey)
     go({at: "people"})
   }
 
   $effect(() => {
     void pubkey
     typed = undefined
-    forgetting = false
+    removing = false
   })
 
   const controls = $derived([
@@ -50,9 +55,9 @@
       ? [
           {
             id: "trusted",
-            label: "Trust their flags",
+            label: "Trusted",
             detail:
-              "Their flags put a warning on posts, and your phone doesn't pass on pictures they flag.",
+              "They can put a warning on posts, stopping your phone from passing along flagged pictures.",
             on: !$ignoredFlaggers.includes(pubkey),
             set: (on: boolean) => setFlagsTrusted($ignoredFlaggers, pubkey, on),
           },
@@ -68,7 +73,8 @@
     {
       id: "blocked",
       label: "Blocked",
-      detail: "Your phone won't connect to theirs, and deletes anything of theirs it receives.",
+      detail:
+        "Their device won't be connected to, and their activity won't be stored or passed on.",
       on: Boolean(contact?.blocked),
       set: (on: boolean) => setBlocked(pubkey, on),
     },
@@ -134,22 +140,22 @@
   {/each}
 </ul>
 
-{#if known}
+{#if contact?.petname}
   <Separator class="my-6" />
 
   <div>
-    <h2 class="text-sm font-semibold">Forget them</h2>
+    <h2 class="text-sm font-semibold">Remove from contacts</h2>
     <p class="mt-0.5 text-xs text-pretty text-muted-foreground">
-      Clears your name and mute for them, and your phones meet as strangers next time.
+      They stop getting what you share with contacts, and your phones meet as strangers next time.
     </p>
     <div class="mt-3 flex justify-end gap-2">
-      {#if forgetting}
-        <Button variant="ghost" size="sm" onclick={() => (forgetting = false)}>Cancel</Button>
-        <Button variant="destructive" size="sm" onclick={confirmForget}>
-          Forget {named.name}
+      {#if removing}
+        <Button variant="ghost" size="sm" onclick={() => (removing = false)}>Cancel</Button>
+        <Button variant="destructive" size="sm" onclick={confirmRemove}>
+          Remove {named.name}
         </Button>
       {:else}
-        <Button variant="outline" size="sm" onclick={() => (forgetting = true)}>Forget</Button>
+        <Button variant="outline" size="sm" onclick={() => (removing = true)}>Remove</Button>
       {/if}
     </div>
   </div>

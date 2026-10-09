@@ -69,7 +69,7 @@ Four facts about the transport decide most of the interface, and every story bel
 40. The user looks up everybody the device knows, and the name each one is known by. — `People`
 41. Somebody the user never met but knows through a contact appears with that contact's name for them; a name from anybody else is not shown. — `People`
 42. The user renames somebody. — `ContactDetail`
-43. When the user forgets somebody, they stop being a contact. — `ContactDetail`
+43. When the user removes somebody from their contacts, that person stops getting what the user shares with contacts and their phones meet as strangers next time. Mute and block stay as they were. — `ContactDetail`
 44. When the user mutes somebody, their content stops appearing without anything stopping at the wire. — `ContactDetail`
 45. When the user blocks somebody, the device refuses their sessions and drops what they send. — `ContactDetail`
 46. When the user stops trusting a contact's flags, what that contact flagged is drawn and passed on as if nobody had flagged it. — `ContactDetail`

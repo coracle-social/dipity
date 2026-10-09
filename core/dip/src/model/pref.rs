@@ -43,7 +43,7 @@ pub mod keys {
     /// Who is handed the user's own activity, and who may carry it further. Default `anyone`.
     pub const SHARING: &str = "policy.sharing";
 
-    /// Whose events the device stores from a peer. Default `lenient`.
+    /// Whose events the device stores from a peer: `contacts`, `network` or `named`. Default `named`.
     pub const ACCEPT: &str = "policy.accept";
 
     /// How long a carried event stays after it first reaches this device. Default 90 days.

@@ -570,8 +570,14 @@ mod tests {
         author(1)
     }
 
+    /// A peer under a policy accepting anyone, since these tests are about authorization rather than scope.
     fn peer(pubkeys: impl IntoIterator<Item = PublicKey>) -> Peer {
-        Peer::bind(LinkId(1), pubkeys, &Policy::new(us()))
+        let open = Policy {
+            accept: Scope::Lenient,
+            ..Policy::new(us())
+        };
+
+        Peer::bind(LinkId(1), pubkeys, &open)
     }
 
     /// This device's identity in these tests.

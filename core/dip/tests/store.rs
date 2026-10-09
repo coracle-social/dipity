@@ -226,7 +226,8 @@ fn the_store_serves_its_use_cases() {
 
     // Policy is those preferences read back together, with the document's defaults filling in.
     let policy = query::policy(&db, &us()).unwrap();
-    assert_eq!(policy.accept, Scope::Lenient);
+    // A stored `lenient` reads as `named`, which is as far as Accept reaches.
+    assert_eq!(policy.accept, Scope::Named);
     assert_eq!(policy.sharing, Sharing::Anyone);
     assert!(policy.discover_in_background);
     assert!(policy.quiet_times.is_empty());

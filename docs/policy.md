@@ -37,14 +37,15 @@ A third kind says what the user calls somebody: a contact card, kind 36017, addr
 
 There is one card per contact rather than one list naming everybody the user has met, so that a name travels with that contact's own events.
 
-A **contact** is somebody the user paired with and named: the subject of one of the user's own contact cards whose name is not empty, unless they are blocked. Pairing, which compares shapes in person and names the other person, is the explicit act that makes somebody a contact. Forgetting somebody ends it by emptying the user's card for them.
+A **contact** is somebody the user paired with and named: the subject of one of the user's own contact cards whose name is not empty, unless they are blocked. Pairing, which compares shapes in person and names the other person, is the explicit act that makes somebody a contact. Removing somebody from contacts ends it by emptying the user's card for them and dropping the pairing. What they wrote stays for as long as the Accept scope admits it.
 
 Every setting below is expressed on the same tiers, applied either to the peer on the other end of a session or to the author of an event:
 
 - **Nothing** - nobody.
 - **Contacts** - people the user paired with and named.
 - **Network** - contacts, and the people the user's contacts have named.
-- **Lenient** - anyone who connects, except blocked pubkeys.
+- **Named** - anyone a contact card on the device names, except blocked pubkeys.
+- **Lenient** - anyone who connects, except blocked pubkeys. Sharing and visibility only.
 - **Public** - anyone.
 
 Only the fixed visibility rules use Nothing and Public.
@@ -53,7 +54,7 @@ Network adds the subjects of every non-empty contact card authored by a contact,
 
 ## Flags
 
-A flag is a NIP-56 report, kind 1984, naming one post and its author with one reason. It can carry a message of up to 100 words. The user picks any number of reasons, and each goes out as its own report with the same message. Flags travel under [Sharing](#sharing) like the user's other events, and whoever receives one sees what the user flagged.
+A flag is a NIP-56 report, kind 1984, naming one post and its author with one reason. It can carry a message of up to 100 words. The user picks any number of reasons, and each goes out as its own report with the same message. Unchecking a reason later retracts its report. Flags travel under [Sharing](#sharing) like the user's other events, and whoever receives one sees what the user flagged.
 
 Only the user's own flags and their contacts' flags count, because counting a stranger's flag would let anybody in range hide anything. The user can ignore a contact's flags, which adds that contact to `policy.ignored_flaggers`. A flag in the trash does not count, and trashing the user's own flag retracts it.
 
@@ -84,7 +85,11 @@ The same holds in the other direction, for a device carrying several of the user
 
 ## Accept
 
-What the device stores from a peer, measured against each event's author: `policy.accept`, `lenient` by default. It takes Contacts, Network or Lenient, and the user's own events are always accepted. A stored `trusted` reads as `contacts`.
+What the device stores from a peer, measured against each event's author: `policy.accept`, `named` by default. It takes Contacts, Network or Named, and the user's own events are always accepted. A stored `trusted` reads as `contacts`, and a stored `lenient` as `named`.
+
+Named admits anybody a contact card on the device names, whoever wrote the card, unless its author is blocked. A stranger's events are stored only once somebody who paired with them has said so, which is what a card records. The card can come from two hops out and admit events that arrive by another path. A card is therefore stored from any author not blocked, whatever the Accept scope, and the relay half sends the cards naming a page's authors ahead of the page. An event that still arrives before its card is refused, and the card's arrival forgets that refusal and reconciles again.
+
+A change to the graph evicts whatever the Accept scope no longer admits, unless the user bookmarked it, and the retention sweep does the same for anything left over. Eviction keeps contact cards.
 
 ## Sharing
 

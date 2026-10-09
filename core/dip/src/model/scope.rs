@@ -18,7 +18,10 @@ pub enum Scope {
     Contacts,
     /// Contacts, and the people they have named, two hops out.
     Network,
-    /// Anyone who connects, except blocked pubkeys.
+    /// Anyone somebody has named, by a contact card this device holds. As far
+    /// as Accept reaches.
+    Named,
+    /// Anyone who connects, except blocked pubkeys. Sharing and visibility only.
     Lenient,
     /// Anyone. Visibility settings only.
     Public,
@@ -32,6 +35,7 @@ impl Scope {
             Standing::Blocked => false,
             Standing::Contact => self >= Self::Contacts,
             Standing::Network => self >= Self::Network,
+            Standing::Named => self >= Self::Named,
             Standing::Stranger => self >= Self::Lenient,
         }
     }
@@ -43,11 +47,17 @@ mod tests {
 
     #[test]
     fn a_wider_scope_admits_everyone_a_narrower_one_does() {
-        for standing in [Standing::Contact, Standing::Network, Standing::Stranger] {
+        for standing in [
+            Standing::Contact,
+            Standing::Network,
+            Standing::Named,
+            Standing::Stranger,
+        ] {
             let admitted: Vec<bool> = [
                 Scope::Nothing,
                 Scope::Contacts,
                 Scope::Network,
+                Scope::Named,
                 Scope::Lenient,
                 Scope::Public,
             ]
@@ -67,6 +77,8 @@ mod tests {
         assert!(!Scope::Contacts.admits(Standing::Network));
         assert!(Scope::Network.admits(Standing::Network));
         assert!(!Scope::Network.admits(Standing::Stranger));
+        assert!(Scope::Named.admits(Standing::Named));
+        assert!(!Scope::Named.admits(Standing::Stranger));
         assert!(Scope::Lenient.admits(Standing::Stranger));
         assert!(!Scope::Nothing.admits(Standing::Contact));
     }

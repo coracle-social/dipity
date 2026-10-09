@@ -13,6 +13,8 @@ pub enum Standing {
     Contact,
     /// Somebody a contact named, two hops out.
     Network,
+    /// Somebody anybody named, by a contact card this device holds.
+    Named,
     /// Everyone else.
     Stranger,
 }
@@ -32,6 +34,7 @@ impl Standing {
             (Self::Blocked, _) | (_, Self::Blocked) => Self::Blocked,
             (Self::Contact, _) | (_, Self::Contact) => Self::Contact,
             (Self::Network, _) | (_, Self::Network) => Self::Network,
+            (Self::Named, _) | (_, Self::Named) => Self::Named,
             _ => Self::Stranger,
         }
     }
@@ -51,6 +54,8 @@ pub struct Graph {
     pub contacts: BTreeSet<PublicKey>,
     /// People a contact has named, which is as far as the graph reaches.
     pub network: BTreeSet<PublicKey>,
+    /// People anybody not blocked has named, by a card this device holds.
+    pub named: BTreeSet<PublicKey>,
     /// People the user has blocked.
     pub blocked: BTreeSet<PublicKey>,
     /// People the user has muted.
@@ -69,6 +74,8 @@ impl Graph {
             Standing::Contact
         } else if self.network.contains(pubkey) {
             Standing::Network
+        } else if self.named.contains(pubkey) {
+            Standing::Named
         } else {
             Standing::Stranger
         }

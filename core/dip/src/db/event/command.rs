@@ -338,6 +338,9 @@ pub fn forget_seen_before(
 /// Forget everything written by `authors` that the user has not bookmarked,
 /// remembering each as refused by policy so reconciliation does not offer it
 /// again. Returns how many events went.
+///
+/// Contact cards stay, because Accept stores them from anybody and one is what
+/// makes its subject named.
 pub fn evict_authors(
     tx: &Tx<'_>,
     identity: &PublicKey,
@@ -350,7 +353,7 @@ pub fn evict_authors(
         let held = tx
             .prepare_cached(
                 "SELECT id, created_at FROM event
-                 WHERE pubkey = ?1
+                 WHERE pubkey = ?1 AND kind <> ?4
                    AND id NOT IN (
                        SELECT bookmark.value FROM event_tag bookmark
                        JOIN event list ON list.id = bookmark.event_id
@@ -358,7 +361,7 @@ pub fn evict_authors(
                    )",
             )?
             .query_map(
-                params![author.to_hex(), identity.to_hex(), BOOKMARKS],
+                params![author.to_hex(), identity.to_hex(), BOOKMARKS, CONTACT],
                 |row| {
                     Ok((
                         event_id_from_sql(&row.get::<_, String>(0)?, 0)?,
@@ -1320,5 +1323,36 @@ mod tests {
             Ok(EventChange::Stored(stored)) => assert_eq!(*stored, subject),
             other => panic!("expected the stored event, got {other:?}"),
         }
+    }
+
+    fn card(by: PublicKey, about: PublicKey, at: i64) -> HashedEvent {
+        event(
+            by,
+            CONTACT,
+            at,
+            "a name",
+            Tags::new().add("d", [about.to_hex()]),
+        )
+    }
+
+    #[test]
+    fn evicting_an_author_keeps_their_cards() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let theirs = note(author(9), 100, "theirs", Tags::new());
+        let named = card(author(9), author(7), 100);
+
+        save(&tx, &theirs, &[author(9)], 100).unwrap();
+        save(&tx, &named, &[author(9)], 100).unwrap();
+
+        assert_eq!(
+            evict_authors(&tx, &author(1), &[author(9)], 200).unwrap(),
+            1
+        );
+        assert!(
+            crate::db::event::query::get(&tx, &named.id)
+                .unwrap()
+                .is_some()
+        );
     }
 }

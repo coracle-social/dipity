@@ -1,4 +1,5 @@
 <script lang="ts">
+  import {untrack} from "svelte"
   import Check from "@lucide/svelte/icons/check"
   import {Button} from "$lib/components/ui/button"
   import * as Drawer from "$lib/components/ui/drawer"
@@ -6,7 +7,7 @@
   import {nameOf, setBlocked, social} from "$lib/data/contacts"
   import type {Item} from "$lib/data/feed"
   import {dismissable} from "$lib/data/nav"
-  import {FLAG_WORDS, flag, flaggedByMe, reasons, wordsIn} from "$lib/data/reports"
+  import {FLAG_WORDS, flag, flaggedByMe, reasons, unflag, wordsIn} from "$lib/data/reports"
   import {trash} from "$lib/data/trash"
 
   // The reasons to flag a post for, then what else to do about it.
@@ -21,6 +22,13 @@
   const already = $derived($flaggedByMe.get(item.event.id) ?? new Set<string>())
 
   const words = $derived(wordsIn(message))
+
+  const added = $derived(chosen.filter(reason => !already.has(reason)))
+
+  const removed = $derived([...already].filter(reason => !chosen.includes(reason)))
+
+  // Unchecking every reason the user gave is taking the flag back.
+  const removing = $derived(already.size > 0 && chosen.length === 0)
 
   const author = $derived(nameOf($social, item.event.pubkey).name)
 
@@ -48,7 +56,8 @@
   $effect(() => {
     if (!open) return
 
-    chosen = []
+    // Read once on opening, since a flag landing while this is open would otherwise reset it.
+    chosen = untrack(() => [...already])
     message = ""
     flagged = false
     trashing = false
@@ -71,9 +80,14 @@
       : [...chosen, reason])
 
   const send = async () => {
-    flagged = true
+    const [adding, dropping] = [added, removed]
 
-    for (const reason of chosen) await flag(item.event, reason, message)
+    if (removing) open = false
+    else flagged = true
+
+    for (const reason of dropping) await unflag(item.event, reason)
+
+    for (const reason of adding) await flag(item.event, reason, message)
   }
 </script>
 
@@ -121,13 +135,12 @@
 
       <div class="flex flex-wrap gap-2 px-4">
         {#each reasons as reason (reason.id)}
-          {@const on = chosen.includes(reason.id) || already.has(reason.id)}
+          {@const on = chosen.includes(reason.id)}
           <Button
             variant="outline"
             size="sm"
             class={on ? "border-secondary-accent text-secondary-accent" : undefined}
             aria-pressed={on}
-            disabled={already.has(reason.id)}
             onclick={() => toggle(reason.id)}>
             {#if on}
               <Check />
@@ -148,7 +161,12 @@
       </div>
 
       <Drawer.Footer>
-        <Button disabled={chosen.length === 0 || words > FLAG_WORDS} onclick={send}>Flag</Button>
+        <Button
+          variant={removing ? "destructive" : "default"}
+          disabled={(added.length === 0 && removed.length === 0) || words > FLAG_WORDS}
+          onclick={send}>
+          {removing ? "Remove flag" : "Flag"}
+        </Button>
       </Drawer.Footer>
     {/if}
   </Drawer.Content>

@@ -35,7 +35,7 @@
   const accepts: Record<string, string> = {
     contacts: "Your contacts",
     network: "Your contacts, and their contacts",
-    lenient: "Anyone not blocked",
+    named: "Anyone somebody has paired with",
   }
 
   const shares: Record<Sharing, string> = {
@@ -56,7 +56,7 @@
       label: "What you accept",
       detail: "Whose posts your phone keeps from phones nearby.",
       on: $policy?.accept as string | undefined,
-      options: (["contacts", "network", "lenient"] as Scope[]).map(scope => ({
+      options: (["contacts", "network", "named"] as Scope[]).map(scope => ({
         value: scope as string,
         label: accepts[scope],
       })),
@@ -192,7 +192,7 @@
 <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Muted topics</h2>
 
 <p class="mt-2 text-sm text-pretty text-muted-foreground">
-  A muted topic stays off the board. Your phone still keeps those posts and still passes them on.
+  A muted topic stays off the board. Your phone still stores and passes along matching posts.
 </p>
 
 <div class="mt-4">
@@ -235,7 +235,7 @@
 <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Your key</h2>
 
 <p class="mt-2 text-sm text-pretty text-muted-foreground">
-  Your key is who you are on Dipity, and nobody can recover it if you lose this phone.
+  Your key is who you are on Dipity. Nobody can recover it if you lose this phone.
 </p>
 
 <div class="mt-4 space-y-4">
@@ -252,7 +252,7 @@
 <h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Log out</h2>
 
 <p class="mt-2 text-sm text-pretty text-muted-foreground">
-  Erases your key and everything on this phone, so back up your key first if you want to keep it.
+  Erase your key and everything on this phone. Back up your key first if you want to keep it.
 </p>
 
 <div class="mt-4 flex gap-2">

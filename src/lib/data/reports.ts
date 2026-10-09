@@ -191,6 +191,18 @@ export const flag = async (event: HashedEvent, reason: string, message = "") => 
   await publish(await writer.renderTemplate())
 }
 
+/** Take back the user's flag on a post for one reason, which retracts the report carrying it. */
+export const unflag = (event: HashedEvent, reason: string) => {
+  const mine = get(flaggings)
+    .get(event.id)
+    ?.find(({pubkey}) => pubkey === get(session).identity)
+  const carrying = (mine?.reports ?? []).filter(
+    held => (report.reader(held).parse().reason() ?? "other") === reason,
+  )
+
+  return Promise.all(carrying.map(held => trashId(held.id)))
+}
+
 /** Throw out one person's flag, which retracts it when it is the user's own. */
 export const trashFlagging = (flagging: Flagging) =>
   Promise.all(flagging.reports.map(event => trashId(event.id)))

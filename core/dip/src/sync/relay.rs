@@ -7,11 +7,11 @@
 //! takes all three, and it is the only place where what a peer may see is
 //! decided.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
 use coracle_lib::events::{EventId, HashedEvent};
-use coracle_lib::filters::Filter;
+use coracle_lib::filters::{Filter, TagMatch};
 use coracle_lib::keys::PublicKey;
 
 use crate::keys::Signer;
@@ -21,7 +21,7 @@ use crate::clock;
 use crate::db::Db;
 use crate::db::command as db_command;
 use crate::db::query as db_query;
-use crate::model::{AuthorshipProof, Identity, Query, RecipientSignature, Registers};
+use crate::model::{AuthorshipProof, CONTACT, Identity, Query, RecipientSignature, Registers};
 use crate::session::Peer;
 use crate::sync::client::{self, Rejected};
 use crate::sync::spending::SessionSpending;
@@ -242,7 +242,12 @@ pub fn serve(
     events.dedup_by(|a, b| a.id == b.id);
 
     let mut messages: Vec<Message> = Vec::new();
-    let page: Vec<HashedEvent> = events.into_iter().take(PAGE_SIZE).collect();
+    let mut page: Vec<HashedEvent> = events.into_iter().take(PAGE_SIZE).collect();
+
+    let cards = cards_naming(db, peer, &local, &page)?;
+
+    page.retain(|event| !cards.iter().any(|card| card.id == event.id));
+    page.splice(0..0, cards);
 
     for event in &page {
         messages.push(Message::Event(
@@ -256,6 +261,30 @@ pub fn serve(
     record_shares(db, peer, &page)?;
 
     Ok(messages)
+}
+
+/// The cards this peer may see naming the authors of `page`, sent ahead of it.
+///
+/// A peer stores a stranger's event only once a card names its author, and an
+/// event arriving before its card is refused. Cards already in the page move
+/// to the front rather than going twice. `docs/policy.md#accept`.
+fn cards_naming(
+    db: &Db,
+    peer: &Peer,
+    local: &Identity,
+    page: &[HashedEvent],
+) -> Result<Vec<HashedEvent>> {
+    let authors: BTreeSet<String> = page.iter().map(|event| event.pubkey.to_hex()).collect();
+
+    if authors.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let filter = Filter::new()
+        .add_kinds([CONTACT])
+        .add_tags(TagMatch::Any, "d", authors);
+
+    db_query::list_events(db, &query_for(peer, local, filter))
 }
 
 /// Record that events went to a peer, which is provenance in the outbound
@@ -352,8 +381,14 @@ mod tests {
         author(1)
     }
 
+    /// A peer under a policy accepting anyone, since these tests are about serving rather than scope.
     fn peer() -> Peer {
-        Peer::bind(LinkId(1), [author(2)], &Policy::new(us()))
+        let open = Policy {
+            accept: crate::model::Scope::Lenient,
+            ..Policy::new(us())
+        };
+
+        Peer::bind(LinkId(1), [author(2)], &open)
     }
 
     fn spending() -> SessionSpending {
@@ -642,6 +677,49 @@ mod tests {
             Message::AuthorshipProof(_, id, _) if *id == event.id
         ));
         assert!(matches!(&replies[2], Message::Eose(_)));
+    }
+
+    #[test]
+    fn a_card_naming_an_author_goes_ahead_of_their_events() {
+        let db = Db::open_in_memory().unwrap();
+        let carried = |event: &HashedEvent, by: u8| {
+            command::publish_event(&db, event, &event.pubkey, 100).unwrap();
+            let signature = RecipientSignature::sign(&secret(by), event.id, author(1));
+            command::receive_signature(&db, &event.id, &signature.sig, &author(1)).unwrap();
+        };
+        let post = note(author(7), 200, "from somebody named", Tags::new());
+        let card = crate::fixtures::event(
+            author(3),
+            CONTACT,
+            100,
+            "Lou",
+            Tags::new().add("d", [author(7).to_hex()]),
+        );
+
+        carried(&post, 7);
+        carried(&card, 3);
+
+        let mut policy = Policy::new(us());
+        policy.graph.contacts.insert(author(2));
+        let peer = Peer::bind(LinkId(1), [author(2)], &policy);
+
+        let replies = serve(
+            &db,
+            &peer,
+            &secret(1),
+            &SubscriptionId("sub".into()),
+            &[Filter::new().add_kinds([1])],
+        )
+        .unwrap();
+        let served: Vec<EventId> = replies
+            .iter()
+            .filter_map(|reply| match reply {
+                Message::Event(_, event) => Some(event.id),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(served, vec![card.id, post.id]);
     }
 
     #[test]
