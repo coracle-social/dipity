@@ -30,6 +30,7 @@ import {
   Poll,
   PollResponse,
   Reaction,
+  Report,
   TimeEvent,
   type KindContext,
 } from "@welshman/domain"
@@ -67,6 +68,9 @@ export const picture = Picture.configure(context)
 export const comment = Comment.configure(context)
 
 export const reaction = Reaction.configure(context)
+
+/** A NIP-56 flag on a post, carrying a reason and nothing else. */
+export const report = Report.configure(context)
 
 export const removal = Delete.configure(context)
 

@@ -29,6 +29,7 @@
   } from "$lib/data/policy"
   import {mutedTopics, setTopicMuted} from "$lib/data/contacts"
   import {logOut} from "$lib/data/session"
+  import {hideFlagged} from "$lib/data/reports"
 
   let leaving = $state(false)
 
@@ -202,6 +203,24 @@
     label="Search for a topic to mute"
     onAdd={topic => setTopicMuted(topic, true)}
     onRemove={topic => setTopicMuted(topic, false)} />
+</div>
+
+<Separator class="my-6" />
+
+<h2 class="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Flagged posts</h2>
+
+<p class="mt-2 text-sm text-pretty text-muted-foreground">
+  Posts you or your contacts flagged. Your phone still keeps them and still passes them on.
+</p>
+
+<div class="mt-4 flex items-start justify-between gap-4">
+  <div class="min-w-0">
+    <Label for="hide-flagged" class="text-sm font-semibold">Hide flagged posts</Label>
+    <p class="mt-0.5 text-xs text-pretty text-muted-foreground">
+      With this off, a flagged post shows a warning in its place, with a button to show it anyway.
+    </p>
+  </div>
+  <Switch id="hide-flagged" checked={$hideFlagged} onCheckedChange={on => hideFlagged.set(on)} />
 </div>
 
 <Separator class="my-6" />

@@ -13,6 +13,7 @@ import type {HashedEvent} from "@welshman/util"
 import {Dip, type EventDetail, type Order} from "$lib/core"
 import {muted, mutedTopics, social} from "$lib/data/contacts"
 import {trashed} from "$lib/data/trash"
+import {flags, flagsOn, hideFlagged} from "$lib/data/reports"
 import {peopleNamed, wordsOf} from "$lib/data/search"
 import {attachment, pictureOf} from "$lib/data/media"
 import type {Encoded} from "$lib/data/encode"
@@ -287,15 +288,21 @@ const topicMuted = (topics: Set<string>, event: EventDetail["event"]) => {
   return topic !== undefined && topics.has(topic)
 }
 
-/** What the board draws, less anybody the user muted, any muted topic, and the trash. */
+/** What the board draws, less anybody the user muted, any muted topic, the trash, and what was flagged when the user hides that. */
 export const board: Readable<Item[]> = derived(
-  [arrived, muted, mutedTopics, trashed],
-  ([$arrived, $muted, $mutedTopics, $trashed]) =>
+  [arrived, muted, mutedTopics, trashed, flags, hideFlagged],
+  ([$arrived, $muted, $mutedTopics, $trashed, $flags, $hideFlagged]) =>
     $arrived.filter(
       ({event}) =>
-        !$muted.has(event.pubkey) && !$trashed.has(event.id) && !topicMuted($mutedTopics, event),
+        !$muted.has(event.pubkey) &&
+        !$trashed.has(event.id) &&
+        !topicMuted($mutedTopics, event) &&
+        !($hideFlagged && flagsOn($flags, flaggedIds(event)).length > 0),
     ),
 )
+
+/** The posts whose flags hold an item back: its own, and what it passes on if it is a boost. */
+export const flaggedIds = (event: HashedEvent) => [event.id, boostedBy(event)]
 
 /** Topics filed under by the recent posts in the store, most posted first. */
 const recent = answering(

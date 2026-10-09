@@ -49,40 +49,42 @@ Four facts about the transport decide most of the interface, and every story bel
 26. The user files what they write under a topic they type, or under none. — `Composer`
 27. The user narrows the board to some topics and content types under one filter button, or to one topic tapped on a post, and sees what everything is filed under as they read. — `ContentFilter`, in `FeedControls`, and `ItemCard`
 28. The user mutes a topic from a post carrying it, and that topic leaves the board. — `ItemCard`
+29. The user flags a post for a reason from its menu, which also opens its author's page. A post the user or a contact they trust flagged shows a warning listing the reasons and how many gave each, with a button to show it anyway, or leaves the board altogether if the user said to hide flagged posts. — `ItemCard`, `Settings`
 
 ## Pairing
 
-29. Somebody the user has not named comes into range and asks to pair, whether or not the gate let them through, and the user finds out without leaving what they were doing. — `PairingTray`
-30. When several are asking at once, the tray says how many and opens on the oldest, the pairing screen steps between them, and answering one moves on to the next. — `PairingTray`, `Pairing`
-31. The user opens a request and compares five shapes against the other person's screen, so that they know the two phones are talking to each other and not to something in between. — `Pairing`
-32. The user names the person in front of them while pairing with them, because there is no profile to read, and sees what their own contacts already call that person, if anything. — `Pairing`
-33. The name lands on whoever the link turns out to be, which the core says after the gate has passed. — `pairing.ts`
-34. The user declines a stranger the gate is holding, and is not asked about that person again for a while; one already through is just left unnamed until they next meet. — `Pairing`
-35. When the person walks away before the user answers, the request leaves the tray on its own. — `PairingTray`
+30. Somebody the user has not named comes into range and asks to pair, whether or not the gate let them through, and the user finds out without leaving what they were doing. — `PairingTray`
+31. When several are asking at once, the tray says how many and opens on the oldest, the pairing screen steps between them, and answering one moves on to the next. — `PairingTray`, `Pairing`
+32. The user opens a request and compares five shapes against the other person's screen, so that they know the two phones are talking to each other and not to something in between. — `Pairing`
+33. The user names the person in front of them while pairing with them, because there is no profile to read, and sees what their own contacts already call that person, if anything. — `Pairing`
+34. The name lands on whoever the link turns out to be, which the core says after the gate has passed. — `pairing.ts`
+35. The user declines a stranger the gate is holding, and is not asked about that person again for a while; one already through is just left unnamed until they next meet. — `Pairing`
+36. When the person walks away before the user answers, the request leaves the tray on its own. — `PairingTray`
 
 ## People
 
-36. The user looks up everybody the device knows, and the name each one is known by. — `People`
-37. Somebody the user never met but knows through a contact appears with that contact's name for them; a name from anybody else is not shown. — `People`
-38. The user renames somebody. — `ContactDetail`
-39. When the user forgets somebody, they stop being a contact. — `ContactDetail`
-40. When the user mutes somebody, their content stops appearing without anything stopping at the wire. — `ContactDetail`
-41. When the user blocks somebody, the device refuses their sessions and drops what they send. — `ContactDetail`
+37. The user looks up everybody the device knows, and the name each one is known by. — `People`
+38. Somebody the user never met but knows through a contact appears with that contact's name for them; a name from anybody else is not shown. — `People`
+39. The user renames somebody. — `ContactDetail`
+40. When the user forgets somebody, they stop being a contact. — `ContactDetail`
+41. When the user mutes somebody, their content stops appearing without anything stopping at the wire. — `ContactDetail`
+42. When the user blocks somebody, the device refuses their sessions and drops what they send. — `ContactDetail`
+43. When the user stops trusting a contact's flags, what that contact flagged is drawn as if nobody had. — `ContactDetail`
 
 ## Settings
 
-42. The user decides whose content the device stores. — `Settings`
-43. The user decides who sees what they publish, and who can carry it further. — `Settings`
-44. The user decides how long a thing carried for somebody else stays on the device. — `Settings`
-45. The user decides whether strangers learn who they are while the app is closed. — `Settings`
-46. The user writes the key down somewhere safe, locked with a password if they choose, whenever they get round to it. — `KeyBackup`, in `Settings`
-47. When the user puts their key on a second phone, both phones are them. — `DeviceLogin`
-48. On a new phone, the user takes the key off their other phone instead of making one. — `FirstRun`, `DeviceLogin`
-49. With the phone in their pocket, the user hears that somebody nearby wants to pair or that new things reached the board, once they switch that on in Settings or when the app offers it after their second post. — `NotificationOffer`, `Settings`
-50. The user decides whose pictures are blurred until tapped. — `Settings`, `Photo`
-51. The user mutes a topic by typing it, and unmutes one. — `Settings`
-52. A picture reaches the board once its image has, so that nothing is drawn as a hole. — `Board`
-53. The user logs out, which erases the key and everything on the phone. — `Settings`
+44. The user decides whose content the device stores. — `Settings`
+45. The user decides who sees what they publish, and who can carry it further. — `Settings`
+46. The user decides how long a thing carried for somebody else stays on the device. — `Settings`
+47. The user decides whether strangers learn who they are while the app is closed. — `Settings`
+48. The user writes the key down somewhere safe, locked with a password if they choose, whenever they get round to it. — `KeyBackup`, in `Settings`
+49. When the user puts their key on a second phone, both phones are them. — `DeviceLogin`
+50. On a new phone, the user takes the key off their other phone instead of making one. — `FirstRun`, `DeviceLogin`
+51. With the phone in their pocket, the user hears that somebody nearby wants to pair or that new things reached the board, once they switch that on in Settings or when the app offers it after their second post. — `NotificationOffer`, `Settings`
+52. The user decides whose pictures are blurred until tapped. — `Settings`, `Photo`
+53. The user mutes a topic by typing it, and unmutes one. — `Settings`
+54. A picture reaches the board once its image has, so that nothing is drawn as a hole. — `Board`
+55. The user logs out, which erases the key and everything on the phone. — `Settings`
 
 ## No screen yet
 

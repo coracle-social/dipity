@@ -31,6 +31,8 @@ Each is a replaceable event whose `p` tags name people. The current list is one 
 
 The mute list names **topics** as well as people, as NIP-51's `t` tags. A post carries at most one topic, and muting one keeps its posts off the board and out of the new-activity notification, and does nothing else. The device still stores them and still hands them on. A muted topic is as visible to contacts as a muted person, because [Sharing](#sharing) hands them the mute list.
 
+A **flag** is a NIP-56 report, kind 1984, naming one post and its author with a reason and no message. Like a mute it is a display filter and never gates propagation: the device stores a flagged post and hands it on as before, and the flag itself travels under [Sharing](#sharing) like any of the user's events. Only the user's own flags and their contacts' count, and the user can ignore any one contact's from that contact's page, because a stranger's flag counting would let anybody in range hide anything. A post that counted flags name is drawn as a warning listing each reason once with how many people gave it, and the user can look past it; a setting hides such posts from the board instead.
+
 **Neither is encrypted.** NIP-51 keeps private entries as ciphertext in `content`, which would put them beyond the peers who need them, since contacts read these lists by design. [Sharing](#sharing) fixes which peers this device hands them to.
 
 A third kind says what the user calls somebody: a contact card, kind 36017, addressed to the person it names at `36017:<author>:<subject>`. A card is the only way anybody has a name, because nobody publishes a profile here. The name is the card's content.

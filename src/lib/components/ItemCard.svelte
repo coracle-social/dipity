@@ -1,6 +1,9 @@
 <script lang="ts">
   import Bookmark from "@lucide/svelte/icons/bookmark"
   import Ellipsis from "@lucide/svelte/icons/ellipsis"
+  import Flag from "@lucide/svelte/icons/flag"
+  import TriangleAlert from "@lucide/svelte/icons/triangle-alert"
+  import UserRound from "@lucide/svelte/icons/user-round"
   import MessageCircle from "@lucide/svelte/icons/message-circle"
   import Undo from "@lucide/svelte/icons/undo-2"
   import Smile from "@lucide/svelte/icons/smile"
@@ -16,10 +19,27 @@
   import Reactions from "$lib/components/Reactions.svelte"
   import {toggleBookmark} from "$lib/data/bookmarks"
   import {nameOf, setTopicMuted, type Social} from "$lib/data/contacts"
-  import {opensId, react, showTopic, type Item, type Standing, type Warmth} from "$lib/data/feed"
+  import {
+    flaggedIds,
+    opensId,
+    react,
+    showTopic,
+    type Item,
+    type Standing,
+    type Warmth,
+  } from "$lib/data/feed"
   import {go} from "$lib/data/nav"
   import type {Session} from "$lib/data/session"
   import {restore, trash} from "$lib/data/trash"
+  import {
+    dismissFlags,
+    flag,
+    flaggedByMe,
+    flags,
+    flagsOn,
+    reasonLabel,
+    reasons,
+  } from "$lib/data/reports"
   import {categoryOf, topicLabel, topicOf} from "$lib/kinds"
 
   let {
@@ -67,6 +87,10 @@
   const opens = $derived(opensId(item))
 
   const Mark = $derived(category.icon)
+
+  const flagged = $derived(flagsOn($flags, flaggedIds(item.event)))
+
+  const myFlags = $derived($flaggedByMe.get(item.event.id) ?? new Set<string>())
 
   const arrived = $derived(
     new Date(item.seenAt * 1000).toLocaleString(undefined, {
@@ -124,9 +148,32 @@
     </span>
   </header>
 
-  <div class="mt-2">
-    <ItemBody {item} {social} {standing} {session} {detailed} />
-  </div>
+  {#if flagged.length > 0}
+    <div class="relative mt-2 flex items-start gap-3 rounded-md bg-muted p-3">
+      <TriangleAlert class="mt-0.5 size-4 flex-none text-destructive" />
+      <div class="min-w-0 flex-1">
+        <p class="text-sm font-medium">Flagged by people you trust</p>
+        <p class="mt-0.5 text-xs text-muted-foreground">
+          {flagged
+            .map(({reason, count}) =>
+              count > 1 ? `${reasonLabel(reason)} (${count})` : reasonLabel(reason),
+            )
+            .join(" · ")}
+        </p>
+        <Button
+          class="mt-2"
+          variant="outline"
+          size="sm"
+          onclick={() => dismissFlags(flaggedIds(item.event))}>
+          Show anyway
+        </Button>
+      </div>
+    </div>
+  {:else}
+    <div class="mt-2">
+      <ItemBody {item} {social} {standing} {session} {detailed} />
+    </div>
+  {/if}
 {/snippet}
 
 <article class="relative rounded-lg bg-card shadow-sm">
@@ -206,23 +253,46 @@
           <Trash />
         </Button>
       {/if}
-      {#if topic}
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger>
-            {#snippet child({props})}
-              <Button {...props} variant="ghost" size="icon-sm" aria-label="More for this post">
-                <Ellipsis />
-              </Button>
-            {/snippet}
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Content align="end">
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger>
+          {#snippet child({props})}
+            <Button {...props} variant="ghost" size="icon-sm" aria-label="More for this post">
+              <Ellipsis />
+            </Button>
+          {/snippet}
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Content align="end">
+          {#if !mine}
+            <DropdownMenu.Item onSelect={() => go({at: "contact", pubkey: item.event.pubkey})}>
+              <UserRound />
+              View author
+            </DropdownMenu.Item>
+          {/if}
+          {#if topic}
             <DropdownMenu.Item onSelect={() => setTopicMuted(topic, true)}>
               <VolumeOff />
               Mute {topicLabel(topic)}
             </DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Root>
-      {/if}
+          {/if}
+          {#if !mine}
+            <DropdownMenu.Sub>
+              <DropdownMenu.SubTrigger>
+                <Flag />
+                Flag activity
+              </DropdownMenu.SubTrigger>
+              <DropdownMenu.SubContent>
+                {#each reasons as reason (reason.id)}
+                  <DropdownMenu.Item
+                    disabled={myFlags.has(reason.id)}
+                    onSelect={() => flag(item.event, reason.id)}>
+                    {reason.label}
+                  </DropdownMenu.Item>
+                {/each}
+              </DropdownMenu.SubContent>
+            </DropdownMenu.Sub>
+          {/if}
+        </DropdownMenu.Content>
+      </DropdownMenu.Root>
     </div>
   </footer>
 </article>
