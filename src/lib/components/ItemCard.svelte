@@ -21,19 +21,18 @@
   import Reactions from "$lib/components/Reactions.svelte"
   import {toggleBookmark} from "$lib/data/bookmarks"
   import {nameOf, setTopicMuted, type Social} from "$lib/data/contacts"
-  import {
-    flaggedIds,
-    opensId,
-    react,
-    showTopic,
-    type Item,
-    type Standing,
-    type Warmth,
-  } from "$lib/data/feed"
+  import {opensId, react, showTopic, type Item, type Standing, type Warmth} from "$lib/data/feed"
   import {go} from "$lib/data/nav"
   import type {Session} from "$lib/data/session"
   import {restore, trash} from "$lib/data/trash"
-  import {dismissFlags, flags, flagsOn, reasonLabel} from "$lib/data/reports"
+  import {
+    counted,
+    dismissFlags,
+    flaggedIds,
+    flaggingsOn,
+    reasonLabel,
+    tallyReasons,
+  } from "$lib/data/reports"
   import {categoryOf, topicLabel, topicOf} from "$lib/kinds"
 
   let {
@@ -84,7 +83,7 @@
 
   const Mark = $derived(category.icon)
 
-  const flagged = $derived(flagsOn($flags, flaggedIds(item.event)))
+  const flagged = $derived(tallyReasons(flaggingsOn($counted, flaggedIds(item.event))))
 
   const arrived = $derived(
     new Date(item.seenAt * 1000).toLocaleString(undefined, {
@@ -250,12 +249,7 @@
         <!-- The menu is empty on the user's own post when it has no topic. -->
         <DropdownMenu.Trigger disabled={mine && !topic}>
           {#snippet child({props})}
-            <Button
-              {...props}
-              variant="ghost"
-              size="icon-sm"
-              aria-label="More for this post"
-              disabled={mine && !topic}>
+            <Button {...props} variant="ghost" size="icon-sm" aria-label="More for this post">
               <Ellipsis />
             </Button>
           {/snippet}

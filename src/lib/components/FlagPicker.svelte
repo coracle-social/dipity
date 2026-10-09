@@ -7,7 +7,8 @@
   import {nameOf, setBlocked, social} from "$lib/data/contacts"
   import type {Item} from "$lib/data/feed"
   import {dismissable} from "$lib/data/nav"
-  import {FLAG_WORDS, flag, flaggedByMe, reasons, unflag, wordsIn} from "$lib/data/reports"
+  import {FLAG_WORDS, flag, flaggings, mineOn, reasons, unflag, wordsIn} from "$lib/data/reports"
+  import {session} from "$lib/data/session"
   import {trash} from "$lib/data/trash"
 
   // The reasons to flag a post for, then what else to do about it.
@@ -19,7 +20,11 @@
   let trashing = $state(false)
   let blocking = $state(false)
 
-  const already = $derived($flaggedByMe.get(item.event.id) ?? new Set<string>())
+  const already = $derived(
+    new Set(
+      mineOn($flaggings, item.event.id, $session.identity)?.reasons.map(({reason}) => reason),
+    ),
+  )
 
   const words = $derived(wordsIn(message))
 

@@ -67,9 +67,5 @@ export const setRetentionDays = (typed: string) => writeCount(keys.retentionDays
 
 export const setDiscoverInBackground = (on: boolean) => write(keys.discoverInBackground, on)
 
-/** Count a contact's flags, or ignore them, which the core reads to decide what to hold back. */
-export const setFlagsTrusted = (ignored: string[], pubkey: string, trusted: boolean) => {
-  const rest = ignored.filter(held => held !== pubkey)
-
-  return write(keys.ignoredFlaggers, trusted ? rest : [...rest, pubkey])
-}
+/** The contacts whose flags the core ignores, in full, since a list preference is written whole. */
+export const setIgnoredFlaggers = (pubkeys: string[]) => write(keys.ignoredFlaggers, pubkeys)

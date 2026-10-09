@@ -9,12 +9,12 @@
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu"
   import {nameOf, type Social} from "$lib/data/contacts"
   import {dismissable} from "$lib/data/nav"
-  import {setFlagsTrusted} from "$lib/data/policy"
   import {
     flaggings,
     flaggingsOn,
     ignoredFlaggers,
     reasonLabel,
+    setFlagsTrusted,
     trashFlagging,
     type Flagging,
   } from "$lib/data/reports"
@@ -29,7 +29,7 @@
   }: {
     open: boolean
     /** The posts whose flags are drawn: a boost's own and what it passes on. */
-    ids: (string | undefined)[]
+    ids: string[]
     social: Social
     session: Session
   } = $props()
@@ -69,7 +69,7 @@
     </Drawer.Header>
 
     <ul class="space-y-4 px-4">
-      {#each listed as flagging (flagging.reports[0].id)}
+      {#each listed as flagging (flagging.reasons[0].report.id)}
         {@const mine = flagging.pubkey === session.identity}
         <li class="flex items-start gap-3">
           <div class="min-w-0 flex-1">
@@ -85,7 +85,7 @@
               <p class="mt-1 text-sm text-pretty whitespace-pre-line">{flagging.message}</p>
             {/if}
             <div class="mt-1.5 flex flex-wrap gap-1">
-              {#each flagging.reasons as reason (reason)}
+              {#each flagging.reasons as { reason } (reason)}
                 <span class={badgeVariants({variant: "secondary"})}>{reasonLabel(reason)}</span>
               {/each}
             </div>
@@ -106,14 +106,12 @@
               </DropdownMenu.Item>
               {#if !mine}
                 {#if ignored.has(flagging.pubkey)}
-                  <DropdownMenu.Item
-                    onSelect={() => setFlagsTrusted($ignoredFlaggers, flagging.pubkey, true)}>
+                  <DropdownMenu.Item onSelect={() => setFlagsTrusted(flagging.pubkey, true)}>
                     <ShieldCheck />
                     Trust their flags
                   </DropdownMenu.Item>
                 {:else}
-                  <DropdownMenu.Item
-                    onSelect={() => setFlagsTrusted($ignoredFlaggers, flagging.pubkey, false)}>
+                  <DropdownMenu.Item onSelect={() => setFlagsTrusted(flagging.pubkey, false)}>
                     <ShieldOff />
                     Ignore their flags
                   </DropdownMenu.Item>

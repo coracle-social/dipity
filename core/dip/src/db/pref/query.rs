@@ -109,67 +109,48 @@ pub fn policy(tx: &Tx<'_>, identity: &PublicKey) -> Result<Policy> {
 
 /// The user's contact graph, from the cards and lists they have published.
 ///
-/// `contacts` is everybody the user's own contact cards name, and `network`
-/// is derived: everybody the contacts' cards name, over whichever of those
-/// cards this device happens to hold — so a contact whose cards have not
-/// arrived contributes nobody, and the tier grows as the graph does.
+/// `contacts` is everybody the user's own cards name. `network` is everybody
+/// the contacts' cards name, over whichever of those cards this device holds,
+/// and stops there: reading the cards of people in `network` would grow the
+/// tier until it meant nothing. `named` is everybody any card names whose
+/// author is not blocked. `docs/policy.md#social-graph`.
 ///
-/// It stops there. Reading the cards of people in `network` would grow the
-/// tier until it meant nothing, and a person two hops out is reachable rather
-/// than known. `docs/policy.md#social-graph`.
+/// Block is a veto over every tier: a blocked person is named by nobody, and
+/// their cards name nobody. The user is in no tier of their own graph.
 ///
-/// Block is a veto over both tiers: a blocked person is neither a contact nor
-/// in the network, and their cards add nobody, whatever else names them.
-///
-/// One query per contact, plus three. This runs when a session opens and when
-/// a preference changes, not per event.
+/// One query for the cards, plus three for the lists. This runs when a session
+/// opens and when a preference changes, not per event.
 fn graph(tx: &Tx<'_>, identity: &PublicKey) -> Result<Graph> {
     let blocked = listed::<BLOCK>(tx, identity)?;
-    let contacts: BTreeSet<PublicKey> =
-        named(tx, identity)?.difference(&blocked).copied().collect();
-    let mut network = BTreeSet::new();
+    let namings = namings(tx)?;
+    let named_by = |by: &dyn Fn(&PublicKey) -> bool| -> BTreeSet<PublicKey> {
+        namings
+            .iter()
+            .filter(|(author, subject)| {
+                by(author) && !blocked.contains(author) && !blocked.contains(subject)
+            })
+            .map(|(_, subject)| *subject)
+            .filter(|subject| subject != identity)
+            .collect()
+    };
 
-    for pubkey in &contacts {
-        network.extend(named(tx, pubkey)?.difference(&blocked));
-    }
-
-    network.remove(identity);
-
-    let mut everyone_named: BTreeSet<PublicKey> = named_by_anyone(tx, &blocked)?
-        .difference(&blocked)
-        .copied()
-        .collect();
-
-    everyone_named.remove(identity);
+    let contacts = named_by(&|author| author == identity);
+    let network = named_by(&|author| contacts.contains(author));
+    let named = named_by(&|_| true);
 
     Ok(Graph {
         contacts,
         network,
-        named: everyone_named,
+        named,
         blocked,
         muted: listed::<MUTE>(tx, identity)?,
         muted_topics: topics::<MUTE>(tx, identity)?,
     })
 }
 
-/// Everybody `pubkey` has named, which for the user is everybody they paired
-/// with. A card emptied by removing a contact names nobody.
-fn named(tx: &Tx<'_>, pubkey: &PublicKey) -> Result<BTreeSet<PublicKey>> {
-    let cards = event::list(
-        tx,
-        &Query::new().with_filter(Filter::new().add_kinds([CONTACT]).add_authors([*pubkey])),
-    )?;
-
-    Ok(cards
-        .iter()
-        .filter(|card| !card.content.trim().is_empty())
-        .filter_map(|card| card.tags.iter().find(|tag| tag.name() == "d"))
-        .filter_map(|tag| PublicKey::from_hex(tag.value()).ok())
-        .collect())
-}
-
-/// Everybody named by a card this device holds from an author not blocked.
-fn named_by_anyone(tx: &Tx<'_>, blocked: &BTreeSet<PublicKey>) -> Result<BTreeSet<PublicKey>> {
+/// Who names whom, as `(author, subject)`, by every card this device holds. A
+/// card emptied by removing a contact names nobody.
+fn namings(tx: &Tx<'_>) -> Result<Vec<(PublicKey, PublicKey)>> {
     let cards = event::list(
         tx,
         &Query::new().with_filter(Filter::new().add_kinds([CONTACT])),
@@ -177,9 +158,12 @@ fn named_by_anyone(tx: &Tx<'_>, blocked: &BTreeSet<PublicKey>) -> Result<BTreeSe
 
     Ok(cards
         .iter()
-        .filter(|card| !blocked.contains(&card.pubkey) && !card.content.trim().is_empty())
-        .filter_map(|card| card.tags.iter().find(|tag| tag.name() == "d"))
-        .filter_map(|tag| PublicKey::from_hex(tag.value()).ok())
+        .filter(|card| !card.content.trim().is_empty())
+        .filter_map(|card| {
+            let subject = card.tags.iter().find(|tag| tag.name() == "d")?;
+
+            Some((card.pubkey, PublicKey::from_hex(subject.value()).ok()?))
+        })
         .collect())
 }
 

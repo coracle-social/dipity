@@ -10,10 +10,10 @@ import {REPORT, type HashedEvent} from "@welshman/util"
 import {social} from "$lib/data/contacts"
 import {publish} from "$lib/data/publish"
 import {answering, eventsOf, remembered, storedEvents} from "$lib/data/query"
-import {policy} from "$lib/data/policy"
+import {policy, setIgnoredFlaggers} from "$lib/data/policy"
 import {session} from "$lib/data/session"
 import {trashId, trashed} from "$lib/data/trash"
-import {report} from "$lib/kinds"
+import {boostedBy, report} from "$lib/kinds"
 
 /** The reasons the dialog offers: NIP-56's, and violence. */
 export const reasons = [
@@ -41,25 +41,23 @@ const dismissed = remembered<string[]>("display.dismissed_flags", [])
 /** How many dismissals are remembered, which bounds a list that would otherwise only grow. */
 const DISMISSALS_KEPT = 500
 
-/** One reason a post was flagged for, and by how many people. */
-export type Flag = {reason: string; count: number}
-
-/** Every flag that counts, by the post it names. */
-export type Flags = Map<string, Flag[]>
-
-/** One person's flag on a post: every reason they gave, what they said, and the reports carrying it. */
-export type Flagging = {
-  pubkey: string
-  reasons: string[]
-  message: string
-  at: number
-  reports: HashedEvent[]
-}
-
 /** How many words a flag's message may run to. */
 export const FLAG_WORDS = 100
 
 export const wordsIn = (text: string) => text.trim().split(/\s+/).filter(Boolean).length
+
+/** One reason a person gave, and the report carrying it. */
+export type Reason = {reason: string; report: HashedEvent}
+
+/** One person's flag on a post: every reason they gave and what they said. */
+export type Flagging = {pubkey: string; reasons: Reason[]; message: string; at: number}
+
+/** One reason a post was flagged for, and by how many people. */
+export type Tally = {reason: string; count: number}
+
+/** The posts whose flags mark an item: its own, and what it passes on if it is a boost. */
+export const flaggedIds = (event: HashedEvent) =>
+  [event.id, boostedBy(event)].filter((id): id is string => Boolean(id))
 
 const stored = answering(
   storedEvents,
@@ -67,29 +65,25 @@ const stored = answering(
   [] as HashedEvent[],
 )
 
-/** The reports not in the trash, because a trashed flag does not count. */
-const live = derived([stored, trashed], ([$stored, $trashed]) =>
-  $stored.filter(event => !$trashed.has(event.id)),
-)
-
 /**
  * Every flag the user or a contact made, by the post it names, newest first.
  *
- * An ignored contact's flags are here too, so the details can offer to trust
- * them again. A stranger's never are.
+ * A flag in the trash counts for nothing and is left out. An ignored contact's
+ * flags are here, so the details can offer to trust them again, and a
+ * stranger's never are.
  */
 export const flaggings: Readable<Map<string, Flagging[]>> = derived(
-  [live, social, session],
-  ([$live, $social, $session]) => {
+  [stored, trashed, social, session],
+  ([$stored, $trashed, $social, $session]) => {
     const known = (pubkey: string) =>
       pubkey === $session.identity || Boolean($social.people.get(pubkey)?.petname)
     const byPost = new Map<string, Map<string, Flagging>>()
 
-    for (const event of $live) {
+    for (const event of $stored) {
       const parsed = report.reader(event).parse()
       const id = parsed.eventId()
 
-      if (!id || !known(event.pubkey)) continue
+      if (!id || $trashed.has(event.id) || !known(event.pubkey)) continue
 
       const byPerson = byPost.get(id) ?? new Map<string, Flagging>()
       const held = byPerson.get(event.pubkey) ?? {
@@ -97,15 +91,11 @@ export const flaggings: Readable<Map<string, Flagging[]>> = derived(
         reasons: [],
         message: "",
         at: event.created_at,
-        reports: [],
       }
-      const reason = parsed.reason() ?? "other"
 
-      if (!held.reasons.includes(reason)) held.reasons.push(reason)
-      if (!held.message && event.content.trim()) held.message = event.content.trim()
-
+      held.reasons.push({reason: parsed.reason() ?? "other", report: event})
+      held.message ||= event.content.trim()
       held.at = Math.max(held.at, event.created_at)
-      held.reports.push(event)
       byPerson.set(event.pubkey, held)
       byPost.set(id, byPerson)
     }
@@ -116,70 +106,46 @@ export const flaggings: Readable<Map<string, Flagging[]>> = derived(
   },
 )
 
-/** The flaggings on any of `ids`, since a boost is drawn as what it passes on. */
-export const flaggingsOn = (flaggings: Map<string, Flagging[]>, ids: (string | undefined)[]) =>
-  ids.flatMap(id => (id && flaggings.get(id)) || [])
+/** The flaggings on any of `ids`. */
+export const flaggingsOn = (flaggings: Map<string, Flagging[]>, ids: string[]) =>
+  ids.flatMap(id => flaggings.get(id) ?? [])
 
-/** What the user has flagged, by post, so the dialog does not publish the same flag twice. */
-export const flaggedByMe: Readable<Map<string, Set<string>>> = derived(
-  [flaggings, session],
-  ([$flaggings, $session]) =>
+/** The flaggings that put a warning on a post: the user's own and trusted contacts', on posts the user has not looked past. */
+export const counted: Readable<Map<string, Flagging[]>> = derived(
+  [flaggings, session, ignoredFlaggers, dismissed],
+  ([$flaggings, $session, $ignored, $dismissed]) =>
     new Map(
-      [...$flaggings].flatMap(([id, people]) => {
-        const mine = people.find(({pubkey}) => pubkey === $session.identity)
-
-        return mine ? [[id, new Set(mine.reasons)] as const] : []
-      }),
+      [...$flaggings]
+        .filter(([id]) => !$dismissed.includes(id))
+        .map(([id, people]) => [
+          id,
+          people.filter(({pubkey}) => pubkey === $session.identity || !$ignored.includes(pubkey)),
+        ]),
     ),
 )
 
-const sortFlags = (tally: Map<string, number>): Flag[] =>
-  [...tally]
-    .map(([reason, count]) => ({reason, count}))
-    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason))
+/** Each reason given across some flaggings, with how many different people gave it, most given first. */
+export const tallyReasons = (flaggings: Flagging[]): Tally[] => {
+  const people = new Map<string, Set<string>>()
 
-/** The flags that count: the user's own and every contact's they trust, less any the user dismissed. */
-export const flags: Readable<Flags> = derived(
-  [flaggings, session, ignoredFlaggers, dismissed],
-  ([$flaggings, $session, $ignored, $dismissed]) => {
-    const ignored = new Set($ignored)
-    const skipped = new Set($dismissed)
-    const counted = new Map<string, Flag[]>()
-
-    for (const [id, people] of $flaggings) {
-      if (skipped.has(id)) continue
-
-      const tally = new Map<string, number>()
-
-      for (const {pubkey, reasons: given} of people) {
-        if (pubkey !== $session.identity && ignored.has(pubkey)) continue
-
-        for (const reason of given) tally.set(reason, (tally.get(reason) ?? 0) + 1)
-      }
-
-      if (tally.size > 0) counted.set(id, sortFlags(tally))
-    }
-
-    return counted
-  },
-)
-
-/** The flags on any of `ids`, merged, since a boost is drawn as what it passes on. */
-export const flagsOn = (flags: Flags, ids: (string | undefined)[]): Flag[] => {
-  const merged = new Map<string, number>()
-
-  for (const id of ids) {
-    for (const {reason, count} of (id && flags.get(id)) || []) {
-      merged.set(reason, Math.max(merged.get(reason) ?? 0, count))
-    }
+  for (const {pubkey, reasons: given} of flaggings) {
+    for (const {reason} of given) people.set(reason, (people.get(reason) ?? new Set()).add(pubkey))
   }
 
-  return sortFlags(merged)
+  return [...people]
+    .map(([reason, by]) => ({reason, count: by.size}))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason))
 }
+
+/** The user's own flagging of a post, if they flagged it. */
+export const mineOn = (flaggings: Map<string, Flagging[]>, id: string, identity?: string) =>
+  flaggings.get(id)?.find(({pubkey}) => pubkey === identity)
 
 /** Flag a post for one reason, saying why if the user did, unless they already flagged it for that. */
 export const flag = async (event: HashedEvent, reason: string, message = "") => {
-  if (get(flaggedByMe).get(event.id)?.has(reason)) return
+  const mine = mineOn(get(flaggings), event.id, get(session).identity)
+
+  if (mine?.reasons.some(given => given.reason === reason)) return
 
   const writer = report
     .writer()
@@ -193,25 +159,25 @@ export const flag = async (event: HashedEvent, reason: string, message = "") => 
 
 /** Take back the user's flag on a post for one reason, which retracts the report carrying it. */
 export const unflag = (event: HashedEvent, reason: string) => {
-  const mine = get(flaggings)
-    .get(event.id)
-    ?.find(({pubkey}) => pubkey === get(session).identity)
-  const carrying = (mine?.reports ?? []).filter(
-    held => (report.reader(held).parse().reason() ?? "other") === reason,
-  )
+  const mine = mineOn(get(flaggings), event.id, get(session).identity)
+  const carrying = mine?.reasons.filter(given => given.reason === reason) ?? []
 
-  return Promise.all(carrying.map(held => trashId(held.id)))
+  return Promise.all(carrying.map(({report: held}) => trashId(held.id)))
 }
 
 /** Throw out one person's flag, which retracts it when it is the user's own. */
 export const trashFlagging = (flagging: Flagging) =>
-  Promise.all(flagging.reports.map(event => trashId(event.id)))
+  Promise.all(flagging.reasons.map(({report: held}) => trashId(held.id)))
 
 /** Look past the flags on some posts, which shows them as if nobody had flagged them. */
-export const dismissFlags = (ids: (string | undefined)[]) => {
-  const kept = ids.filter((id): id is string => Boolean(id))
-
-  return dismissed.set(
-    [...kept, ...get(dismissed).filter(id => !kept.includes(id))].slice(0, DISMISSALS_KEPT),
+export const dismissFlags = (ids: string[]) =>
+  dismissed.set(
+    [...ids, ...get(dismissed).filter(id => !ids.includes(id))].slice(0, DISMISSALS_KEPT),
   )
+
+/** Count a contact's flags, or ignore them, which the core reads to decide what to hold back. */
+export const setFlagsTrusted = (pubkey: string, trusted: boolean) => {
+  const rest = get(ignoredFlaggers).filter(ignored => ignored !== pubkey)
+
+  return setIgnoredFlaggers(trusted ? rest : [...rest, pubkey])
 }

@@ -297,9 +297,6 @@ export const board: Readable<Item[]> = derived(
     ),
 )
 
-/** The posts whose flags hold an item back: its own, and what it passes on if it is a boost. */
-export const flaggedIds = (event: HashedEvent) => [event.id, boostedBy(event)]
-
 /** Topics filed under by the recent posts in the store, most posted first. */
 const recent = answering(
   storedEvents,

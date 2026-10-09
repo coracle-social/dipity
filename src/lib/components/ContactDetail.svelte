@@ -15,8 +15,7 @@
     social,
   } from "$lib/data/contacts"
   import {back, go} from "$lib/data/nav"
-  import {setFlagsTrusted} from "$lib/data/policy"
-  import {ignoredFlaggers} from "$lib/data/reports"
+  import {ignoredFlaggers, setFlagsTrusted} from "$lib/data/reports"
 
   let {pubkey}: {pubkey: string} = $props()
 
@@ -59,7 +58,7 @@
             detail:
               "They can put a warning on posts, stopping your phone from passing along flagged pictures.",
             on: !$ignoredFlaggers.includes(pubkey),
-            set: (on: boolean) => setFlagsTrusted($ignoredFlaggers, pubkey, on),
+            set: (on: boolean) => setFlagsTrusted(pubkey, on),
           },
         ]
       : []),
