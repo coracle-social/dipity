@@ -31,8 +31,6 @@ Each is a replaceable event whose `p` tags name people. The current list is one 
 
 The mute list names **topics** as well as people, as NIP-51's `t` tags. A post carries at most one topic, and muting one keeps its posts off the board and out of the new-activity notification, and does nothing else. The device still stores them and still hands them on. A muted topic is as visible to contacts as a muted person, because [Sharing](#sharing) hands them the mute list.
 
-A **flag** is a NIP-56 report, kind 1984, naming one post and its author with a reason and no message. Like a mute it is a display filter and never gates propagation: the device stores a flagged post and hands it on as before, and the flag itself travels under [Sharing](#sharing) like any of the user's events. Only the user's own flags and their contacts' count, and the user can ignore any one contact's from that contact's page, because a stranger's flag counting would let anybody in range hide anything. A post that counted flags name is drawn as a warning listing each reason once with how many people gave it, and the user can look past it; a setting hides such posts from the board instead.
-
 **Neither is encrypted.** NIP-51 keeps private entries as ciphertext in `content`, which would put them beyond the peers who need them, since contacts read these lists by design. [Sharing](#sharing) fixes which peers this device hands them to.
 
 A third kind says what the user calls somebody: a contact card, kind 36017, addressed to the person it names at `36017:<author>:<subject>`. A card is the only way anybody has a name, because nobody publishes a profile here. The name is the card's content.
@@ -52,6 +50,24 @@ Every setting below is expressed on the same tiers, applied either to the peer o
 Only the fixed visibility rules use Nothing and Public.
 
 Network adds the subjects of every non-empty contact card authored by a contact, except blocked pubkeys, and stops there, two hops from the user. It is derived rather than stored, from whichever of those cards the device holds. A contact whose cards have not arrived yet contributes nobody.
+
+## Flags
+
+A flag is a NIP-56 report, kind 1984, naming one post and its author with one reason. It can carry a message of up to 100 words. The user picks any number of reasons, and each goes out as its own report with the same message. Flags travel under [Sharing](#sharing) like the user's other events, and whoever receives one sees what the user flagged.
+
+Only the user's own flags and their contacts' flags count, because counting a stranger's flag would let anybody in range hide anything. The user can ignore a contact's flags, which adds that contact to `policy.ignored_flaggers`. A flag in the trash does not count, and trashing the user's own flag retracts it.
+
+A post with counted flags is drawn as a warning that lists each reason once with how many people gave it. The user can show the post anyway, or open the details to see who flagged it, for what, and what they said. From the details the user can trash any flag, and trust or ignore any contact's flags. Nothing hides a flagged post from the user, because the device still carries it.
+
+A flag can **hold a post back**. The device keeps and shows a held-back post, but serves it to no peer through reconciliation, a `REQ`, the live forward or a blob request. That puts a flag between block, which acts on the wire, and mute, which acts only on what the user sees.
+
+- **The user's own flag** holds back any post. Holding a post back takes the user's own decision, as passing it on with a boost does.
+- **A trusted contact's flag** holds back a picture, because gore, nudity and illegal material are nearly always pictures.
+- **A contact's flag does not hold back a note.** Contacts often disagree about words, and a phone with contacts on both sides of a disagreement would otherwise keep the post from everyone downstream of it.
+- **A bookmark or a boost by the user** passes a held-back post on again, and so does trashing every flag that holds it back.
+- **The user's own posts** are never held back.
+
+A flag deletes nothing. The trash removes a post from the phone, and a block stops its author. The flag dialog offers both after the flag is sent. A post served before a flag arrived is not recalled.
 
 ## A device, not a pubkey
 

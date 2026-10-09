@@ -19,6 +19,8 @@
 //! assert!(!policy.is_blocked());
 //! ```
 
+use std::collections::BTreeSet;
+
 use coracle_lib::events::{HasCreatedAt, HasId, HasKind, HasPubkey, HasTags};
 use coracle_lib::keys::PublicKey;
 use serde::Serialize;
@@ -49,6 +51,8 @@ pub struct Policy {
     pub accept: Scope,
     /// How long a carried event stays after it first reaches this device.
     pub retention_days: u32,
+    /// The contacts whose flags the user ignores. `docs/policy.md#flags`.
+    pub ignored_flaggers: BTreeSet<PublicKey>,
     /// The contact graph the scopes above are measured against.
     #[serde(skip)]
     pub graph: Graph,
@@ -65,8 +69,20 @@ impl Policy {
             sharing: Sharing::default(),
             accept: Scope::Lenient,
             retention_days: 90,
+            ignored_flaggers: BTreeSet::new(),
             graph: Graph::default(),
         }
+    }
+
+    /// Every contact whose flags the user has not said to ignore.
+    #[must_use]
+    pub fn trusted_flaggers(&self) -> Vec<PublicKey> {
+        self.graph
+            .contacts
+            .iter()
+            .filter(|contact| !self.ignored_flaggers.contains(contact))
+            .copied()
+            .collect()
     }
 
     /// Whether `minute` of the local day falls in one of the quiet times.
@@ -232,6 +248,7 @@ mod tests {
             [
                 "accept",
                 "discover_in_background",
+                "ignored_flaggers",
                 "quiet_times",
                 "retention_days",
                 "sharing",

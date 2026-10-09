@@ -43,8 +43,8 @@ pub use disclosure::{DisclosureBucket, STRANGERS_PER_DAY};
 pub use graph::{Graph, Standing, topic};
 pub use identity::Identity;
 pub use kinds::{
-    BLOCK, BOOKMARKS, BlockListReader, BlockListWriter, CONTACT, MUTE, MuteListReader,
-    MuteListWriter, PeopleListReader, PeopleListWriter,
+    BLOCK, BOOKMARKS, BOOSTS, BlockListReader, BlockListWriter, CONTACT, MUTE, MuteListReader,
+    MuteListWriter, PICTURE, PeopleListReader, PeopleListWriter, REPORT,
 };
 pub use order::Order;
 pub use policy::{PeerPolicy, Policy};

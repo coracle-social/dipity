@@ -1,7 +1,8 @@
 <script lang="ts">
   import Tag from "@lucide/svelte/icons/tag"
   import X from "@lucide/svelte/icons/x"
-  import {Badge} from "$lib/components/ui/badge"
+  import {badgeVariants} from "$lib/components/ui/badge"
+  import {cn} from "$lib/utils"
   import * as InputGroup from "$lib/components/ui/input-group"
   import {topicFrom, topicLabel} from "$lib/kinds"
 
@@ -53,20 +54,21 @@
 </script>
 
 {#if selected.length > 0}
-  <ul class="mb-2 flex flex-wrap gap-1.5">
+  <ul class="mb-2 flex flex-wrap gap-2">
     {#each selected as topic (topic)}
       <li>
-        <Badge variant="secondary">
+        <!-- The whole pill is the target, because an x alone is too small to hit with a thumb. -->
+        <button
+          type="button"
+          class={cn(
+            badgeVariants({variant: "secondary"}),
+            "h-9 gap-1.5 px-3 text-sm [&>svg]:size-4!",
+          )}
+          aria-label="Remove {topicLabel(topic)}"
+          onclick={() => onRemove(topic)}>
           {topicLabel(topic)}
-          <button
-            type="button"
-            data-icon="inline-end"
-            class="rounded-full text-muted-foreground hover:text-foreground"
-            aria-label="Remove {topicLabel(topic)}"
-            onclick={() => onRemove(topic)}>
-            <X class="size-3" />
-          </button>
-        </Badge>
+          <X class="text-muted-foreground" />
+        </button>
       </li>
     {/each}
   </ul>

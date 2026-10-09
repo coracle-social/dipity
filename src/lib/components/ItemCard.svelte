@@ -15,6 +15,8 @@
   import Byline from "$lib/components/Byline.svelte"
   import Cooling from "$lib/components/Cooling.svelte"
   import EmojiPicker from "$lib/components/EmojiPicker.svelte"
+  import FlagDetails from "$lib/components/FlagDetails.svelte"
+  import FlagPicker from "$lib/components/FlagPicker.svelte"
   import ItemBody from "$lib/components/ItemBody.svelte"
   import Reactions from "$lib/components/Reactions.svelte"
   import {toggleBookmark} from "$lib/data/bookmarks"
@@ -31,15 +33,7 @@
   import {go} from "$lib/data/nav"
   import type {Session} from "$lib/data/session"
   import {restore, trash} from "$lib/data/trash"
-  import {
-    dismissFlags,
-    flag,
-    flaggedByMe,
-    flags,
-    flagsOn,
-    reasonLabel,
-    reasons,
-  } from "$lib/data/reports"
+  import {dismissFlags, flags, flagsOn, reasonLabel} from "$lib/data/reports"
   import {categoryOf, topicLabel, topicOf} from "$lib/kinds"
 
   let {
@@ -74,6 +68,8 @@
 
   let picking = $state(false)
   let reading = $state(false)
+  let flagging = $state(false)
+  let detailing = $state(false)
 
   const mine = $derived(item.event.pubkey === session.identity)
 
@@ -89,8 +85,6 @@
   const Mark = $derived(category.icon)
 
   const flagged = $derived(flagsOn($flags, flaggedIds(item.event)))
-
-  const myFlags = $derived($flaggedByMe.get(item.event.id) ?? new Set<string>())
 
   const arrived = $derived(
     new Date(item.seenAt * 1000).toLocaleString(undefined, {
@@ -160,13 +154,12 @@
             )
             .join(" · ")}
         </p>
-        <Button
-          class="mt-2"
-          variant="outline"
-          size="sm"
-          onclick={() => dismissFlags(flaggedIds(item.event))}>
-          Show anyway
-        </Button>
+        <div class="mt-2 flex gap-2">
+          <Button variant="outline" size="sm" onclick={() => (detailing = true)}>Details</Button>
+          <Button variant="ghost" size="sm" onclick={() => dismissFlags(flaggedIds(item.event))}>
+            Show anyway
+          </Button>
+        </div>
       </div>
     </div>
   {:else}
@@ -254,9 +247,15 @@
         </Button>
       {/if}
       <DropdownMenu.Root>
-        <DropdownMenu.Trigger>
+        <!-- The menu is empty on the user's own post when it has no topic. -->
+        <DropdownMenu.Trigger disabled={mine && !topic}>
           {#snippet child({props})}
-            <Button {...props} variant="ghost" size="icon-sm" aria-label="More for this post">
+            <Button
+              {...props}
+              variant="ghost"
+              size="icon-sm"
+              aria-label="More for this post"
+              disabled={mine && !topic}>
               <Ellipsis />
             </Button>
           {/snippet}
@@ -275,21 +274,10 @@
             </DropdownMenu.Item>
           {/if}
           {#if !mine}
-            <DropdownMenu.Sub>
-              <DropdownMenu.SubTrigger>
-                <Flag />
-                Flag activity
-              </DropdownMenu.SubTrigger>
-              <DropdownMenu.SubContent>
-                {#each reasons as reason (reason.id)}
-                  <DropdownMenu.Item
-                    disabled={myFlags.has(reason.id)}
-                    onSelect={() => flag(item.event, reason.id)}>
-                    {reason.label}
-                  </DropdownMenu.Item>
-                {/each}
-              </DropdownMenu.SubContent>
-            </DropdownMenu.Sub>
+            <DropdownMenu.Item onSelect={() => (flagging = true)}>
+              <Flag />
+              Flag activity
+            </DropdownMenu.Item>
           {/if}
         </DropdownMenu.Content>
       </DropdownMenu.Root>
@@ -298,4 +286,6 @@
 </article>
 
 <EmojiPicker bind:open={picking} onPick={emoji => react(item, emoji)} />
+<FlagPicker bind:open={flagging} {item} />
+<FlagDetails bind:open={detailing} ids={flaggedIds(item.event)} {social} {session} />
 <Reactions bind:open={reading} response={standing.response} {social} {session} />

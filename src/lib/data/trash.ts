@@ -48,7 +48,10 @@ export const trashed: Readable<Map<string, Trashed>> = answering(
 )
 
 /** Put a thing in the trash. */
-export const trash = (item: Item) => Dip.trash({id: item.event.id}).catch(logged("trashing"))
+export const trash = (item: Item) => trashId(item.event.id)
+
+/** Put an event in the trash by id, for one that is not drawn as an item. */
+export const trashId = (id: string) => Dip.trash({id}).catch(logged("trashing"))
 
 /** Take a thing back out of the trash, which the core refuses for somebody else's retracted thing. */
 export const restore = (item: Item) => Dip.restore({id: item.event.id}).catch(logged("restoring"))

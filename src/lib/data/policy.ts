@@ -14,6 +14,7 @@ const keys = {
   sharing: "policy.sharing",
   retentionDays: "policy.retention_days",
   discoverInBackground: "policy.discover_in_background",
+  ignoredFlaggers: "policy.ignored_flaggers",
 } as const
 
 const read = (): Promise<Policy | undefined> =>
@@ -65,3 +66,10 @@ const writeCount = (key: string, typed: string, least: number) => {
 export const setRetentionDays = (typed: string) => writeCount(keys.retentionDays, typed, 1)
 
 export const setDiscoverInBackground = (on: boolean) => write(keys.discoverInBackground, on)
+
+/** Count a contact's flags, or ignore them, which the core reads to decide what to hold back. */
+export const setFlagsTrusted = (ignored: string[], pubkey: string, trusted: boolean) => {
+  const rest = ignored.filter(held => held !== pubkey)
+
+  return write(keys.ignoredFlaggers, trusted ? rest : [...rest, pubkey])
+}

@@ -7,7 +7,8 @@
   import {Switch} from "$lib/components/ui/switch"
   import {forget, name, nameOf, setBlocked, setMuted, short, social} from "$lib/data/contacts"
   import {back, go} from "$lib/data/nav"
-  import {ignoredFlaggers, setFlagsTrusted} from "$lib/data/reports"
+  import {setFlagsTrusted} from "$lib/data/policy"
+  import {ignoredFlaggers} from "$lib/data/reports"
 
   let {pubkey}: {pubkey: string} = $props()
 
@@ -44,15 +45,16 @@
   })
 
   const controls = $derived([
-    // Only a contact's flags ever count, so only a contact has this to switch.
+    // Only contacts have this switch, because nobody else's flags count.
     ...(contact?.petname
       ? [
           {
             id: "trusted",
             label: "Trust their flags",
-            detail: "Posts they flag are hidden or marked for you.",
+            detail:
+              "Their flags put a warning on posts, and your phone doesn't pass on pictures they flag.",
             on: !$ignoredFlaggers.includes(pubkey),
-            set: (on: boolean) => setFlagsTrusted(pubkey, on),
+            set: (on: boolean) => setFlagsTrusted($ignoredFlaggers, pubkey, on),
           },
         ]
       : []),

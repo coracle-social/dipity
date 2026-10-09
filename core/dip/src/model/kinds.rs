@@ -39,6 +39,18 @@ pub const MUTE: u16 = 10_000;
 /// to keep something somebody else wrote. `docs/storage.md#retention`.
 pub const BOOKMARKS: u16 = 10_003;
 
+/// NIP-56's report, which this app calls a flag. The user's own flag, or a
+/// trusted contact's flag on a picture, holds the post back from peers.
+/// `docs/policy.md#flags`.
+pub const REPORT: u16 = 1984;
+
+/// NIP-68's picture post, which a trusted contact's flag holds back.
+pub const PICTURE: u16 = 20;
+
+/// NIP-18's boosts: kind 6 for a note and 16 for anything else. A boost by the
+/// user passes a held-back post on again.
+pub const BOOSTS: [u16; 2] = [6, 16];
+
 /// One person, as somebody else calls them.
 ///
 /// Ours, and addressable at the person it names. The core reads nothing out of

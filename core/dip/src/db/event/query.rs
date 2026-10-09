@@ -19,8 +19,8 @@ use crate::db::Tx;
 use crate::db::condition::{Conditions, text};
 use crate::db::sql::{event_id_from_sql, placeholders, pubkey_from_sql};
 use crate::model::{
-    Order, PeerPolicy, Provenance, ProvenanceFilter, Query, Register, Registers, Scope, Share,
-    Standing, Visibility,
+    BOOKMARKS, BOOSTS, Order, PICTURE, PeerPolicy, Policy, Provenance, ProvenanceFilter, Query,
+    REPORT, Register, Registers, Scope, Share, Standing, Visibility,
 };
 
 /// The event columns, in the order [`to_event`] reads them.
@@ -557,6 +557,8 @@ fn push_policy(conditions: &mut Conditions, policy: &PeerPolicy, trash_included:
         conditions.push_set("e.pubkey", vec![text(policy.policy.identity.to_hex())]);
     }
 
+    push_held_back(conditions, &policy.policy);
+
     let blocked = policy.policy.graph.blocked.iter();
     conditions.push_excluded(
         "e.pubkey",
@@ -569,6 +571,46 @@ fn push_policy(conditions: &mut Conditions, policy: &PeerPolicy, trash_included:
         policy.standing,
         &policy.policy.identity,
     );
+}
+
+/// Exclude the posts that flags hold back from peers.
+///
+/// The user's own flag holds back any post, and a trusted contact's flag holds
+/// back a picture. A bookmark or a boost by the user overrides either, a flag in
+/// the trash does not count, and the user's own posts are never held back. The
+/// clause applies even when the trash is included, which withholds a blob while
+/// any post naming it is held back. `docs/policy.md#flags`.
+fn push_held_back(conditions: &mut Conditions, policy: &Policy) {
+    let identity = conditions.bind(text(policy.identity.to_hex()));
+    let flagged_by = |authors: &str| {
+        format!(
+            "SELECT flag.value FROM event_tag flag JOIN event report ON report.id = flag.event_id
+             WHERE report.kind = {REPORT} AND flag.name = 'e' AND report.pubkey IN ({authors})
+               AND report.id NOT IN (SELECT event_id FROM event_trashed)"
+        )
+    };
+    let [boost, generic_boost] = BOOSTS;
+    let kept = format!(
+        "SELECT kept.value FROM event_tag kept JOIN event list ON list.id = kept.event_id
+         WHERE list.pubkey = ?{identity} AND kept.name = 'e'
+           AND list.kind IN ({BOOKMARKS}, {boost}, {generic_boost})
+           AND list.id NOT IN (SELECT event_id FROM event_trashed)"
+    );
+    let trusted = policy.trusted_flaggers();
+    let mut held = format!("e.id IN ({})", flagged_by(&format!("?{identity}")));
+
+    if !trusted.is_empty() {
+        let bound = conditions.bind_all(trusted.iter().map(|contact| text(contact.to_hex())));
+
+        held = format!(
+            "({held} OR (e.kind = {PICTURE} AND e.id IN ({})))",
+            flagged_by(&bound)
+        );
+    }
+
+    conditions.push(format!(
+        "(e.pubkey = ?{identity} OR e.id IN ({kept}) OR NOT {held})"
+    ));
 }
 
 /// Exclude the user's own events a peer standing at `standing` may not see.
@@ -696,6 +738,7 @@ mod tests {
     use crate::db::recipient_signature::command as signature;
     use crate::fixtures::{author, event, id, note, peer};
     use crate::model::{MUTE, Policy, RecipientSignature, Scope, Sharing, VisibilityRule};
+    use coracle_lib::events::EventId;
 
     /// A query narrowed by a NIP-01 filter and nothing else.
     fn matching(filter: Filter) -> Query {
@@ -998,6 +1041,172 @@ mod tests {
 
         // The user still finds it, under Trash.
         assert_eq!(list(&tx, &everything()).unwrap().len(), 2);
+    }
+
+    /// A contact's policy for the flag tests: `us` is author 1, the peer is author 2, author 3 is a trusted contact who flags.
+    fn flagging_policy() -> PeerPolicy {
+        let mut policy = Policy::new(author(1));
+        policy.graph.contacts.extend([author(2), author(3)]);
+
+        policy.for_pubkey(author(2))
+    }
+
+    fn flag_of(by: PublicKey, flagged: &HashedEvent, at: i64) -> HashedEvent {
+        let target = flagged.id.to_hex();
+
+        event(
+            by,
+            REPORT,
+            at,
+            "",
+            Tags::new()
+                .add("e", [target.as_str(), "nudity"])
+                .add("p", [flagged.pubkey.to_hex().as_str(), "nudity"]),
+        )
+    }
+
+    fn served_ids(tx: &Tx<'_>, policy: PeerPolicy) -> Vec<EventId> {
+        list(tx, &everything().with_policy(policy))
+            .unwrap()
+            .iter()
+            .filter(|event| event.kind != REPORT)
+            .map(id)
+            .collect()
+    }
+
+    #[test]
+    fn a_post_the_user_flagged_is_held_back_from_peers_but_kept() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let post = note(author(4), 100, "flagged", Tags::new());
+
+        command::save(&tx, &post, &[author(4)], 100).unwrap();
+        command::save(&tx, &flag_of(author(1), &post, 200), &[author(1)], 200).unwrap();
+
+        assert!(served_ids(&tx, flagging_policy()).is_empty());
+        assert_eq!(
+            list(&tx, &matching(Filter::new().add_kinds([1])))
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_contacts_flag_holds_back_a_picture_but_not_a_note() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let words = note(author(4), 100, "words", Tags::new());
+        let picture = event(author(4), PICTURE, 110, "a picture", Tags::new());
+
+        for (post, at) in [(&words, 100), (&picture, 110)] {
+            command::save(&tx, post, &[author(4)], at).unwrap();
+            command::save(
+                &tx,
+                &flag_of(author(3), post, at + 100),
+                &[author(3)],
+                at + 100,
+            )
+            .unwrap();
+        }
+
+        assert_eq!(served_ids(&tx, flagging_policy()), vec![id(&words)]);
+    }
+
+    #[test]
+    fn an_ignored_contacts_flag_holds_nothing_back() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let picture = event(author(4), PICTURE, 110, "a picture", Tags::new());
+
+        command::save(&tx, &picture, &[author(4)], 110).unwrap();
+        command::save(&tx, &flag_of(author(3), &picture, 200), &[author(3)], 200).unwrap();
+
+        let mut policy = flagging_policy();
+        policy.policy.ignored_flaggers.insert(author(3));
+
+        assert_eq!(served_ids(&tx, policy), vec![id(&picture)]);
+    }
+
+    #[test]
+    fn a_strangers_flag_holds_nothing_back() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let picture = event(author(4), PICTURE, 110, "a picture", Tags::new());
+
+        command::save(&tx, &picture, &[author(4)], 110).unwrap();
+        command::save(&tx, &flag_of(author(9), &picture, 200), &[author(9)], 200).unwrap();
+
+        assert_eq!(served_ids(&tx, flagging_policy()), vec![id(&picture)]);
+    }
+
+    #[test]
+    fn bookmarking_or_boosting_a_flagged_post_passes_it_on_again() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let kept = event(author(4), PICTURE, 100, "bookmarked", Tags::new());
+        let boosted = event(author(4), PICTURE, 110, "boosted", Tags::new());
+        let us = author(1);
+
+        for (post, at) in [(&kept, 100), (&boosted, 110)] {
+            command::save(&tx, post, &[author(4)], at).unwrap();
+            command::save(
+                &tx,
+                &flag_of(author(3), post, at + 100),
+                &[author(3)],
+                at + 100,
+            )
+            .unwrap();
+        }
+
+        let bookmarks = event(
+            us,
+            BOOKMARKS,
+            300,
+            "",
+            Tags::new().add("e", [kept.id.to_hex()]),
+        );
+        let boost = event(
+            us,
+            BOOSTS[1],
+            310,
+            "",
+            Tags::new().add("e", [boosted.id.to_hex()]),
+        );
+
+        command::save(&tx, &bookmarks, &[us], 300).unwrap();
+        command::save(&tx, &boost, &[us], 310).unwrap();
+
+        let served = served_ids(&tx, flagging_policy());
+
+        assert!(served.contains(&id(&kept)) && served.contains(&id(&boosted)));
+    }
+
+    #[test]
+    fn a_trashed_flag_holds_nothing_back() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let picture = event(author(4), PICTURE, 110, "a picture", Tags::new());
+        let flag = flag_of(author(3), &picture, 200);
+
+        command::save(&tx, &picture, &[author(4)], 110).unwrap();
+        command::save(&tx, &flag, &[author(3)], 200).unwrap();
+        assert!(served_ids(&tx, flagging_policy()).is_empty());
+
+        command::set_trashed(&tx, &id(&flag), true, 300).unwrap();
+        assert_eq!(served_ids(&tx, flagging_policy()), vec![id(&picture)]);
+    }
+
+    #[test]
+    fn nobodys_flag_holds_back_the_users_own_post() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let own = event(author(1), PICTURE, 100, "mine", Tags::new());
+
+        command::save(&tx, &own, &[author(1)], 100).unwrap();
+        command::save(&tx, &flag_of(author(3), &own, 200), &[author(3)], 200).unwrap();
+
+        assert_eq!(served_ids(&tx, flagging_policy()), vec![id(&own)]);
     }
 
     #[test]

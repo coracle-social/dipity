@@ -143,6 +143,8 @@ export type Policy = {
   retention_days: number
   quiet_times: Window[]
   discover_in_background: boolean
+  /** The contacts whose flags count for nothing, as hex pubkeys. */
+  ignored_flaggers: string[]
 }
 
 /** What the phone says about letting the app notify. */

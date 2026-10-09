@@ -16,6 +16,7 @@ const defaults: Policy = {
   retention_days: 90,
   quiet_times: [],
   discover_in_background: true,
+  ignored_flaggers: [],
 }
 
 /** One preference's document, or the default where it has never been written. */
@@ -38,4 +39,5 @@ export const compiled = (store: Store): Policy => ({
     "policy.discover_in_background",
     defaults.discover_in_background,
   ),
+  ignored_flaggers: at<string[]>(store, "policy.ignored_flaggers", defaults.ignored_flaggers),
 })
