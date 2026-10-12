@@ -7,8 +7,9 @@ use coracle_lib::keys::PublicKey;
 /// Where a pubkey stands in the user's graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Standing {
-    /// Muted and withheld both, which is what refusing somebody is: their
-    /// events are dropped on ingest and never served, and their sessions are refused.
+    /// Muted, withheld and blocked all three, which is what refusing somebody
+    /// is: their events are dropped on ingest and never served, and their
+    /// sessions are refused.
     Refused,
     /// Somebody the user paired with and named.
     Contact,
@@ -66,26 +67,11 @@ pub struct Graph {
 }
 
 impl Graph {
-    /// Whether the user has both muted and withheld `pubkey`, which leaves this
-    /// device nothing to do with them. `docs/policy.md#social-graph`.
-    #[must_use]
-    pub fn refuses(&self, pubkey: &PublicKey) -> bool {
-        self.muted.contains(pubkey) && self.withheld.contains(pubkey)
-    }
-
-    /// Mute and withhold `pubkey` at once.
-    #[cfg(test)]
-    pub(crate) fn refuse(&mut self, pubkey: PublicKey) {
-        self.muted.insert(pubkey);
-        self.withheld.insert(pubkey);
-    }
-
-    /// Where `pubkey` stands.
+    /// Which tier `pubkey` is in, which says nothing of refusal: that is
+    /// [`Policy::standing`](crate::model::Policy::standing).
     #[must_use]
     pub fn standing(&self, pubkey: &PublicKey) -> Standing {
-        if self.refuses(pubkey) {
-            Standing::Refused
-        } else if self.contacts.contains(pubkey) {
+        if self.contacts.contains(pubkey) {
             Standing::Contact
         } else if self.network.contains(pubkey) {
             Standing::Network
@@ -103,27 +89,18 @@ pub(crate) mod tests {
 
     use crate::fixtures::author;
 
-    /// A graph with one pubkey in each tier: 2 a contact, 3 network, 4 refused,
-    /// 5 muted. Shared with the tests of everything measured against a graph.
+    /// A graph with one pubkey in each tier: 2 a contact, 3 network, 4 muted
+    /// and withheld, 5 muted. Shared with the tests of everything measured against a graph.
     pub(crate) fn graph() -> Graph {
         let mut graph = Graph::default();
 
         graph.contacts.insert(author(2));
         graph.network.insert(author(3));
-        graph.refuse(author(4));
+        graph.muted.insert(author(4));
+        graph.withheld.insert(author(4));
         graph.muted.insert(author(5));
 
         graph
-    }
-
-    #[test]
-    fn refusing_wins_over_naming() {
-        let mut graph = Graph::default();
-
-        graph.contacts.insert(author(2));
-        graph.refuse(author(2));
-
-        assert_eq!(graph.standing(&author(2)), Standing::Refused);
     }
 
     #[test]
@@ -134,10 +111,10 @@ pub(crate) mod tests {
 
         assert_eq!(graph.standing(&author(2)), Standing::Contact);
         assert_eq!(graph.standing(&author(3)), Standing::Network);
-        assert_eq!(graph.standing(&author(4)), Standing::Refused);
         assert_eq!(graph.standing(&author(9)), Standing::Stranger);
 
-        // Muting or withholding alone is not a tier: it takes both to refuse somebody.
+        // Muting and withholding are not tiers, and refusing somebody takes blocking them too.
+        assert_eq!(graph.standing(&author(4)), Standing::Stranger);
         assert_eq!(graph.standing(&author(5)), Standing::Stranger);
         assert_eq!(graph.standing(&author(6)), Standing::Stranger);
         assert!(graph.muted.contains(&author(5)));

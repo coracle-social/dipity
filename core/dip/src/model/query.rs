@@ -100,7 +100,7 @@ impl Query {
                 .registers
                 .as_ref()
                 .is_some_and(Registers::matches_nothing)
-            || self.policy.as_ref().is_some_and(PeerPolicy::is_refused)
+            || self.policy.as_ref().is_some_and(PeerPolicy::sends_nothing)
     }
 }
 
@@ -133,7 +133,7 @@ mod tests {
         );
 
         let mut policy = Policy::new(author(1));
-        policy.graph.refuse(author(2));
+        policy.refuse(author(2));
 
         assert!(
             Query::new()

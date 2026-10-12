@@ -3,7 +3,7 @@
 use coracle_lib::keys::PublicKey;
 
 use crate::link::LinkId;
-use crate::model::{Identity, PeerPolicy, Policy, Standing};
+use crate::model::{Identity, PeerPolicy, Policy};
 
 /// A peer — the device on the other end of the session — that has completed
 /// NIP-42, and what the user's settings say about it.
@@ -45,16 +45,12 @@ impl Peer {
         policy: &Policy,
     ) -> Self {
         let pubkeys: Identity = pubkeys.into_iter().collect();
-        let standing = pubkeys
-            .iter()
-            .map(|pubkey| policy.graph.standing(pubkey))
-            .reduce(Standing::combine)
-            .unwrap_or(Standing::Refused);
+        let policy = policy.clone().for_pubkeys(&pubkeys);
 
         Self {
             link,
             pubkeys,
-            policy: policy.clone().for_standing(standing),
+            policy,
         }
     }
 }
@@ -64,6 +60,7 @@ mod tests {
     use super::*;
 
     use crate::fixtures::author;
+    use crate::model::Standing;
 
     /// A graph with one of each tier, so that a set can mix them.
     fn policy() -> Policy {
@@ -71,7 +68,7 @@ mod tests {
 
         policy.graph.contacts.insert(author(2));
         policy.graph.network.insert(author(3));
-        policy.graph.refuse(author(9));
+        policy.refuse(author(9));
 
         policy
     }

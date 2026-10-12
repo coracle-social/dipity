@@ -17,8 +17,9 @@ import {derived, get, type Readable} from "svelte/store"
 import {spec} from "@welshman/lib"
 import type {ConfiguredKind, MuteListQuery, MuteListReader, MuteListWriter} from "@welshman/domain"
 import {MUTES, type EventTemplate, type HashedEvent} from "@welshman/util"
-import {Dip} from "$lib/core"
+import {Dip, type Policy} from "$lib/core"
 import {links} from "$lib/data/links"
+import {policy} from "$lib/data/policy"
 import {answering, eventsOf, storedEvents} from "$lib/data/query"
 import {publish} from "$lib/data/publish"
 import {session} from "$lib/data/session"
@@ -35,8 +36,10 @@ export type Contact = {
   aliases: {by: string; petname: string}[]
   /** Whether the user hides their posts from themselves. */
   muted: boolean
-  /** Whether the user's device never passes their posts on. Both at once refuses them. */
+  /** Whether the user's device never passes their posts on, which is not having accepted them. */
   withheld: boolean
+  /** Whether the user's device sends them nothing. With the two above, the device refuses them. */
+  blocked: boolean
 }
 
 /** What the user wrote, kept so an edit supersedes rather than replaces. */
@@ -106,7 +109,11 @@ const ownCards = (events: HashedEvent[], identity?: string) => {
   return cards
 }
 
-const collate = async (events: HashedEvent[], identity?: string): Promise<Social> => {
+const collate = async (
+  events: HashedEvent[],
+  identity: string | undefined,
+  {blocked = [], untrusted = []}: Partial<Policy> = {},
+): Promise<Social> => {
   const named = namings(events)
   const own = {
     cards: ownCards(events, identity),
@@ -124,6 +131,7 @@ const collate = async (events: HashedEvent[], identity?: string): Promise<Social
       aliases: [],
       muted: muted.has(pubkey),
       withheld: withheld.has(pubkey),
+      blocked: blocked.includes(pubkey),
     }
 
     people.set(pubkey, contact)
@@ -135,28 +143,33 @@ const collate = async (events: HashedEvent[], identity?: string): Promise<Social
     if (by === identity) at(about).petname = petname
   }
 
-  // A stranger's cards name nobody, and neither does a contact's card about somebody they withhold.
+  // A stranger's cards name nobody, and neither does a trusted contact's card about somebody they withhold.
   for (const {by, about, petname} of named) {
-    if (by === identity || !people.get(by)?.petname || withholdings.get(by)?.has(about)) continue
+    const withdrawn = !untrusted.includes(by) && withholdings.get(by)?.has(about)
+
+    if (by === identity || !people.get(by)?.petname || withdrawn) continue
 
     at(about).aliases.push({by, petname})
   }
 
-  for (const pubkey of [...withheld, ...muted]) at(pubkey)
+  for (const pubkey of [...withheld, ...muted, ...blocked]) at(pubkey)
 
   return {people, own}
 }
 
-const read = ([identity]: [string | undefined, number]) =>
+type Inputs = [string | undefined, number, Policy | undefined]
+
+const read = ([identity, , $policy]: Inputs) =>
   eventsOf({filter: JSON.stringify({kinds: [CONTACT, MUTES, WITHHOLD]})}).then(events =>
-    collate(events, identity),
+    collate(events, identity, $policy),
   )
 
-/** Everybody the device knows about, re-collated whenever a card or a list arrives. */
+/** Everybody the device knows about, re-collated whenever a card, a list or the policy changes. */
 export const social: Readable<Social> = answering(
-  derived([session, storedEvents], ([$session, revision]): [string | undefined, number] => [
+  derived([session, storedEvents, policy], ([$session, revision, $policy]): Inputs => [
     $session.identity,
     revision,
+    $policy,
   ]),
   read,
   {people: new Map(), own: {cards: new Map()}},
@@ -200,6 +213,7 @@ export const contacts: Readable<Listed[]> = derived(
           aliases: [],
           muted: false,
           withheld: false,
+          blocked: false,
           connected: true,
         })
       }
@@ -333,7 +347,7 @@ export const setTopicMuted = (topic: string, muted: boolean) =>
 
 /**
  * Take somebody out of the user's contacts: an empty card supersedes the user's
- * name for them, and their device is met as a stranger next time. Mute and withhold
+ * name for them, and their device is met as a stranger next time. Mute, withhold and block
  * stay as they were, and what they wrote stays for as long as the Accept scope
  * admits it. `docs/policy.md#social-graph`.
  */

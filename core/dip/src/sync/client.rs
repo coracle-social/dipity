@@ -622,7 +622,7 @@ mod tests {
     #[test]
     fn a_refused_peer_is_admitted_nothing() {
         let mut policy = Policy::new(us());
-        policy.graph.refuse(author(2));
+        policy.refuse(author(2));
 
         let peer = Peer::bind(LinkId(1), [author(2)], &policy);
         let event = note_from(2, 100);

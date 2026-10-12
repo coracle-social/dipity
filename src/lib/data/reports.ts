@@ -10,7 +10,7 @@ import {REPORT, type HashedEvent} from "@welshman/util"
 import {social} from "$lib/data/contacts"
 import {publish} from "$lib/data/publish"
 import {answering, eventsOf, remembered, storedEvents} from "$lib/data/query"
-import {policy, setIgnoredFlaggers} from "$lib/data/policy"
+import {untrusted} from "$lib/data/policy"
 import {session} from "$lib/data/session"
 import {trashId, trashed} from "$lib/data/trash"
 import {boostedBy, report} from "$lib/kinds"
@@ -28,12 +28,6 @@ export const reasons = [
 ]
 
 export const reasonLabel = (id: string) => reasons.find(reason => reason.id === id)?.label ?? id
-
-/** The contacts whose flags the user ignores, a preference the core also reads. */
-export const ignoredFlaggers: Readable<string[]> = derived(
-  policy,
-  $policy => $policy?.ignored_flaggers ?? [],
-)
 
 /** The posts the user looked at past their flags, newest first. */
 const dismissed = remembered<string[]>("display.dismissed_flags", [])
@@ -112,14 +106,14 @@ export const flaggingsOn = (flaggings: Map<string, Flagging[]>, ids: string[]) =
 
 /** The flaggings that put a warning on a post: the user's own and trusted contacts', on posts the user has not looked past. */
 export const counted: Readable<Map<string, Flagging[]>> = derived(
-  [flaggings, session, ignoredFlaggers, dismissed],
-  ([$flaggings, $session, $ignored, $dismissed]) =>
+  [flaggings, session, untrusted, dismissed],
+  ([$flaggings, $session, $untrusted, $dismissed]) =>
     new Map(
       [...$flaggings]
         .filter(([id]) => !$dismissed.includes(id))
         .map(([id, people]) => [
           id,
-          people.filter(({pubkey}) => pubkey === $session.identity || !$ignored.includes(pubkey)),
+          people.filter(({pubkey}) => pubkey === $session.identity || !$untrusted.includes(pubkey)),
         ]),
     ),
 )
@@ -174,10 +168,3 @@ export const dismissFlags = (ids: string[]) =>
   dismissed.set(
     [...ids, ...get(dismissed).filter(id => !ids.includes(id))].slice(0, DISMISSALS_KEPT),
   )
-
-/** Count a contact's flags, or ignore them, which the core reads to decide what to hold back. */
-export const setFlagsTrusted = (pubkey: string, trusted: boolean) => {
-  const rest = get(ignoredFlaggers).filter(ignored => ignored !== pubkey)
-
-  return setIgnoredFlaggers(trusted ? rest : [...rest, pubkey])
-}

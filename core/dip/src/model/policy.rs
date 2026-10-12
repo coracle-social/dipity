@@ -51,8 +51,11 @@ pub struct Policy {
     pub accept: Scope,
     /// How long a carried event stays after it first reaches this device.
     pub retention_days: u32,
-    /// The contacts whose flags the user ignores. `docs/policy.md#flags`.
-    pub ignored_flaggers: BTreeSet<PublicKey>,
+    /// The contacts the user does not trust, whose flags and withhold lists
+    /// count for nothing here. `docs/policy.md#trust`.
+    pub untrusted: BTreeSet<PublicKey>,
+    /// The people this device sends nothing. `docs/policy.md#social-graph`.
+    pub blocked: BTreeSet<PublicKey>,
     /// The contact graph the scopes above are measured against.
     #[serde(skip)]
     pub graph: Graph,
@@ -69,18 +72,19 @@ impl Policy {
             sharing: Sharing::default(),
             accept: Scope::Named,
             retention_days: 90,
-            ignored_flaggers: BTreeSet::new(),
+            untrusted: BTreeSet::new(),
+            blocked: BTreeSet::new(),
             graph: Graph::default(),
         }
     }
 
-    /// Every contact whose flags the user has not said to ignore.
+    /// Every contact the user has not said to distrust.
     #[must_use]
-    pub fn trusted_flaggers(&self) -> Vec<PublicKey> {
+    pub fn trusted(&self) -> Vec<PublicKey> {
         self.graph
             .contacts
             .iter()
-            .filter(|contact| !self.ignored_flaggers.contains(contact))
+            .filter(|contact| !self.untrusted.contains(contact))
             .copied()
             .collect()
     }
@@ -96,13 +100,40 @@ impl Policy {
     /// Whether moving from `before` to this changes what this device stores.
     #[must_use]
     pub fn changes_accept(&self, before: &Self) -> bool {
-        self.accept != before.accept || self.graph != before.graph
+        self.accept != before.accept || self.graph != before.graph || self.blocked != before.blocked
     }
 
     /// Whether moving from `before` to this changes what moves between peers.
     #[must_use]
     pub fn moves_sync(&self, before: &Self) -> bool {
         self.changes_accept(before) || self.sharing != before.sharing
+    }
+
+    /// Whether the user has muted, withheld and blocked `pubkey` all three,
+    /// which leaves this device nothing to do with them. `docs/policy.md#social-graph`.
+    #[must_use]
+    pub fn refuses(&self, pubkey: &PublicKey) -> bool {
+        self.blocked.contains(pubkey)
+            && self.graph.muted.contains(pubkey)
+            && self.graph.withheld.contains(pubkey)
+    }
+
+    /// Mute, withhold and block `pubkey` at once.
+    #[cfg(test)]
+    pub(crate) fn refuse(&mut self, pubkey: PublicKey) {
+        self.blocked.insert(pubkey);
+        self.graph.muted.insert(pubkey);
+        self.graph.withheld.insert(pubkey);
+    }
+
+    /// Where `pubkey` stands: refused, or its tier in the graph.
+    #[must_use]
+    pub fn standing(&self, pubkey: &PublicKey) -> Standing {
+        if self.refuses(pubkey) {
+            Standing::Refused
+        } else {
+            self.graph.standing(pubkey)
+        }
     }
 
     /// Which of the user's own events go to whom: fixed rules for their lists,
@@ -115,17 +146,26 @@ impl Policy {
     /// Bind this policy to a pubkey the peer proved.
     #[must_use]
     pub fn for_pubkey(self, pubkey: PublicKey) -> PeerPolicy {
-        let standing = self.graph.standing(&pubkey);
-
-        self.for_standing(standing)
+        self.for_pubkeys(&[pubkey])
     }
 
-    /// Resolve against a standing already worked out.
+    /// Bind this policy to the device that proved `pubkeys`, which stands where
+    /// the best of them does and is blocked if any of them is. A device that
+    /// proved nothing is refused. `docs/policy.md#a-device-not-a-pubkey`.
     #[must_use]
-    pub fn for_standing(self, standing: Standing) -> PeerPolicy {
+    pub fn for_pubkeys<'a>(self, pubkeys: impl IntoIterator<Item = &'a PublicKey>) -> PeerPolicy {
+        let pubkeys: Vec<&PublicKey> = pubkeys.into_iter().collect();
+        let standing = pubkeys
+            .iter()
+            .map(|pubkey| self.standing(pubkey))
+            .reduce(Standing::combine)
+            .unwrap_or(Standing::Refused);
+        let blocked = pubkeys.iter().any(|pubkey| self.blocked.contains(pubkey));
+
         PeerPolicy {
             policy: self,
             standing,
+            blocked,
         }
     }
 }
@@ -137,6 +177,9 @@ pub struct PeerPolicy {
     pub policy: Policy,
     /// Where the pubkey stands in the user's graph.
     pub standing: Standing,
+    /// Whether the user blocked the pubkey, which this device then sends
+    /// nothing though it may still take what they send.
+    pub blocked: bool,
 }
 
 impl PeerPolicy {
@@ -145,6 +188,12 @@ impl PeerPolicy {
     #[must_use]
     pub fn is_refused(&self) -> bool {
         self.standing == Standing::Refused
+    }
+
+    /// Whether this device sends the peer nothing at all.
+    #[must_use]
+    pub fn sends_nothing(&self) -> bool {
+        self.blocked || self.is_refused()
     }
 
     /// Whether this pubkey is somebody the user paired with, which is who may
@@ -161,7 +210,7 @@ impl PeerPolicy {
     where
         E: HasId + HasKind + HasPubkey + HasTags + HasCreatedAt,
     {
-        !self.is_refused()
+        !self.sends_nothing()
             && self
                 .policy
                 .visibility()
@@ -179,7 +228,7 @@ impl PeerPolicy {
             return false;
         }
 
-        let standing = self.policy.graph.standing(event.pubkey());
+        let standing = self.policy.standing(event.pubkey());
 
         event.pubkey() == &self.policy.identity
             || (event.kind() == CONTACT && standing != Standing::Refused)
@@ -198,14 +247,14 @@ impl PeerPolicy {
             return self.is_visible(event);
         }
 
-        !self.is_refused() && self.is_contact()
+        !self.sends_nothing() && self.is_contact()
     }
 
     /// Whether this peer may be handed the author's signature over an own
     /// event, which is the capability to carry it one more hop.
     #[must_use]
     pub fn signs(&self) -> bool {
-        !self.is_refused() && self.policy.sharing.signs() && self.is_contact()
+        !self.sends_nothing() && self.policy.sharing.signs() && self.is_contact()
     }
 }
 
@@ -227,11 +276,45 @@ mod tests {
         author(1)
     }
 
+    /// The shared graph, with 4 blocked as well as muted and withheld, so refused.
     fn policy() -> Policy {
-        Policy {
+        let mut policy = Policy {
             graph: graph(),
             ..Policy::new(us())
-        }
+        };
+
+        policy.blocked.insert(author(4));
+
+        policy
+    }
+
+    #[test]
+    fn refusing_takes_all_three_and_wins_over_naming() {
+        let mut policy = Policy::new(us());
+
+        policy.graph.contacts.insert(author(2));
+        policy.graph.muted.insert(author(2));
+        policy.graph.withheld.insert(author(2));
+        assert_eq!(policy.standing(&author(2)), Standing::Contact);
+
+        policy.blocked.insert(author(2));
+        assert_eq!(policy.standing(&author(2)), Standing::Refused);
+    }
+
+    #[test]
+    fn a_blocked_contact_is_sent_nothing_and_still_offers_what_they_wrote() {
+        let mut policy = policy();
+
+        policy.blocked.insert(author(2));
+
+        let blocked = policy.for_pubkey(author(2));
+
+        assert!(blocked.is_contact());
+        assert!(blocked.sends_nothing());
+        assert!(!blocked.may_share(&event(us(), 1, 1, "", Tags::new())));
+        assert!(!blocked.may_share(&event(author(3), 1, 1, "", Tags::new())));
+        assert!(!blocked.signs());
+        assert!(blocked.should_accept(&event(author(2), 1, 1, "", Tags::new())));
     }
 
     #[test]
@@ -250,11 +333,12 @@ mod tests {
             named,
             [
                 "accept",
+                "blocked",
                 "discover_in_background",
-                "ignored_flaggers",
                 "quiet_times",
                 "retention_days",
                 "sharing",
+                "untrusted",
             ]
             .into()
         );

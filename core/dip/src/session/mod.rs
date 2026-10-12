@@ -1579,7 +1579,7 @@ mod tests {
     #[test]
     fn a_peer_holding_a_refused_identity_is_refused_whatever_else_it_proved() {
         let mut policy = policy();
-        policy.graph.refuse(author(3));
+        policy.refuse(author(3));
 
         let mut session = secured_session(policy);
 
@@ -1736,7 +1736,7 @@ mod tests {
         assert_eq!(session.state, State::Identified);
 
         let mut refused = policy();
-        refused.graph.refuse(author(2));
+        refused.refuse(author(2));
 
         session.set_policy(Arc::new(refused));
 

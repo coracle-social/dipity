@@ -542,7 +542,7 @@ fn push_registers(conditions: &mut Conditions, registers: &Registers) {
 
 /// Compile the policy governing the peer being answered.
 fn push_policy(conditions: &mut Conditions, policy: &PeerPolicy, trash_included: bool) {
-    if policy.is_refused() {
+    if policy.sends_nothing() {
         conditions.push_never();
         return;
     }
@@ -602,7 +602,7 @@ fn push_held_back(conditions: &mut Conditions, policy: &Policy) {
            AND list.kind IN ({BOOKMARKS}, {boost}, {generic_boost})
            AND list.id NOT IN (SELECT event_id FROM event_trashed)"
     );
-    let trusted = policy.trusted_flaggers();
+    let trusted = policy.trusted();
     let mut held = format!("e.id IN ({})", flagged_by(&format!("?{identity}")));
 
     if !trusted.is_empty() {
@@ -1146,7 +1146,7 @@ mod tests {
         command::save(&tx, &flag_of(author(3), &picture, 200), &[author(3)], 200).unwrap();
 
         let mut policy = flagging_policy();
-        policy.policy.ignored_flaggers.insert(author(3));
+        policy.policy.untrusted.insert(author(3));
 
         assert_eq!(served_ids(&tx, policy), vec![id(&picture)]);
     }
@@ -1241,7 +1241,7 @@ mod tests {
         let mut policy = Policy::new(us);
 
         policy.graph.contacts.insert(author(2));
-        policy.graph.refuse(author(4));
+        policy.refuse(author(4));
 
         let profile = event(us, profile::KIND, 100, "", Tags::new());
         let mutes = event(us, MUTE, 200, "", Tags::new());

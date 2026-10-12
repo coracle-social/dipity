@@ -19,7 +19,7 @@ use coracle_lib::keys::PublicKey;
 
 use crate::clock;
 use crate::db::Db;
-use crate::model::{Policy, STRANGERS_PER_DAY, Standing};
+use crate::model::{Policy, STRANGERS_PER_DAY};
 
 /// What the gate decided about a peer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,10 +79,7 @@ impl Gate {
                 }
                 Admission::Held => Verdict::Pending,
             }
-        } else if resolved
-            .iter()
-            .any(|pubkey| policy.graph.standing(pubkey) == Standing::Refused)
-        {
+        } else if resolved.iter().any(|pubkey| policy.refuses(pubkey)) {
             // Refused wins over every identity the tags resolved to: one device, one decision.
             Verdict::Refused
         } else {
@@ -147,7 +144,7 @@ mod tests {
     fn the_gate_refuses_a_resolved_refused_peer() {
         let db = Db::open_in_memory().unwrap();
         let mut policy = policy();
-        policy.graph.refuse(author(2));
+        policy.refuse(author(2));
         let mut gate = Gate::default();
 
         assert_eq!(
@@ -162,7 +159,7 @@ mod tests {
         // Judging only the pubkey that sorted first let a refused identity through.
         let db = Db::open_in_memory().unwrap();
         let mut policy = policy();
-        policy.graph.refuse(author(3));
+        policy.refuse(author(3));
         let mut gate = Gate::default();
 
         // The refused pubkey is not the one that sorts first.

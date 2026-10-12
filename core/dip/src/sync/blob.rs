@@ -1814,7 +1814,7 @@ mod tests {
 
         // Refused is a veto over the whole set, and it is not the pubkey that sorts first.
         let mut policy = Policy::new(author(1));
-        policy.graph.refuse(author(3));
+        policy.refuse(author(3));
 
         let refused = Peer::bind(LinkId(1), [author(2), author(3)], &policy);
         assert!(refused.policy.is_refused());

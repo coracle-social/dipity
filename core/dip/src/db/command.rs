@@ -190,7 +190,7 @@ pub fn evict_out_of_scope(db: &Db, policy: &Policy, at: i64) -> Result<usize> {
     db.write(|tx| {
         let outside: Vec<PublicKey> = event_query::authors(tx, &policy.identity)?
             .into_iter()
-            .filter(|author| !policy.accept.admits(policy.graph.standing(author)))
+            .filter(|author| !policy.accept.admits(policy.standing(author)))
             .collect();
 
         event::evict_authors(tx, &policy.identity, &outside, at)

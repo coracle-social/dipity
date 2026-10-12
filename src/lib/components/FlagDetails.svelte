@@ -9,12 +9,11 @@
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu"
   import {nameOf, type Social} from "$lib/data/contacts"
   import {dismissable} from "$lib/data/nav"
+  import {setTrusted, untrusted} from "$lib/data/policy"
   import {
     flaggings,
     flaggingsOn,
-    ignoredFlaggers,
     reasonLabel,
-    setFlagsTrusted,
     trashFlagging,
     type Flagging,
   } from "$lib/data/reports"
@@ -40,7 +39,7 @@
 
   const listed = $derived(flaggingsOn($flaggings, ids))
 
-  const ignored = $derived(new Set($ignoredFlaggers))
+  const ignored = $derived(new Set($untrusted))
 
   // Removing the last flag also removes the warning this was opened from.
   const drop = (flagging: Flagging) => {
@@ -106,14 +105,14 @@
               </DropdownMenu.Item>
               {#if !mine}
                 {#if ignored.has(flagging.pubkey)}
-                  <DropdownMenu.Item onSelect={() => setFlagsTrusted(flagging.pubkey, true)}>
+                  <DropdownMenu.Item onSelect={() => setTrusted(flagging.pubkey, true)}>
                     <ShieldCheck />
-                    Trust their flags
+                    Trust them
                   </DropdownMenu.Item>
                 {:else}
-                  <DropdownMenu.Item onSelect={() => setFlagsTrusted(flagging.pubkey, false)}>
+                  <DropdownMenu.Item onSelect={() => setTrusted(flagging.pubkey, false)}>
                     <ShieldOff />
-                    Ignore their flags
+                    Stop trusting them
                   </DropdownMenu.Item>
                 {/if}
               {/if}

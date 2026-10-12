@@ -100,9 +100,10 @@ pub fn policy(tx: &Tx<'_>, identity: &PublicKey) -> Result<Policy> {
     policy.accept = policy.accept.min(Scope::Named);
     override_with(tx, keys::SHARING, &mut policy.sharing)?;
     override_with(tx, keys::RETENTION_DAYS, &mut policy.retention_days)?;
-    override_with(tx, keys::IGNORED_FLAGGERS, &mut policy.ignored_flaggers)?;
+    override_with(tx, keys::UNTRUSTED, &mut policy.untrusted)?;
+    override_with(tx, keys::BLOCKED, &mut policy.blocked)?;
 
-    policy.graph = graph(tx, identity)?;
+    policy.graph = graph(tx, identity, &policy.blocked, &policy.untrusted)?;
 
     Ok(policy)
 }
@@ -115,18 +116,25 @@ pub fn policy(tx: &Tx<'_>, identity: &PublicKey) -> Result<Policy> {
 /// tier until it meant nothing. `named` is everybody any card names whose
 /// author is not refused. `docs/policy.md#social-graph`.
 ///
-/// Refusing is a veto over every tier: a person the user has both muted and
-/// withheld is named by nobody, and their cards name nobody. The user is in no
+/// Refusing is a veto over every tier: a person the user has muted, withheld
+/// and blocked is named by nobody, and their cards name nobody. The user is in no
 /// tier of their own graph.
 ///
 /// One query for the cards, one for every withhold list, and three for the
 /// user's own lists. This runs when a session opens and when a preference
 /// changes, not per event.
-fn graph(tx: &Tx<'_>, identity: &PublicKey) -> Result<Graph> {
+fn graph(
+    tx: &Tx<'_>,
+    identity: &PublicKey,
+    blocked: &BTreeSet<PublicKey>,
+    untrusted: &BTreeSet<PublicKey>,
+) -> Result<Graph> {
     let withheld = listed::<WITHHOLD>(tx, identity)?;
     let muted = listed::<MUTE>(tx, identity)?;
-    let refused = |pubkey: &PublicKey| withheld.contains(pubkey) && muted.contains(pubkey);
-    let namings = namings(tx, identity)?;
+    let refused = |pubkey: &PublicKey| {
+        blocked.contains(pubkey) && withheld.contains(pubkey) && muted.contains(pubkey)
+    };
+    let namings = namings(tx, identity, untrusted)?;
     let named_by = |by: &dyn Fn(&PublicKey) -> bool| -> BTreeSet<PublicKey> {
         namings
             .iter()
@@ -154,11 +162,15 @@ fn graph(tx: &Tx<'_>, identity: &PublicKey) -> Result<Graph> {
 ///
 /// A card emptied by removing a contact names nobody, and so does a card whose
 /// author withholds its subject: withholding withdraws the vouching a card was,
-/// for everybody the author's withhold list reaches. The user's own withhold
-/// list leaves the user's contacts as they are, because it is about what
-/// travels on from here rather than who the user paired with.
-/// `docs/policy.md#social-graph`.
-fn namings(tx: &Tx<'_>, identity: &PublicKey) -> Result<Vec<(PublicKey, PublicKey)>> {
+/// for everybody the author's withhold list reaches who trusts the author. The
+/// user's own withhold list leaves the user's contacts as they are, because it
+/// is about what travels on from here rather than who the user paired with.
+/// `docs/policy.md#trust`.
+fn namings(
+    tx: &Tx<'_>,
+    identity: &PublicKey,
+    untrusted: &BTreeSet<PublicKey>,
+) -> Result<Vec<(PublicKey, PublicKey)>> {
     let cards = event::list(
         tx,
         &Query::new().with_filter(Filter::new().add_kinds([CONTACT])),
@@ -173,7 +185,9 @@ fn namings(tx: &Tx<'_>, identity: &PublicKey) -> Result<Vec<(PublicKey, PublicKe
 
             Some((card.pubkey, PublicKey::from_hex(subject.value()).ok()?))
         })
-        .filter(|naming| naming.0 == *identity || !withholdings.contains(naming))
+        .filter(|naming| {
+            naming.0 == *identity || untrusted.contains(&naming.0) || !withholdings.contains(naming)
+        })
         .collect())
 }
 
@@ -316,18 +330,22 @@ mod tests {
         name(&tx, us, author(2), "Ben", 100);
         name(&tx, us, author(3), "Ana", 100);
         publish_list(&tx, us, WITHHOLD, &[author(3), author(4), author(5)], 100);
-        publish_list(&tx, us, MUTE, &[author(5)], 100);
+        publish_list(&tx, us, MUTE, &[author(4), author(5)], 100);
+        pref_command::set_as(&tx, keys::BLOCKED, &[author(5)], 100).unwrap();
 
-        let graph = policy(&tx, &us).unwrap().graph;
+        let policy = policy(&tx, &us).unwrap();
 
-        assert_eq!(graph.contacts, [author(2), author(3)].into());
-        assert_eq!(graph.withheld, [author(3), author(4), author(5)].into());
-        assert_eq!(graph.standing(&author(2)), Standing::Contact);
-        // Withholding a contact keeps them one, and withholding alone refuses nobody.
-        assert_eq!(graph.standing(&author(3)), Standing::Contact);
-        assert_eq!(graph.standing(&author(4)), Standing::Stranger);
-        assert_eq!(graph.standing(&author(5)), Standing::Refused);
-        assert_eq!(graph.standing(&author(9)), Standing::Stranger);
+        assert_eq!(policy.graph.contacts, [author(2), author(3)].into());
+        assert_eq!(
+            policy.graph.withheld,
+            [author(3), author(4), author(5)].into()
+        );
+        assert_eq!(policy.standing(&author(2)), Standing::Contact);
+        // Withholding a contact keeps them one, and refusing somebody takes blocking them too.
+        assert_eq!(policy.standing(&author(3)), Standing::Contact);
+        assert_eq!(policy.standing(&author(4)), Standing::Stranger);
+        assert_eq!(policy.standing(&author(5)), Standing::Refused);
+        assert_eq!(policy.standing(&author(9)), Standing::Stranger);
     }
 
     #[test]
@@ -352,6 +370,7 @@ mod tests {
         name(&tx, us, author(3), "Ana", 100);
         publish_list(&tx, us, WITHHOLD, &[author(2), author(6)], 100);
         publish_list(&tx, us, MUTE, &[author(2), author(6)], 100);
+        pref_command::set_as(&tx, keys::BLOCKED, &[author(2), author(6)], 100).unwrap();
         name(&tx, author(2), author(5), "Sam", 100);
         name(&tx, author(3), author(6), "Kit", 100);
 
@@ -419,6 +438,22 @@ mod tests {
     }
 
     #[test]
+    fn an_untrusted_contacts_withholding_counts_for_nothing() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let us = author(1);
+
+        name(&tx, us, author(2), "Ben", 100);
+        name(&tx, author(2), author(3), "Ana", 100);
+        publish_list(&tx, author(2), WITHHOLD, &[author(3)], 110);
+        pref_command::set_as(&tx, keys::UNTRUSTED, &[author(2)], 120).unwrap();
+
+        let graph = policy(&tx, &us).unwrap().graph;
+
+        assert_eq!(graph.standing(&author(3)), Standing::Network);
+    }
+
+    #[test]
     fn another_contacts_card_still_vouches_for_somebody_one_contact_withholds() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
@@ -443,6 +478,7 @@ mod tests {
 
         publish_list(&tx, us, WITHHOLD, &[author(9)], 100);
         publish_list(&tx, us, MUTE, &[author(9)], 100);
+        pref_command::set_as(&tx, keys::BLOCKED, &[author(9)], 100).unwrap();
         name(&tx, author(9), author(7), "Lou", 100);
         name(&tx, author(8), author(6), "", 100);
 

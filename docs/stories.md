@@ -49,7 +49,7 @@ Four facts about the transport decide most of the interface, and every story bel
 26. The user files what they write under a topic they type, or under none. — `Composer`
 27. The user narrows the board to some topics and content types under one filter button, or to one topic tapped on a post, and sees what everything is filed under as they read. — `ContentFilter`, in `FeedControls`, and `ItemCard`
 28. The user mutes a topic from a post carrying it, and that topic leaves the board. — `ItemCard`
-29. The user flags a post from its menu with every reason that applies, and the phone stops passing it on. The dialog then offers to trash the post, and to mute and stop passing on its author. — `ItemCard`, `FlagPicker`
+29. The user flags a post from its menu with every reason that applies, and the phone stops passing it on. The dialog then offers to trash the post and to cut off its author, which stops accepting, mutes and blocks them. — `ItemCard`, `FlagPicker`
 30. The user opens a post's author from its menu. — `ItemCard`
 31. A post the user or a trusted contact flagged shows a warning with each reason and how many people gave it, and the user can show it anyway. — `ItemCard`
 32. The user opens a flagged post's details to see who flagged it, for what, and what each person said. They can trash any flag or stop trusting the person who made it, and the phone passes the post on again once no counted flag holds it back. — `FlagDetails`
@@ -69,10 +69,10 @@ Four facts about the transport decide most of the interface, and every story bel
 40. The user looks up everybody the device knows, and the name each one is known by. — `People`
 41. Somebody the user never met but knows through a contact appears with that contact's name for them; a name from anybody else is not shown. — `People`
 42. The user renames somebody. — `ContactDetail`
-43. When the user removes somebody from their contacts, that person stops getting what the user shares with contacts and their phones meet as strangers next time. Mute and withholding stay as they were. — `ContactDetail`
+43. When the user removes somebody from their contacts, that person stops getting what the user shares with contacts and their phones meet as strangers next time. Accepted, muted and blocked stay as they were. — `ContactDetail`
 44. When the user mutes somebody, their content stops appearing without anything stopping at the wire. — `ContactDetail`
 45. When the user keeps somebody's posts to themselves, they still see them, and the device never passes them on. — `ContactDetail`
-46. When the user both mutes somebody and stops passing them on, the device refuses their sessions and drops what they send. Stopping passing somebody on alone keeps showing their posts to the user, passes them to nobody, and withdraws the user's card for them on contacts' phones. — `ContactDetail`
+46. When the user stops accepting somebody, the device passes their posts to nobody and the user's card for them stops vouching on trusted contacts' phones. Muting them hides their posts from the user, and blocking them sends them nothing. All three refuses their sessions and drops what they send. — `ContactDetail`
 47. When the user stops trusting a contact's flags, what that contact flagged is drawn and passed on as if nobody had flagged it. — `ContactDetail`
 
 ## Settings

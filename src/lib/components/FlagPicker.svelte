@@ -5,6 +5,7 @@
   import * as Drawer from "$lib/components/ui/drawer"
   import {Textarea} from "$lib/components/ui/textarea"
   import {nameOf, setMuted, setWithheld, social} from "$lib/data/contacts"
+  import {setBlocked} from "$lib/data/policy"
   import type {Item} from "$lib/data/feed"
   import {dismissable} from "$lib/data/nav"
   import {FLAG_WORDS, flag, flaggings, mineOn, reasons, unflag, wordsIn} from "$lib/data/reports"
@@ -47,8 +48,8 @@
     },
     {
       id: "refuse",
-      idle: `Mute and stop passing on ${author}`,
-      done: `Muted and not passing on ${author}`,
+      idle: `Cut off ${author}`,
+      done: `Cutting off ${author}`,
       on: refusing,
       toggle: () => (refusing = !refusing),
     },
@@ -71,9 +72,11 @@
       undismiss()
 
       if (trashing) trash(item)
+      // Not accepting, muting and blocking them together is refusing them.
       if (refusing) {
-        setMuted(item.event.pubkey, true)
         setWithheld(item.event.pubkey, true)
+        setMuted(item.event.pubkey, true)
+        setBlocked(item.event.pubkey, true)
       }
     }
   })

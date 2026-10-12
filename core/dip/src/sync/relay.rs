@@ -460,7 +460,7 @@ mod tests {
     fn a_refused_peer_is_not_stored_even_when_it_authored() {
         let db = Db::open_in_memory().unwrap();
         let mut policy = Policy::new(us());
-        policy.graph.refuse(author(2));
+        policy.refuse(author(2));
         let peer = Peer::bind(LinkId(1), [author(2)], &policy);
         let event = note(author(2), 100, "refused", Tags::new());
 

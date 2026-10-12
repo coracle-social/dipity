@@ -2413,7 +2413,7 @@ mod tests {
     }
 
     #[test]
-    fn refusing_somebody_evicts_what_they_wrote_and_withholding_alone_keeps_it() {
+    fn refusing_somebody_evicts_what_they_wrote_and_less_than_refusing_keeps_it() {
         let db = db();
         let mut node = Node::new(
             Arc::clone(&db),
@@ -2452,6 +2452,11 @@ mod tests {
         assert!(held());
 
         node.publish(&list(MUTE, 300), &[]).unwrap();
+        assert!(held());
+
+        let blocked = format!(r#"["{}"]"#, author(3).to_hex());
+        db_command::set_preference(&db, "policy.blocked", &blocked, 400).unwrap();
+        node.tick();
         assert!(!held());
     }
 

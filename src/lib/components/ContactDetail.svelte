@@ -15,7 +15,7 @@
     social,
   } from "$lib/data/contacts"
   import {back, go} from "$lib/data/nav"
-  import {ignoredFlaggers, setFlagsTrusted} from "$lib/data/reports"
+  import {setBlocked, setTrusted, untrusted} from "$lib/data/policy"
 
   let {pubkey}: {pubkey: string} = $props()
 
@@ -49,19 +49,27 @@
   })
 
   const controls = $derived([
-    // Only contacts have this switch, because nobody else's flags count.
+    // Only contacts have this switch, because nobody else's flags or withholding count.
     ...(contact?.petname
       ? [
           {
             id: "trusted",
             label: "Trusted",
             detail:
-              "They can put a warning on posts, stopping your phone from passing along flagged pictures.",
-            on: !$ignoredFlaggers.includes(pubkey),
-            set: (on: boolean) => setFlagsTrusted(pubkey, on),
+              "They can put a warning on posts, stopping your phone from passing along flagged pictures, and anyone they stop accepting loses their vouching.",
+            on: !$untrusted.includes(pubkey),
+            set: (on: boolean) => setTrusted(pubkey, on),
           },
         ]
       : []),
+    {
+      id: "accepted",
+      label: "Accepted",
+      detail:
+        "Your device passes their posts on, and your contacts' phones take them on your word.",
+      on: !contact?.withheld,
+      set: (on: boolean) => setWithheld(pubkey, !on),
+    },
     {
       id: "muted",
       label: "Muted",
@@ -70,17 +78,17 @@
       set: (on: boolean) => setMuted(pubkey, on),
     },
     {
-      id: "withheld",
-      label: "Not passed on",
+      id: "blocked",
+      label: "Blocked",
       detail:
-        "Your device never passes their posts on, and your contacts' phones stop taking them on your word.",
-      on: Boolean(contact?.withheld),
-      set: (on: boolean) => setWithheld(pubkey, on),
+        "Your device sends them nothing, though other phones may still pass your posts to them.",
+      on: Boolean(contact?.blocked),
+      set: (on: boolean) => setBlocked(pubkey, on),
     },
   ])
 
-  // Both at once is what blocking was: the core keeps nothing of theirs and refuses their phone.
-  const refused = $derived(Boolean(contact?.muted && contact?.withheld))
+  // All three is refusing them: the core keeps nothing of theirs and won't connect to their phone.
+  const refused = $derived(Boolean(contact?.withheld && contact?.muted && contact?.blocked))
 </script>
 
 <header class="flex items-center gap-1 pt-4 pb-3">
@@ -144,7 +152,8 @@
 
 {#if refused}
   <p class="mt-4 text-xs text-pretty text-muted-foreground">
-    With both on, your device won't connect to them or keep anything they write.
+    Not accepted, muted and blocked, so your device won't connect to them or keep anything they
+    write.
   </p>
 {/if}
 

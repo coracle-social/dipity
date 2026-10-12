@@ -22,14 +22,15 @@ When the bucket is empty, a stranger is held for the user to approve. **Quiet ti
 
 ## Social graph
 
-There are certain classifications that users may wish to use to tag other users:
+Three controls say what the user has to do with somebody, and each answers a different question. The screen shows them in this order:
 
-- Mute - the user does not see this person's events (kind 10000)
-- Withhold - the user's device never passes this person's events on, and the user's card for them vouches for them to nobody (kind 16018)
+- **Accepted** - whether the people the user gatekeeps for get this person through the user. Not accepting somebody puts them on the withhold list (kind 16018): the device never passes their events on, and the user's card for them vouches for them to nobody.
+- **Muted** - whether the user sees this person's events (kind 10000).
+- **Blocked** - whether this device sends this person anything (`policy.blocked`). A blocked peer is handed nothing, the user's own events included, though the device still takes what they send while the other two allow it. Other phones may still pass the user's events to them, which nothing here can stop.
 
-Each is a replaceable event whose `p` tags name people. The current list is one lookup at `<kind>:<pubkey>:`, and an edit supersedes what came before. The withhold kind is ours rather than NIP-51's.
+The two lists are replaceable events whose `p` tags name people. The current list is one lookup at `<kind>:<pubkey>:`, and an edit supersedes what came before. The withhold kind is ours rather than NIP-51's. Block is a preference rather than an event, because nobody else needs to read it and publishing it would tell the user's contacts.
 
-Mute decides what the user sees. Withholding decides what the people the user gatekeeps for see, over both kinds of hop: the events this device carries, and the vouching the user's contact cards are. There is no block. Somebody both muted and withheld is **refused**, which is what blocking would be: their events are dropped on ingest and never served, and their sessions are refused, so the user's own events do not reach them first-hand either.
+Somebody not accepted, muted and blocked all three is **refused**: their events are dropped on ingest and never served, and their sessions are refused.
 
 The mute list names **topics** as well as people, as NIP-51's `t` tags. A post carries at most one topic, and muting one keeps its posts off the board and out of the new-activity notification, and does nothing else. The device still stores them and still hands them on. A muted topic is as visible to contacts as a muted person, because [Sharing](#sharing) hands them the mute list.
 
@@ -52,13 +53,13 @@ Every setting below is expressed on the same tiers, applied either to the peer o
 
 Only the fixed visibility rules use Nothing and Public.
 
-Network adds the subjects of every non-empty contact card authored by a contact, except refused pubkeys, and stops there, two hops from the user. A card names nobody once its author withholds its subject. Withhold lists travel to contacts, so a contact withholding somebody withdraws their vouching on this device without withholding anything here, and another contact's card for the same person still counts. It is derived rather than stored, from whichever of those cards the device holds. A contact whose cards have not arrived yet contributes nobody.
+Network adds the subjects of every non-empty contact card authored by a contact, except refused pubkeys, and stops there, two hops from the user. A card names nobody once its author withholds its subject. Withhold lists travel to contacts, so a contact withholding somebody withdraws their vouching on this device without withholding anything here, unless the user does not [trust](#trust) that contact. Another contact's card for the same person still counts. It is derived rather than stored, from whichever of those cards the device holds. A contact whose cards have not arrived yet contributes nobody.
 
 ## Flags
 
 A flag is a NIP-56 report, kind 1984, naming one post and its author with one reason. It can carry a message of up to 100 words. The user picks any number of reasons, and each goes out as its own report with the same message. Unchecking a reason later retracts its report. Flags travel under [Sharing](#sharing) like the user's other events, and whoever receives one sees what the user flagged.
 
-Only the user's own flags and their contacts' flags count, because counting a stranger's flag would let anybody in range hide anything. The user can ignore a contact's flags, which adds that contact to `policy.ignored_flaggers`. A flag in the trash does not count, and trashing the user's own flag retracts it.
+Only the user's own flags and their contacts' flags count, because counting a stranger's flag would let anybody in range hide anything. The user can stop [trusting](#trust) a contact, which leaves their flags counting for nothing. A flag in the trash does not count, and trashing the user's own flag retracts it.
 
 A post with counted flags is drawn as a warning that lists each reason once with how many people gave it. The user can show the post anyway, or open the details to see who flagged it, for what, and what they said. From the details the user can trash any flag, and trust or ignore any contact's flags. Nothing hides a flagged post from the user, because the device still carries it.
 
@@ -70,7 +71,11 @@ A flag can **hold a post back**. The device keeps and shows a held-back post, bu
 - **A bookmark or a boost by the user** passes a held-back post on again, and so does trashing every flag that holds it back.
 - **The user's own posts** are never held back.
 
-A flag deletes nothing. The trash removes a post from the phone, and muting and withholding its author refuses them. The flag dialog offers both after the flag is sent. A post served before a flag arrived is not recalled.
+A flag deletes nothing. The trash removes a post from the phone, and not accepting, muting and blocking its author refuses them. The flag dialog offers both after the flag is sent. A post served before a flag arrived is not recalled.
+
+## Trust
+
+Every contact is trusted until the user says otherwise, which adds them to `policy.untrusted`. Trust decides whether two things a contact publishes count on this device: their [flags](#flags), and their withhold list, which withdraws the vouching their cards are. An untrusted contact's cards still vouch for whoever they name, including people the contact has stopped accepting. A stranger's withhold list counts whatever the user says, because it only takes back what that stranger's own cards claimed.
 
 ## A device, not a pubkey
 
@@ -78,7 +83,7 @@ A peer may prove several pubkeys over one session, since [NIP-42](./nips/p2p-aut
 
 The set reduces to one standing, and the two directions reduce differently:
 
-- **Refusal is a veto.** Any refused pubkey refuses the device. Refusing is a decision about a person, and a device holding that key is theirs whatever else it also signs with.
+- **Refusal and block are vetoes.** Any refused pubkey refuses the device, and any blocked pubkey blocks it. Refusing is a decision about a person, and a device holding that key is theirs whatever else it also signs with.
 - **Access takes the best.** Any contact's pubkey makes the device a contact. Proving an extra key is a claim to more, never less, and the peer could have made the better claim on its own.
 
 A session syncs one superset once rather than once per key, because everything downstream reads that one standing. What does *not* reduce is the cryptography: recipient signatures and [authorship proofs](./proofs.md#authorship-proofs) are minted once per identity the peer proved, because a signature names one recipient and a proof designates one verifier.
@@ -109,7 +114,7 @@ Three of the user's events follow fixed rules whatever the setting. The withhold
 
 ### Relaying
 
-It hands a contact every event it holds for somebody else that it may forward, which is an event it holds the author's signature for, unless the event is in the trash, a [flag](#flags) holds it back, or its author is [withheld](#social-graph). A withheld author is the inverse of a muted one: the user sees their events, and the device never passes them on. A stranger is handed none of it. An event that arrived second-hand, under a proof, is never handed on. A contact therefore passes the user's events to their own contacts and no further, which is what `network` says.
+It hands a contact every event it holds for somebody else that it may forward, which is an event it holds the author's signature for, unless the event is in the trash, a [flag](#flags) holds it back, or its author is [not accepted](#social-graph). Not accepting somebody is the inverse of muting them: the user sees their events, and the device never passes them on. A [blocked](#social-graph) peer is handed nothing at all. A stranger is handed none of it. An event that arrived second-hand, under a proof, is never handed on. A contact therefore passes the user's events to their own contacts and no further, which is what `network` says.
 
 ### How the screen maps to the core
 
