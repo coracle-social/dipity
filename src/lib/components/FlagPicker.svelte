@@ -57,8 +57,9 @@
     },
     {
       id: "refuse",
-      idle: `Cut off ${author}`,
-      done: `Cutting off ${author}`,
+      idle: `Mute, block and suppress ${author}`,
+      done: `Muting, blocking and suppressing ${author}`,
+      detail: "Your device won't connect to them or keep anything they write.",
       on: refusing,
       toggle: () => (refusing = !refusing),
     },
@@ -130,6 +131,9 @@
               {/if}
               {action.on ? action.done : action.idle}
             </Button>
+            {#if action.detail}
+              <p class="mt-1 text-xs text-pretty text-muted-foreground">{action.detail}</p>
+            {/if}
           </li>
         {/each}
       </ul>

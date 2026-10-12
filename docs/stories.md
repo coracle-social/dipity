@@ -49,7 +49,7 @@ Four facts about the transport decide most of the interface, and every story bel
 26. The user files what they write under a topic they type, or under none. — `Composer`
 27. The user narrows the board to some topics and content types under one filter button, or to one topic tapped on a post, and sees what everything is filed under as they read. — `ContentFilter`, in `FeedControls`, and `ItemCard`
 28. The user mutes a topic from a post carrying it, and that topic leaves the board. — `ItemCard`
-29. The user flags a post from its menu with every reason that applies, and the phone stops passing it on. The dialog then offers to trash the post and to cut off its author, which mutes, blocks and suppresses them. — `ItemCard`, `FlagPicker`
+29. The user flags a post from its menu with every reason that applies, and the phone stops passing it on. The dialog then offers to trash the post and to mute, block and suppress its author. — `ItemCard`, `FlagPicker`
 30. The user opens a post's author from its menu. — `ItemCard`
 31. A post the user or a trusted contact flagged shows a warning with each reason and how many people gave it, and the user can show it anyway. — `ItemCard`
 32. The user opens a flagged post's details to see who flagged it, for what, and what each person said. They can trash any flag or stop trusting the person who made it, and the phone passes the post on again once no counted flag holds it back. — `FlagDetails`
