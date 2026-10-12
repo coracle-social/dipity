@@ -8,7 +8,7 @@
   import {nameOf, social} from "$lib/data/contacts"
   import {links} from "$lib/data/links"
   import {back, swap} from "$lib/data/nav"
-  import {logOut, npubOf, session} from "$lib/data/session"
+  import {logOut, session} from "$lib/data/session"
   import {clear, compare, offer, step} from "$lib/data/transfer"
 
   // The ending goes on the way out, because the phone's own back button leaves without passing through here.

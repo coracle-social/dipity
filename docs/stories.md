@@ -18,7 +18,7 @@ Four facts about the transport decide most of the interface, and every story bel
 
 ## First run
 
-1. When the device has no identity, the app offers to get started, which makes one without explaining it. — `FirstRun`
+1. When the device has no identity, the app offers to get started, which makes one without explaining it, once the user has agreed to the terms of use. — `FirstRun`
 2. The user has a key from another device and logs in with it. — `FirstRun`
 3. When the identity exists, the app opens the store and starts the radio without asking anything. — `App`
 

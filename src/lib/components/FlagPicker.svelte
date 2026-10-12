@@ -8,7 +8,16 @@
   import {setBlocked} from "$lib/data/policy"
   import type {Item} from "$lib/data/feed"
   import {dismissable} from "$lib/data/nav"
-  import {FLAG_WORDS, flag, flaggings, mineOn, reasons, unflag, wordsIn} from "$lib/data/reports"
+  import {
+    FLAG_WORDS,
+    flag,
+    flaggings,
+    mineOn,
+    reasons,
+    reportEmail,
+    unflag,
+    wordsIn,
+  } from "$lib/data/reports"
   import {session} from "$lib/data/session"
   import {trash} from "$lib/data/trash"
 
@@ -124,6 +133,19 @@
           </li>
         {/each}
       </ul>
+
+      <div class="mt-5 px-4">
+        <p class="text-sm text-muted-foreground">
+          If this is illegal or puts a child at risk, report it to the people who make Dipity too.
+          Your mail app opens with the post named in it.
+        </p>
+        <Button
+          class="mt-2 w-full"
+          variant="outline"
+          href={reportEmail(item.event, chosen, message)}>
+          Report to Dipity
+        </Button>
+      </div>
 
       <Drawer.Footer>
         <Button onclick={() => (open = false)}>Done</Button>

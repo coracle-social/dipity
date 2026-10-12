@@ -73,6 +73,8 @@ A flag can **hold a post back**. The device keeps and shows a held-back post, bu
 
 A flag deletes nothing. The trash removes a post from the phone, and muting, blocking and suppressing its author refuses them. The flag dialog offers both after the flag is sent. A post served before a flag arrived is not recalled.
 
+A flag reaches nobody who makes Dipity. The flag dialog also offers to report the post to `safety@coracle.social`, which opens the user's mail app with the post's id, its author and the reasons. The report names nothing about how the post arrived, because provenance never leaves the device. It asks for no picture, because forwarding abuse material is distributing it. The [child safety standards](https://dipity.coracle.social/child-safety) say what is done with a report.
+
 ## Trust
 
 Every contact is trusted until the user says otherwise, which adds them to `policy.untrusted`. Trust decides whether two things a contact publishes count on this device: their [flags](#flags), and their withhold list, which withdraws the vouching their cards are. An untrusted contact's cards still vouch for whoever they name, including people the contact has suppressed. A stranger's withhold list counts whatever the user says, because it only takes back what that stranger's own cards claimed.

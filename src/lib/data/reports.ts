@@ -11,7 +11,7 @@ import {social} from "$lib/data/contacts"
 import {publish} from "$lib/data/publish"
 import {answering, eventsOf, remembered, storedEvents} from "$lib/data/query"
 import {untrusted} from "$lib/data/policy"
-import {session} from "$lib/data/session"
+import {npubOf, session} from "$lib/data/session"
 import {trashId, trashed} from "$lib/data/trash"
 import {boostedBy, report} from "$lib/kinds"
 
@@ -22,12 +22,37 @@ export const reasons = [
   {id: "profanity", label: "Profanity"},
   {id: "violence", label: "Violence"},
   {id: "illegal", label: "Illegal"},
-  {id: "malware", label: "Malware"},
   {id: "impersonation", label: "Impersonation"},
   {id: "other", label: "Other"},
 ]
 
 export const reasonLabel = (id: string) => reasons.find(reason => reason.id === id)?.label ?? id
+
+/** Where a report to the people who make Dipity goes, and the address the child safety standards name. */
+export const SAFETY_EMAIL = "safety@coracle.social"
+
+/**
+ * An email reporting a post to Dipity, written by the user's own mail app.
+ *
+ * It names the post and its author and nothing about how the post reached this
+ * phone, because provenance never leaves the device. The post's picture is never
+ * attached, since sending on abuse material is distributing it.
+ */
+export const reportEmail = (event: HashedEvent, chosen: string[], message: string) => {
+  const body = [
+    `Post: ${event.id}`,
+    `Author: ${npubOf(event.pubkey)}`,
+    `Reasons: ${chosen.map(reasonLabel).join(", ") || "none given"}`,
+    "",
+    message.trim() || "What I saw:",
+    "",
+    "Please don't attach a picture or a screenshot of anything showing a child.",
+  ].join("\n")
+  const query = new URLSearchParams({subject: "Report from Dipity", body})
+
+  // URLSearchParams writes a space as "+", which mail apps show literally.
+  return `mailto:${SAFETY_EMAIL}?${query.toString().replaceAll("+", "%20")}`
+}
 
 /** The posts the user looked at past their flags, newest first. */
 const dismissed = remembered<string[]>("display.dismissed_flags", [])
