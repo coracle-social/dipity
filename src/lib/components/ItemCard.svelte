@@ -212,7 +212,13 @@
     </p>
 
     <div class="flex flex-none items-center gap-0.5">
-      <Button variant="ghost" size="icon-sm" aria-label="React" onclick={() => (picking = true)}>
+      <!-- Nobody reacts to their own post. -->
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label="React"
+        disabled={mine}
+        onclick={() => (picking = true)}>
         <Smile />
       </Button>
       <Button variant="ghost" size="icon-sm" aria-label="Pass it on" onclick={() => onBoost(item)}>

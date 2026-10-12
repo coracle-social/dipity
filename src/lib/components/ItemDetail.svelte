@@ -52,7 +52,7 @@
   {@const swept = sweptAt(item, $session, $policy?.retention_days, marked)}
   {@const answers = commentedOn(item.event)}
   {@const standing = {
-    ...standingOf($responses, $saying, id),
+    ...standingOf($responses, $saying, item.event),
     saying: $detail.comments.length,
   }}
 

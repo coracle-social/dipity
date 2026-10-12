@@ -48,7 +48,7 @@
     <ItemCard
       {item}
       social={$social}
-      standing={standingOf($responses, $saying, item.event.id)}
+      standing={standingOf($responses, $saying, item.event)}
       warmth={warmthOf(item, swept, now)}
       sweptAt={swept}
       session={$session}

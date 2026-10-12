@@ -360,15 +360,19 @@ export const saying: Readable<Map<string, number>> = derived(
 
 export const responseTo = (responses: Responses, id: string) => responses.to.get(id) ?? nothing()
 
-/** Everything a card draws about one item beyond the event itself. */
+/** Everything a card draws about one item beyond the event itself, less its author's reactions to it. */
 export const standingOf = (
   responses: Responses,
   saying: Map<string, number>,
-  id: string,
-): Standing => ({
-  response: responseTo(responses, id),
-  saying: saying.get(id) ?? 0,
-})
+  {id, pubkey}: HashedEvent,
+): Standing => {
+  const response = responseTo(responses, id)
+
+  return {
+    response: {...response, reactions: response.reactions.filter(sent => sent.pubkey !== pubkey)},
+    saying: saying.get(id) ?? 0,
+  }
+}
 
 /**
  * Whether the retention sweep will ever take an item.
@@ -488,9 +492,12 @@ export const boostItem = async (item: Item, said = "") => {
   return publish(await withTopic(writer, topicOf(item.event)).renderTemplate())
 }
 
-/** React, unless this device already sent that reaction. */
+/** React, unless this device already sent that reaction or the item is the user's own. */
 export const react = async (item: Item, emoji: string) => {
   const mine = get(session).identity
+
+  if (item.event.pubkey === mine) return
+
   const already = responseTo(get(responses), item.event.id).reactions.some(
     sent => sent.pubkey === mine && sent.emoji === emoji,
   )

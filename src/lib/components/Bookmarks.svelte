@@ -94,7 +94,7 @@
         <ItemCard
           {item}
           social={$social}
-          standing={standingOf($responses, $saying, item.event.id)}
+          standing={standingOf($responses, $saying, item.event)}
           warmth={warmthOf(item, undefined, now)}
           session={$session}
           bookmarked={$bookmarked.has(item.event.id)}
@@ -149,7 +149,7 @@
         <ItemCard
           {item}
           social={$social}
-          standing={standingOf($responses, $saying, item.event.id)}
+          standing={standingOf($responses, $saying, item.event)}
           warmth={warmthOf(item, undefined, now)}
           session={$session}
           bookmarked={$bookmarked.has(item.event.id)}
