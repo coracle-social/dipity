@@ -270,6 +270,33 @@
   }
 }
 
+/* ------------------------------------------------------------- overlays ---
+ *
+ * Restyled here rather than in the vendored components, which `just ui` would
+ * overwrite. Unlayered rules beat the utilities those components carry.
+ */
+
+/* A menu grows out of the control that opened it, on the house curve, and
+ * leaves faster than it came. */
+[data-slot="dropdown-menu-content"],
+[data-slot="dropdown-menu-sub-content"] {
+  transform-origin: var(--bits-floating-transform-origin);
+  --tw-animation-duration: 200ms;
+  --tw-ease: var(--ease-clay);
+
+  &[data-state="closed"] {
+    --tw-animation-duration: 120ms;
+    --tw-ease: var(--ease-exit);
+  }
+}
+
+/* The backdrop fades in step with the sheet, which vaul slides over 500ms on
+ * the same curve, and both leave together. */
+[data-slot="drawer-overlay"] {
+  --tw-animation-duration: 500ms;
+  --tw-ease: var(--ease-clay);
+}
+
 /* Collapsing the animations here removes nothing but polish, because each is a
  * fade, a slide or a lift and none of them gates an interaction. */
 @media (prefers-reduced-motion: reduce) {

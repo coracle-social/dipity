@@ -35,13 +35,14 @@
   const toggle = (chosen: string[], id: string) =>
     chosen.includes(id) ? chosen.filter(kept => kept !== id) : [...chosen, id]
 
-  // A post matches by what it says, its title, or who wrote it, among the categories and topics chosen.
+  // A post matches by what it says, its title, or who wrote it, among the categories and topics chosen; a kind the filter does not offer always shows.
   const narrowed = (items: Item[], query: string, showing: string[], topics: string[]) => {
     const words = wordsOf(query)
 
     return items.filter(
       ({event}) =>
-        showing.includes(categoryOf(event.kind).id) &&
+        (!categories.includes(categoryOf(event.kind)) ||
+          showing.includes(categoryOf(event.kind).id)) &&
         (topics.length === 0 || topics.includes(topicOf(event) ?? "")) &&
         (!words.length ||
           matches(words, `${summaryOf(event)} ${event.content}`) ||

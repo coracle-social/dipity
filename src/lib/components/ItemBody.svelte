@@ -8,13 +8,16 @@
     LONG_FORM,
     PICTURE_NOTE,
     POLL,
+    REPORT,
     REPOST,
   } from "@welshman/util"
+  import {badgeVariants} from "$lib/components/ui/badge"
   import Photo from "$lib/components/Photo.svelte"
   import Poll from "$lib/components/Poll.svelte"
   import Prose from "$lib/components/Prose.svelte"
   import Quoted from "$lib/components/Quoted.svelte"
-  import {article, boostedBy, calendarFor, commentedOn, occasionOf} from "$lib/kinds"
+  import {reasonLabel} from "$lib/data/reports"
+  import {article, boostedBy, calendarFor, commentedOn, occasionOf, report} from "$lib/kinds"
   import type {Item, Standing} from "$lib/data/feed"
   import type {Social} from "$lib/data/contacts"
   import type {Session} from "$lib/data/session"
@@ -69,6 +72,20 @@
   {@const id = boostedBy(event)}
   {#if id}
     <Quoted {id} {social} absent="The original post isn't on this phone." />
+  {/if}
+{:else if event.kind === REPORT}
+  {@const flagged = report.reader(event).parse()}
+  {@const target = flagged.eventId()}
+  <span class={badgeVariants({variant: "secondary"})}>
+    {reasonLabel(flagged.reason() ?? "other")}
+  </span>
+  {#if event.content.trim()}
+    <Prose class="mt-2" {event} />
+  {/if}
+  {#if target}
+    <div class="mt-2">
+      <Quoted id={target} {social} absent="The flagged post isn't on this phone." />
+    </div>
   {/if}
 {:else if about}
   <!-- A comment's own words come first, because it reaches people who never got its subject. -->

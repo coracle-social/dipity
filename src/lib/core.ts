@@ -145,6 +145,8 @@ export type Policy = {
   discover_in_background: boolean
   /** The contacts whose flags count for nothing, as hex pubkeys. */
   ignored_flaggers: string[]
+  /** The people whose posts this device never passes on, as hex pubkeys. */
+  withheld: string[]
 }
 
 /** What the phone says about letting the app notify. */

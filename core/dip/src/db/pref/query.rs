@@ -101,6 +101,7 @@ pub fn policy(tx: &Tx<'_>, identity: &PublicKey) -> Result<Policy> {
     override_with(tx, keys::SHARING, &mut policy.sharing)?;
     override_with(tx, keys::RETENTION_DAYS, &mut policy.retention_days)?;
     override_with(tx, keys::IGNORED_FLAGGERS, &mut policy.ignored_flaggers)?;
+    override_with(tx, keys::WITHHELD, &mut policy.withheld)?;
 
     policy.graph = graph(tx, identity)?;
 

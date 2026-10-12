@@ -34,7 +34,7 @@
 
   const accepts: Record<string, string> = {
     contacts: "Your contacts",
-    network: "Your contacts, and their contacts",
+    network: "Your contacts and their contacts",
     named: "Anyone somebody has paired with",
   }
 

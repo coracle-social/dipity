@@ -53,6 +53,8 @@ pub struct Policy {
     pub retention_days: u32,
     /// The contacts whose flags the user ignores. `docs/policy.md#flags`.
     pub ignored_flaggers: BTreeSet<PublicKey>,
+    /// The people whose events this device never passes on. `docs/policy.md#relaying`.
+    pub withheld: BTreeSet<PublicKey>,
     /// The contact graph the scopes above are measured against.
     #[serde(skip)]
     pub graph: Graph,
@@ -70,6 +72,7 @@ impl Policy {
             accept: Scope::Named,
             retention_days: 90,
             ignored_flaggers: BTreeSet::new(),
+            withheld: BTreeSet::new(),
             graph: Graph::default(),
         }
     }
@@ -255,6 +258,7 @@ mod tests {
                 "quiet_times",
                 "retention_days",
                 "sharing",
+                "withheld",
             ]
             .into()
         );

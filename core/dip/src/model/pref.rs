@@ -49,6 +49,9 @@ pub mod keys {
     /// How long a carried event stays after it first reaches this device. Default 90 days.
     pub const RETENTION_DAYS: &str = "policy.retention_days";
 
+    /// The people whose events this device never passes on, though the user sees them. Default nobody.
+    pub const WITHHELD: &str = "policy.withheld";
+
     /// The contacts whose flags the user ignores. Default nobody.
     pub const IGNORED_FLAGGERS: &str = "policy.ignored_flaggers";
 }

@@ -158,6 +158,7 @@ The standard scale is redefined rather than supplemented with a `shadow-clay` ut
 - **One curve.** `ease-clay` — `cubic-bezier(0.32, 0.72, 0, 1)` — quick to leave, slow to settle, **no overshoot**. Bounce and spring make an interface ask to be looked at. `ease-exit` is the counterpart for dismissals, which are faster and less interesting than entrances.
 - **A bare `transition` is already correct.** `transition-colors` with no modifiers picks up the house feel, because `--default-transition-duration` is 180ms and the default timing function is `ease-clay`. Set an explicit duration only when 180ms is wrong.
 - **Transform and opacity only.** Animating layout properties forces reflow, and this app has a Rust core doing crypto and a radio scanning in the background. The frame budget is not ours alone.
+- **Overlays come from what opened them.** A menu grows out of its trigger over 200ms and leaves in 120ms on `ease-exit`. A drawer's backdrop fades over the 500ms vaul slides the sheet, on the same curve. Both are set in `app.css` against the vendored components' `data-slot`, so `just ui` cannot overwrite them.
 - **Movement carries meaning.** Sheets slide because they come from an edge. Tab panels cross-fade, because sliding would imply a spatial relationship between tabs that does not exist.
 - **Never gate an interaction on an animation.** The reduced-motion rule in `app.css` collapses every duration to 1ms, and is safe precisely because nothing waits on one.
 

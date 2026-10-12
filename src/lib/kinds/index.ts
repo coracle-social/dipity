@@ -11,6 +11,7 @@
 // to the core.
 
 import CalendarDays from "@lucide/svelte/icons/calendar-days"
+import Flag from "@lucide/svelte/icons/flag"
 import ImageIcon from "@lucide/svelte/icons/image"
 import ListChecks from "@lucide/svelte/icons/list-checks"
 import MessageCircle from "@lucide/svelte/icons/message-circle"
@@ -46,6 +47,7 @@ import {
   POLL,
   POLL_RESPONSE,
   REACTION,
+  REPORT,
   REPOST,
   Resolver,
   tagValue,
@@ -142,6 +144,10 @@ export const occasionOf = (event: HashedEvent): Occasion | undefined => {
   return Number.isNaN(day) ? undefined : {at: day / 1000, allDay: true}
 }
 
+/** What a flag names, or undefined for anything that is not one. */
+export const flaggedBy = (event: HashedEvent) =>
+  event.kind === REPORT ? report.reader(event).parse().eventId() : undefined
+
 /** What a comment answers, or undefined for anything that is not one. */
 export const commentedOn = (event: HashedEvent) =>
   event.kind === COMMENT ? comment.reader(event).parse().parent().id : undefined
@@ -198,9 +204,18 @@ export const categories: Category[] = [
   {id: "articles", label: "Articles", noun: "Article", icon: Newspaper, kinds: [LONG_FORM]},
 ]
 
+/** The user's flags, which the board never shows and the trash does, since retracting one is trashing it. */
+export const flags: Category = {
+  id: "flags",
+  label: "Flags",
+  noun: "Flag",
+  icon: Flag,
+  kinds: [REPORT],
+}
+
 /** Which category a kind belongs to, for a card that has to draw its own mark. */
 export const categoryOf = (kind: number) =>
-  categories.find(category => category.kinds.includes(kind)) ?? categories[0]
+  [...categories, flags].find(category => category.kinds.includes(kind)) ?? categories[0]
 
 /**
  * A topic as the user typed it, in the one spelling every phone files it under.

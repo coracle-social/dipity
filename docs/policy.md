@@ -107,7 +107,7 @@ Three of the user's events follow fixed rules whatever the setting. The block an
 
 ### Relaying
 
-What the device carries for other people is not a setting. It hands a contact every event it holds for somebody else that it may forward, which is an event it holds the author's signature for, unless the event is in the trash or its author is blocked. A stranger is handed none of it. An event that arrived second-hand, under a proof, is never handed on. A contact therefore passes the user's events to their own contacts and no further, which is what `network` says.
+It hands a contact every event it holds for somebody else that it may forward, which is an event it holds the author's signature for, unless the event is in the trash, a [flag](#flags) holds it back, or its author is blocked or withheld. A **withheld** author is the inverse of a muted one: the user sees their events, and the device never passes them on. The list is `policy.withheld`, a preference rather than a published event, because nobody else needs to read it. A stranger is handed none of it. An event that arrived second-hand, under a proof, is never handed on. A contact therefore passes the user's events to their own contacts and no further, which is what `network` says.
 
 ### How the screen maps to the core
 

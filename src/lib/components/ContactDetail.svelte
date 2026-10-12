@@ -15,6 +15,7 @@
     social,
   } from "$lib/data/contacts"
   import {back, go} from "$lib/data/nav"
+  import {policy, setWithheld} from "$lib/data/policy"
   import {ignoredFlaggers, setFlagsTrusted} from "$lib/data/reports"
 
   let {pubkey}: {pubkey: string} = $props()
@@ -65,15 +66,22 @@
     {
       id: "muted",
       label: "Muted",
-      detail: "Their posts are hidden from you, but your phone still passes them on.",
+      detail: "Their posts are hidden from you.",
       on: Boolean(contact?.muted),
       set: (on: boolean) => setMuted(pubkey, on),
+    },
+    {
+      id: "withheld",
+      label: "Not passed on",
+      detail: "You see their posts, but your device never passes them on to anyone.",
+      on: Boolean($policy?.withheld.includes(pubkey)),
+      set: (on: boolean) => setWithheld(pubkey, on),
     },
     {
       id: "blocked",
       label: "Blocked",
       detail:
-        "Their device won't be connected to, and their activity won't be stored or passed on.",
+        "Your device won't connect or pass anything on to them, and their activity won't be stored or passed on.",
       on: Boolean(contact?.blocked),
       set: (on: boolean) => setBlocked(pubkey, on),
     },

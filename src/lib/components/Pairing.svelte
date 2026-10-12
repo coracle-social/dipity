@@ -67,13 +67,13 @@
     <ShieldCheck class="mt-0.5 size-5 flex-none text-primary" />
     <div class="space-y-2">
       <p>
-        Someone nearby wants to pair. Pairing makes them one of your contacts, and your phones will
-        trade posts whenever they are in range of each other.
+        Someone nearby wants to pair. Pairing adds them to your contact list which allows your
+        phones to trade posts whenever they are in range of each other.
       </p>
       <p class="font-semibold">
         Hold the two phones side by side and check that both show the same five shapes, in the same
         order. If they match, the phones are talking to each other and not to somebody else nearby.
-        If they don't, do not pair.
+        If they don't match, do not pair.
       </p>
     </div>
   </div>

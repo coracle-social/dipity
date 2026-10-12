@@ -71,23 +71,24 @@ Four facts about the transport decide most of the interface, and every story bel
 42. The user renames somebody. — `ContactDetail`
 43. When the user removes somebody from their contacts, that person stops getting what the user shares with contacts and their phones meet as strangers next time. Mute and block stay as they were. — `ContactDetail`
 44. When the user mutes somebody, their content stops appearing without anything stopping at the wire. — `ContactDetail`
-45. When the user blocks somebody, the device refuses their sessions and drops what they send. — `ContactDetail`
-46. When the user stops trusting a contact's flags, what that contact flagged is drawn and passed on as if nobody had flagged it. — `ContactDetail`
+45. When the user keeps somebody's posts to themselves, they still see them, and the device never passes them on. — `ContactDetail`
+46. When the user blocks somebody, the device refuses their sessions and drops what they send. — `ContactDetail`
+47. When the user stops trusting a contact's flags, what that contact flagged is drawn and passed on as if nobody had flagged it. — `ContactDetail`
 
 ## Settings
 
-47. The user decides whose content the device stores. — `Settings`
-48. The user decides who sees what they publish, and who can carry it further. — `Settings`
-49. The user decides how long a thing carried for somebody else stays on the device. — `Settings`
-50. The user decides whether strangers learn who they are while the app is closed. — `Settings`
-51. The user writes the key down somewhere safe, locked with a password if they choose, whenever they get round to it. — `KeyBackup`, in `Settings`
-52. When the user puts their key on a second phone, both phones are them. — `DeviceLogin`
-53. On a new phone, the user takes the key off their other phone instead of making one. — `FirstRun`, `DeviceLogin`
-54. With the phone in their pocket, the user hears that somebody nearby wants to pair or that new things reached the board, once they switch that on in Settings or when the app offers it after their second post. — `NotificationOffer`, `Settings`
-55. The user decides whose pictures are blurred until tapped. — `Settings`, `Photo`
-56. The user mutes a topic by typing it, and unmutes one. — `Settings`
-57. A picture reaches the board once its image has, so that nothing is drawn as a hole. — `Board`
-58. The user logs out, which erases the key and everything on the phone. — `Settings`
+48. The user decides whose content the device stores. — `Settings`
+49. The user decides who sees what they publish, and who can carry it further. — `Settings`
+50. The user decides how long a thing carried for somebody else stays on the device. — `Settings`
+51. The user decides whether strangers learn who they are while the app is closed. — `Settings`
+52. The user writes the key down somewhere safe, locked with a password if they choose, whenever they get round to it. — `KeyBackup`, in `Settings`
+53. When the user puts their key on a second phone, both phones are them. — `DeviceLogin`
+54. On a new phone, the user takes the key off their other phone instead of making one. — `FirstRun`, `DeviceLogin`
+55. With the phone in their pocket, the user hears that somebody nearby wants to pair or that new things reached the board, once they switch that on in Settings or when the app offers it after their second post. — `NotificationOffer`, `Settings`
+56. The user decides whose pictures are blurred until tapped. — `Settings`, `Photo`
+57. The user mutes a topic by typing it, and unmutes one. — `Settings`
+58. A picture reaches the board once its image has, so that nothing is drawn as a hole. — `Board`
+59. The user logs out, which erases the key and everything on the phone. — `Settings`
 
 ## No screen yet
 
@@ -95,5 +96,4 @@ Each of these is a story the transport or the docs already support and the view 
 
 - **A notification while the app is closed.** Story 16 in the pocket. The core emits `WakeAt` and the shells own local notifications; nothing posts one.
 - **Quiet times.** `policy.quiet_times` is a list of windows and needs a time picker rather than a switch. Settings leaves it alone.
-- **Per-contact relaying.** "Do not pass this person's things on" is only sayable as a block, because [relaying](./policy.md#relaying) hands every contact everything this device may forward. `ContactDetail` offers mute and block.
 - **Media beyond pictures.** A picture is the one post that attaches a file. Video, audio and a file attached to a note have no composer.

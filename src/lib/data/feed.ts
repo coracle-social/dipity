@@ -33,6 +33,7 @@ import {
   categories,
   commentOn,
   commentedOn,
+  flaggedBy,
   note,
   picture,
   poll,
@@ -584,4 +585,4 @@ export const heldAtAddress = (kind: number, pubkey: string, identifier: string) 
  * comment, which is the page the conversation above it is drawn on.
  */
 export const opensId = (item: Item) =>
-  boostedBy(item.event) ?? commentedOn(item.event) ?? item.event.id
+  boostedBy(item.event) ?? flaggedBy(item.event) ?? commentedOn(item.event) ?? item.event.id

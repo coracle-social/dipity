@@ -40,19 +40,15 @@
   const actions = $derived([
     {
       id: "trash",
-      heading: "Move it to the trash",
-      help: "It leaves your board and is deleted from this phone in a week, unless you put it back.",
       idle: "Move to trash",
-      done: "Moving to trash",
+      done: "Moved to trash",
       on: trashing,
       toggle: () => (trashing = !trashing),
     },
     {
       id: "block",
-      heading: `Block ${author}`,
-      help: "Your phone won't connect to theirs, and deletes anything of theirs it receives.",
       idle: `Block ${author}`,
-      done: `Blocking ${author}`,
+      done: `Blocked ${author}`,
       on: blocking,
       toggle: () => (blocking = !blocking),
     },
@@ -109,7 +105,6 @@
       <ul class="space-y-5 px-4">
         {#each actions as action (action.id)}
           <li>
-            <h3 class="text-sm font-semibold">{action.heading}</h3>
             <Button
               class="mt-2 w-full {action.on ? 'border-secondary-accent text-secondary-accent' : ''}"
               variant="outline"
@@ -120,9 +115,6 @@
               {/if}
               {action.on ? action.done : action.idle}
             </Button>
-            <p class="mt-1.5 text-xs text-pretty text-muted-foreground">
-              {action.help}
-            </p>
           </li>
         {/each}
       </ul>

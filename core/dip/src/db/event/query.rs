@@ -559,10 +559,16 @@ fn push_policy(conditions: &mut Conditions, policy: &PeerPolicy, trash_included:
 
     push_held_back(conditions, &policy.policy);
 
-    let blocked = policy.policy.graph.blocked.iter();
+    // A blocked author's events are dropped on ingest, and a withheld one's kept here and never passed on.
+    let unserved = policy
+        .policy
+        .graph
+        .blocked
+        .iter()
+        .chain(&policy.policy.withheld);
     conditions.push_excluded(
         "e.pubkey",
-        blocked.map(|author| text(author.to_hex())).collect(),
+        unserved.map(|author| text(author.to_hex())).collect(),
     );
 
     push_visibility(
@@ -1017,6 +1023,23 @@ mod tests {
 
         assert_eq!(page.len(), 1);
         assert_eq!(page[0].created_at, 100);
+    }
+
+    #[test]
+    fn a_withheld_authors_events_are_kept_but_never_served() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let theirs = note(author(4), 100, "kept to myself", Tags::new());
+        let others = note(author(5), 100, "passed on", Tags::new());
+
+        command::save(&tx, &theirs, &[author(4)], 100).unwrap();
+        command::save(&tx, &others, &[author(5)], 100).unwrap();
+
+        let mut policy = flagging_policy();
+        policy.policy.withheld.insert(author(4));
+
+        assert_eq!(served_ids(&tx, policy), vec![id(&others)]);
+        assert_eq!(list(&tx, &everything()).unwrap().len(), 2);
     }
 
     #[test]
