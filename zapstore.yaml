@@ -5,6 +5,6 @@ tags:
   - bluetooth
   - offline
   - community
-repository: https://gitea.coracle.social/coracle/dip
+repository: https://gitea.coracle.social/coracle/dipity
 release_source: ./android/app/build/outputs/apk/release/app-release-signed.apk
 release_notes: ./CHANGELOG.md

@@ -10,7 +10,15 @@ export const gitea = ({repository, token}) => {
         ...(body && !multipart ? {"Content-Type": "application/json"} : {}),
       },
       body: multipart ? body : body && JSON.stringify(body),
+      // A followed redirect turns a POST into a GET, which reads where it meant to write
+      redirect: "manual",
     })
+
+    if (response.status >= 300 && response.status < 400) {
+      throw new Error(
+        `${method} ${path} redirected to ${response.headers.get("location")}; update repository in zapstore.yaml`,
+      )
+    }
 
     if (response.status === 404 && allow404) {
       return undefined
