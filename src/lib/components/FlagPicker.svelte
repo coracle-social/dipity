@@ -4,7 +4,7 @@
   import {Button} from "$lib/components/ui/button"
   import * as Drawer from "$lib/components/ui/drawer"
   import {Textarea} from "$lib/components/ui/textarea"
-  import {nameOf, setBlocked, social} from "$lib/data/contacts"
+  import {nameOf, setMuted, setWithheld, social} from "$lib/data/contacts"
   import type {Item} from "$lib/data/feed"
   import {dismissable} from "$lib/data/nav"
   import {FLAG_WORDS, flag, flaggings, mineOn, reasons, unflag, wordsIn} from "$lib/data/reports"
@@ -18,7 +18,7 @@
   let message = $state("")
   let flagged = $state(false)
   let trashing = $state(false)
-  let blocking = $state(false)
+  let refusing = $state(false)
 
   const already = $derived(
     new Set(
@@ -46,11 +46,11 @@
       toggle: () => (trashing = !trashing),
     },
     {
-      id: "block",
-      idle: `Block ${author}`,
-      done: `Blocked ${author}`,
-      on: blocking,
-      toggle: () => (blocking = !blocking),
+      id: "refuse",
+      idle: `Mute and stop passing on ${author}`,
+      done: `Muted and not passing on ${author}`,
+      on: refusing,
+      toggle: () => (refusing = !refusing),
     },
   ])
 
@@ -62,16 +62,19 @@
     message = ""
     flagged = false
     trashing = false
-    blocking = false
+    refusing = false
 
     const undismiss = dismissable(() => (open = false))
 
-    // Applied on close, because trashing or blocking removes the card this dialog belongs to.
+    // Applied on close, because trashing or muting removes the card this dialog belongs to.
     return () => {
       undismiss()
 
       if (trashing) trash(item)
-      if (blocking) setBlocked(item.event.pubkey, true)
+      if (refusing) {
+        setMuted(item.event.pubkey, true)
+        setWithheld(item.event.pubkey, true)
+      }
     }
   })
 

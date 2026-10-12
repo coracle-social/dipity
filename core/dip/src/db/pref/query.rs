@@ -4,7 +4,7 @@
 //! `docs/policy.md` defines, substitutes the document's defaults for the ones
 //! never written, and resolves the contact graph the tiers are measured
 //! against — which lives in events rather than in this table, since contact
-//! cards, block and mute are things the user publishes.
+//! cards, withhold and mute are things the user publishes.
 
 use std::collections::BTreeSet;
 
@@ -18,7 +18,7 @@ use serde::de::DeserializeOwned;
 use crate::db::Tx;
 use crate::db::event::query as event;
 use crate::model::{
-    BLOCK, CONTACT, Graph, MUTE, PeopleListReader, Policy, Pref, Query, Scope, keys,
+    CONTACT, Graph, MUTE, PeopleListReader, Policy, Pref, Query, Scope, WITHHOLD, keys,
 };
 use coracle_lib::filters::Filter;
 
@@ -101,7 +101,6 @@ pub fn policy(tx: &Tx<'_>, identity: &PublicKey) -> Result<Policy> {
     override_with(tx, keys::SHARING, &mut policy.sharing)?;
     override_with(tx, keys::RETENTION_DAYS, &mut policy.retention_days)?;
     override_with(tx, keys::IGNORED_FLAGGERS, &mut policy.ignored_flaggers)?;
-    override_with(tx, keys::WITHHELD, &mut policy.withheld)?;
 
     policy.graph = graph(tx, identity)?;
 
@@ -114,22 +113,24 @@ pub fn policy(tx: &Tx<'_>, identity: &PublicKey) -> Result<Policy> {
 /// the contacts' cards name, over whichever of those cards this device holds,
 /// and stops there: reading the cards of people in `network` would grow the
 /// tier until it meant nothing. `named` is everybody any card names whose
-/// author is not blocked. `docs/policy.md#social-graph`.
+/// author is not refused. `docs/policy.md#social-graph`.
 ///
-/// Block is a veto over every tier: a blocked person is named by nobody, and
-/// their cards name nobody. The user is in no tier of their own graph.
+/// Refusing is a veto over every tier: a person the user has both muted and
+/// withheld is named by nobody, and their cards name nobody. The user is in no
+/// tier of their own graph.
 ///
-/// One query for the cards, plus three for the lists. This runs when a session
-/// opens and when a preference changes, not per event.
+/// One query for the cards, one for every withhold list, and three for the
+/// user's own lists. This runs when a session opens and when a preference
+/// changes, not per event.
 fn graph(tx: &Tx<'_>, identity: &PublicKey) -> Result<Graph> {
-    let blocked = listed::<BLOCK>(tx, identity)?;
-    let namings = namings(tx)?;
+    let withheld = listed::<WITHHOLD>(tx, identity)?;
+    let muted = listed::<MUTE>(tx, identity)?;
+    let refused = |pubkey: &PublicKey| withheld.contains(pubkey) && muted.contains(pubkey);
+    let namings = namings(tx, identity)?;
     let named_by = |by: &dyn Fn(&PublicKey) -> bool| -> BTreeSet<PublicKey> {
         namings
             .iter()
-            .filter(|(author, subject)| {
-                by(author) && !blocked.contains(author) && !blocked.contains(subject)
-            })
+            .filter(|(author, subject)| by(author) && !refused(author) && !refused(subject))
             .map(|(_, subject)| *subject)
             .filter(|subject| subject != identity)
             .collect()
@@ -143,23 +144,26 @@ fn graph(tx: &Tx<'_>, identity: &PublicKey) -> Result<Graph> {
         contacts,
         network,
         named,
-        blocked,
-        muted: listed::<MUTE>(tx, identity)?,
         muted_topics: topics::<MUTE>(tx, identity)?,
+        withheld,
+        muted,
     })
 }
 
 /// Who names whom, as `(author, subject)`, by every card this device holds.
 ///
 /// A card emptied by removing a contact names nobody, and so does a card whose
-/// author has since blocked its subject: a block withdraws the vouching a card
-/// was, for everybody the author's block list reaches. `docs/policy.md#social-graph`.
-fn namings(tx: &Tx<'_>) -> Result<Vec<(PublicKey, PublicKey)>> {
+/// author withholds its subject: withholding withdraws the vouching a card was,
+/// for everybody the author's withhold list reaches. The user's own withhold
+/// list leaves the user's contacts as they are, because it is about what
+/// travels on from here rather than who the user paired with.
+/// `docs/policy.md#social-graph`.
+fn namings(tx: &Tx<'_>, identity: &PublicKey) -> Result<Vec<(PublicKey, PublicKey)>> {
     let cards = event::list(
         tx,
         &Query::new().with_filter(Filter::new().add_kinds([CONTACT])),
     )?;
-    let blocks = blocks(tx)?;
+    let withholdings = withholdings(tx)?;
 
     Ok(cards
         .iter()
@@ -169,25 +173,29 @@ fn namings(tx: &Tx<'_>) -> Result<Vec<(PublicKey, PublicKey)>> {
 
             Some((card.pubkey, PublicKey::from_hex(subject.value()).ok()?))
         })
-        .filter(|naming| !blocks.contains(naming))
+        .filter(|naming| naming.0 == *identity || !withholdings.contains(naming))
         .collect())
 }
 
-/// Who blocks whom, as `(author, blocked)`, by every block list this device holds.
-fn blocks(tx: &Tx<'_>) -> Result<BTreeSet<(PublicKey, PublicKey)>> {
+/// Who withholds whom, as `(author, withheld)`, by every withhold list this device holds.
+fn withholdings(tx: &Tx<'_>) -> Result<BTreeSet<(PublicKey, PublicKey)>> {
     let lists = event::list(
         tx,
-        &Query::new().with_filter(Filter::new().add_kinds([BLOCK])),
+        &Query::new().with_filter(Filter::new().add_kinds([WITHHOLD])),
     )?;
-    let mut blocks = BTreeSet::new();
+    let mut withholdings = BTreeSet::new();
 
     for list in &lists {
-        if let Ok(read) = PeopleListReader::<_, BLOCK>::read(list) {
-            blocks.extend(read.pubkeys().iter().map(|blocked| (list.pubkey, *blocked)));
+        if let Ok(read) = PeopleListReader::<_, WITHHOLD>::read(list) {
+            withholdings.extend(
+                read.pubkeys()
+                    .iter()
+                    .map(|withheld| (list.pubkey, *withheld)),
+            );
         }
     }
 
-    Ok(blocks)
+    Ok(withholdings)
 }
 
 /// The pubkeys the list `pubkey` published at `kind` names.
@@ -300,21 +308,25 @@ mod tests {
     }
 
     #[test]
-    fn the_graph_reads_the_users_cards_and_block_list() {
+    fn the_graph_reads_the_users_cards_and_lists() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
         let us = author(1);
 
         name(&tx, us, author(2), "Ben", 100);
         name(&tx, us, author(3), "Ana", 100);
-        publish_list(&tx, us, BLOCK, &[author(4)], 100);
+        publish_list(&tx, us, WITHHOLD, &[author(3), author(4), author(5)], 100);
+        publish_list(&tx, us, MUTE, &[author(5)], 100);
 
         let graph = policy(&tx, &us).unwrap().graph;
 
         assert_eq!(graph.contacts, [author(2), author(3)].into());
-        assert_eq!(graph.blocked, [author(4)].into());
+        assert_eq!(graph.withheld, [author(3), author(4), author(5)].into());
         assert_eq!(graph.standing(&author(2)), Standing::Contact);
-        assert_eq!(graph.standing(&author(4)), Standing::Blocked);
+        // Withholding a contact keeps them one, and withholding alone refuses nobody.
+        assert_eq!(graph.standing(&author(3)), Standing::Contact);
+        assert_eq!(graph.standing(&author(4)), Standing::Stranger);
+        assert_eq!(graph.standing(&author(5)), Standing::Refused);
         assert_eq!(graph.standing(&author(9)), Standing::Stranger);
     }
 
@@ -331,14 +343,15 @@ mod tests {
     }
 
     #[test]
-    fn a_blocked_person_is_in_no_tier_and_their_cards_add_nobody() {
+    fn a_refused_person_is_in_no_tier_and_their_cards_add_nobody() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
         let us = author(1);
 
         name(&tx, us, author(2), "Ben", 100);
         name(&tx, us, author(3), "Ana", 100);
-        publish_list(&tx, us, BLOCK, &[author(2), author(6)], 100);
+        publish_list(&tx, us, WITHHOLD, &[author(2), author(6)], 100);
+        publish_list(&tx, us, MUTE, &[author(2), author(6)], 100);
         name(&tx, author(2), author(5), "Sam", 100);
         name(&tx, author(3), author(6), "Kit", 100);
 
@@ -388,16 +401,16 @@ mod tests {
     }
 
     #[test]
-    fn a_card_whose_author_blocked_its_subject_vouches_for_nobody() {
+    fn a_card_whose_author_withholds_its_subject_vouches_for_nobody() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
         let us = author(1);
 
         name(&tx, us, author(2), "Ben", 100);
         name(&tx, author(2), author(3), "Ana", 100);
-        publish_list(&tx, author(2), BLOCK, &[author(3)], 110);
+        publish_list(&tx, author(2), WITHHOLD, &[author(3)], 110);
         name(&tx, author(9), author(7), "Lou", 100);
-        publish_list(&tx, author(9), BLOCK, &[author(7)], 110);
+        publish_list(&tx, author(9), WITHHOLD, &[author(7)], 110);
 
         let graph = policy(&tx, &us).unwrap().graph;
 
@@ -406,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn another_contacts_card_still_vouches_for_somebody_one_contact_blocked() {
+    fn another_contacts_card_still_vouches_for_somebody_one_contact_withholds() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
         let us = author(1);
@@ -415,7 +428,7 @@ mod tests {
         name(&tx, us, author(5), "Cy", 100);
         name(&tx, author(2), author(3), "Ana", 100);
         name(&tx, author(5), author(3), "Ana", 100);
-        publish_list(&tx, author(2), BLOCK, &[author(3)], 110);
+        publish_list(&tx, author(2), WITHHOLD, &[author(3)], 110);
 
         let graph = policy(&tx, &us).unwrap().graph;
 
@@ -423,12 +436,13 @@ mod tests {
     }
 
     #[test]
-    fn a_blocked_authors_card_and_an_emptied_card_name_nobody() {
+    fn a_refused_authors_card_and_an_emptied_card_name_nobody() {
         let mut db = Db::open_in_memory().unwrap();
         let tx = db.begin_write().unwrap();
         let us = author(1);
 
-        publish_list(&tx, us, BLOCK, &[author(9)], 100);
+        publish_list(&tx, us, WITHHOLD, &[author(9)], 100);
+        publish_list(&tx, us, MUTE, &[author(9)], 100);
         name(&tx, author(9), author(7), "Lou", 100);
         name(&tx, author(8), author(6), "", 100);
 
@@ -461,12 +475,12 @@ mod tests {
         let us = author(1);
 
         name(&tx, peer(), author(8), "Ben", 100);
-        publish_list(&tx, peer(), BLOCK, &[author(2)], 100);
+        publish_list(&tx, peer(), WITHHOLD, &[author(2)], 100);
 
         let graph = policy(&tx, &us).unwrap().graph;
 
         assert!(graph.contacts.is_empty());
-        assert!(graph.blocked.is_empty());
+        assert!(graph.withheld.is_empty());
     }
 
     #[test]

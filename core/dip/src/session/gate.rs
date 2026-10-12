@@ -2,7 +2,7 @@
 //!
 //! What the gate protects is the disclosure of a nostr pubkey, which names a
 //! long-term identity and, on a proximity transport, places it somewhere at a
-//! given time. A peer the recognition exchange resolved passes or is blocked
+//! given time. A peer the recognition exchange resolved passes or is refused
 //! on standing alone. A stranger is held in a quiet time; otherwise one is
 //! admitted outright while the app is in front, where the user is there to
 //! meet whoever is nearby, and from the disclosure bucket while it is not, if
@@ -26,8 +26,8 @@ use crate::model::{Policy, STRANGERS_PER_DAY, Standing};
 pub enum Verdict {
     /// Admitted, or already paired.
     Pass,
-    /// Blocked; drop the link before either side names itself.
-    Blocked,
+    /// Refused; drop the link before either side names itself.
+    Refused,
     /// An unadmitted stranger; hold for the user.
     Pending,
 }
@@ -81,10 +81,10 @@ impl Gate {
             }
         } else if resolved
             .iter()
-            .any(|pubkey| policy.graph.standing(pubkey) == Standing::Blocked)
+            .any(|pubkey| policy.graph.standing(pubkey) == Standing::Refused)
         {
-            // Blocked wins over every identity the tags resolved to: one device, one decision.
-            Verdict::Blocked
+            // Refused wins over every identity the tags resolved to: one device, one decision.
+            Verdict::Refused
         } else {
             // Paired peers pass silently.
             Verdict::Pass
@@ -144,35 +144,35 @@ mod tests {
     }
 
     #[test]
-    fn the_gate_blocks_a_resolved_blocked_peer() {
+    fn the_gate_refuses_a_resolved_refused_peer() {
         let db = Db::open_in_memory().unwrap();
         let mut policy = policy();
-        policy.graph.blocked.insert(author(2));
+        policy.graph.refuse(author(2));
         let mut gate = Gate::default();
 
         assert_eq!(
             gate.evaluate(&db, &policy, &[author(2)]).unwrap(),
-            Verdict::Blocked
+            Verdict::Refused
         );
         assert!(!gate.passed);
     }
 
     #[test]
-    fn one_blocked_identity_sinks_a_peer_that_proved_several() {
-        // Judging only the pubkey that sorted first let a blocked identity through.
+    fn one_refused_identity_sinks_a_peer_that_proved_several() {
+        // Judging only the pubkey that sorted first let a refused identity through.
         let db = Db::open_in_memory().unwrap();
         let mut policy = policy();
-        policy.graph.blocked.insert(author(3));
+        policy.graph.refuse(author(3));
         let mut gate = Gate::default();
 
-        // The blocked pubkey is not the one that sorts first.
+        // The refused pubkey is not the one that sorts first.
         let mut resolved = [author(2), author(3)];
         resolved.sort();
         assert_ne!(resolved[0], author(3), "the fixture stopped being a test");
 
         assert_eq!(
             gate.evaluate(&db, &policy, &resolved).unwrap(),
-            Verdict::Blocked
+            Verdict::Refused
         );
         assert!(!gate.passed);
     }

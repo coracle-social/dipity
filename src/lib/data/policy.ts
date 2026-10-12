@@ -5,7 +5,7 @@
 // into a policy and answers it with them filled in. The writes go back one key
 // at a time as JSON documents. `docs/policy.md`.
 
-import {get, type Readable} from "svelte/store"
+import type {Readable} from "svelte/store"
 import {Dip, type Policy, type Scope, type Sharing} from "$lib/core"
 import {answering, storedPreferences} from "$lib/data/query"
 
@@ -15,7 +15,6 @@ const keys = {
   retentionDays: "policy.retention_days",
   discoverInBackground: "policy.discover_in_background",
   ignoredFlaggers: "policy.ignored_flaggers",
-  withheld: "policy.withheld",
 } as const
 
 const read = (): Promise<Policy | undefined> =>
@@ -70,10 +69,3 @@ export const setDiscoverInBackground = (on: boolean) => write(keys.discoverInBac
 
 /** The contacts whose flags the core ignores, in full, since a list preference is written whole. */
 export const setIgnoredFlaggers = (pubkeys: string[]) => write(keys.ignoredFlaggers, pubkeys)
-
-/** Never pass somebody's posts on, or pass them on again, while still showing them to the user. */
-export const setWithheld = (pubkey: string, on: boolean) => {
-  const rest = (get(policy)?.withheld ?? []).filter(held => held !== pubkey)
-
-  return write(keys.withheld, on ? [...rest, pubkey] : rest)
-}

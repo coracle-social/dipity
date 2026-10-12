@@ -37,7 +37,7 @@ The sender attaches recipient signatures or authorship proofs to an event, never
 
 ### How policy reaches the wire
 
-Policy never becomes a NIP-01 filter. A scope like "anyone except the people I blocked" has no expression in a filter, which is positive-only. A filter is also something a peer reads, and compiling the contact graph into one would hand it over. Scope is applied where the events are read instead.
+Policy never becomes a NIP-01 filter. A scope like "anyone except the people I refused" has no expression in a filter, which is positive-only. A filter is also something a peer reads, and compiling the contact graph into one would hand it over. Scope is applied where the events are read instead.
 
 | Setting | Applied | Where |
 | --- | --- | --- |
@@ -51,7 +51,7 @@ Reconciliation is bounded from both ends by the same rule, with one asymmetry. A
 
 ### Resyncing
 
-A change to block, a contact card, or the Accept and Sharing settings applies to what is already stored and to every live session. What the new Accept scope no longer admits is evicted, unless the user bookmarked it, and is remembered as refused so reconciliation does not offer it again. The old settings' refusals are forgotten, and what the new ones admit is fetched.
+A change to the withhold or mute list, a contact card, or the Accept and Sharing settings applies to what is already stored and to every live session. What the new Accept scope no longer admits is evicted, unless the user bookmarked it, and is remembered as refused so reconciliation does not offer it again. The old settings' refusals are forgotten, and what the new ones admit is fetched.
 
 Each live session then reconciles again. A device that receives a `NEG-OPEN` beyond the number it has opened itself answers with one of its own. A change on either side therefore makes both sides pull, and the counts stop the exchange at one round each.
 

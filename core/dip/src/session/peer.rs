@@ -36,7 +36,7 @@ impl Peer {
     /// Bind `policy` to the device that proved `pubkeys`.
     ///
     /// Deduplicated on the way in, so that a peer cannot weigh the set by proving
-    /// one pubkey twice. A peer that proved nothing binds as blocked: it is not
+    /// one pubkey twice. A peer that proved nothing binds as refused: it is not
     /// a peer, and every path below reads that as "pass nothing".
     #[must_use]
     pub fn bind(
@@ -49,7 +49,7 @@ impl Peer {
             .iter()
             .map(|pubkey| policy.graph.standing(pubkey))
             .reduce(Standing::combine)
-            .unwrap_or(Standing::Blocked);
+            .unwrap_or(Standing::Refused);
 
         Self {
             link,
@@ -71,7 +71,7 @@ mod tests {
 
         policy.graph.contacts.insert(author(2));
         policy.graph.network.insert(author(3));
-        policy.graph.blocked.insert(author(9));
+        policy.graph.refuse(author(9));
 
         policy
     }
@@ -100,11 +100,11 @@ mod tests {
     }
 
     #[test]
-    fn one_blocked_identity_blocks_the_device() {
+    fn one_refused_identity_refuses_the_device() {
         // The other direction: blocking is about a person, whatever else the device signs with.
         let peer = Peer::bind(LinkId(1), [author(2), author(9)], &policy());
 
-        assert!(peer.policy.is_blocked());
+        assert!(peer.policy.is_refused());
         assert_ne!(peer.policy.standing, Standing::Contact);
         assert!(!peer.policy.signs());
     }
@@ -120,7 +120,7 @@ mod tests {
     fn a_peer_that_proved_nothing_passes_nothing() {
         let peer = Peer::bind(LinkId(1), [], &policy());
 
-        assert!(peer.policy.is_blocked());
+        assert!(peer.policy.is_refused());
         assert!(!peer.policy.signs());
     }
 

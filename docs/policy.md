@@ -24,33 +24,35 @@ When the bucket is empty, a stranger is held for the user to approve. **Quiet ti
 
 There are certain classifications that users may wish to use to tag other users:
 
-- Block - the user has blocked this person (kind 16018)
-- Mute - the user has muted this person (kind 10000)
+- Mute - the user does not see this person's events (kind 10000)
+- Withhold - the user's device never passes this person's events on, and the user's card for them vouches for them to nobody (kind 16018)
 
-Each is a replaceable event whose `p` tags name people. The current list is one lookup at `<kind>:<pubkey>:`, and an edit supersedes what came before. The block kind is ours rather than NIP-51's.
+Each is a replaceable event whose `p` tags name people. The current list is one lookup at `<kind>:<pubkey>:`, and an edit supersedes what came before. The withhold kind is ours rather than NIP-51's.
+
+Mute decides what the user sees. Withholding decides what the people the user gatekeeps for see, over both kinds of hop: the events this device carries, and the vouching the user's contact cards are. There is no block. Somebody both muted and withheld is **refused**, which is what blocking would be: their events are dropped on ingest and never served, and their sessions are refused, so the user's own events do not reach them first-hand either.
 
 The mute list names **topics** as well as people, as NIP-51's `t` tags. A post carries at most one topic, and muting one keeps its posts off the board and out of the new-activity notification, and does nothing else. The device still stores them and still hands them on. A muted topic is as visible to contacts as a muted person, because [Sharing](#sharing) hands them the mute list.
 
-**Neither is encrypted.** NIP-51 keeps private entries as ciphertext in `content`, which would put them beyond the peers who need them, since contacts read these lists by design. [Sharing](#sharing) fixes which peers this device hands them to.
+**Neither list is encrypted.** NIP-51 keeps private entries as ciphertext in `content`, which would put them beyond the peers who need them, since contacts read these lists by design. [Sharing](#sharing) fixes which peers this device hands them to.
 
 A third kind says what the user calls somebody: a contact card, kind 36017, addressed to the person it names at `36017:<author>:<subject>`. A card is the only way anybody has a name, because nobody publishes a profile here. The name is the card's content.
 
 There is one card per contact rather than one list naming everybody the user has met, so that a name travels with that contact's own events.
 
-A **contact** is somebody the user paired with and named: the subject of one of the user's own contact cards whose name is not empty, unless they are blocked. Pairing, which compares shapes in person and names the other person, is the explicit act that makes somebody a contact. Removing somebody from contacts ends it by emptying the user's card for them and dropping the pairing. What they wrote stays for as long as the Accept scope admits it.
+A **contact** is somebody the user paired with and named: the subject of one of the user's own contact cards whose name is not empty, unless they are refused. Withholding a contact keeps them one, because it is about what travels on from here rather than who the user paired with. Pairing, which compares shapes in person and names the other person, is the explicit act that makes somebody a contact. Removing somebody from contacts ends it by emptying the user's card for them and dropping the pairing. What they wrote stays for as long as the Accept scope admits it.
 
 Every setting below is expressed on the same tiers, applied either to the peer on the other end of a session or to the author of an event:
 
 - **Nothing** - nobody.
 - **Contacts** - people the user paired with and named.
 - **Network** - contacts, and the people the user's contacts have named.
-- **Named** - anyone a contact card on the device names, except blocked pubkeys.
-- **Lenient** - anyone who connects, except blocked pubkeys. Sharing and visibility only.
+- **Named** - anyone a contact card on the device names, except refused pubkeys.
+- **Lenient** - anyone who connects, except refused pubkeys. Sharing and visibility only.
 - **Public** - anyone.
 
 Only the fixed visibility rules use Nothing and Public.
 
-Network adds the subjects of every non-empty contact card authored by a contact, except blocked pubkeys, and stops there, two hops from the user. A card names nobody once its author has blocked its subject. Block lists travel to contacts, so a contact's block withdraws their vouching on this device without blocking anybody here, and another contact's card for the same person still counts. It is derived rather than stored, from whichever of those cards the device holds. A contact whose cards have not arrived yet contributes nobody.
+Network adds the subjects of every non-empty contact card authored by a contact, except refused pubkeys, and stops there, two hops from the user. A card names nobody once its author withholds its subject. Withhold lists travel to contacts, so a contact withholding somebody withdraws their vouching on this device without withholding anything here, and another contact's card for the same person still counts. It is derived rather than stored, from whichever of those cards the device holds. A contact whose cards have not arrived yet contributes nobody.
 
 ## Flags
 
@@ -60,7 +62,7 @@ Only the user's own flags and their contacts' flags count, because counting a st
 
 A post with counted flags is drawn as a warning that lists each reason once with how many people gave it. The user can show the post anyway, or open the details to see who flagged it, for what, and what they said. From the details the user can trash any flag, and trust or ignore any contact's flags. Nothing hides a flagged post from the user, because the device still carries it.
 
-A flag can **hold a post back**. The device keeps and shows a held-back post, but serves it to no peer through reconciliation, a `REQ`, the live forward or a blob request. That puts a flag between block, which acts on the wire, and mute, which acts only on what the user sees.
+A flag can **hold a post back**. The device keeps and shows a held-back post, but serves it to no peer through reconciliation, a `REQ`, the live forward or a blob request. That makes a flag withholding for one post rather than for a person.
 
 - **The user's own flag** holds back any post. Holding a post back takes the user's own decision, as passing it on with a boost does.
 - **A trusted contact's flag** holds back a picture, because gore, nudity and illegal material are nearly always pictures.
@@ -68,7 +70,7 @@ A flag can **hold a post back**. The device keeps and shows a held-back post, bu
 - **A bookmark or a boost by the user** passes a held-back post on again, and so does trashing every flag that holds it back.
 - **The user's own posts** are never held back.
 
-A flag deletes nothing. The trash removes a post from the phone, and a block stops its author. The flag dialog offers both after the flag is sent. A post served before a flag arrived is not recalled.
+A flag deletes nothing. The trash removes a post from the phone, and muting and withholding its author refuses them. The flag dialog offers both after the flag is sent. A post served before a flag arrived is not recalled.
 
 ## A device, not a pubkey
 
@@ -76,7 +78,7 @@ A peer may prove several pubkeys over one session, since [NIP-42](./nips/p2p-aut
 
 The set reduces to one standing, and the two directions reduce differently:
 
-- **Block is a veto.** Any blocked pubkey blocks the device. Blocking is a decision about a person, and a device holding that key is theirs whatever else it also signs with.
+- **Refusal is a veto.** Any refused pubkey refuses the device. Refusing is a decision about a person, and a device holding that key is theirs whatever else it also signs with.
 - **Access takes the best.** Any contact's pubkey makes the device a contact. Proving an extra key is a claim to more, never less, and the peer could have made the better claim on its own.
 
 A session syncs one superset once rather than once per key, because everything downstream reads that one standing. What does *not* reduce is the cryptography: recipient signatures and [authorship proofs](./proofs.md#authorship-proofs) are minted once per identity the peer proved, because a signature names one recipient and a proof designates one verifier.
@@ -87,7 +89,7 @@ The same holds in the other direction, for a device carrying several of the user
 
 What the device stores from a peer, measured against each event's author: `policy.accept`, `named` by default. It takes Contacts, Network or Named, and the user's own events are always accepted. A stored `trusted` reads as `contacts`, and a stored `lenient` as `named`.
 
-Named admits anybody a contact card on the device names, whoever wrote the card, unless its author is blocked. A stranger's events are stored only once somebody who paired with them has said so, which is what a card records. The card can come from two hops out and admit events that arrive by another path. A card is therefore stored from any author not blocked, whatever the Accept scope, and the relay half sends the cards naming a page's authors ahead of the page. An event that still arrives before its card is refused, and the card's arrival forgets that refusal and reconciles again.
+Named admits anybody a contact card on the device names, whoever wrote the card, unless its author is refused or withholds its subject. A stranger's events are stored only once somebody who paired with them has said so, which is what a card records. The card can come from two hops out and admit events that arrive by another path. A card is therefore stored from any author not refused, whatever the Accept scope, and the relay half sends the cards naming a page's authors ahead of the page. An event that still arrives before its card is refused, and the card's arrival forgets that refusal and reconciles again.
 
 A change to the graph evicts whatever the Accept scope no longer admits, unless the user bookmarked it, and the retention sweep does the same for anything left over. Eviction keeps contact cards.
 
@@ -99,15 +101,15 @@ Who is handed the user's own activity, and who may carry it a hop further: `poli
 | --- | --- | --- | --- |
 | `contacts` | contacts | nobody | contacts |
 | `network` | contacts | contacts | contacts, and their contacts |
-| `anyone` (default) | anyone not blocked | contacts | anyone the user meets, and their contacts' contacts |
+| `anyone` (default) | anyone not refused | contacts | anyone the user meets, and their contacts' contacts |
 
 A peer carries an event its second hop by presenting an [authorship proof](./proofs.md#authorship-proofs), which it can only build from the author's signature over the event id and its own pubkey. Handing that signature over [ends the author's deniability](./proofs.md#the-authors-signature-stays-with-the-peer-it-names) for that event permanently and for everyone, because anyone can verify it. A signature therefore only ever goes to a [contact](#social-graph), and `anyone` widens who sees an event first-hand rather than who can attribute it. A signature handed to a stranger would mint permanent attribution for whoever happens to dial, which on a proximity transport includes a beacon left on a windowsill.
 
-Three of the user's events follow fixed rules whatever the setting. The block and mute lists go only to contacts. The bookmark list goes to nobody, including the user's own second phone, because it cannot be encrypted on a path with no signer. Contact cards follow the setting.
+Three of the user's events follow fixed rules whatever the setting. The withhold and mute lists go only to contacts. The bookmark list goes to nobody, including the user's own second phone, because it cannot be encrypted on a path with no signer. Contact cards follow the setting.
 
 ### Relaying
 
-It hands a contact every event it holds for somebody else that it may forward, which is an event it holds the author's signature for, unless the event is in the trash, a [flag](#flags) holds it back, or its author is blocked or withheld. A **withheld** author is the inverse of a muted one: the user sees their events, and the device never passes them on. The list is `policy.withheld`, a preference rather than a published event, because nobody else needs to read it. A stranger is handed none of it. An event that arrived second-hand, under a proof, is never handed on. A contact therefore passes the user's events to their own contacts and no further, which is what `network` says.
+It hands a contact every event it holds for somebody else that it may forward, which is an event it holds the author's signature for, unless the event is in the trash, a [flag](#flags) holds it back, or its author is [withheld](#social-graph). A withheld author is the inverse of a muted one: the user sees their events, and the device never passes them on. A stranger is handed none of it. An event that arrived second-hand, under a proof, is never handed on. A contact therefore passes the user's events to their own contacts and no further, which is what `network` says.
 
 ### How the screen maps to the core
 

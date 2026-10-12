@@ -17,7 +17,6 @@ const defaults: Policy = {
   quiet_times: [],
   discover_in_background: true,
   ignored_flaggers: [],
-  withheld: [],
 }
 
 /** One preference's document, or the default where it has never been written. */
@@ -45,5 +44,4 @@ export const compiled = (store: Store): Policy => ({
     defaults.discover_in_background,
   ),
   ignored_flaggers: at<string[]>(store, "policy.ignored_flaggers", defaults.ignored_flaggers),
-  withheld: at<string[]>(store, "policy.withheld", defaults.withheld),
 })

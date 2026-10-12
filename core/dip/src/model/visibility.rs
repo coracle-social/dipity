@@ -4,7 +4,7 @@ use coracle_lib::events::{HasCreatedAt, HasId, HasKind, HasPubkey, HasTags};
 use coracle_lib::filters::Filter;
 use serde::{Deserialize, Serialize};
 
-use crate::model::{BLOCK, BOOKMARKS, MUTE, Scope, Sharing};
+use crate::model::{BOOKMARKS, MUTE, Scope, Sharing, WITHHOLD};
 
 /// One rule: which of the user's own events it governs, and who may see them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,10 +29,11 @@ pub struct Visibility {
 }
 
 impl Visibility {
-    /// The block and mute lists to contacts, the bookmark list to nobody, and
+    /// The withhold and mute lists to contacts, the bookmark list to nobody, and
     /// everything else to whoever `sharing` reaches.
     ///
-    /// The block and mute lists say who the user wants nothing to do with. They
+    /// The withhold list is what withdraws the user's vouching on a contact's
+    /// device, and the mute list says who the user would rather not see. They
     /// are not encrypted, because contacts are meant to read them. That rule
     /// is the whole of what keeps them from a stranger.
     ///
@@ -43,7 +44,7 @@ impl Visibility {
         Self {
             rules: vec![
                 VisibilityRule {
-                    filter: Filter::new().add_kinds([MUTE, BLOCK]),
+                    filter: Filter::new().add_kinds([MUTE, WITHHOLD]),
                     scope: Scope::Contacts,
                 },
                 VisibilityRule {
@@ -145,7 +146,7 @@ mod tests {
         let visibility = Visibility::default();
 
         let mutes = event(author(1), MUTE, 1, "", Tags::new());
-        let block = event(author(1), BLOCK, 1, "", Tags::new());
+        let withholds = event(author(1), WITHHOLD, 1, "", Tags::new());
         let bookmarks = event(author(1), BOOKMARKS, 1, "", Tags::new());
         let card = event(
             author(1),
@@ -158,7 +159,7 @@ mod tests {
         let note = event(author(1), 1, 1, "", Tags::new());
 
         assert_eq!(visibility.scope_for(&mutes), Scope::Contacts);
-        assert_eq!(visibility.scope_for(&block), Scope::Contacts);
+        assert_eq!(visibility.scope_for(&withholds), Scope::Contacts);
         assert_eq!(visibility.scope_for(&bookmarks), Scope::Nothing);
         assert_eq!(visibility.scope_for(&card), Scope::Lenient);
         assert_eq!(visibility.scope_for(&profile), Scope::Lenient);

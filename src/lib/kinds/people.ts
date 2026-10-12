@@ -1,6 +1,6 @@
-// The list of ours that says the user wants nothing to do with somebody.
+// The list of ours that says whose posts the user never passes on.
 //
-// Block is a kind of ours, spelled the way NIP-51's mute list is: a set of
+// Withhold is a kind of ours, spelled the way NIP-51's mute list is: a set of
 // plain `p` tags, which is what the core reads to narrow the contact graph. So
 // both go through `@welshman/domain`'s mute list classes at their own kind
 // numbers. Neither ever carries a private entry — a NIP-51 private entry is
@@ -9,11 +9,11 @@
 
 import {KindFactory, MuteListQuery, MuteListReader, MuteListWriter} from "@welshman/domain"
 
-/** Block, which refuses the peer's sessions and drops what they send. */
-export const BLOCK = 16_018
+/** Withhold, whose people the device never passes on and the user's cards vouch for to nobody. */
+export const WITHHOLD = 16_018
 
-export const Block = new KindFactory({
-  kind: BLOCK,
+export const Withhold = new KindFactory({
+  kind: WITHHOLD,
   reader: MuteListReader,
   writer: MuteListWriter,
   query: MuteListQuery,

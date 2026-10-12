@@ -18,7 +18,7 @@ pub enum Sharing {
     /// Contacts are handed the user's events with a signature, which lets each
     /// carry them on to their own contacts.
     Network,
-    /// Anyone not blocked is handed the user's events, and contacts get a
+    /// Anyone not refused is handed the user's events, and contacts get a
     /// signature as under [`Network`](Self::Network).
     #[default]
     Anyone,

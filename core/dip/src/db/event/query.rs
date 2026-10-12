@@ -542,7 +542,7 @@ fn push_registers(conditions: &mut Conditions, registers: &Registers) {
 
 /// Compile the policy governing the peer being answered.
 fn push_policy(conditions: &mut Conditions, policy: &PeerPolicy, trash_included: bool) {
-    if policy.is_blocked() {
+    if policy.is_refused() {
         conditions.push_never();
         return;
     }
@@ -559,16 +559,16 @@ fn push_policy(conditions: &mut Conditions, policy: &PeerPolicy, trash_included:
 
     push_held_back(conditions, &policy.policy);
 
-    // A blocked author's events are dropped on ingest, and a withheld one's kept here and never passed on.
-    let unserved = policy
-        .policy
-        .graph
-        .blocked
-        .iter()
-        .chain(&policy.policy.withheld);
+    // A withheld author's events are kept here for the user and never passed on.
     conditions.push_excluded(
         "e.pubkey",
-        unserved.map(|author| text(author.to_hex())).collect(),
+        policy
+            .policy
+            .graph
+            .withheld
+            .iter()
+            .map(|author| text(author.to_hex()))
+            .collect(),
     );
 
     push_visibility(
@@ -1036,7 +1036,7 @@ mod tests {
         command::save(&tx, &others, &[author(5)], 100).unwrap();
 
         let mut policy = flagging_policy();
-        policy.policy.withheld.insert(author(4));
+        policy.policy.graph.withheld.insert(author(4));
 
         assert_eq!(served_ids(&tx, policy), vec![id(&others)]);
         assert_eq!(list(&tx, &everything()).unwrap().len(), 2);
@@ -1241,16 +1241,16 @@ mod tests {
         let mut policy = Policy::new(us);
 
         policy.graph.contacts.insert(author(2));
-        policy.graph.blocked.insert(author(4));
+        policy.graph.refuse(author(4));
 
         let profile = event(us, profile::KIND, 100, "", Tags::new());
         let mutes = event(us, MUTE, 200, "", Tags::new());
         let ours = note(us, 300, "ours", Tags::new());
         let known = note(author(2), 400, "a contact's", Tags::new());
         let stranger = note(author(9), 500, "stranger", Tags::new());
-        let blocked = note(author(4), 600, "blocked", Tags::new());
+        let refused = note(author(4), 600, "refused", Tags::new());
 
-        for held in [&profile, &mutes, &ours, &known, &stranger, &blocked] {
+        for held in [&profile, &mutes, &ours, &known, &stranger, &refused] {
             command::save(&tx, held, &[peer()], held.created_at).unwrap();
         }
 
@@ -1268,7 +1268,7 @@ mod tests {
             [id(&profile), id(&ours)].into()
         );
 
-        // A contact is served what this device carries, except a blocked author's.
+        // A contact is served what this device carries, except a refused or withheld author's.
         assert_eq!(
             served(policy.clone(), author(2)),
             [
@@ -1281,7 +1281,7 @@ mod tests {
             .into()
         );
 
-        // A blocked peer is served nothing at all.
+        // A refused peer is served nothing at all.
         assert!(served(policy.clone(), author(4)).is_empty());
 
         // Sharing with contacts only leaves a stranger nothing.

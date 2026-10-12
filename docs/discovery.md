@@ -108,7 +108,7 @@ Domain-separated so that the secret cannot collide with any other use of the han
 
 What the gate protects is the disclosure of a nostr pubkey, which names a long-term identity. On a proximity transport it also places that identity somewhere at a given time.
 
-Before either party identifies itself, a recognition tag may resolve allowing the peer to be mapped to a pubkey. This allows policy to be used to decide whether to connect. Blocked peers retain their tags so we can keep dropping their connections.
+Before either party identifies itself, a recognition tag may resolve allowing the peer to be mapped to a pubkey. This allows policy to be used to decide whether to connect. Refused peers retain their tags so we can keep dropping their connections.
 
 If a peer isn't recognized, the app may refuse to connect depending on the user's [discoverability policy settings](./policy.md#discoverability). If this happens, the user should be notified so they can manually approve the connection. If the user doesn't respond, hang on to the connection for up to 5 minutes.
 

@@ -16,7 +16,7 @@
 //! let peer = SecretKey::generate().public_key();
 //! let policy = Policy::new(identity).for_pubkey(peer);
 //!
-//! assert!(!policy.is_blocked());
+//! assert!(!policy.is_refused());
 //! ```
 
 use std::collections::BTreeSet;
@@ -53,8 +53,6 @@ pub struct Policy {
     pub retention_days: u32,
     /// The contacts whose flags the user ignores. `docs/policy.md#flags`.
     pub ignored_flaggers: BTreeSet<PublicKey>,
-    /// The people whose events this device never passes on. `docs/policy.md#relaying`.
-    pub withheld: BTreeSet<PublicKey>,
     /// The contact graph the scopes above are measured against.
     #[serde(skip)]
     pub graph: Graph,
@@ -72,7 +70,6 @@ impl Policy {
             accept: Scope::Named,
             retention_days: 90,
             ignored_flaggers: BTreeSet::new(),
-            withheld: BTreeSet::new(),
             graph: Graph::default(),
         }
     }
@@ -143,11 +140,11 @@ pub struct PeerPolicy {
 }
 
 impl PeerPolicy {
-    /// Whether the pubkey is blocked, in which case nothing passes in either
+    /// Whether the pubkey is refused, in which case nothing passes in either
     /// direction and the session should not have been accepted at all.
     #[must_use]
-    pub fn is_blocked(&self) -> bool {
-        self.standing == Standing::Blocked
+    pub fn is_refused(&self) -> bool {
+        self.standing == Standing::Refused
     }
 
     /// Whether this pubkey is somebody the user paired with, which is who may
@@ -164,7 +161,7 @@ impl PeerPolicy {
     where
         E: HasId + HasKind + HasPubkey + HasTags + HasCreatedAt,
     {
-        !self.is_blocked()
+        !self.is_refused()
             && self
                 .policy
                 .visibility()
@@ -174,18 +171,18 @@ impl PeerPolicy {
 
     /// Whether an event this peer offered is one to store.
     ///
-    /// A contact card is stored from any author not blocked, whatever the
+    /// A contact card is stored from any author not refused, whatever the
     /// Accept scope, because a card is what makes its subject named.
     #[must_use]
     pub fn should_accept<E: HasPubkey + HasKind>(&self, event: &E) -> bool {
-        if self.is_blocked() {
+        if self.is_refused() {
             return false;
         }
 
         let standing = self.policy.graph.standing(event.pubkey());
 
         event.pubkey() == &self.policy.identity
-            || (event.kind() == CONTACT && standing != Standing::Blocked)
+            || (event.kind() == CONTACT && standing != Standing::Refused)
             || self.policy.accept.admits(standing)
     }
 
@@ -201,14 +198,14 @@ impl PeerPolicy {
             return self.is_visible(event);
         }
 
-        !self.is_blocked() && self.is_contact()
+        !self.is_refused() && self.is_contact()
     }
 
     /// Whether this peer may be handed the author's signature over an own
     /// event, which is the capability to carry it one more hop.
     #[must_use]
     pub fn signs(&self) -> bool {
-        !self.is_blocked() && self.policy.sharing.signs() && self.is_contact()
+        !self.is_refused() && self.policy.sharing.signs() && self.is_contact()
     }
 }
 
@@ -258,7 +255,6 @@ mod tests {
                 "quiet_times",
                 "retention_days",
                 "sharing",
-                "withheld",
             ]
             .into()
         );
@@ -386,15 +382,15 @@ mod tests {
     }
 
     #[test]
-    fn a_blocked_peer_is_served_nothing_and_offers_nothing() {
-        let blocked = policy().for_pubkey(author(4));
+    fn a_refused_peer_is_served_nothing_and_offers_nothing() {
+        let refused = policy().for_pubkey(author(4));
 
-        assert!(blocked.is_blocked());
-        assert!(!blocked.may_share(&event(us(), 1, 1, "", Tags::new())));
-        assert!(!blocked.signs());
-        assert!(!blocked.should_accept(&event(author(2), 1, 1, "", Tags::new())));
+        assert!(refused.is_refused());
+        assert!(!refused.may_share(&event(us(), 1, 1, "", Tags::new())));
+        assert!(!refused.signs());
+        assert!(!refused.should_accept(&event(author(2), 1, 1, "", Tags::new())));
 
-        // Blocked outranks every rule, including one this peer would otherwise fall inside.
-        assert!(!blocked.is_visible(&event(us(), profile::KIND, 1, "", Tags::new())));
+        // Refused outranks every rule, including one this peer would otherwise fall inside.
+        assert!(!refused.is_visible(&event(us(), profile::KIND, 1, "", Tags::new())));
     }
 }

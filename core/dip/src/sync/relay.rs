@@ -457,12 +457,12 @@ mod tests {
     }
 
     #[test]
-    fn a_blocked_peer_is_not_stored_even_when_it_authored() {
+    fn a_refused_peer_is_not_stored_even_when_it_authored() {
         let db = Db::open_in_memory().unwrap();
         let mut policy = Policy::new(us());
-        policy.graph.blocked.insert(author(2));
+        policy.graph.refuse(author(2));
         let peer = Peer::bind(LinkId(1), [author(2)], &policy);
-        let event = note(author(2), 100, "blocked", Tags::new());
+        let event = note(author(2), 100, "refused", Tags::new());
 
         let replies = Relay::default()
             .handle(

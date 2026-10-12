@@ -231,7 +231,7 @@ fn the_store_serves_its_use_cases() {
     assert_eq!(policy.sharing, Sharing::Anyone);
     assert!(policy.discover_in_background);
     assert!(policy.quiet_times.is_empty());
-    assert!(!policy.for_pubkey(peer()).is_blocked());
+    assert!(!policy.for_pubkey(peer()).is_refused());
 
     command::set_preference(&db, keys::SHARING, r#""contacts""#, 500).unwrap();
     assert_eq!(

@@ -5,7 +5,7 @@
 //! [`delete`](coracle_kinds::delete) for kind 5, [`profile`](coracle_kinds::profile)
 //! for kind 0 — so this module holds only what is ours.
 //!
-//! Block and mute are the same shape: `p` tags naming pubkeys,
+//! Withhold and mute are the same shape: `p` tags naming pubkeys,
 //! distinguished only by the kind that gives them meaning. That is
 //! `coracle-kinds`'s `relay_collection` arrangement — one reader and one
 //! writer parameterized by kind, with an alias and a named constant per kind —
@@ -24,11 +24,13 @@ use coracle_lib::readers::{Reader, ReaderError};
 use coracle_lib::tags::{HasTagsMut, Tags};
 use coracle_lib::writers::{ValidationError, Writer};
 
-/// The people the user has blocked. The wire control, and separate from
-/// [`MUTE`], which only filters what the user is shown.
-pub const BLOCK: u16 = 16_018;
+/// The people whose events the user never passes on, and whom the user's cards
+/// vouch for to nobody. Separate from [`MUTE`], which only filters what the user
+/// is shown, and somebody on both is refused. `docs/policy.md#social-graph`.
+pub const WITHHOLD: u16 = 16_018;
 
-/// NIP-51's mute list. A display filter, and never a gate on propagation.
+/// NIP-51's mute list. A display filter, which gates propagation only for
+/// somebody [`WITHHOLD`] names too.
 pub const MUTE: u16 = 10_000;
 
 /// NIP-51's bookmark list, which the retention sweep reads.
@@ -82,8 +84,8 @@ pub struct PeopleListReader<'e, E, const KIND: u16> {
     pubkeys: Vec<PublicKey>,
 }
 
-/// A block list being read.
-pub type BlockListReader<'e, E> = PeopleListReader<'e, E, BLOCK>;
+/// A withhold list being read.
+pub type WithholdListReader<'e, E> = PeopleListReader<'e, E, WITHHOLD>;
 /// A mute list being read.
 pub type MuteListReader<'e, E> = PeopleListReader<'e, E, MUTE>;
 
@@ -124,8 +126,8 @@ pub struct PeopleListWriter<const KIND: u16> {
     tags: Tags,
 }
 
-/// A block list being assembled.
-pub type BlockListWriter = PeopleListWriter<BLOCK>;
+/// A withhold list being assembled.
+pub type WithholdListWriter = PeopleListWriter<WITHHOLD>;
 /// A mute list being assembled.
 pub type MuteListWriter = PeopleListWriter<MUTE>;
 
@@ -199,9 +201,9 @@ mod tests {
 
     use crate::fixtures::{author, event};
 
-    /// A stored block list for the reader to borrow.
+    /// A stored withhold list for the reader to borrow.
     fn stored(tags: Tags) -> coracle_lib::events::HashedEvent {
-        event(author(1), BLOCK, 100, "", tags)
+        event(author(1), WITHHOLD, 100, "", tags)
     }
 
     #[test]
@@ -211,7 +213,7 @@ mod tests {
                 .add("p", [author(2).to_hex()])
                 .add("p", [author(3).to_hex()]),
         );
-        let list = BlockListReader::read(&event).unwrap();
+        let list = WithholdListReader::read(&event).unwrap();
 
         assert_eq!(list.pubkeys(), [author(2), author(3)]);
         assert!(list.contains(&author(2)));
@@ -227,7 +229,7 @@ mod tests {
         );
 
         assert_eq!(
-            BlockListReader::read(&event).unwrap().pubkeys(),
+            WithholdListReader::read(&event).unwrap().pubkeys(),
             [author(2)]
         );
     }
@@ -241,17 +243,17 @@ mod tests {
         );
 
         assert_eq!(
-            BlockListReader::read(&event).unwrap().pubkeys(),
+            WithholdListReader::read(&event).unwrap().pubkeys(),
             [author(2)]
         );
     }
 
     #[test]
     fn a_reader_refuses_another_kind() {
-        let blocks = event(author(1), BLOCK, 100, "", Tags::new());
+        let withholds = event(author(1), WITHHOLD, 100, "", Tags::new());
 
-        assert!(MuteListReader::read(&blocks).is_err());
-        assert!(BlockListReader::read(&blocks).is_ok());
+        assert!(MuteListReader::read(&withholds).is_err());
+        assert!(WithholdListReader::read(&withholds).is_ok());
     }
 
     #[test]
@@ -259,7 +261,7 @@ mod tests {
         // A tag the writer has no field for survives: it holds the tag set, not a parse of it.
         let stored = event(
             author(1),
-            BLOCK,
+            WITHHOLD,
             100,
             "",
             Tags::new()
@@ -267,28 +269,28 @@ mod tests {
                 .add("title", ["people I have met"]),
         );
 
-        let template = BlockListWriter::read(&stored)
+        let template = WithholdListWriter::read(&stored)
             .unwrap()
             .add_pubkey(author(3))
             .render_template()
             .unwrap();
 
         assert_eq!(template.tags.value("title"), Some("people I have met"));
-        assert_eq!(template.kind, BLOCK);
+        assert_eq!(template.kind, WITHHOLD);
         // Nothing rides in content, because the list is public.
         assert!(template.content.is_empty());
 
-        let rebuilt = event(author(1), BLOCK, 100, "", template.tags);
+        let rebuilt = event(author(1), WITHHOLD, 100, "", template.tags);
 
         assert_eq!(
-            BlockListReader::read(&rebuilt).unwrap().pubkeys(),
+            WithholdListReader::read(&rebuilt).unwrap().pubkeys(),
             [author(2), author(3)]
         );
     }
 
     #[test]
     fn adding_and_removing_name_and_unname() {
-        let list = BlockListWriter::new()
+        let list = WithholdListWriter::new()
             .add_pubkey(author(2))
             .add_pubkey(author(3))
             // Not a second tag, because it is already named.
@@ -309,18 +311,18 @@ mod tests {
     #[test]
     fn the_kinds_are_replaceable_so_one_address_holds_each_list() {
         // An edit supersedes, and `by_address` finds the current list in one lookup.
-        for kind in [BLOCK, MUTE] {
+        for kind in [WITHHOLD, MUTE] {
             assert!(coracle_lib::kinds::is_replaceable(kind), "{kind} is not");
         }
 
         use coracle_lib::addresses::EventExtensionAddress;
 
         assert_eq!(
-            event(author(1), BLOCK, 100, "", Tags::new())
+            event(author(1), WITHHOLD, 100, "", Tags::new())
                 .address()
                 .unwrap()
                 .to_string(),
-            format!("{BLOCK}:{}:", author(1).to_hex())
+            format!("{WITHHOLD}:{}:", author(1).to_hex())
         );
     }
 }

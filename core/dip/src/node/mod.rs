@@ -62,7 +62,7 @@ use crate::db::recipient_signature::channel::{
 use crate::db::{Db, query};
 use crate::keys::KeyCustody;
 use crate::link::{LinkId, PeripheralId, Role};
-use crate::model::{BLOCK, Blob, BlobHash, CONTACT, MUTE, NotificationPrefs, Policy, Query};
+use crate::model::{Blob, BlobHash, CONTACT, MUTE, NotificationPrefs, Policy, Query, WITHHOLD};
 use crate::session::gate::Presence;
 use crate::session::l2cap::Step;
 use crate::session::transfer::Outcome;
@@ -700,9 +700,9 @@ impl Node {
     /// changed a preference.
     ///
     /// Every entry point does this on its own once the store announces a
-    /// preference, a contact card, or a block or mute list, because a session that cached
-    /// a policy would keep serving a peer the user has just blocked. A session
-    /// whose peer the new policy blocks closes here.
+    /// preference, a contact card, or a withhold or mute list, because a session that cached
+    /// a policy would keep serving a peer the user has just refused. A session
+    /// whose peer the new policy refuses closes here.
     pub fn policy_changed(&mut self) -> Result<Vec<Action>> {
         self.rebind_policy()?;
 
@@ -1116,7 +1116,7 @@ impl Node {
     /// same query a fresh `REQ` would run, and an event held for this device
     /// alone goes nowhere.
     ///
-    /// Answers whether a contact card, block or mute list arrived, which the policy is
+    /// Answers whether a contact card, withhold or mute list arrived, which the policy is
     /// compiled from, or whether changes were missed and one might have.
     fn offer_saved_events(&mut self) -> bool {
         let mut graph_moved = false;
@@ -1125,7 +1125,7 @@ impl Node {
         loop {
             match self.events.try_recv() {
                 Ok(EventChange::Stored(event)) => {
-                    graph_moved |= [CONTACT, BLOCK, MUTE].contains(&event.kind);
+                    graph_moved |= [CONTACT, WITHHOLD, MUTE].contains(&event.kind);
                     // What arrives on screen is seen as it arrives.
                     if self.presence != Some(Presence::Foreground) {
                         self.notifier
@@ -2413,7 +2413,7 @@ mod tests {
     }
 
     #[test]
-    fn blocking_somebody_evicts_what_they_wrote() {
+    fn refusing_somebody_evicts_what_they_wrote_and_withholding_alone_keeps_it() {
         let db = db();
         let mut node = Node::new(
             Arc::clone(&db),
@@ -2421,23 +2421,38 @@ mod tests {
             Arc::new(crate::blobs::MemoryBlobStore::default()),
         )
         .unwrap();
-        let theirs = note(author(3), 100, "not welcome", Tags::new());
-        db_command::receive_event(&db, &theirs, &[author(3)], 100).unwrap();
-
-        let blocks = crate::fixtures::event(
+        let list = |kind, at| {
+            crate::fixtures::event(
+                author(1),
+                kind,
+                at,
+                "",
+                Tags::new().add("p", [author(3).to_hex()]),
+            )
+        };
+        let card = crate::fixtures::event(
             author(1),
-            crate::model::BLOCK,
-            200,
-            "",
-            Tags::new().add("p", [author(3).to_hex()]),
+            CONTACT,
+            50,
+            "Ana",
+            Tags::new().add("d", [author(3).to_hex()]),
         );
-        node.publish(&blocks, &[]).unwrap();
-
-        assert!(
+        let theirs = note(author(3), 100, "not welcome", Tags::new());
+        let held = || {
             crate::db::query::get_event(&db, &theirs.id)
                 .unwrap()
-                .is_none()
-        );
+                .is_some()
+        };
+
+        node.publish(&card, &[]).unwrap();
+        db_command::receive_event(&db, &theirs, &[author(3)], 100).unwrap();
+
+        node.publish(&list(crate::model::WITHHOLD, 200), &[])
+            .unwrap();
+        assert!(held());
+
+        node.publish(&list(MUTE, 300), &[]).unwrap();
+        assert!(!held());
     }
 
     #[test]

@@ -151,7 +151,7 @@ impl State {
 pub enum Ending {
     /// The peer stopped answering, or the shell reported the link gone.
     WalkedAway,
-    /// This device tore the link down: policy blocks the peer, the consent
+    /// This device tore the link down: policy refuses the peer, the consent
     /// gate lapsed or was refused, or a frame arrived the wire could not
     /// carry.
     Refused,
@@ -275,7 +275,7 @@ impl Session {
     ///
     /// A peer may authenticate as several pubkeys across several responses, so
     /// this accumulates rather than replacing. A peer that turns out to be
-    /// blocked is refused here: the consent gate ran before anyone was named.
+    /// refused is closed here: the consent gate ran before anyone was named.
     pub fn identify(&mut self, pubkeys: impl IntoIterator<Item = PublicKey>) {
         self.auth.prove(pubkeys);
         self.bind_peer();
@@ -290,7 +290,7 @@ impl Session {
     }
 
     /// Bind the peer from the pubkeys it has proved, under the current policy,
-    /// closing the session if any of them is blocked.
+    /// closing the session if any of them is refused.
     ///
     /// Binds only, whatever the phase: a peer that has proved nothing stays
     /// `None`, and the lifecycle moves in [`identify`](Self::identify) alone.
@@ -301,7 +301,7 @@ impl Session {
 
         let peer = Peer::bind(self.link, self.auth.proved.iter().copied(), &self.policy);
 
-        if peer.policy.is_blocked() {
+        if peer.policy.is_refused() {
             self.close(Ending::Refused);
         }
 
@@ -309,7 +309,7 @@ impl Session {
     }
 
     /// Take a policy the user has just changed and rebind the peer under it,
-    /// closing the session if any proved pubkey is now blocked.
+    /// closing the session if any proved pubkey is now refused.
     ///
     /// A session follows the user's preferences rather than caching them,
     /// because policy is read at encounter time with nobody watching.
@@ -1236,7 +1236,7 @@ impl Session {
 
         match self.gate.evaluate(db, &self.policy, &resolved)? {
             Verdict::Pass => {}
-            Verdict::Blocked => self.close(Ending::Refused),
+            Verdict::Refused => self.close(Ending::Refused),
             // The dialer discloses first, which lets a receiver see who it is before holding them.
             Verdict::Pending if self.role == Role::Receiver => self.gate.deferred = true,
             Verdict::Pending => self.hold(),
@@ -1577,15 +1577,15 @@ mod tests {
     }
 
     #[test]
-    fn a_peer_holding_a_blocked_identity_is_refused_whatever_else_it_proved() {
+    fn a_peer_holding_a_refused_identity_is_refused_whatever_else_it_proved() {
         let mut policy = policy();
-        policy.graph.blocked.insert(author(3));
+        policy.graph.refuse(author(3));
 
         let mut session = secured_session(policy);
 
         session.identify([author(2), author(3)]);
 
-        assert!(session.peer.as_ref().unwrap().policy.is_blocked());
+        assert!(session.peer.as_ref().unwrap().policy.is_refused());
         assert_eq!(session.state, State::Closed);
     }
 
@@ -1735,12 +1735,12 @@ mod tests {
         session.identify([author(2)]);
         assert_eq!(session.state, State::Identified);
 
-        let mut blocked = policy();
-        blocked.graph.blocked.insert(author(2));
+        let mut refused = policy();
+        refused.graph.refuse(author(2));
 
-        session.set_policy(Arc::new(blocked));
+        session.set_policy(Arc::new(refused));
 
-        assert!(session.peer.as_ref().unwrap().policy.is_blocked());
+        assert!(session.peer.as_ref().unwrap().policy.is_refused());
         assert_eq!(session.state, State::Closed);
     }
 

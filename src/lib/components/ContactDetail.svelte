@@ -9,13 +9,12 @@
     name,
     nameOf,
     removeContact,
-    setBlocked,
     setMuted,
+    setWithheld,
     short,
     social,
   } from "$lib/data/contacts"
   import {back, go} from "$lib/data/nav"
-  import {policy, setWithheld} from "$lib/data/policy"
   import {ignoredFlaggers, setFlagsTrusted} from "$lib/data/reports"
 
   let {pubkey}: {pubkey: string} = $props()
@@ -73,19 +72,15 @@
     {
       id: "withheld",
       label: "Not passed on",
-      detail: "You see their posts, but your device never passes them on to anyone.",
-      on: Boolean($policy?.withheld.includes(pubkey)),
+      detail:
+        "Your device never passes their posts on, and your contacts' phones stop taking them on your word.",
+      on: Boolean(contact?.withheld),
       set: (on: boolean) => setWithheld(pubkey, on),
     },
-    {
-      id: "blocked",
-      label: "Blocked",
-      detail:
-        "Your device won't connect or pass anything on to them, and their activity won't be stored or passed on.",
-      on: Boolean(contact?.blocked),
-      set: (on: boolean) => setBlocked(pubkey, on),
-    },
   ])
+
+  // Both at once is what blocking was: the core keeps nothing of theirs and refuses their phone.
+  const refused = $derived(Boolean(contact?.muted && contact?.withheld))
 </script>
 
 <header class="flex items-center gap-1 pt-4 pb-3">
@@ -146,6 +141,12 @@
     </li>
   {/each}
 </ul>
+
+{#if refused}
+  <p class="mt-4 text-xs text-pretty text-muted-foreground">
+    With both on, your device won't connect to them or keep anything they write.
+  </p>
+{/if}
 
 {#if contact?.petname}
   <Separator class="my-6" />

@@ -5,7 +5,7 @@
 // neighbour. A name therefore always has a claimant, and the screen says whose
 // it is.
 //
-// Writing the user's cards, block or mute is publishing an event rather than
+// Writing the user's cards, withhold list or mute list is publishing an event rather than
 // setting a preference, because the core derives the contact graph from them.
 // `docs/policy.md#social-graph`.
 //
@@ -22,9 +22,9 @@ import {links} from "$lib/data/links"
 import {answering, eventsOf, storedEvents} from "$lib/data/query"
 import {publish} from "$lib/data/publish"
 import {session} from "$lib/data/session"
-import {block, contactCard, mute, topicsIn} from "$lib/kinds"
+import {contactCard, mute, topicsIn, withhold} from "$lib/kinds"
 import {CONTACT} from "$lib/kinds/contact"
-import {BLOCK} from "$lib/kinds/people"
+import {WITHHOLD} from "$lib/kinds/people"
 
 /** Somebody the device knows about. */
 export type Contact = {
@@ -33,15 +33,17 @@ export type Contact = {
   petname?: string
   /** What the user's contacts call them, newest card first. */
   aliases: {by: string; petname: string}[]
+  /** Whether the user hides their posts from themselves. */
   muted: boolean
-  blocked: boolean
+  /** Whether the user's device never passes their posts on. Both at once refuses them. */
+  withheld: boolean
 }
 
 /** What the user wrote, kept so an edit supersedes rather than replaces. */
 export type Own = {
   /** The user's own card for each person they have named. */
   cards: Map<string, HashedEvent>
-  block?: HashedEvent
+  withhold?: HashedEvent
   mute?: HashedEvent
 }
 
@@ -77,12 +79,14 @@ const namings = (events: HashedEvent[]): Naming[] =>
       return about && petname ? [{by: event.pubkey, about, petname, event}] : []
     })
 
-/** Who each author blocks, by every block list held, which withdraws their cards about the people on it. */
-const blocksBy = async (events: HashedEvent[]) => {
-  const lists = events.filter(event => event.kind === BLOCK)
+/** Who each author withholds, by every withhold list held, which withdraws their cards about the people on it. */
+const withholdingsBy = async (events: HashedEvent[]) => {
+  const lists = events.filter(event => event.kind === WITHHOLD)
 
   return new Map(
-    await Promise.all(lists.map(async list => [list.pubkey, await listed(list, block)] as const)),
+    await Promise.all(
+      lists.map(async list => [list.pubkey, await listed(list, withhold)] as const),
+    ),
   )
 }
 
@@ -106,12 +110,12 @@ const collate = async (events: HashedEvent[], identity?: string): Promise<Social
   const named = namings(events)
   const own = {
     cards: ownCards(events, identity),
-    block: newest(events, BLOCK, identity),
+    withhold: newest(events, WITHHOLD, identity),
     mute: newest(events, MUTES, identity),
   }
 
-  const blocked = await listed(own.block, block)
-  const blocks = await blocksBy(events)
+  const withheld = await listed(own.withhold, withhold)
+  const withholdings = await withholdingsBy(events)
   const muted = await listed(own.mute, mute)
   const people = new Map<string, Contact>()
   const at = (pubkey: string) => {
@@ -119,7 +123,7 @@ const collate = async (events: HashedEvent[], identity?: string): Promise<Social
       pubkey,
       aliases: [],
       muted: muted.has(pubkey),
-      blocked: blocked.has(pubkey),
+      withheld: withheld.has(pubkey),
     }
 
     people.set(pubkey, contact)
@@ -131,20 +135,20 @@ const collate = async (events: HashedEvent[], identity?: string): Promise<Social
     if (by === identity) at(about).petname = petname
   }
 
-  // A stranger's cards name nobody, and neither does a contact's card about somebody they have since blocked.
+  // A stranger's cards name nobody, and neither does a contact's card about somebody they withhold.
   for (const {by, about, petname} of named) {
-    if (by === identity || !people.get(by)?.petname || blocks.get(by)?.has(about)) continue
+    if (by === identity || !people.get(by)?.petname || withholdings.get(by)?.has(about)) continue
 
     at(about).aliases.push({by, petname})
   }
 
-  for (const pubkey of [...blocked, ...muted]) at(pubkey)
+  for (const pubkey of [...withheld, ...muted]) at(pubkey)
 
   return {people, own}
 }
 
 const read = ([identity]: [string | undefined, number]) =>
-  eventsOf({filter: JSON.stringify({kinds: [CONTACT, MUTES, BLOCK]})}).then(events =>
+  eventsOf({filter: JSON.stringify({kinds: [CONTACT, MUTES, WITHHOLD]})}).then(events =>
     collate(events, identity),
   )
 
@@ -195,7 +199,7 @@ export const contacts: Readable<Listed[]> = derived(
           pubkey,
           aliases: [],
           muted: false,
-          blocked: false,
+          withheld: false,
           connected: true,
         })
       }
@@ -316,8 +320,9 @@ const amend = (kind: PeopleList, list: keyof Omit<Own, "cards">, tag: string[], 
     return amended.renderTemplate()
   })
 
-export const setBlocked = (pubkey: string, blocked: boolean) =>
-  amend(block, "block", ["p", pubkey], blocked)
+/** Never pass somebody's posts on, which also withdraws the user's card for them on a contact's device. */
+export const setWithheld = (pubkey: string, withheld: boolean) =>
+  amend(withhold, "withhold", ["p", pubkey], withheld)
 
 export const setMuted = (pubkey: string, muted: boolean) =>
   amend(mute, "mute", ["p", pubkey], muted)
@@ -328,7 +333,7 @@ export const setTopicMuted = (topic: string, muted: boolean) =>
 
 /**
  * Take somebody out of the user's contacts: an empty card supersedes the user's
- * name for them, and their device is met as a stranger next time. Mute and block
+ * name for them, and their device is met as a stranger next time. Mute and withhold
  * stay as they were, and what they wrote stays for as long as the Accept scope
  * admits it. `docs/policy.md#social-graph`.
  */

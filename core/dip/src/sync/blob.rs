@@ -1812,16 +1812,16 @@ mod tests {
         let (mut blobs, store) = exchange();
         let blob = given_blob(&db, &store, b"the quick brown fox");
 
-        // Blocked is a veto over the whole set, and it is not the pubkey that sorts first.
+        // Refused is a veto over the whole set, and it is not the pubkey that sorts first.
         let mut policy = Policy::new(author(1));
-        policy.graph.blocked.insert(author(3));
+        policy.graph.refuse(author(3));
 
-        let blocked = Peer::bind(LinkId(1), [author(2), author(3)], &policy);
-        assert!(blocked.policy.is_blocked());
+        let refused = Peer::bind(LinkId(1), [author(2), author(3)], &policy);
+        assert!(refused.policy.is_refused());
         let response = blobs
             .serve(
                 &db,
-                &blocked,
+                &refused,
                 &local(),
                 &ask("HEAD", &format!("/{}", blob.sha256), &[]),
                 quota(1024),

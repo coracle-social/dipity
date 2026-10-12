@@ -56,7 +56,7 @@ import {
   type HashedEvent,
 } from "@welshman/util"
 import {ContactCard} from "$lib/kinds/contact"
-import {Block} from "$lib/kinds/people"
+import {Withhold} from "$lib/kinds/people"
 import {Boost, GenericBoost} from "$lib/kinds/repost"
 
 const context: KindContext = {resolver: new Resolver(() => [])}
@@ -93,7 +93,7 @@ export const timeEvent = TimeEvent.configure(context)
 /** What somebody calls somebody else, which is the only name anybody has here. */
 export const contactCard = ContactCard.configure(context)
 
-export const block = Block.configure(context)
+export const withhold = Withhold.configure(context)
 
 export const mute = MuteList.configure(context)
 

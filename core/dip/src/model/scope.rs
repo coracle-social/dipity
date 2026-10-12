@@ -21,7 +21,7 @@ pub enum Scope {
     /// Anyone somebody has named, by a contact card this device holds. As far
     /// as Accept reaches.
     Named,
-    /// Anyone who connects, except blocked pubkeys. Sharing and visibility only.
+    /// Anyone who connects, except refused pubkeys. Sharing and visibility only.
     Lenient,
     /// Anyone. Visibility settings only.
     Public,
@@ -32,7 +32,7 @@ impl Scope {
     #[must_use]
     pub fn admits(self, standing: Standing) -> bool {
         match standing {
-            Standing::Blocked => false,
+            Standing::Refused => false,
             Standing::Contact => self >= Self::Contacts,
             Standing::Network => self >= Self::Network,
             Standing::Named => self >= Self::Named,
@@ -71,8 +71,8 @@ mod tests {
             );
         }
 
-        // Block is not a tier and is outside even the widest scope.
-        assert!(!Scope::Public.admits(Standing::Blocked));
+        // Refused is not a tier and is outside even the widest scope.
+        assert!(!Scope::Public.admits(Standing::Refused));
         assert!(Scope::Contacts.admits(Standing::Contact));
         assert!(!Scope::Contacts.admits(Standing::Network));
         assert!(Scope::Network.admits(Standing::Network));

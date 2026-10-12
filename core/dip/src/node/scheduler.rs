@@ -124,7 +124,7 @@ enum Tier {
     NeverAnswered,
     /// A peer that was connected and walked away.
     WalkedAway,
-    /// A peer the core dropped: policy blocks it, its consent gate lapsed, or
+    /// A peer the core dropped: policy refuses it, its consent gate lapsed, or
     /// its frames stopped being ones the wire could carry.
     Refused,
     /// A peer the user declined at the consent gate, or a device that does

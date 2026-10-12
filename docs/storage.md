@@ -60,7 +60,7 @@ What the sweep forgets it also refuses, in `event_refused`, which reconciliation
 Four things are never swept:
 
 - Events the user wrote. A sweep would delete the last copy rather than let one go, because this device is their origin and no peer hands one back.
-- Replaceable events, which are state rather than content. A sweep reading only circulation would take the [graph](./policy.md#social-graph) that policy is measured against, because a block list arrives once and is never offered again. A [contact card](./policy.md#social-graph) is addressable rather than replaceable, and the sweep spares its kind by name because sweeping one would leave a person nameless on a device that still holds their writing.
+- Replaceable events, which are state rather than content. A sweep reading only circulation would take the [graph](./policy.md#social-graph) that policy is measured against, because a withhold list arrives once and is never offered again. A [contact card](./policy.md#social-graph) is addressable rather than replaceable, and the sweep spares its kind by name because sweeping one would leave a person nameless on a device that still holds their writing.
 - Deletion requests, kind 5. The store refuses an event a stored request covers. Sweeping the request would let the deleted event back in the next time a peer offers it.
 - Events the user bookmarked. Circulation is a measure of what the neighbourhood is still interested in, and a bookmark is the one place the person holding the device says otherwise. The sweep reads the `e` tags on their own NIP-51 list, kind 10003, which is replaceable and so survives on the rule above; somebody else's bookmark list keeps nothing here.
 
@@ -72,7 +72,7 @@ The sweep is the device deciding; dropping is the user deciding. Either removes 
 
 Dropping is local and tells nobody. A device holds somebody else's writing at their author's sufferance and can stop holding it at any time, but it cannot ask the neighbourhood to do the same — only the author can, by publishing a kind 5, which travels the way the event did and is a request rather than an instruction. So the two are separate operations.
 
-Nothing stops a dropped event arriving again from somebody who still has it. Dropping is not a block, and refusing a person's events is [policy](./policy.md#accept).
+Nothing stops a dropped event arriving again from somebody who still has it. Dropping is not refusing anybody, and refusing a person's events is [policy](./policy.md#accept).
 
 ### The trash
 
