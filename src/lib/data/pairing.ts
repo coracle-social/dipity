@@ -5,8 +5,8 @@
 // about the person; the name typed for it is held against the link until the
 // peer identifies itself. Or the gate let a stranger through, and the request
 // comes once they have identified, carrying their pubkey: nothing waits on it,
-// and answering it names them. Either way the user compares the same five
-// shapes against the other phone, and a name is what lets them set anything
+// and answering it names them. Either way the user compares the same six
+// digits against the other phone, and a name is what lets them set anything
 // about that person. Somebody the user already named is asked about too when
 // this phone did not recognize them, since they have forgotten the user and
 // are being asked on their own phone. `docs/discovery.md#the-consent-gate`,
@@ -94,7 +94,7 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
   // Every identified link so that a request can move to another link to the same person when its own one closes.
   const identified = new Map<number, {pubkey: string; code: number; dialed: boolean}>()
 
-  // Two links to one person resolve to the one the lower pubkey dialed; both phones pick it and show its shapes.
+  // Two links to one person resolve to the one the lower pubkey dialed; both phones pick it and show its digits.
   const dialer = (link: number) => {
     const peer = identified.get(link)
 
@@ -149,7 +149,7 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
         waiting.flatMap(request => {
           if (request.link !== link) return [request]
 
-          // The person is still here over another link: the request stays, under that link's shapes.
+          // The person is still here over another link: the request stays, under that link's digits.
           const still = [...identified].find(([, peer]) => peer.pubkey === request.pubkey)
 
           return still && request.pubkey

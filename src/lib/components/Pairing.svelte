@@ -7,8 +7,8 @@
   import {Button} from "$lib/components/ui/button"
   import {Input} from "$lib/components/ui/input"
   import {Label} from "$lib/components/ui/label"
+  import Digits from "$lib/components/Digits.svelte"
   import EmptyState from "$lib/components/EmptyState.svelte"
-  import Shapes from "$lib/components/Shapes.svelte"
   import {social} from "$lib/data/contacts"
   import {back, swap} from "$lib/data/nav"
   import {accept, decline, requests, type Request} from "$lib/data/pairing"
@@ -71,9 +71,9 @@
         phones to trade posts whenever they are in range of each other.
       </p>
       <p class="font-semibold">
-        Hold the two phones side by side and check that both show the same five shapes, in the same
-        order. If they match, the phones are talking to each other and not to somebody else nearby.
-        If they don't match, do not pair.
+        Hold the two phones side by side and check that both show the same six digits. If they
+        match, the phones are talking to each other and not to somebody else nearby. If they don't
+        match, do not pair.
       </p>
     </div>
   </div>
@@ -85,7 +85,7 @@
   {/if}
 
   <div class="my-8">
-    <Shapes code={request.code} />
+    <Digits code={request.code} />
   </div>
 
   <div class="space-y-2">
@@ -100,7 +100,7 @@
 
   <div class="mt-8 flex flex-col gap-2">
     <Button size="lg" disabled={!petname.trim()} onclick={() => answer(true)}>
-      The shapes match
+      The digits match
     </Button>
     <Button variant="ghost" size="lg" onclick={() => answer(false)}>
       {request.held ? "Not this person" : "Not now"}
@@ -109,7 +109,7 @@
 
   {#if $requests.length > 1}
     <p class="mt-8 text-xs text-pretty text-muted-foreground">
-      Each request has its own shapes, so if these don't match, try the next one.
+      Each request has its own digits, so if these don't match, try the next one.
     </p>
     <nav class="mt-2 flex items-center justify-between" aria-label="Other pairing requests">
       <Button variant="ghost" size="sm" disabled={at <= 0} onclick={() => open(at - 1)}>

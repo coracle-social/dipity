@@ -20,7 +20,7 @@ use anyhow::{Result, anyhow, bail};
 use coracle_lib::keys::SecretKey;
 use zeroize::Zeroizing;
 
-use crate::session::sas::{LOGIN_LABEL, LOGIN_SPACE, sas};
+use crate::session::sas::{LOGIN_LABEL, sas};
 
 /// Discriminants for the transfer exchange, one byte ahead of its payload,
 /// inside the control channel's own `TRANSFER` frame.
@@ -201,7 +201,7 @@ impl IdentityTransfer {
             Some(Step::Offered { prompted, .. } | Step::Invited { prompted }) if !*prompted => {
                 *prompted = true;
 
-                Some(sas(LOGIN_LABEL, handshake_hash, LOGIN_SPACE))
+                Some(sas(LOGIN_LABEL, handshake_hash))
             }
             _ => None,
         }

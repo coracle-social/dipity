@@ -40,7 +40,7 @@ A third kind says what the user calls somebody: a contact card, kind 36017, addr
 
 There is one card per contact rather than one list naming everybody the user has met, so that a name travels with that contact's own events.
 
-A **contact** is somebody the user paired with and named: the subject of one of the user's own contact cards whose name is not empty, unless they are refused. Withholding a contact keeps them one, because it is about what travels on from here rather than who the user paired with. Pairing, which compares shapes in person and names the other person, is the explicit act that makes somebody a contact. Removing somebody from contacts ends it by emptying the user's card for them and dropping the pairing. What they wrote stays for as long as the Accept scope admits it.
+A **contact** is somebody the user paired with and named: the subject of one of the user's own contact cards whose name is not empty, unless they are refused. Withholding a contact keeps them one, because it is about what travels on from here rather than who the user paired with. Pairing, which compares digits in person and names the other person, is the explicit act that makes somebody a contact. Removing somebody from contacts ends it by emptying the user's card for them and dropping the pairing. What they wrote stays for as long as the Accept scope admits it.
 
 Every setting below is expressed on the same tiers, applied either to the peer on the other end of a session or to the author of an event:
 

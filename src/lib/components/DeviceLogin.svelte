@@ -3,6 +3,7 @@
   import BluetoothSearching from "@lucide/svelte/icons/bluetooth-searching"
   import Smartphone from "@lucide/svelte/icons/smartphone"
   import {Button} from "$lib/components/ui/button"
+  import Digits from "$lib/components/Digits.svelte"
   import EmptyState from "$lib/components/EmptyState.svelte"
   import {nameOf, social} from "$lib/data/contacts"
   import {links} from "$lib/data/links"
@@ -17,13 +18,6 @@
   const leave = () => ($session.receiving ? logOut() : back())
 
   const done = () => back() || swap({at: "board"})
-
-  /** Six digits, grouped the way a person reads a number off another screen. */
-  const digits = (code: number) => {
-    const padded = String(code).padStart(6, "0")
-
-    return `${padded.slice(0, 3)} ${padded.slice(3)}`
-  }
 </script>
 
 <header class="flex items-center gap-1 pt-4 pb-3">
@@ -76,9 +70,9 @@
     Check that both phones show the same six digits.
   </p>
 
-  <p class="my-8 text-center font-mono text-4xl font-semibold tabular-nums">
-    {digits($step.code)}
-  </p>
+  <div class="my-8">
+    <Digits code={$step.code} />
+  </div>
 
   {#if $step.source}
     <p class="max-w-prose text-sm text-pretty text-muted-foreground">
@@ -92,30 +86,20 @@
 
   <div class="mt-8 flex flex-col gap-2">
     <Button size="lg" onclick={() => compare(true)}>The digits match</Button>
-    <Button variant="ghost" size="lg" onclick={() => compare(false)}>They do not</Button>
+    <Button variant="ghost" size="lg" onclick={() => compare(false)}>Cancel</Button>
   </div>
 {:else if $step.at === "waiting"}
   <p class="py-10 text-sm text-pretty text-muted-foreground">
     Waiting for the other phone to confirm.
   </p>
-{:else if $step.at === "sent"}
-  <p class="py-10 text-sm text-pretty">That phone now has your key.</p>
+{:else if $step.at === "sent" || $step.at === "arrived"}
+  <p class="py-10 text-sm text-pretty">Your key has successfully been transfered!</p>
 
   <Button size="lg" onclick={done}>Done</Button>
-{:else if $step.at === "arrived"}
-  <p class="pt-10 text-sm text-pretty">This phone now has your key.</p>
-
-  {#if $session.identity}
-    <p class="mt-3 font-mono text-xs break-all text-muted-foreground">
-      {npubOf($session.identity)}
-    </p>
-  {/if}
-
-  <Button class="mt-8" size="lg" onclick={done}>Done</Button>
 {:else if $step.at === "refused"}
   <p class="py-10 text-sm text-pretty text-muted-foreground">
-    No key was transferred. A phone declined, went out of range, or has already posted under its own
-    key.
+    No key was transferred. The device declined, went out of range, or has already posted under its
+    own key.
   </p>
 
   <Button size="lg" onclick={$session.receiving ? clear : done}>

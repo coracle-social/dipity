@@ -396,17 +396,13 @@ impl Session {
         Some(code)
     }
 
-    /// The five shapes both users compare, derived from this session's
+    /// The six digits both users compare, derived from this session's
     /// transcript, or `None` before the handshake has finished.
     #[must_use]
     pub fn pairing_code(&self) -> Option<u32> {
         let handshake_hash = self.wire.noise.handshake_hash().ok()?;
 
-        Some(sas::sas(
-            sas::PAIRING_LABEL,
-            &handshake_hash,
-            sas::PAIRING_SPACE,
-        ))
+        Some(sas::sas(sas::PAIRING_LABEL, &handshake_hash))
     }
 
     /// Whichever pubkeys the peer has proved that the shell has not been told

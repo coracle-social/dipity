@@ -162,15 +162,5 @@ export const remark = () =>
 
 export const emoji = () => faker.helpers.arrayElement(["👍", "❤️", "😂", "🙏", "👀"])
 
-/**
- * The code both phones show while pairing, and the six digits a login-with-device
- * shows. `docs/keys.md`, `docs/discovery.md#the-consent-gate`.
- */
-/** The six digits a login-with-device prompt compares. */
+/** The six digits two phones compare while pairing or logging in with a device, as `session::sas::SPACE` in the core. */
 export const shortCode = () => faker.number.int({min: 0, max: 999_999})
-
-/**
- * What the pairing gate compares: five shapes of eight in three tints, which is
- * `session::sas::PAIRING_SPACE` in the core.
- */
-export const pairingCode = () => faker.number.int({min: 0, max: 24 ** 5 - 1})

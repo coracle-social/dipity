@@ -27,7 +27,7 @@ export type Approval = {link: number; code: number}
 
 /**
  * Who the peer on a link turned out to be, once both sides have authenticated,
- * and the five shapes both users compare before naming them.
+ * and the six digits both users compare before naming them.
  */
 /** Who proved themselves on a link, and whether this phone recognized them by their pairing. */
 export type PeerIdentity = {

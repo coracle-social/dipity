@@ -116,7 +116,7 @@ A receiver that would hold a stranger first lets the exchange run until the dial
 
 The prompt carries a comparison value, derived from the session's handshake hash under its own domain label the way [login with device](./keys.md#login-with-device) derives its six digits. That value is the only thing the two users have to check, because Noise XX authenticates nobody and the gate runs before either side has named a pubkey. A device in the middle completes two handshakes and the two screens then disagree. A gate that cannot derive one asks nothing and stays held.
 
-The value the gate shows is five shapes drawn from an alphabet of eight in three tints, which is 24^5 and a little over 23 bits. The screen draws the whole space rather than a prefix of it.
+The value the gate shows is six decimal digits, as login with device shows, under the gate's own label so that one ritual's value cannot stand in for the other's.
 
 The pubkey each side proves afterwards is announced to the shell as it is proved. The gate runs first. A pet name the user typed there is for the person in front of them, and this is what says which key that person holds.
 
@@ -128,7 +128,7 @@ If the receiver wishes to continue, it then identifies itself to the dialer, whi
 
 The gate decides whether a link proceeds, and naming decides whether the person on it becomes a contact. A stranger the disclosure bucket admits passes without a prompt and syncs, but has no name on this device. Every [policy](./policy.md) the user can set about a person starts from naming them.
 
-So once a peer the user has not named identifies itself, the device asks to pair the same way a held gate does: the same five shapes over the same transcript, and a name for whoever is standing there. Nothing waits on the answer. Naming them writes the user's [contact card](./policy.md#social-graph) for the pubkey the session proved. Declining leaves them unnamed, and they are asked about again at the next meeting.
+So once a peer the user has not named identifies itself, the device asks to pair the same way a held gate does: the same six digits over the same transcript, and a name for whoever is standing there. Nothing waits on the answer. Naming them writes the user's [contact card](./policy.md#social-graph) for the pubkey the session proved. Declining leaves them unnamed, and they are asked about again at the next meeting.
 
 ## Heartbeat and teardown
 

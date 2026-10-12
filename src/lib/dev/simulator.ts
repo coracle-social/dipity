@@ -38,16 +38,7 @@ import {nip19} from "nostr-tools"
 import type {Blob, Bluetooth, DipCore, NotificationPermission, Pref, Query} from "$lib/core"
 import {boost, card, comment, genericBoost, reaction} from "$lib/dev/kinds"
 import {compiled} from "$lib/dev/policy"
-import {
-  emoji,
-  identity,
-  pairingCode,
-  people,
-  post,
-  remark,
-  shortCode,
-  type Person,
-} from "$lib/dev/neighborhood"
+import {emoji, identity, people, post, remark, shortCode, type Person} from "$lib/dev/neighborhood"
 import {Store} from "$lib/dev/store"
 
 const HOUR = 3600
@@ -334,7 +325,7 @@ export class Simulator extends WebPlugin implements DipCore {
     this.notifyListeners("peerIdentified", {
       link,
       pubkey: person.pubkey,
-      code: pairingCode(),
+      code: shortCode(),
       dialed: false,
       recognized,
     })
@@ -361,7 +352,7 @@ export class Simulator extends WebPlugin implements DipCore {
 
     if (Date.now() - asked > GATE_BACKOFF) {
       this.gates.set(link, person)
-      this.notifyListeners("requestApproval", {link, code: pairingCode()})
+      this.notifyListeners("requestApproval", {link, code: shortCode()})
       log(
         `${short(person.pubkey)} is asking to pair — dip.approve({link: ${link}, approved: true})`,
       )
