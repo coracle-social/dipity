@@ -50,7 +50,7 @@ Every setting below is expressed on the same tiers, applied either to the peer o
 
 Only the fixed visibility rules use Nothing and Public.
 
-Network adds the subjects of every non-empty contact card authored by a contact, except blocked pubkeys, and stops there, two hops from the user. It is derived rather than stored, from whichever of those cards the device holds. A contact whose cards have not arrived yet contributes nobody.
+Network adds the subjects of every non-empty contact card authored by a contact, except blocked pubkeys, and stops there, two hops from the user. A card names nobody once its author has blocked its subject. Block lists travel to contacts, so a contact's block withdraws their vouching on this device without blocking anybody here, and another contact's card for the same person still counts. It is derived rather than stored, from whichever of those cards the device holds. A contact whose cards have not arrived yet contributes nobody.
 
 ## Flags
 

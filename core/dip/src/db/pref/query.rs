@@ -149,13 +149,17 @@ fn graph(tx: &Tx<'_>, identity: &PublicKey) -> Result<Graph> {
     })
 }
 
-/// Who names whom, as `(author, subject)`, by every card this device holds. A
-/// card emptied by removing a contact names nobody.
+/// Who names whom, as `(author, subject)`, by every card this device holds.
+///
+/// A card emptied by removing a contact names nobody, and so does a card whose
+/// author has since blocked its subject: a block withdraws the vouching a card
+/// was, for everybody the author's block list reaches. `docs/policy.md#social-graph`.
 fn namings(tx: &Tx<'_>) -> Result<Vec<(PublicKey, PublicKey)>> {
     let cards = event::list(
         tx,
         &Query::new().with_filter(Filter::new().add_kinds([CONTACT])),
     )?;
+    let blocks = blocks(tx)?;
 
     Ok(cards
         .iter()
@@ -165,7 +169,25 @@ fn namings(tx: &Tx<'_>) -> Result<Vec<(PublicKey, PublicKey)>> {
 
             Some((card.pubkey, PublicKey::from_hex(subject.value()).ok()?))
         })
+        .filter(|naming| !blocks.contains(naming))
         .collect())
+}
+
+/// Who blocks whom, as `(author, blocked)`, by every block list this device holds.
+fn blocks(tx: &Tx<'_>) -> Result<BTreeSet<(PublicKey, PublicKey)>> {
+    let lists = event::list(
+        tx,
+        &Query::new().with_filter(Filter::new().add_kinds([BLOCK])),
+    )?;
+    let mut blocks = BTreeSet::new();
+
+    for list in &lists {
+        if let Ok(read) = PeopleListReader::<_, BLOCK>::read(list) {
+            blocks.extend(read.pubkeys().iter().map(|blocked| (list.pubkey, *blocked)));
+        }
+    }
+
+    Ok(blocks)
 }
 
 /// The pubkeys the list `pubkey` published at `kind` names.
@@ -363,6 +385,41 @@ mod tests {
 
         assert_eq!(graph.standing(&author(3)), Standing::Network);
         assert_eq!(graph.standing(&author(4)), Standing::Named);
+    }
+
+    #[test]
+    fn a_card_whose_author_blocked_its_subject_vouches_for_nobody() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let us = author(1);
+
+        name(&tx, us, author(2), "Ben", 100);
+        name(&tx, author(2), author(3), "Ana", 100);
+        publish_list(&tx, author(2), BLOCK, &[author(3)], 110);
+        name(&tx, author(9), author(7), "Lou", 100);
+        publish_list(&tx, author(9), BLOCK, &[author(7)], 110);
+
+        let graph = policy(&tx, &us).unwrap().graph;
+
+        assert_eq!(graph.standing(&author(3)), Standing::Stranger);
+        assert_eq!(graph.standing(&author(7)), Standing::Stranger);
+    }
+
+    #[test]
+    fn another_contacts_card_still_vouches_for_somebody_one_contact_blocked() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tx = db.begin_write().unwrap();
+        let us = author(1);
+
+        name(&tx, us, author(2), "Ben", 100);
+        name(&tx, us, author(5), "Cy", 100);
+        name(&tx, author(2), author(3), "Ana", 100);
+        name(&tx, author(5), author(3), "Ana", 100);
+        publish_list(&tx, author(2), BLOCK, &[author(3)], 110);
+
+        let graph = policy(&tx, &us).unwrap().graph;
+
+        assert_eq!(graph.standing(&author(3)), Standing::Network);
     }
 
     #[test]
