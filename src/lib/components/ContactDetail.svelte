@@ -66,7 +66,7 @@
     {
       id: "muted",
       label: "Muted",
-      detail: "Their posts are hidden from you.",
+      detail: "Their posts are hidden from you, but may still be passed on.",
       on: Boolean(contact?.muted),
       set: (on: boolean) => setMuted(pubkey, on),
     },

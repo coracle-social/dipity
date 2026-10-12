@@ -77,6 +77,15 @@ const namings = (events: HashedEvent[]): Naming[] =>
       return about && petname ? [{by: event.pubkey, about, petname, event}] : []
     })
 
+/** Who each author blocks, by every block list held, which withdraws their cards about the people on it. */
+const blocksBy = async (events: HashedEvent[]) => {
+  const lists = events.filter(event => event.kind === BLOCK)
+
+  return new Map(
+    await Promise.all(lists.map(async list => [list.pubkey, await listed(list, block)] as const)),
+  )
+}
+
 /** The user's newest card for each person, emptied ones included, since emptying one removes the contact. */
 const ownCards = (events: HashedEvent[], identity?: string) => {
   const cards = new Map<string, HashedEvent>()
@@ -102,6 +111,7 @@ const collate = async (events: HashedEvent[], identity?: string): Promise<Social
   }
 
   const blocked = await listed(own.block, block)
+  const blocks = await blocksBy(events)
   const muted = await listed(own.mute, mute)
   const people = new Map<string, Contact>()
   const at = (pubkey: string) => {
@@ -121,9 +131,11 @@ const collate = async (events: HashedEvent[], identity?: string): Promise<Social
     if (by === identity) at(about).petname = petname
   }
 
-  // A stranger's cards name nobody, because a name is only worth showing from somebody the user has named.
+  // A stranger's cards name nobody, and neither does a contact's card about somebody they have since blocked.
   for (const {by, about, petname} of named) {
-    if (by !== identity && people.get(by)?.petname) at(about).aliases.push({by, petname})
+    if (by === identity || !people.get(by)?.petname || blocks.get(by)?.has(about)) continue
+
+    at(about).aliases.push({by, petname})
   }
 
   for (const pubkey of [...blocked, ...muted]) at(pubkey)
