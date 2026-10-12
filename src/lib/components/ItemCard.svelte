@@ -204,7 +204,7 @@
     <p class="min-w-0 truncate text-xs text-muted-foreground">
       {arrived}{carrier ? ` · from ${carrier}` : ""}{hops === 2 ? " · two hops" : ""}{passedOn > 0
         ? ` · ${passedOn} passed on`
-        : ""}{standing.saying > 0 ? ` · ${standing.saying} saying` : ""}{retracted
+        : ""}{standing.saying > 0 ? ` · ${standing.saying} comments` : ""}{retracted
         ? mine
           ? " · retracted"
           : " · retracted by author"

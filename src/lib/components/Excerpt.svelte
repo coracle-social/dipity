@@ -5,4 +5,4 @@
   let {content, class: className = ""}: {content: string; class?: string} = $props()
 </script>
 
-<span class="line-clamp-2 block text-sm text-pretty {className}">{firstLine(content)}</span>
+<span class="line-clamp-2 text-sm text-pretty {className}">{firstLine(content)}</span>

@@ -121,7 +121,7 @@
     {:else if preview.excerpt}
       <Excerpt class="mt-1" content={preview.excerpt} />
     {:else if preview.text}
-      <span class="mt-1 line-clamp-3 block text-sm text-pretty">{preview.text}</span>
+      <span class="mt-1 line-clamp-3 text-sm text-pretty">{preview.text}</span>
     {/if}
 
     {#if preview.prompt}
