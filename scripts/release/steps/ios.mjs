@@ -127,14 +127,23 @@ export default {
         )
       ).data
 
+      let noted = true
+
       for (const localization of localizations) {
-        await store.api("PATCH", `/v1/appStoreVersionLocalizations/${localization.id}`, {
-          data: {
-            type: "appStoreVersionLocalizations",
-            id: localization.id,
-            attributes: {whatsNew: notes.slice(0, 4000)},
-          },
-        })
+        try {
+          await store.api("PATCH", `/v1/appStoreVersionLocalizations/${localization.id}`, {
+            data: {
+              type: "appStoreVersionLocalizations",
+              id: localization.id,
+              attributes: {whatsNew: notes.slice(0, 4000)},
+            },
+          })
+        } catch (error) {
+          // An app's first version has no "What's New", and App Store Connect refuses the field until one is out
+          if (!error.message.includes("whatsNew")) throw error
+
+          noted = false
+        }
       }
 
       await store.api("PATCH", `/v1/appStoreVersions/${appStoreVersion.id}/relationships/build`, {
@@ -142,7 +151,7 @@ export default {
       })
 
       followUps.push(
-        `App Store Connect: ${version} has build ${buildNumber} and its release notes, submit it for review at https://appstoreconnect.apple.com`,
+        `App Store Connect: ${version} has build ${buildNumber}${noted ? " and its release notes" : ", and no release notes since it is the app's first version"}, submit it for review at https://appstoreconnect.apple.com`,
       )
     } else {
       const attached = await store.api("GET", `/v1/appStoreVersions/${appStoreVersion.id}/build`)
