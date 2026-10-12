@@ -28,7 +28,7 @@ Attempts are rate-limited, candidates are ordered by RSSI so the nearest strange
 - Distinct backoff for "never answered a connect" versus "was connected and walked away." The second recovers fast, because those peers usually come back.
 - A dial that fails before a link comes up is retried within a few seconds, jittered, because the usual cause is two phones dialing each other at the same moment.
 - A dropped link is redialed when its backoff lapses, without waiting for the radio to report the peer again, because a peer stays queued after it is dialed.
-- Two phones that dial each other end up with two links to one person. Both keep the one the lower pubkey dialed and close the other, which needs no message between them.
+- Two phones that dial each other end up with two links to one person. Both keep the one the lower pubkey dialed and close the other as soon as both have named the peer, which needs no message between them. Each link has its own transcript and so its own six digits. A pairing prompt therefore waits up to 15 seconds while another link has named nobody yet, since that link may be the same person dialing back, and only the kept link's digits are shown.
 - A peripheral that took a disclosure and left before syncing is not redialed until its address rotates, so that a harvester cannot drain the [disclosure bucket](./policy.md#discoverability) by being dialed again.
 - A peer that synced and then walked away is waited for: a standing connect that does not time out and survives the app being suspended, `connect` on iOS and an auto-connect on Android, given up once the peer's address has rotated. A suspended iPhone runs no timer. Without the standing connect, a peer coming back is reached only if somebody happens to scan. A link that never synced gets no wait, since a peer that refused us would be reconnected the moment it was back.
 - A walk-away in the background restarts the scan, because iOS reports each peripheral once per scan there and a peer it already reported would otherwise never be seen again.
@@ -117,6 +117,8 @@ A receiver that would hold a stranger first lets the exchange run until the dial
 The prompt carries a comparison value, derived from the session's handshake hash under its own domain label the way [login with device](./keys.md#login-with-device) derives its six digits. That value is the only thing the two users have to check, because Noise XX authenticates nobody and the gate runs before either side has named a pubkey. A device in the middle completes two handshakes and the two screens then disagree. A gate that cannot derive one asks nothing and stays held.
 
 The value the gate shows is six decimal digits, as login with device shows, under the gate's own label so that one ritual's value cannot stand in for the other's.
+
+Two held phones that dial each other each hold the link they dialed, and the two links carry different digits. Nobody is named yet, so both order the links by handshake hash, which both ends of a link share. A held dial stays quiet while a stranger's link coming the other way, opened within 10 seconds of it, has the lower hash, and closes once that stranger names itself. One phone is asked first, and the other is asked over the same digits once the first approves.
 
 The pubkey each side proves afterwards is announced to the shell as it is proved. The gate runs first. A pet name the user typed there is for the person in front of them, and this is what says which key that person holds.
 

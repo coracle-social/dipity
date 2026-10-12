@@ -167,6 +167,9 @@ pub struct Session {
     pub state: State,
     /// Why the session ended, read once the state is `Closed`.
     pub ending: Ending,
+    /// When the link came up, which is how two links one pair of phones
+    /// dialed at once are told from two unrelated ones.
+    pub opened_at: i64,
     /// When the link has to have named somebody by. Sending recognition tags
     /// extends this by the hold, because it hands the peer a gate the user may
     /// hold.
@@ -240,6 +243,7 @@ impl Session {
             role,
             state: State::Linked,
             ending: Ending::WalkedAway,
+            opened_at: clock::now(),
             identify_by: clock::now() + IDENTIFY_CAP_SECONDS,
             wire: Wire::new(role, mtu)?,
             heartbeat: Heartbeat::new()?,
@@ -403,6 +407,39 @@ impl Session {
         let handshake_hash = self.wire.noise.handshake_hash().ok()?;
 
         Some(sas::sas(sas::PAIRING_LABEL, &handshake_hash))
+    }
+
+    /// The handshake hash both ends hold, or `None` before the handshake has
+    /// finished, which orders two links before either has named anybody.
+    #[must_use]
+    pub fn transcript(&self) -> Option<[u8; 32]> {
+        self.wire.noise.handshake_hash().ok()
+    }
+
+    /// Whether this is a dial held at the gate before anybody on it is named,
+    /// whose prompt carries digits and no person.
+    #[must_use]
+    pub fn holds_unnamed_dial(&self) -> bool {
+        self.role == Role::Dialer
+            && matches!(self.state, State::GatePending { .. })
+            && self.peer.is_none()
+    }
+
+    /// Whether this is a stranger's dial that the gate let run on to see who
+    /// they are, and will hold for the user once they say.
+    #[must_use]
+    pub fn defers_stranger(&self) -> bool {
+        self.role == Role::Receiver && self.gate.deferred && self.state.is_open()
+    }
+
+    /// Whether the peer has proved a pubkey the shell has not been told about
+    /// that this device did not recognize, which is a pubkey the view asks to pair with.
+    #[must_use]
+    pub fn awaits_pairing_prompt(&self) -> bool {
+        self.auth
+            .proved
+            .difference(&self.announced)
+            .any(|pubkey| !self.recognized(pubkey))
     }
 
     /// Whichever pubkeys the peer has proved that the shell has not been told
