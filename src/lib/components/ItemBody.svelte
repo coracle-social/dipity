@@ -17,7 +17,15 @@
   import Prose from "$lib/components/Prose.svelte"
   import Quoted from "$lib/components/Quoted.svelte"
   import {reasonLabel} from "$lib/data/reports"
-  import {article, boostedBy, calendarFor, commentedOn, occasionOf, report} from "$lib/kinds"
+  import {
+    article,
+    boostedBy,
+    calendarFor,
+    commentedOn,
+    firstLine,
+    occasionOf,
+    report,
+  } from "$lib/kinds"
   import type {Item, Standing} from "$lib/data/feed"
   import type {Social} from "$lib/data/contacts"
   import type {Session} from "$lib/data/session"
@@ -38,12 +46,6 @@
   } = $props()
 
   const {event} = $derived(item)
-
-  const firstLine = (content: string) =>
-    content
-      .split("\n")
-      .map(line => line.trim())
-      .find(Boolean) ?? ""
 
   const occasion = $derived.by(() => {
     if (event.kind !== EVENT_DATE && event.kind !== EVENT_TIME) return undefined
@@ -121,9 +123,6 @@
   <Poll {item} {standing} {session} />
 {:else if written}
   <h4 class="text-lg leading-snug font-semibold text-pretty">{written.title() ?? "Untitled"}</h4>
-  {#if written.summary()}
-    <p class="mt-1 text-sm text-pretty text-muted-foreground italic">{written.summary()}</p>
-  {/if}
   {#if detailed}
     <Prose class="mt-2" gap="mt-2" {event} />
   {:else}

@@ -6,7 +6,15 @@
   import {nameOf, type Social} from "$lib/data/contacts"
   import {heldEventOf} from "$lib/data/feed"
   import {go} from "$lib/data/nav"
-  import {article, calendarFor, categoryOf, occasionOf, poll, summaryOf} from "$lib/kinds"
+  import {
+    article,
+    calendarFor,
+    categoryOf,
+    firstLine,
+    occasionOf,
+    poll,
+    summaryOf,
+  } from "$lib/kinds"
 
   // A quoted thing in brief, its kind showing, and nothing in it to press but the way to it.
   let {
@@ -69,7 +77,7 @@
     if (event.kind === LONG_FORM) {
       const written = article.reader(event).parse()
 
-      return {...base, title: written.title(), text: written.summary(), prompt: "Read it"}
+      return {...base, title: written.title(), text: firstLine(event.content), prompt: "Read it"}
     }
 
     return base

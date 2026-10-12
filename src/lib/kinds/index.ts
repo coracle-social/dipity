@@ -255,6 +255,13 @@ export const withTopic = <W extends {addTags: (...tags: string[][]) => W}>(
   topic: string | undefined,
 ) => (topic ? writer.addTags(["t", topic]) : writer)
 
+/** The first line of some text that says anything, which is what stands for an article. */
+export const firstLine = (content: string) =>
+  content
+    .split("\n")
+    .map(line => line.trim())
+    .find(Boolean) ?? ""
+
 /**
  * One line standing for an event somewhere it is not the subject.
  *

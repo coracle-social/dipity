@@ -48,7 +48,6 @@
   let typed = $state("")
   let content = $state("")
   let title = $state("")
-  let summary = $state("")
   let where = $state("")
   let when = $state("")
   let options = $state(["", ""])
@@ -123,7 +122,7 @@
       return arrange(title.trim(), Date.parse(when) / 1000, where.trim(), content, topic)
     }
 
-    return compose(title.trim(), summary.trim(), content, topic)
+    return compose(title.trim(), content, topic)
   }
 
   // A refused publish keeps what was typed. The drawer staying open has to say why.
@@ -139,7 +138,6 @@
         typed = ""
         content = ""
         title = ""
-        summary = ""
         where = ""
         when = ""
         options = ["", ""]
@@ -260,10 +258,6 @@
           <div class="space-y-1.5">
             <Label for="article-title">Title</Label>
             <Input id="article-title" bind:value={title} placeholder="What it is called" />
-          </div>
-          <div class="space-y-1.5">
-            <Label for="article-summary">The line people see first</Label>
-            <Input id="article-summary" bind:value={summary} placeholder="One sentence" />
           </div>
           <Textarea bind:value={content} class="min-h-48" placeholder="Write it out" />
         {/if}

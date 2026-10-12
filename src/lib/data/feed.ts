@@ -462,13 +462,11 @@ export const arrange = async (
 }
 
 /** Write something long enough to want a title. */
-export const compose = async (title: string, summary: string, body: string, topic?: string) => {
+export const compose = async (title: string, body: string, topic?: string) => {
   const writer = withTopic(
     article.writer().setIdentifier(randomId()).setTitle(title).setContent(body),
     topic,
   )
-
-  if (summary) writer.setSummary(summary)
 
   return publish(await writer.renderTemplate())
 }
