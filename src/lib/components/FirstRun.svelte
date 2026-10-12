@@ -49,10 +49,10 @@
     {:else}
       <div class="mt-6 flex flex-col gap-2">
         <Button size="lg" onclick={() => take(createIdentity)}>Get started</Button>
-        <Button variant="ghost" size="lg" onclick={() => take(awaitIdentity)}>
+        <Button variant="outline" size="lg" onclick={() => take(awaitIdentity)}>
           Log in with your other phone
         </Button>
-        <Button variant="ghost" size="lg" onclick={() => (pasting = true)}>
+        <Button variant="outline" size="lg" onclick={() => (pasting = true)}>
           Log in with a key
         </Button>
       </div>
