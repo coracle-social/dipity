@@ -204,11 +204,9 @@
     <p class="min-w-0 truncate text-xs text-muted-foreground">
       {arrived}{carrier ? ` · from ${carrier}` : ""}{hops === 2 ? " · two hops" : ""}{passedOn > 0
         ? ` · ${passedOn} passed on`
-        : ""}{standing.saying > 0 ? ` · ${standing.saying} comments` : ""}{retracted
-        ? mine
-          ? " · retracted"
-          : " · retracted by author"
-        : ""}
+        : ""}{standing.saying > 0
+        ? ` · ${standing.saying} ${standing.saying === 1 ? "comment" : "comments"}`
+        : ""}{retracted ? (mine ? " · retracted" : " · retracted by author") : ""}
     </p>
 
     <div class="flex flex-none items-center gap-0.5">

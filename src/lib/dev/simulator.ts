@@ -19,10 +19,10 @@
 
 import {WebPlugin} from "@capacitor/core"
 import {faker} from "@faker-js/faker"
-import {blake3} from "@noble/hashes/blake3.js"
 import {sha256} from "@noble/hashes/sha2.js"
 import {bytesToHex} from "@noble/hashes/utils.js"
 import {
+  BOOKMARKS,
   COMMENT,
   NOTE,
   REACTION,
@@ -37,9 +37,17 @@ import type {HashedEvent} from "@welshman/util"
 import {nip19} from "nostr-tools"
 import type {Blob, Bluetooth, DipCore, NotificationPermission, Pref, Query} from "$lib/core"
 import {boost, card, comment, genericBoost, reaction} from "$lib/dev/kinds"
+import {bytes, describe} from "$lib/dev/media"
 import {compiled} from "$lib/dev/policy"
-import {emoji, identity, people, post, remark, shortCode, type Person} from "$lib/dev/neighborhood"
+import * as neighborhood from "$lib/dev/neighborhood"
+import {emoji, post, remark, shortCode, type Person} from "$lib/dev/neighborhood"
+import * as scene from "$lib/dev/scene"
 import {Store} from "$lib/dev/store"
+
+/** Who lives on the street this load runs, the staged one at `?scene`. */
+const {identity, people} = scene.staged
+  ? {identity: scene.identity, people: scene.cast}
+  : neighborhood
 
 const HOUR = 3600
 
@@ -64,15 +72,6 @@ const now = () => Math.floor(Date.now() / 1000)
 const log = (message: string) => console.info(`[sim] ${message}`)
 
 const short = (pubkey: string) => pubkey.slice(0, 8)
-
-const bytes = (base64: string) => Uint8Array.from(atob(base64), letter => letter.charCodeAt(0))
-
-/** The three `imeta` entries the core answers, computed the same way it does. */
-const describe = (media: Uint8Array) => [
-  `x ${bytesToHex(sha256(media))}`,
-  `size ${media.length}`,
-  `blake3 ${bytesToHex(blake3(media))}`,
-]
 
 /** A blob known only by what an `imeta` tag claims about it. */
 const fromImeta = (tag: string[]): Blob | undefined => {
@@ -186,6 +185,27 @@ export class Simulator extends WebPlugin implements DipCore {
     for (const person of known) {
       await this.respond(person, at - faker.number.int(6 * HOUR))
       this.handOn(person, 6, at - faker.number.int(6 * HOUR))
+    }
+  }
+
+  /** The street staged for screenshots, which stands still once it is set out. */
+  private async stage() {
+    const staged = await scene.stage(now())
+
+    for (const {event, from, at, media} of staged) {
+      this.keep(event, from, at, media ? [media] : [])
+    }
+
+    const kept = scene.bookmarkedFrom(staged).map(event => ["e", event.id])
+
+    this.store.record(
+      hash({kind: BOOKMARKS, tags: kept, content: "", created_at: now(), pubkey: this.identity}),
+      this.identity,
+      now(),
+    )
+
+    for (const {event} of staged.filter(({from}) => from !== this.identity).slice(0, 12)) {
+      this.store.share(event.id, scene.cast[0].pubkey, now())
     }
   }
 
@@ -439,9 +459,14 @@ export class Simulator extends WebPlugin implements DipCore {
     // A reloaded view starts again over the same core, which seeds its backlog once.
     if (!this.started) {
       this.started = true
-      await this.backlog()
+      if (scene.staged) {
+        await this.stage()
+      } else {
+        await this.backlog()
+        this.tick()
+      }
+
       log(`started as ${short(this.identity)}, ${people.length} people in range`)
-      this.tick()
     }
 
     return {identity: this.identity}
@@ -449,18 +474,14 @@ export class Simulator extends WebPlugin implements DipCore {
 
   // ------------------------------------------------------------- the store
 
-  async mediaTags({media}: {media: string}) {
-    return {entries: describe(bytes(media))}
-  }
-
-  async publish({event, media = []}: {event: string; media?: string[]}) {
-    const published = JSON.parse(event) as HashedEvent
-    const blobs = published.tags
+  /** Store an event with the bytes its `imeta` tags describe, answering the blobs it names. */
+  private keep(event: HashedEvent, from: string, at: number, media: string[]) {
+    const blobs = event.tags
       .filter(tag => tag[0] === "imeta")
       .map(fromImeta)
       .filter(blob => blob !== undefined)
 
-    this.store.record(published, this.identity, now(), blobs)
+    this.store.record(event, from, at, blobs)
 
     for (const [index, attached] of media.map(bytes).entries()) {
       const hash = bytesToHex(sha256(attached))
@@ -469,6 +490,18 @@ export class Simulator extends WebPlugin implements DipCore {
       this.media.set(hash, media[index])
     }
 
+    return blobs
+  }
+
+  async mediaTags({media}: {media: string}) {
+    return {entries: describe(bytes(media))}
+  }
+
+  async publish({event, media = []}: {event: string; media?: string[]}) {
+    const published = JSON.parse(event) as HashedEvent
+    const blobs = this.keep(published, this.identity, now(), media)
+
+    this.keep(published, this.identity, now(), media)
     this.notifyListeners("storeChanged", {group: "events"})
     log(`published kind ${published.kind}, ${blobs.length} attached`)
   }

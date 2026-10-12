@@ -21,6 +21,8 @@ Obtainium needs no step of its own, because it reads the gitea release. `.gitea/
 4. `just release --check` lists every step and anything a step is missing, and runs nothing.
 5. `just release`.
 
+`just screenshots` draws the store listings' screenshots into `screenshots/`, at every size the App Store and Google Play take, over the posts and people `src/lib/dev/scene.ts` stages.
+
 A step that fails names the command that picks up from it, such as `just release ios gitea zapstore`. The Play and App Store Connect steps reuse a build already uploaded rather than building again, because neither store accepts a build number twice.
 
 ## Credentials

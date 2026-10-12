@@ -16,7 +16,9 @@ import {
   Delete,
   GenericRepost,
   Note,
+  Picture,
   Poll,
+  PollResponse,
   Reaction,
   Repost,
   TimeEvent,
@@ -29,6 +31,10 @@ const context: KindContext = {resolver: new Resolver(() => [])}
 export const note = Note.configure(context)
 
 export const poll = Poll.configure(context)
+
+export const pollResponse = PollResponse.configure(context)
+
+export const picture = Picture.configure(context)
 
 export const article = Article.configure(context)
 

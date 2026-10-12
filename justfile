@@ -170,6 +170,10 @@ icons:
 bump version:
     node scripts/release/bump.mjs {{version}}
 
+# App Store screenshots of every screen, staged over the simulated core: just screenshots [--dark] [--store app-store|play] [screen...]
+screenshots *args:
+    node scripts/screenshots.mjs {{args}}
+
 # Build, sign and publish a release, or only the named steps: just release [--check] [step...]
 release *args:
     node scripts/release/release.mjs {{args}}
