@@ -200,13 +200,6 @@
           </DropdownMenu.Content>
         </DropdownMenu.Root>
 
-        <InputGroup.Root>
-          <InputGroup.Addon>
-            <Tag />
-          </InputGroup.Addon>
-          <InputGroup.Input bind:value={typed} placeholder="Topic, if any" aria-label="Topic" />
-        </InputGroup.Root>
-
         {#if shape === "notes"}
           <Textarea bind:value={content} class="min-h-32" placeholder="Type it out" />
         {:else if shape === "images"}
@@ -274,6 +267,16 @@
           </div>
           <Textarea bind:value={content} class="min-h-48" placeholder="Write it out" />
         {/if}
+
+        <div class="space-y-1.5">
+          <Label for="topic">Topic</Label>
+          <InputGroup.Root>
+            <InputGroup.Addon>
+              <Tag />
+            </InputGroup.Addon>
+            <InputGroup.Input id="topic" bind:value={typed} placeholder="Optional" />
+          </InputGroup.Root>
+        </div>
       {/if}
     </div>
 
