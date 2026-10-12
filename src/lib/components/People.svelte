@@ -19,9 +19,9 @@
 
   const standings = [
     {value: "everyone", label: "Everyone"},
-    {value: "withheld", label: "Not accepted"},
     {value: "muted", label: "Muted"},
     {value: "blocked", label: "Blocked"},
+    {value: "withheld", label: "Suppressed"},
   ] as const
 
   let standing = $state<(typeof standings)[number]["value"]>("everyone")
@@ -111,14 +111,14 @@
               </p>
             </div>
 
-            {#if contact.withheld}
-              <Badge variant="outline">not accepted</Badge>
-            {/if}
             {#if contact.muted}
               <Badge variant="outline">muted</Badge>
             {/if}
             {#if contact.blocked}
               <Badge variant="destructive">blocked</Badge>
+            {/if}
+            {#if contact.withheld}
+              <Badge variant="outline">suppressed</Badge>
             {/if}
 
             <ChevronRight class="size-4 flex-none text-muted-foreground" />

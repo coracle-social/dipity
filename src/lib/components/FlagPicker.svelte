@@ -72,7 +72,7 @@
       undismiss()
 
       if (trashing) trash(item)
-      // Not accepting, muting and blocking them together is refusing them.
+      // Muting, blocking and suppressing them together is refusing them.
       if (refusing) {
         setWithheld(item.event.pubkey, true)
         setMuted(item.event.pubkey, true)

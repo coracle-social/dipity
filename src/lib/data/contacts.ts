@@ -36,7 +36,7 @@ export type Contact = {
   aliases: {by: string; petname: string}[]
   /** Whether the user hides their posts from themselves. */
   muted: boolean
-  /** Whether the user's device never passes their posts on, which is not having accepted them. */
+  /** Whether the user's device never passes their posts on, which is suppressing them. */
   withheld: boolean
   /** Whether the user's device sends them nothing. With the two above, the device refuses them. */
   blocked: boolean

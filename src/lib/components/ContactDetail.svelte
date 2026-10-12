@@ -56,20 +56,12 @@
             id: "trusted",
             label: "Trusted",
             detail:
-              "They can put a warning on posts, stopping your phone from passing along flagged pictures, and anyone they stop accepting loses their vouching.",
+              "Display warnings they add to posts and take their social graph into account when auto-muting strangers.",
             on: !$untrusted.includes(pubkey),
             set: (on: boolean) => setTrusted(pubkey, on),
           },
         ]
       : []),
-    {
-      id: "accepted",
-      label: "Accepted",
-      detail:
-        "Your device passes their posts on, and your contacts' phones take them on your word.",
-      on: !contact?.withheld,
-      set: (on: boolean) => setWithheld(pubkey, !on),
-    },
     {
       id: "muted",
       label: "Muted",
@@ -84,6 +76,14 @@
         "Your device sends them nothing, though other phones may still pass your posts to them.",
       on: Boolean(contact?.blocked),
       set: (on: boolean) => setBlocked(pubkey, on),
+    },
+    {
+      id: "suppressed",
+      label: "Suppressed",
+      detail:
+        "Your device never passes their posts on, and your contacts' phones stop taking them on your word.",
+      on: Boolean(contact?.withheld),
+      set: (on: boolean) => setWithheld(pubkey, on),
     },
   ])
 
@@ -152,8 +152,7 @@
 
 {#if refused}
   <p class="mt-4 text-xs text-pretty text-muted-foreground">
-    Not accepted, muted and blocked, so your device won't connect to them or keep anything they
-    write.
+    Muted, blocked and suppressed, so your device won't connect to them or keep anything they write.
   </p>
 {/if}
 
