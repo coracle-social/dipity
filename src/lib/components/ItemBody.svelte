@@ -12,20 +12,13 @@
     REPOST,
   } from "@welshman/util"
   import {badgeVariants} from "$lib/components/ui/badge"
+  import Excerpt from "$lib/components/Excerpt.svelte"
   import Photo from "$lib/components/Photo.svelte"
   import Poll from "$lib/components/Poll.svelte"
   import Prose from "$lib/components/Prose.svelte"
   import Quoted from "$lib/components/Quoted.svelte"
   import {reasonLabel} from "$lib/data/reports"
-  import {
-    article,
-    boostedBy,
-    calendarFor,
-    commentedOn,
-    firstLine,
-    occasionOf,
-    report,
-  } from "$lib/kinds"
+  import {article, boostedBy, calendarFor, commentedOn, occasionOf, report} from "$lib/kinds"
   import type {Item, Standing} from "$lib/data/feed"
   import type {Social} from "$lib/data/contacts"
   import type {Session} from "$lib/data/session"
@@ -126,7 +119,7 @@
   {#if detailed}
     <Prose class="mt-2" gap="mt-2" {event} />
   {:else}
-    <p class="mt-1 line-clamp-2 text-sm text-pretty">{firstLine(event.content)}</p>
+    <Excerpt class="mt-1" content={event.content} />
   {/if}
 {:else}
   <Prose {event} />

@@ -3,18 +3,11 @@
   import Clock from "@lucide/svelte/icons/clock"
   import MapPin from "@lucide/svelte/icons/map-pin"
   import {EVENT_DATE, EVENT_TIME, LONG_FORM, POLL} from "@welshman/util"
+  import Excerpt from "$lib/components/Excerpt.svelte"
   import {nameOf, type Social} from "$lib/data/contacts"
   import {heldEventOf} from "$lib/data/feed"
   import {go} from "$lib/data/nav"
-  import {
-    article,
-    calendarFor,
-    categoryOf,
-    firstLine,
-    occasionOf,
-    poll,
-    summaryOf,
-  } from "$lib/kinds"
+  import {article, calendarFor, categoryOf, occasionOf, poll, summaryOf} from "$lib/kinds"
 
   // A quoted thing in brief, its kind showing, and nothing in it to press but the way to it.
   let {
@@ -39,6 +32,8 @@
     by: string
     title?: string
     text?: string
+    /** An article's content, which shows the way its card does. */
+    excerpt?: string
     options?: {id: string; label: string}[]
     when?: string
     where?: string
@@ -77,7 +72,7 @@
     if (event.kind === LONG_FORM) {
       const written = article.reader(event).parse()
 
-      return {...base, title: written.title(), text: firstLine(event.content), prompt: "Read it"}
+      return {...base, title: written.title(), excerpt: event.content, prompt: "Read it"}
     }
 
     return base
@@ -123,6 +118,8 @@
           <span class="flex items-center gap-1.5"><MapPin class="size-3.5" />{preview.where}</span>
         {/if}
       </span>
+    {:else if preview.excerpt}
+      <Excerpt class="mt-1" content={preview.excerpt} />
     {:else if preview.text}
       <span class="mt-1 line-clamp-3 block text-sm text-pretty">{preview.text}</span>
     {/if}
