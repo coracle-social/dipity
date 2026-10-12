@@ -1,5 +1,13 @@
 # Changelog
 
+# 0.1.3
+
+* Both phones now show the same pairing digits when they find each other at the same moment
+* Pairing digits are bolder and colored by digit, so they're easier to compare
+* Report a flagged post to the people who make Dipity by email
+* Agree to the terms of use when you first open the app
+* Clearer wording for muting, blocking and suppressing someone from a flagged post
+
 # 0.1.2
 
 * Picture posts, and topics with a filter and muted topics on the board
