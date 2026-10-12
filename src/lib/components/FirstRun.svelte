@@ -33,8 +33,8 @@
     <Wordmark class="mx-auto h-auto w-56" />
     <h1 class="mt-6 text-center text-2xl font-semibold text-balance">Where your town talks.</h1>
 
-    <div class="mt-6 flex items-start gap-3">
-      <Checkbox id="terms" bind:checked={agreed} class="mt-0.5" />
+    <div class="mt-6 flex items-center justify-center gap-3">
+      <Checkbox id="terms" bind:checked={agreed} />
       <Label for="terms" class="block text-sm leading-snug font-normal text-muted-foreground">
         I agree to the
         <a
