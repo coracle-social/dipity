@@ -101,6 +101,10 @@ mod control {
     /// One step of the L2CAP upgrade.
     /// `docs/transport.md#the-l2cap-bandwidth-upgrade`.
     pub const L2CAP: u8 = 0x05;
+    /// The user at the other end asked to pair over this link. Carries
+    /// nothing: the link already says who is asking.
+    /// `docs/discovery.md#meeting-somebody`.
+    pub const PAIR: u8 = 0x06;
 }
 
 /// Where a link is in its lifecycle.
@@ -117,13 +121,11 @@ pub enum State {
     Identified,
     /// Events, then blobs.
     Syncing,
-    /// Waiting on the user to approve an unadmitted stranger, up to
-    /// [`GATE_HOLD_SECONDS`].
+    /// Holding an unadmitted stranger, up to [`GATE_HOLD_SECONDS`], for the
+    /// app to come to the front.
     GatePending {
         /// When the hold began.
         since: i64,
-        /// Whether the shell has been asked to prompt yet.
-        approval_requested: bool,
     },
     /// No new work; in-flight transfers finish or time out.
     Draining {
@@ -198,6 +200,8 @@ pub struct Session {
     recognized: Vec<PublicKey>,
     /// The proved pubkeys the shell has already been told about.
     announced: Identity,
+    /// Whether the peer asked to pair and the shell has not been told yet.
+    pair_requested: bool,
     /// The relay half: what this device serves, and the subscriptions it
     /// serves to.
     relay: Relay,
@@ -255,6 +259,7 @@ impl Session {
             peer: None,
             recognized: Vec::new(),
             announced: Identity::default(),
+            pair_requested: false,
             relay: Relay::default(),
             client: Client::default(),
             blobs: BlobExchange::new(blobs),
@@ -325,19 +330,27 @@ impl Session {
         self.blobs.forgive_refusal();
     }
 
-    /// Answer the consent gate's hold, from the user's decision.
-    ///
-    /// Approving resumes whatever the gate held back; refusing closes the link.
-    pub fn approve(&mut self, db: &Db, approved: bool) -> Result<()> {
+    /// Judge a held stranger again, which the app coming to the front is the
+    /// occasion for: a stranger met with the app open is admitted outright.
+    pub fn reconsider_gate(&mut self, db: &Db) -> Result<()> {
         if !matches!(self.state, State::GatePending { .. }) {
             return Ok(());
         }
 
-        if !approved {
-            self.close(Ending::Refused);
-            return Ok(());
-        }
+        let resolved = self.recognized.clone();
 
+        match self.gate.evaluate(db, &self.policy, &resolved)? {
+            Verdict::Pass => self.admit(db),
+            Verdict::Refused => {
+                self.close(Ending::Refused);
+                Ok(())
+            }
+            Verdict::Pending => Ok(()),
+        }
+    }
+
+    /// Let a held stranger through, resuming whatever the gate held back.
+    fn admit(&mut self, db: &Db) -> Result<()> {
         self.gate.passed = true;
         self.identify_by = self.identify_by.max(clock::now() + IDENTIFY_CAP_SECONDS);
 
@@ -374,33 +387,21 @@ impl Session {
         Ok(())
     }
 
-    /// The comparison value to put in front of the user, once per held gate.
-    ///
-    /// This is the only thing the two users have to check, because the gate
-    /// runs before either side has named a pubkey. A transcript that is not available
-    /// yet defers the prompt rather than asking without one: a gate with
-    /// nothing to compare authenticates nobody.
-    pub fn request_approval(&mut self) -> Option<u32> {
-        if !matches!(
-            self.state,
-            State::GatePending {
-                approval_requested: false,
-                ..
-            }
-        ) {
-            return None;
+    /// Ask the peer to pair, which puts this device's request in front of
+    /// their user. Only a syncing link can carry one, because the request
+    /// names whoever the link proved.
+    pub fn request_pairing(&mut self) -> Result<()> {
+        if self.state != State::Syncing {
+            return Ok(());
         }
 
-        let code = self.pairing_code()?;
+        self.send_control(control::PAIR, &[])
+    }
 
-        if let State::GatePending {
-            approval_requested, ..
-        } = &mut self.state
-        {
-            *approval_requested = true;
-        }
-
-        Some(code)
+    /// Whether the peer asked to pair since the shell was last told, which is
+    /// what the view puts in front of the user.
+    pub fn take_pair_request(&mut self) -> bool {
+        std::mem::take(&mut self.pair_requested)
     }
 
     /// The six digits both users compare, derived from this session's
@@ -417,22 +418,6 @@ impl Session {
     #[must_use]
     pub fn transcript(&self) -> Option<[u8; 32]> {
         self.wire.noise.handshake_hash().ok()
-    }
-
-    /// Whether this is a dial held at the gate before anybody on it is named,
-    /// whose prompt carries digits and no person.
-    #[must_use]
-    pub fn holds_unnamed_dial(&self) -> bool {
-        self.role == Role::Dialer
-            && matches!(self.state, State::GatePending { .. })
-            && self.peer.is_none()
-    }
-
-    /// Whether this is a stranger's dial that the gate let run on to see who
-    /// they are, and will hold for the user once they say.
-    #[must_use]
-    pub fn defers_stranger(&self) -> bool {
-        self.role == Role::Receiver && self.gate.deferred && self.state.is_open()
     }
 
     /// Whether the peer has proved a pubkey the shell has not been told about
@@ -1253,6 +1238,8 @@ impl Session {
             }
             control::TRANSFER => self.on_transfer(payload)?,
             control::L2CAP => self.on_l2cap(db, payload)?,
+            // A request before the link syncs names nobody, and is not one.
+            control::PAIR => self.pair_requested = self.state == State::Syncing,
             other => bail!("an unknown control frame {other} arrived"),
         }
 
@@ -1287,11 +1274,10 @@ impl Session {
         Ok(())
     }
 
-    /// Hold the link for the user to approve.
+    /// Hold the link for the app to come to the front.
     fn hold(&mut self) {
         self.state = State::GatePending {
             since: clock::now(),
-            approval_requested: false,
         };
     }
 
@@ -1875,48 +1861,50 @@ mod tests {
     }
 
     #[test]
-    fn approval_is_requested_once_and_refusal_closes() {
+    fn a_held_stranger_is_admitted_once_the_app_is_in_front_unless_it_is_quiet() {
         let db = Db::open_in_memory().unwrap();
-        let mut session = secured_session(policy());
+        let mut session = secured_session(quiet());
         session.state = State::GatePending {
             since: clock::now(),
-            approval_requested: false,
         };
+        session.gate.presence = Some(Presence::Foreground);
 
-        assert!(session.request_approval().is_some());
-        assert_eq!(session.request_approval(), None, "the prompt is one-shot");
-
-        session.approve(&db, false).unwrap();
-        assert_eq!(session.state, State::Closed);
-    }
-
-    #[test]
-    fn a_gate_with_no_transcript_behind_it_asks_nothing() {
-        let mut session = session(policy());
-        session.state = State::GatePending {
-            since: clock::now(),
-            approval_requested: false,
-        };
-
-        assert_eq!(session.request_approval(), None);
+        session.reconsider_gate(&db).unwrap();
         assert!(
-            session.request_approval().is_none(),
-            "and it is still owed once the handshake completes"
+            matches!(session.state, State::GatePending { .. }),
+            "a quiet time holds whoever is looking"
         );
+
+        session.set_policy(Arc::new(policy()));
+        session.reconsider_gate(&db).unwrap();
+        assert!(!matches!(session.state, State::GatePending { .. }));
     }
 
     #[test]
-    fn both_ends_of_a_gate_compare_the_same_value() {
-        let (mut session, mut peer) = secured_pair(policy());
+    fn both_ends_of_a_link_compare_the_same_value() {
+        let (session, peer) = secured_pair(policy());
 
-        for end in [&mut session, &mut peer] {
-            end.state = State::GatePending {
-                since: clock::now(),
-                approval_requested: false,
-            };
-        }
+        assert!(session.pairing_code().is_some());
+        assert_eq!(session.pairing_code(), peer.pairing_code());
+    }
 
-        assert_eq!(session.request_approval(), peer.request_approval());
+    #[test]
+    fn a_pair_request_crosses_once_the_link_syncs_and_is_announced_once() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, _receiver) = secured_pair(policy());
+
+        // Nobody is named on a secured link, so there is nobody to ask.
+        dialer.request_pairing().unwrap();
+        assert!(dialer.next_write(Pipe::Gatt).unwrap().is_none());
+
+        let (mut dialer, mut receiver) = attended_pair(&db);
+
+        dialer.request_pairing().unwrap();
+        pump(&mut dialer, &mut receiver, &db);
+
+        assert!(receiver.take_pair_request());
+        assert!(!receiver.take_pair_request());
+        assert!(!dialer.take_pair_request(), "asking is not being asked");
     }
 
     #[test]
@@ -1949,7 +1937,6 @@ mod tests {
         let mut session = session(policy());
         session.state = State::GatePending {
             since: clock::now(),
-            approval_requested: false,
         };
 
         // A held stranger volunteering an identity is refused by the gate, not the decoder.
@@ -2386,8 +2373,10 @@ mod tests {
             "nothing disclosed before approval"
         );
 
-        // The user admits the stranger, and the receiver discloses in turn.
-        receiver.approve(&db, true).unwrap();
+        // The quiet time ends and the user opens the app, and the receiver discloses in turn.
+        receiver.set_policy(Arc::new(policy()));
+        receiver.gate.presence = Some(Presence::Foreground);
+        receiver.reconsider_gate(&db).unwrap();
         pump(&mut receiver, &mut dialer, &db); // receiver response: dialer identifies
 
         assert_eq!(dialer.state, State::Syncing);
@@ -2441,7 +2430,8 @@ mod tests {
         let late = 1_000 + GATE_HOLD_SECONDS - 1;
 
         clock::at(late, || {
-            receiver.approve(&db, true).unwrap();
+            receiver.gate.presence = Some(Presence::Foreground);
+            receiver.reconsider_gate(&db).unwrap();
             receiver.heartbeat.heard();
             assert!(
                 !receiver.expired(),

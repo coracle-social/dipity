@@ -22,7 +22,7 @@ export type Place =
   | {at: "settings"}
   | {at: "contact"; pubkey: string}
   | {at: "item"; id: string}
-  | {at: "pairing"; link: number}
+  | {at: "pairing"; link?: number}
   | {at: "device"}
 
 export const place = writable<Place>({at: "board"})

@@ -61,11 +61,8 @@ const ENCOUNTER_EVERY = 9_000
 
 const ENCOUNTER_JITTER = 12_000
 
-/** How long a consent gate stays open before the peer has walked away. */
-const GATE_OPEN = 45_000
-
-/** How long a refusal is respected before that person is asked about again. */
-const GATE_BACKOFF = 10 * 60_000
+/** How long the person at the other end takes to open a request on their phone. */
+const LOOK_DELAY = 2_500
 
 const now = () => Math.floor(Date.now() / 1000)
 
@@ -132,8 +129,6 @@ export class Simulator extends WebPlugin implements DipCore {
   private paired = new Set<string>()
   /** What the user attached to what they published, base64 by hash, since only the core keeps files. */
   private media = new Map<string, string>()
-  private refused = new Map<string, number>()
-  private gates = new Map<number, Person>()
   private live = new Map<number, Person>()
   private transfer: Transfer | undefined
   /** The link a transfer last delivered a key over, and whose key it was. */
@@ -149,7 +144,7 @@ export class Simulator extends WebPlugin implements DipCore {
       this.paired.add(person.pubkey)
     }
 
-    // Reachable as `dip` in the console so that a gate with no screen yet can still be answered.
+    // Reachable as `dip` in the console, for what a browser has no second phone to drive.
     Object.assign(window, {dip: this})
   }
 
@@ -316,20 +311,32 @@ export class Simulator extends WebPlugin implements DipCore {
     }
   }
 
-  /** Everything one encounter produces: a gate if they are a stranger, then a burst. */
+  /** Everything one encounter produces: a link, a burst, and now and then a stranger asking to pair. */
   private async encounter() {
     const person = faker.helpers.arrayElement(people)
     const link = this.nextLink++
+    const known = this.paired.has(person.pubkey)
 
-    // A stranger exchanges nothing until the gate is answered, which is when `approve` gossips.
-    if (this.paired.has(person.pubkey)) {
-      this.open(link, person, true)
-      await this.gossip(person, faker.number.int({min: 1, max: person.talkative}))
-    } else {
-      this.gate(person, link)
+    this.open(link, person, known)
+
+    // A stranger syncs like anybody else; one in three presses add contact on their own phone.
+    if (!known && faker.datatype.boolean({probability: 0.33})) {
+      setTimeout(() => this.ask(link), LOOK_DELAY)
     }
 
+    await this.gossip(person, faker.number.int({min: 1, max: person.talkative}))
+
     this.tick()
+  }
+
+  /** The person on a link asks to pair, which is a question for the user and not an event. */
+  private ask(link: number) {
+    const person = this.live.get(link)
+
+    if (!person) return
+
+    this.notifyListeners("pairingRequested", {link, pubkey: person.pubkey, code: shortCode()})
+    log(`${short(person.pubkey)} is asking to pair over link ${link}`)
   }
 
   /**
@@ -363,31 +370,6 @@ export class Simulator extends WebPlugin implements DipCore {
 
       this.notifyListeners("linkClosed", {link})
       log(`link ${link} went down`)
-    }
-  }
-
-  /** A stranger asking, which is a question for the user and not an event. */
-  private gate(person: Person, link: number) {
-    const asked = this.refused.get(person.pubkey) ?? 0
-
-    if (Date.now() - asked > GATE_BACKOFF) {
-      this.gates.set(link, person)
-      this.notifyListeners("requestApproval", {link, code: shortCode()})
-      log(
-        `${short(person.pubkey)} is asking to pair — dip.approve({link: ${link}, approved: true})`,
-      )
-
-      setTimeout(() => this.walkAway(link), GATE_OPEN)
-    }
-  }
-
-  /** An unanswered gate is a peer who has gone, not a peer who was refused. */
-  private walkAway(link: number) {
-    const person = this.gates.get(link)
-
-    if (person) {
-      this.gates.delete(link)
-      log(`${short(person.pubkey)} walked away with link ${link} unanswered`)
     }
   }
 
@@ -506,20 +488,15 @@ export class Simulator extends WebPlugin implements DipCore {
     log(`published kind ${published.kind}, ${blobs.length} attached`)
   }
 
-  async approve({link, approved}: {link: number; approved: boolean}) {
-    const person = this.gates.get(link)
+  /** Everybody asked opens the request a moment later, which is when their phone asks back. */
+  async requestPairing({link}: {link?: number} = {}) {
+    const asked = [...this.live].filter(([at, person]) =>
+      link === undefined ? !this.paired.has(person.pubkey) : at === link,
+    )
 
-    this.gates.delete(link)
+    log(`asked ${asked.length} ${asked.length === 1 ? "phone" : "phones"} to pair`)
 
-    if (person && approved) {
-      this.paired.add(person.pubkey)
-      this.open(link, person, false)
-      log(`paired with ${short(person.pubkey)}`)
-      this.gossip(person, person.talkative)
-    } else if (person) {
-      this.refused.set(person.pubkey, Date.now())
-      log(`refused ${short(person.pubkey)}`)
-    }
+    for (const [at] of asked) setTimeout(() => this.ask(at), LOOK_DELAY)
   }
 
   async listEvents(query?: Query) {

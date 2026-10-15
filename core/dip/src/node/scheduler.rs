@@ -37,10 +37,6 @@ pub(crate) const WALKED_AWAY_BACKOFF_SECONDS: i64 = 15;
 /// whole gathering. `docs/discovery.md#connection-scheduling`.
 pub(crate) const REFUSED_BACKOFF_SECONDS: i64 = 60;
 
-/// How long after a consent-gate refusal before trying again. Hard, since the
-/// user just said no.
-pub(crate) const DECLINED_BACKOFF_SECONDS: i64 = 5 * 60;
-
 /// The shortest wait before redialing a peripheral whose dial failed outright.
 ///
 /// The retry is jittered by up to [`DIAL_FAILED_JITTER_SECONDS`] more, because
@@ -127,8 +123,7 @@ enum Tier {
     /// A peer the core dropped: policy refuses it, its consent gate lapsed, or
     /// its frames stopped being ones the wire could carry.
     Refused,
-    /// A peer the user declined at the consent gate, or a device that does
-    /// not run the app.
+    /// A device that does not run the app, or that took a disclosure and left.
     Declined,
 }
 
@@ -320,11 +315,6 @@ impl Scheduler {
         self.dialing.remove(peripheral);
         self.awaiting.remove(peripheral);
         self.record(peripheral, Tier::Declined, NOT_OURS_BACKOFF_SECONDS);
-    }
-
-    /// A peer whose gate was refused: leave them alone.
-    pub fn declined(&mut self, peripheral: &PeripheralId) {
-        self.record(peripheral, Tier::Declined, DECLINED_BACKOFF_SECONDS);
     }
 
     /// Merge one outcome into a peripheral's backoff.

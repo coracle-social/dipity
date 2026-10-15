@@ -56,17 +56,17 @@ Four facts about the transport decide most of the interface, and every story bel
 
 ## Pairing
 
-33. Somebody the user has not named comes into range and asks to pair, whether or not the gate let them through, and the user finds out without leaving what they were doing. — `PairingTray`
-34. When several are asking at once, the tray says how many and opens on the oldest, the pairing screen steps between them, and answering one moves on to the next. — `PairingTray`, `Pairing`
-35. The user opens a request and compares six digits against the other person's screen, so that they know the two phones are talking to each other and not to something in between. — `Pairing`
-36. The user names the person in front of them while pairing with them, because there is no profile to read, and sees what their own contacts already call that person, if anything. — `Pairing`
-37. The name lands on whoever the link turns out to be, which the core says after the gate has passed. — `pairing.ts`
-38. The user declines a stranger the gate is holding, and is not asked about that person again for a while; one already through is just left unnamed until they next meet. — `Pairing`
+33. The user adds a contact by pressing a button while standing next to them, which asks everybody in range they have not named, and waits on the pairing screen until somebody opens the request. — `People`, `Pairing`
+34. Somebody nearby presses that button on their own phone, and the user finds out without leaving what they were doing. Nobody is asked about a phone that merely came into range. — `PairingTray`
+35. When several are asking at once, the tray says how many and opens on the oldest, the pairing screen steps between them, and answering one moves on to the next. — `PairingTray`, `Pairing`
+36. The user opens a request and compares six digits against the other person's screen, so that they know the two phones are talking to each other and not to something in between; opening it is what puts the same digits on the other screen. — `Pairing`
+37. The user names the person in front of them while pairing with them, because there is no profile to read, and sees what their own contacts already call that person, if anything. — `Pairing`
+38. The user declines, and that person is left unnamed and not asked about again until they have left and come back. — `Pairing`
 39. When the person walks away before the user answers, the request leaves the tray on its own. — `PairingTray`
 
 ## People
 
-40. The user looks up everybody the device knows, and the name each one is known by. — `People`
+40. The user looks up everybody they have named, and the name each one is known by, with how many phones are in range above them, contacts or not. — `People`
 41. Somebody the user never met but knows through a contact appears with that contact's name for them; a name from anybody else is not shown. — `People`
 42. The user renames somebody. — `ContactDetail`
 43. When the user removes somebody from their contacts, that person stops getting what the user shares with contacts and their phones meet as strangers next time. Muted, blocked and suppressed stay as they were. — `ContactDetail`
@@ -84,7 +84,7 @@ Four facts about the transport decide most of the interface, and every story bel
 52. The user writes the key down somewhere safe, locked with a password if they choose, whenever they get round to it. — `KeyBackup`, in `Settings`
 53. When the user puts their key on a second phone, both phones are them. — `DeviceLogin`
 54. On a new phone, the user takes the key off their other phone instead of making one. — `FirstRun`, `DeviceLogin`
-55. With the phone in their pocket, the user hears that somebody nearby wants to pair or that new things reached the board, once they switch that on in Settings or when the app offers it after their second post. — `NotificationOffer`, `Settings`
+55. With the phone in their pocket, the user hears that somebody nearby asked to pair or that new things reached the board, once they switch that on in Settings or when the app offers it after their second post. — `NotificationOffer`, `Settings`
 56. The user decides whose pictures are blurred until tapped. — `Settings`, `Photo`
 57. The user mutes a topic by typing it, and unmutes one. — `Settings`
 58. A picture reaches the board once its image has, so that nothing is drawn as a hole. — `Board`

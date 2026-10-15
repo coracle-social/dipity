@@ -54,7 +54,7 @@ The backup file is the weak point in an otherwise device-bound design. Unencrypt
 
 ## Social layer
 
-People can set up their profile any way they like, allowing them to impersonate others. There are two categories of mitigation to this: approve-on-first connect prevents peering when the user isn't paying attention, keeping people who peer at weird times from getting into the social graph. The other is web-of-trust analysis; if we have access to others' contact cards, we can have more confidence in the reputation of a given key.
+People can set up their profile any way they like, allowing them to impersonate others. There are two categories of mitigation to this: pairing happens only when a person asks for it from their own phone and the other person answers on theirs, so nobody gets into the social graph without two people paying attention. The other is web-of-trust analysis; if we have access to others' contact cards, we can have more confidence in the reputation of a given key.
 
 ## What we do not defend against
 

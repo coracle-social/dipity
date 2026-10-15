@@ -2,6 +2,7 @@
   import ChevronRight from "@lucide/svelte/icons/chevron-right"
   import Filter from "@lucide/svelte/icons/list-filter"
   import Tag from "@lucide/svelte/icons/tag"
+  import UserPlus from "@lucide/svelte/icons/user-plus"
   import Users from "@lucide/svelte/icons/users"
   import {Badge} from "$lib/components/ui/badge"
   import {Button} from "$lib/components/ui/button"
@@ -10,7 +11,9 @@
   import EmptyState from "$lib/components/EmptyState.svelte"
   import SearchBox from "$lib/components/SearchBox.svelte"
   import {aliases, contacts, nameOf, short, social} from "$lib/data/contacts"
+  import {links} from "$lib/data/links"
   import {go} from "$lib/data/nav"
+  import {seek} from "$lib/data/pairing"
   import {matches, nameMatches, wordsOf} from "$lib/data/search"
 
   // Each tab searches only itself.
@@ -48,10 +51,26 @@
 
   /** Who gave a name, by the name the user knows them by. */
   const givers = (by: string[]) => by.map(pubkey => nameOf($social, pubkey).name).join(", ")
+
+  // Contacts or not: a phone in range is a phone trading posts, and nothing more is said about whose it is.
+  const inRange = $derived(
+    $links.length === 0
+      ? "Nobody in range right now"
+      : $links.length === 1
+        ? "1 person in range"
+        : `${$links.length} people in range`,
+  )
 </script>
 
-<header class="pt-4 pb-3">
-  <h1 class="text-2xl font-semibold">People</h1>
+<header class="flex items-center justify-between gap-3 pt-4 pb-3">
+  <div>
+    <h1 class="text-2xl font-semibold">People</h1>
+    <p class="text-sm text-muted-foreground">{inRange}</p>
+  </div>
+  <Button onclick={seek}>
+    <UserPlus />
+    Add contact
+  </Button>
 </header>
 
 <Tabs.Root value="contacts">
@@ -130,7 +149,8 @@
     {#if narrowed && shown.length === 0 && $contacts.length > 0}
       <EmptyState icon={Users}>No contacts match that.</EmptyState>
     {:else if $contacts.length === 0}
-      <EmptyState icon={Users}>Pair with someone nearby and they appear here.</EmptyState>
+      <EmptyState icon={Users}
+        >Add a contact while you are next to them, and they appear here.</EmptyState>
     {/if}
   </Tabs.Content>
 

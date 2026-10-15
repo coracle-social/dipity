@@ -38,7 +38,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "mediaTags", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "publish", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "approve", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "requestPairing", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "exportKey", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "offerIdentity", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "answerIdentityTransfer", returnType: CAPPluginReturnPromise),
@@ -175,12 +175,12 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    /// The user answered a `requestApproval` the plugin sent up.
-    @objc func approve(_ call: CAPPluginCall) {
-        guard let link = link(call) else { return call.reject("approve needs a link") }
+    /// Ask to pair over one link, or over every link to somebody the user has not named.
+    @objc func requestPairing(_ call: CAPPluginCall) {
+        let link = link(call)
 
-        perform(call, "that approval could not be recorded") {
-            try $0.node.approve(link: link, approved: call.getBool("approved", false))
+        perform(call, "that request could not be sent") {
+            try $0.node.requestPairing(link: link)
         }
     }
 

@@ -28,7 +28,7 @@ Attempts are rate-limited, candidates are ordered by RSSI so the nearest strange
 - Distinct backoff for "never answered a connect" versus "was connected and walked away." The second recovers fast, because those peers usually come back.
 - A dial that fails before a link comes up is retried within a few seconds, jittered, because the usual cause is two phones dialing each other at the same moment.
 - A dropped link is redialed when its backoff lapses, without waiting for the radio to report the peer again, because a peer stays queued after it is dialed.
-- Two phones that dial each other end up with two links to one person. Both keep the one the lower pubkey dialed and close the other as soon as both have named the peer, which needs no message between them. Each link has its own transcript and so its own six digits. A pairing prompt therefore waits up to 15 seconds while another link has named nobody yet, since that link may be the same person dialing back, and only the kept link's digits are shown.
+- Two phones that dial each other end up with two links to one person. Both keep the one the lower pubkey dialed and close the other as soon as both have named the peer, which needs no message between them. Each link has its own transcript and so its own six digits, and a pairing request that arrives over both before the duplicate closes is shown once, under the kept link's digits.
 - A peripheral that took a disclosure and left before syncing is not redialed until its address rotates, so that a harvester cannot drain the [disclosure bucket](./policy.md#discoverability) by being dialed again.
 - A peer that synced and then walked away is waited for: a standing connect that does not time out and survives the app being suspended, `connect` on iOS and an auto-connect on Android, given up once the peer's address has rotated. A suspended iPhone runs no timer. Without the standing connect, a peer coming back is reached only if somebody happens to scan. A link that never synced gets no wait, since a peer that refused us would be reconnected the moment it was back.
 - A walk-away in the background restarts the scan, because iOS reports each peripheral once per scan there and a peer it already reported would otherwise never be seen again.
@@ -110,17 +110,13 @@ What the gate protects is the disclosure of a nostr pubkey, which names a long-t
 
 Before either party identifies itself, a recognition tag may resolve allowing the peer to be mapped to a pubkey. This allows policy to be used to decide whether to connect. Refused peers retain their tags so we can keep dropping their connections.
 
-If a peer isn't recognized, the app may refuse to connect depending on the user's [discoverability policy settings](./policy.md#discoverability). If this happens, the user should be notified so they can manually approve the connection. If the user doesn't respond, hang on to the connection for up to 5 minutes.
+If a peer isn't recognized, the app may hold the connection depending on the user's [discoverability policy settings](./policy.md#discoverability). A held stranger is not put in front of the user: the hold waits for the app to come to the front, where every stranger is admitted, and lapses after 5 minutes otherwise. Nothing about a held stranger is worth a prompt, because nobody is named yet and the user could only be asked whether to let an unknown phone in.
 
-A receiver that would hold a stranger first lets the exchange run until the dialer has proved its pubkey, which the dialer discloses first. A pubkey the user has named, which is a [contact](./policy.md#social-graph), passes without a prompt and without spending a disclosure, which repairs a pair secret only one of the two phones kept. Anybody else is held, and the prompt names the key they proved.
+A receiver that would hold a stranger first lets the exchange run until the dialer has proved its pubkey, which the dialer discloses first. A pubkey the user has named, which is a [contact](./policy.md#social-graph), passes without a hold and without spending a disclosure, which repairs a pair secret only one of the two phones kept. Anybody else is held.
 
-The prompt carries a comparison value, derived from the session's handshake hash under its own domain label the way [login with device](./keys.md#login-with-device) derives its six digits. That value is the only thing the two users have to check, because Noise XX authenticates nobody and the gate runs before either side has named a pubkey. A device in the middle completes two handshakes and the two screens then disagree. A gate that cannot derive one asks nothing and stays held.
+Every link carries a comparison value, derived from the session's handshake hash under its own domain label the way [login with device](./keys.md#login-with-device) derives its six digits. That value is the only thing the two users have to check when they pair, because Noise XX authenticates nobody. A device in the middle completes two handshakes and the two screens then disagree. It is six decimal digits, as login with device shows, under its own label so that one ritual's value cannot stand in for the other's.
 
-The value the gate shows is six decimal digits, as login with device shows, under the gate's own label so that one ritual's value cannot stand in for the other's.
-
-Two held phones that dial each other each hold the link they dialed, and the two links carry different digits. Nobody is named yet, so both order the links by handshake hash, which both ends of a link share. A held dial stays quiet while a stranger's link coming the other way, opened within 10 seconds of it, has the lower hash, and closes once that stranger names itself. One phone is asked first, and the other is asked over the same digits once the first approves.
-
-The pubkey each side proves afterwards is announced to the shell as it is proved. The gate runs first. A pet name the user typed there is for the person in front of them, and this is what says which key that person holds.
+The pubkey each side proves is announced to the shell as it is proved, which is how the view knows who is in range.
 
 If neither party drops the connection, the dialer identifies itself first via [NIP 42 AUTH](./nips/p2p-auth.md#mutual-authentication). This gives the receiver the chance to drop the connection without identifying itself.
 
@@ -128,9 +124,11 @@ If the receiver wishes to continue, it then identifies itself to the dialer, whi
 
 ### Meeting somebody
 
-The gate decides whether a link proceeds, and naming decides whether the person on it becomes a contact. A stranger the disclosure bucket admits passes without a prompt and syncs, but has no name on this device. Every [policy](./policy.md) the user can set about a person starts from naming them.
+The gate decides whether a link proceeds, and naming decides whether the person on it becomes a contact. A stranger the gate admits syncs without anybody being asked, and has no name on this device. Every [policy](./policy.md) the user can set about a person starts from naming them.
 
-So once a peer the user has not named identifies itself, the device asks to pair the same way a held gate does: the same six digits over the same transcript, and a name for whoever is standing there. Nothing waits on the answer. Naming them writes the user's [contact card](./policy.md#social-graph) for the pubkey the session proved. Declining leaves them unnamed, and they are asked about again at the next meeting.
+**A pairing request is made by a person, not noticed by a phone.** Pressing add contact sends a request over every link to somebody the user has not named, as a control frame carrying nothing, because the link already says who is asking. The other phone puts the request in front of its user with the link's six digits and a name field, and the first phone waits. Opening the request sends one back over that link, so that the first phone shows the same digits while the second user compares them. Either user names the other once the digits match, which writes their [contact card](./policy.md#social-graph) for the pubkey the session proved. Declining leaves the person unnamed and not asked about again until they have left and come back.
+
+A request from a contact the phone recognized is nothing new and is not shown. One from a contact the phone did not recognize is somebody whose phone has forgotten the user, and is shown under the name the user already gave them. Somebody who has not been asked cannot be named: there is no screen for a stranger in range, only a count of phones in range, because being in the room is not an introduction.
 
 ## Heartbeat and teardown
 

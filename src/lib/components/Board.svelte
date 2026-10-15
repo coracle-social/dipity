@@ -2,11 +2,13 @@
   import Filter from "@lucide/svelte/icons/list-filter"
   import Radar from "@lucide/svelte/icons/radar"
   import Search from "@lucide/svelte/icons/search"
+  import UserPlus from "@lucide/svelte/icons/user-plus"
+  import {Button} from "$lib/components/ui/button"
   import EmptyState from "$lib/components/EmptyState.svelte"
   import FeedControls from "$lib/components/FeedControls.svelte"
   import ItemCard from "$lib/components/ItemCard.svelte"
   import {bookmarked} from "$lib/data/bookmarks"
-  import {social} from "$lib/data/contacts"
+  import {contacts, social} from "$lib/data/contacts"
   import {
     board,
     responses,
@@ -18,6 +20,7 @@
     warmthOf,
     type Item,
   } from "$lib/data/feed"
+  import {seek} from "$lib/data/pairing"
   import {policy} from "$lib/data/policy"
   import {session} from "$lib/data/session"
 
@@ -58,11 +61,22 @@
 </div>
 
 {#if $board.length === 0}
+  {@const unpaired = !hidden && !searching && $contacts.length === 0}
   <EmptyState icon={hidden ? Filter : searching ? Search : Radar}>
     {hidden
       ? "No categories are selected."
       : searching
         ? "No matching activity found."
-        : "No activity yet. Posts arrive when you are near other people."}
+        : unpaired
+          ? "Nothing here yet. Add a contact while you are next to them, and what they share shows up whenever your phones are near each other."
+          : "No activity yet. Posts arrive when you are near other people."}
   </EmptyState>
+  {#if unpaired}
+    <div class="flex justify-center pb-16">
+      <Button onclick={seek}>
+        <UserPlus />
+        Add a contact
+      </Button>
+    </div>
+  {/if}
 {/if}

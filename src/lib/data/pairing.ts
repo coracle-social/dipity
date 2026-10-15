@@ -1,37 +1,32 @@
-// Somebody in range asking to pair, and the name they get out of it.
+// Asking to pair, and being asked: the requests in the tray and the name each
+// one gets out of it.
 //
-// A request comes one of two ways. The gate holds a stranger before either side
-// has named a pubkey. That request carries a link and a code and nothing
-// about the person; the name typed for it is held against the link until the
-// peer identifies itself. Or the gate let a stranger through, and the request
-// comes once they have identified, carrying their pubkey: nothing waits on it,
-// and answering it names them. Either way the user compares the same six
-// digits against the other phone, and a name is what lets them set anything
-// about that person. Somebody the user already named is asked about too when
-// this phone did not recognize them, since they have forgotten the user and
-// are being asked on their own phone. `docs/discovery.md#the-consent-gate`,
-// `docs/discovery.md#meeting-somebody`.
+// A request is made from a phone, by the person holding it, rather than by a
+// phone noticing a stranger. Pressing add contact asks everybody in range the
+// user has not named, and their phones show the request. Opening one asks back
+// over that link, so that the first phone shows the same six digits while the
+// second user compares them. Either user names the other once the digits
+// match, and a name is what lets them set anything about that person. Somebody
+// the user already named asks the same way when their phone has forgotten the
+// user. `docs/discovery.md#meeting-somebody`.
 
 import {get, readable, writable, type Readable} from "svelte/store"
 import type {PluginListenerHandle} from "@capacitor/core"
 import {Dip} from "$lib/core"
 import {name, social, type Social} from "$lib/data/contacts"
+import {go} from "$lib/data/nav"
 import {session} from "$lib/data/session"
 
 /**
- * Somebody waiting on an answer. `held` is set when the gate is holding them,
- * which is a request to admit them as well as to name them. `pubkey` is set
- * once they have said who they are, which a dialer does before the gate holds
- * them. `known` is the user's name for somebody they already named, who
- * forgot them. `formerly` holds the links it moved off so that a screen opened on
- * one still finds it.
+ * Somebody waiting on an answer. `known` is the user's name for somebody they
+ * already named, who forgot them. `formerly` holds the links it moved off so
+ * that a screen opened on one still finds it.
  */
 export type Request = {
   link: number
   code: number
+  pubkey: string
   asked: number
-  held?: boolean
-  pubkey?: string
   known?: string
   formerly?: number[]
 }
@@ -42,8 +37,11 @@ export const requestOn = (waiting: Request[], link: number) =>
 
 const pending = writable<Request[]>([])
 
-/** Names waiting on the peer that earned them to say who it is. */
-const promised = new Map<number, string>()
+/** People answered this session, who are not asked about again until they leave and come back. */
+const answered = new Set<string>()
+
+/** Links asked back over, once each, so that the other phone shows its digits. */
+const looked = new Set<number>()
 
 const drop = (link: number) =>
   pending.update(waiting => waiting.filter(request => request.link !== link))
@@ -55,9 +53,8 @@ const unnamed = (known: Social, pubkey: string) =>
 /**
  * Who is asking, oldest first.
  *
- * A request leaves when its link closes, which is the person walking away or a
- * held gate lapsing; the shell reports both. A held gate's five-minute hold is
- * also kept here, for a link whose close nobody heard.
+ * A request leaves when its link closes, which is the person walking away, or
+ * when the user answers it.
  */
 export const requests: Readable<Request[]> = readable<Request[]>([], set => {
   let live = true
@@ -77,22 +74,11 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
       })
       .catch(() => undefined)
 
-  const lapse = setInterval(
-    () =>
-      pending.update(waiting =>
-        waiting.filter(({asked, held}) => !held || Date.now() - asked < 5 * 60_000),
-      ),
-    10_000,
-  )
-
-  hold(
-    Dip.addListener("requestApproval", ({link, code}) =>
-      pending.update(waiting => [...waiting, {link, code, asked: Date.now(), held: true}]),
-    ),
-  )
-
   // Every identified link so that a request can move to another link to the same person when its own one closes.
-  const identified = new Map<number, {pubkey: string; code: number; dialed: boolean}>()
+  const identified = new Map<
+    number,
+    {pubkey: string; code: number; dialed: boolean; recognized: boolean}
+  >()
 
   // Two links to one person resolve to the one the lower pubkey dialed; both phones pick it and show its digits.
   const dialer = (link: number) => {
@@ -110,24 +96,23 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
       : request
   }
 
-  // One request per link and per person: a device may prove several pubkeys, and two phones may briefly hold two links.
   hold(
     Dip.addListener("peerIdentified", ({link, pubkey, code, dialed, recognized}) => {
-      identified.set(link, {pubkey, code, dialed})
+      identified.set(link, {pubkey, code, dialed, recognized})
+    }),
+  )
 
-      if (promised.has(link) || (!unnamed(known, pubkey) && recognized)) return
-      if (pubkey === get(session).identity) return
+  // One request per person: a device may prove several pubkeys, and two phones may briefly hold two links.
+  hold(
+    Dip.addListener("pairingRequested", ({link, pubkey, code}) => {
+      if (pubkey === get(session).identity || answered.has(pubkey)) return
+
+      // A contact this phone recognized is asking nothing new; one it did not has forgotten the user.
+      if (!unnamed(known, pubkey) && identified.get(link)?.recognized) return
 
       const named = known.people.get(pubkey)?.petname
 
       pending.update(waiting => {
-        // A held dialer's request learns who it is and stands for them, because it named itself before the hold.
-        if (waiting.some(request => request.link === link && request.held)) {
-          return waiting
-            .filter(request => request.held || request.pubkey !== pubkey)
-            .map(request => (request.link === link ? {...request, pubkey, known: named} : request))
-        }
-
         if (waiting.some(request => request.link === link)) return waiting
 
         if (waiting.some(request => request.pubkey === pubkey)) {
@@ -143,7 +128,15 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
 
   hold(
     Dip.addListener("linkClosed", ({link}) => {
+      const gone = identified.get(link)
+
       identified.delete(link)
+      looked.delete(link)
+
+      // Somebody who left may ask again when they are back.
+      if (gone && ![...identified.values()].some(peer => peer.pubkey === gone.pubkey)) {
+        answered.delete(gone.pubkey)
+      }
 
       pending.update(waiting =>
         waiting.flatMap(request => {
@@ -152,11 +145,10 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
           // The person is still here over another link: the request stays, under that link's digits.
           const still = [...identified].find(([, peer]) => peer.pubkey === request.pubkey)
 
-          return still && request.pubkey
+          return still
             ? [
                 {
                   ...request,
-                  held: false,
                   link: still[0],
                   code: still[1].code,
                   formerly: [...(request.formerly ?? []), link],
@@ -170,12 +162,37 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
 
   return () => {
     live = false
-    clearInterval(lapse)
     unsubscribe()
     unwatch()
     handles.forEach(handle => handle.remove())
   }
 })
+
+/** Whether the user pressed add contact and nobody has answered yet. */
+export const seeking = writable(false)
+
+/** Ask everybody in range the user has not named, and wait on the pairing screen for an answer. */
+export const seek = async () => {
+  seeking.set(true)
+  go({at: "pairing"})
+
+  await Dip.requestPairing({}).catch(error => console.error("asking to pair failed", error))
+}
+
+/** The user left the pairing screen, answered or not. */
+export const stopSeeking = () => seeking.set(false)
+
+/**
+ * The user is looking at a request. Ask back over its link, once, so that the
+ * other phone stops waiting and shows the digits this one does.
+ */
+export const look = async (link: number) => {
+  if (looked.has(link)) return
+
+  looked.add(link)
+
+  await Dip.requestPairing({link}).catch(error => console.error("asking to pair failed", error))
+}
 
 const waitingOn = (link: number) => requestOn(get(pending), link)
 
@@ -183,49 +200,20 @@ const waitingOn = (link: number) => requestOn(get(pending), link)
 export const accept = async (link: number, petname: string) => {
   const request = waitingOn(link)
 
-  drop(request?.link ?? link)
+  if (!request) return
 
-  if (request?.held) {
-    if (request.pubkey && petname !== request.known) await name(request.pubkey, petname)
-    else if (!request.pubkey) promised.set(link, petname)
+  answered.add(request.pubkey)
+  drop(request.link)
 
-    return Dip.approve({link: request.link, approved: true})
-  }
-
-  if (request?.pubkey && petname !== request.known) return name(request.pubkey, petname)
+  if (petname !== request.known) await name(request.pubkey, petname)
 }
 
-/**
- * Say no. A held stranger is refused, which the core respects for long enough
- * that they are not asked about again; one already through is left unnamed, and
- * asked about at the next meeting.
- */
-export const decline = async (link: number) => {
+/** Say no. They are left unnamed, and not asked about again until they leave and come back. */
+export const decline = (link: number) => {
   const request = waitingOn(link)
 
-  drop(request?.link ?? link)
+  if (!request) return
 
-  if (request?.held) await Dip.approve({link: request.link, approved: false})
-}
-
-/**
- * Bind promised names to the peers that turn out to hold them.
- *
- * Started once, from the shell, because writing the card is a publish and not a
- * screen: the user may have moved on by the time the peer identifies itself.
- *
- * The name is kept until the link is answered for rather than spent on the
- * first, because a device may prove several pubkeys over one link and the
- * announcement comes once per pubkey.
- */
-export const watchPairings = async () => {
-  const listener = await Dip.addListener("peerIdentified", ({link, pubkey}) => {
-    const petname = promised.get(link)
-
-    if (petname) {
-      name(pubkey, petname).catch(error => console.error("the name could not be stored", error))
-    }
-  })
-
-  return () => listener.remove()
+  answered.add(request.pubkey)
+  drop(request.link)
 }

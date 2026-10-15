@@ -4,7 +4,6 @@
 
 use std::collections::BTreeSet;
 
-use crate::link::LinkId;
 use crate::model::{Graph, NotificationPrefs};
 use coracle_lib::events::HashedEvent;
 use coracle_lib::keys::PublicKey;
@@ -56,13 +55,6 @@ pub fn excerpt(event: &HashedEvent) -> String {
     format!("{}…", cut.trim_end())
 }
 
-/// Who a pairing notification was about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Asker {
-    Link(LinkId),
-    Person(PublicKey),
-}
-
 /// What has been counted and announced since the user last looked.
 #[derive(Debug, Default)]
 pub struct Notifier {
@@ -76,8 +68,8 @@ pub struct Notifier {
     announced_at: Option<i64>,
     /// The latest post counted, which the notification quotes.
     latest: Option<HashedEvent>,
-    /// People, or held links naming nobody yet, already announced as wanting to pair.
-    asked: BTreeSet<Asker>,
+    /// People already announced as asking to pair.
+    asked: BTreeSet<PublicKey>,
 }
 
 impl Notifier {
@@ -110,17 +102,10 @@ impl Notifier {
         }
     }
 
-    /// Somebody the user has not named is asking over `link`, announced once a
-    /// person, or once a link while the gate holds them unnamed.
-    pub fn pairing(
-        &mut self,
-        link: LinkId,
-        pubkey: Option<PublicKey>,
-        background: bool,
-    ) -> Option<Notification> {
-        let asker = pubkey.map_or(Asker::Link(link), Asker::Person);
-
-        (background && self.prefs.pairing && self.asked.insert(asker))
+    /// Somebody asked to pair over `link`, announced once a person until the
+    /// user looks.
+    pub fn pairing(&mut self, pubkey: PublicKey, background: bool) -> Option<Notification> {
+        (background && self.prefs.pairing && self.asked.insert(pubkey))
             .then_some(Notification::Pairing)
     }
 
@@ -237,11 +222,11 @@ mod tests {
         );
 
         assert_eq!(notifier.content(100, false), None);
-        assert_eq!(notifier.pairing(LinkId(1), None, false), None);
+        assert_eq!(notifier.pairing(author(2), false), None);
 
         notifier.prefs = NotificationPrefs::default();
         assert_eq!(notifier.content(100, true), None);
-        assert_eq!(notifier.pairing(LinkId(1), None, true), None);
+        assert_eq!(notifier.pairing(author(2), true), None);
     }
 
     #[test]
@@ -249,19 +234,19 @@ mod tests {
         let mut notifier = on();
 
         assert_eq!(
-            notifier.pairing(LinkId(1), None, true),
+            notifier.pairing(author(2), true),
             Some(Notification::Pairing)
         );
-        assert_eq!(notifier.pairing(LinkId(1), None, true), None);
+        assert_eq!(notifier.pairing(author(2), true), None, "once a person");
         assert_eq!(
-            notifier.pairing(LinkId(2), Some(author(2)), true),
-            Some(Notification::Pairing)
+            notifier.pairing(author(3), false),
+            None,
+            "and never in front"
         );
-        assert_eq!(notifier.pairing(LinkId(3), Some(author(2)), true), None);
 
         notifier.seen();
         assert_eq!(
-            notifier.pairing(LinkId(4), Some(author(2)), true),
+            notifier.pairing(author(2), true),
             Some(Notification::Pairing)
         );
     }

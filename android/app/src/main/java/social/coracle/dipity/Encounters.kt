@@ -196,11 +196,12 @@ object Encounters : Radio.Delegate {
                     notify("linkClosed", JSObject().put("link", action.link.value.toLong()))
                 }
                 is Action.Send -> radio.send(action.link.value, action.fragment)
-                is Action.RequestApproval ->
+                is Action.PairingRequested ->
                     notify(
-                        "requestApproval",
+                        "pairingRequested",
                         JSObject()
                             .put("link", action.link.value.toLong())
+                            .put("pubkey", action.pubkey)
                             .put("code", action.code.toLong()),
                     )
                 is Action.PeerIdentified ->

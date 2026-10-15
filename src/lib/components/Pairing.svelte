@@ -2,6 +2,7 @@
   import ArrowLeft from "@lucide/svelte/icons/arrow-left"
   import ChevronLeft from "@lucide/svelte/icons/chevron-left"
   import ChevronRight from "@lucide/svelte/icons/chevron-right"
+  import Radar from "@lucide/svelte/icons/radar"
   import ShieldCheck from "@lucide/svelte/icons/shield-check"
   import UserX from "@lucide/svelte/icons/user-x"
   import {Button} from "$lib/components/ui/button"
@@ -10,8 +11,17 @@
   import Digits from "$lib/components/Digits.svelte"
   import EmptyState from "$lib/components/EmptyState.svelte"
   import {social} from "$lib/data/contacts"
+  import {links} from "$lib/data/links"
   import {back, swap} from "$lib/data/nav"
-  import {accept, decline, requests, type Request} from "$lib/data/pairing"
+  import {
+    accept,
+    decline,
+    look,
+    requests,
+    seeking,
+    stopSeeking,
+    type Request,
+  } from "$lib/data/pairing"
 
   let {request}: {request?: Request} = $props()
 
@@ -21,8 +31,20 @@
   const link = $derived(request?.link)
 
   $effect(() => {
-    if (link !== undefined) petname = request?.known ?? ""
+    if (link !== undefined) {
+      petname = request?.known ?? ""
+
+      // Looking at a request is what shows the other phone the same digits.
+      look(link)
+    }
   })
+
+  // Leaving the screen ends the wait, answered or not.
+  $effect(() => () => stopSeeking())
+
+  const inRange = $derived(
+    $links.length === 1 ? "1 phone in range" : `${$links.length} phones in range`,
+  )
 
   // What the user's contacts call this person, which is all the app knows of anyone it has not been told about.
   const aliases = $derived.by(() => {
@@ -102,9 +124,7 @@
     <Button size="lg" disabled={!petname.trim()} onclick={() => answer(true)}>
       The digits match
     </Button>
-    <Button variant="ghost" size="lg" onclick={() => answer(false)}>
-      {request.held ? "Not this person" : "Not now"}
-    </Button>
+    <Button variant="ghost" size="lg" onclick={() => answer(false)}>Not now</Button>
   </div>
 
   {#if $requests.length > 1}
@@ -127,6 +147,17 @@
       </Button>
     </nav>
   {/if}
+{:else if $seeking}
+  <div class="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-16 text-center">
+    <Radar class="size-12 animate-pulse text-muted-foreground" strokeWidth={1.5} />
+    <p class="text-lg font-semibold">Waiting for someone nearby</p>
+    <p class="max-w-xs text-sm text-balance text-muted-foreground">
+      Everyone in range has been asked. When the person you want to add opens the request on their
+      phone, it shows up here with the six digits you both compare.
+    </p>
+    <p class="text-xs text-muted-foreground">{inRange}</p>
+    <Button variant="ghost" onclick={back}>Cancel</Button>
+  </div>
 {:else}
   <EmptyState icon={UserX}
     >This request has ended. They moved out of range, or it timed out.</EmptyState>

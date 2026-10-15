@@ -123,20 +123,18 @@ pub enum Action {
         /// The fragment, header included.
         fragment: Vec<u8>,
     },
-    /// Ask the user whether an unadmitted stranger may connect.
-    ///
-    /// Answer with [`Node::approve`]; the link is held up to the drain cap
-    /// meanwhile.
-    RequestApproval {
-        /// The link waiting on the answer.
+    /// The person on a link asked to pair, from their own phone. Put the
+    /// request in front of the user with the value both of them compare.
+    PairingRequested {
+        /// The link the request came over.
         link: LinkId,
-        /// What the two users compare before either of them answers.
+        /// The pubkey the peer proved on it, hex.
+        pubkey: String,
+        /// What the two users compare before naming each other.
         code: u32,
     },
-    /// Who the peer on a link proved to be, once per pubkey it proves.
-    ///
-    /// A pet name the user typed at the gate is for a person, because the gate
-    /// runs before either side names a pubkey. This says which key that person holds.
+    /// Who the peer on a link proved to be, once per pubkey it proves, which
+    /// is how the view knows who is in range.
     PeerIdentified {
         /// The link the peer proved itself over.
         link: LinkId,
@@ -489,11 +487,12 @@ impl Node {
         drive!(self, |node| node.notify_backgrounded())
     }
 
-    /// The user answered [`Action::RequestApproval`].
-    pub fn approve(&self, link: LinkId, approved: bool) -> Result<Vec<Action>, NodeError> {
+    /// Ask to pair over `link`, or over every link to somebody the user has
+    /// not named when none is given, which is what the add-contact button does.
+    pub fn request_pairing(&self, link: Option<LinkId>) -> Result<Vec<Action>, NodeError> {
         drive!(self, |node| node
-            .approve(link.into(), approved)
-            .map_err(|error| NodeError::link(link, &error))?)
+            .request_pairing(link.map(Into::into))
+            .map_err(|error| NodeError::core(&error))?)
     }
 
     /// Everything the user has said about who gets what, as JSON, with the
@@ -740,8 +739,9 @@ impl From<CoreAction> for Action {
                 link: link.into(),
                 fragment,
             },
-            CoreAction::RequestApproval(link, code) => Self::RequestApproval {
+            CoreAction::PairingRequested { link, pubkey, code } => Self::PairingRequested {
                 link: link.into(),
+                pubkey: pubkey.to_hex(),
                 code,
             },
             CoreAction::PeerIdentified {
@@ -923,7 +923,11 @@ mod tests {
             CoreAction::Connect(peripheral.clone()),
             CoreAction::Disconnect(link),
             CoreAction::Send(link, vec![1, 2]),
-            CoreAction::RequestApproval(link, 7_654_321),
+            CoreAction::PairingRequested {
+                link,
+                pubkey: proved,
+                code: 7_654_321,
+            },
             CoreAction::PeerIdentified {
                 link,
                 pubkey: proved,
@@ -959,8 +963,9 @@ mod tests {
                     link,
                     fragment: vec![1, 2]
                 },
-                Action::RequestApproval {
+                Action::PairingRequested {
                     link,
+                    pubkey: proved.to_hex(),
                     code: 7_654_321
                 },
                 Action::PeerIdentified {

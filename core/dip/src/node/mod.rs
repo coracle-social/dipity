@@ -75,15 +75,6 @@ use scheduler::Scheduler;
 /// Minimum gap between retention sweeps, against a window measured in days.
 const SWEEP_INTERVAL_SECONDS: i64 = 60 * 60;
 
-/// How long a pairing prompt waits on another link that names nobody yet,
-/// which may be the same person dialing back over a transcript with other digits.
-/// `docs/discovery.md#connection-scheduling`.
-pub(crate) const DUPLICATE_SETTLE_SECONDS: i64 = 15;
-
-/// How close together two links come up for a held dial to be taken for the
-/// same pair of phones dialing each other. `docs/discovery.md#the-consent-gate`.
-pub(crate) const DUPLICATE_WINDOW_SECONDS: i64 = 10;
-
 /// How long something stays in the trash before the sweep empties it.
 /// `docs/storage.md#the-trash`.
 pub const TRASH_SECONDS: i64 = 7 * 86_400;
@@ -116,24 +107,26 @@ pub enum Action {
     /// The shell reports back with [`Node::write_complete`] once the ATT write
     /// is acknowledged, which releases the next.
     Send(LinkId, Vec<u8>),
-    /// Ask the user whether an unadmitted stranger may connect. Answer with
-    /// [`Node::approve`]; the link is held up to the gate hold meanwhile.
+    /// The person on a link asked to pair, from their own phone. Put the
+    /// request in front of the user with the value both of them compare.
     ///
-    /// The value is what the two users compare, and the gate authenticates
-    /// nobody without it. `docs/discovery.md#the-consent-gate`.
-    RequestApproval(LinkId, u32),
+    /// Raised once per request the peer sends. Which requests are worth
+    /// showing is the view's call: one from a contact this device recognized
+    /// is nothing new, while one from a contact it did not recognize is
+    /// somebody who has forgotten the user. `docs/discovery.md#meeting-somebody`.
+    PairingRequested {
+        /// The link the request came over.
+        link: LinkId,
+        /// The pubkey the peer proved on it.
+        pubkey: PublicKey,
+        /// The value both users compare.
+        code: u32,
+    },
     /// Who the peer on a link proved to be, once per pubkey it proves, and the
     /// value the two users compare to be sure of it.
     ///
-    /// A pet name the user typed at the gate is for a person rather than for a
-    /// key, because the gate runs before either side names a pubkey. This is what says
-    /// which key that person turned out to hold. The value is the one a held
-    /// gate shows, which lets a peer the gate let through be named over the
-    /// same comparison. `docs/discovery.md#meeting-somebody`.
-    ///
-    /// A peer the user named but this device did not recognize has forgotten
-    /// them, or holds a pair secret this one does not. It is asked about again
-    /// rather than passed over. `docs/discovery.md#meeting-somebody`.
+    /// Announced as it is proved, so that the view knows who is in range. The
+    /// value is what a pairing request over the same link is compared on.
     PeerIdentified {
         /// The link the peer proved itself over.
         link: LinkId,
@@ -254,8 +247,6 @@ pub struct Node {
     /// person already connected over a link they dialed from being dialed a
     /// second time.
     dialed_as: BTreeMap<PeripheralId, PublicKey>,
-    /// When each link's pairing prompt began waiting on links that name nobody yet.
-    settling: BTreeMap<LinkId, i64>,
     /// What has arrived since the user last looked, and what was announced.
     notifier: Notifier,
 }
@@ -296,7 +287,6 @@ impl Node {
             transferred: BTreeMap::new(),
             duplicates: std::collections::BTreeSet::new(),
             dialed_as: BTreeMap::new(),
-            settling: BTreeMap::new(),
             notifier: Notifier::default(),
         };
 
@@ -642,6 +632,16 @@ impl Node {
         for session in self.sessions.values_mut() {
             session.gate.presence = self.presence;
 
+            // A stranger held in the background is admitted now that somebody is looking.
+            if presence == Presence::Foreground
+                && let Err(error) = session.reconsider_gate(&self.db)
+            {
+                log::error!(
+                    "admitting a held stranger on link {:?} failed: {error:#}",
+                    session.link
+                );
+            }
+
             if presence != Presence::Foreground
                 && let Err(error) = session.cancel_transfer()
             {
@@ -655,16 +655,24 @@ impl Node {
         self.collect()
     }
 
-    /// Answer a pending consent gate. `approved` admits the stranger and
-    /// resumes the exchange; refusing closes the link and the scheduler leaves
-    /// the peer alone.
-    pub fn approve(&mut self, link: LinkId, approved: bool) -> Result<Vec<Action>> {
-        if let Some(session) = self.sessions.get_mut(&link) {
-            session.approve(&self.db, approved)?;
-        }
+    /// Ask to pair: over one link, or over every link to somebody the user
+    /// has not named, which is what pressing the button with nobody picked
+    /// out means. A contact is never asked, since they are one already.
+    /// `docs/discovery.md#meeting-somebody`.
+    pub fn request_pairing(&mut self, link: Option<LinkId>) -> Result<Vec<Action>> {
+        let contacts = &self.policy.graph.contacts;
 
-        if !approved && let Some(peripheral) = self.link_peripheral.get(&link) {
-            self.scheduler.declined(peripheral);
+        for session in self.sessions.values_mut() {
+            let wanted = match link {
+                Some(link) => session.link == link,
+                None => session.peer.as_ref().is_some_and(|peer| {
+                    !peer.pubkeys.iter().any(|pubkey| contacts.contains(pubkey))
+                }),
+            };
+
+            if wanted {
+                session.request_pairing()?;
+            }
         }
 
         Ok(self.collect())
@@ -899,7 +907,6 @@ impl Node {
     /// from forgetting to flush a session it advanced.
     fn collect(&mut self) -> Vec<Action> {
         self.close_duplicates();
-        let shadowed = self.settle_held_dials();
 
         let preferences_moved = self.drain_preferences();
         let graph_moved = self.offer_saved_events();
@@ -942,37 +949,15 @@ impl Node {
 
         let mut actions = Vec::new();
         let mut asking = Vec::new();
-        let now = clock::now();
-        let naming = self
-            .sessions
-            .values()
-            .any(|session| session.state.is_open() && session.peer.is_none());
 
         // Whatever each session wants of the shell, asked once apiece.
         for session in self.sessions.values_mut() {
-            // A held gate, and the value the two users compare over it.
-            if !shadowed.contains(&session.link)
-                && let Some(code) = session.request_approval()
-            {
-                actions.push(Action::RequestApproval(session.link, code));
-                asking.push((session.link, None));
-            }
-
-            // A closed duplicate is never announced, and a prompt waits out a link that may be one.
-            let settled = session.state != State::Closed
-                && (!session.awaits_pairing_prompt() || {
-                    let since = *self.settling.entry(session.link).or_insert(now);
-
-                    !naming || now - since >= DUPLICATE_SETTLE_SECONDS
-                });
-
-            // Identifying the link lands a name typed at the gate, or lets one be given now.
+            // A closed duplicate is never announced.
             let code = session.pairing_code();
-            let identified = if settled {
-                self.settling.remove(&session.link);
-                session.take_identified()
-            } else {
+            let identified = if session.state == State::Closed {
                 Identity::default()
+            } else {
+                session.take_identified()
             };
 
             if let (Some(peripheral), Some(pubkey)) = (
@@ -993,8 +978,20 @@ impl Node {
                         dialed: session.role == Role::Dialer,
                         recognized,
                     });
-                    asking.push((session.link, Some((pubkey, recognized))));
                 }
+            }
+
+            // The person on the link asked to pair, from their own phone.
+            if session.take_pair_request()
+                && let (Some(peer), Some(code)) = (session.peer.as_ref(), code)
+                && let Some(pubkey) = peer.pubkeys.iter().min().copied()
+            {
+                actions.push(Action::PairingRequested {
+                    link: session.link,
+                    pubkey,
+                    code,
+                });
+                asking.push((pubkey, session.recognized(&pubkey)));
             }
 
             // Only a phone that has published nothing as itself may take another identity.
@@ -1060,7 +1057,6 @@ impl Node {
         // Grading is one decision because every teardown passes through here.
         for (link, ending, harvested, synced) in closed {
             self.sessions.remove(&link);
-            self.settling.remove(&link);
 
             let duplicate = self.duplicates.remove(&link);
 
@@ -1091,18 +1087,7 @@ impl Node {
             actions.push(Action::Scan(true));
         }
 
-        let settled_at = self
-            .settling
-            .values()
-            .map(|since| since + DUPLICATE_SETTLE_SECONDS);
-
-        if let Some(deadline) = self
-            .sessions
-            .values()
-            .map(Session::deadline)
-            .chain(settled_at)
-            .min()
-        {
+        if let Some(deadline) = self.sessions.values().map(Session::deadline).min() {
             actions.push(Action::WakeAt(deadline));
         }
 
@@ -1160,51 +1145,6 @@ impl Node {
                 self.duplicates.insert(link);
             }
         }
-    }
-
-    /// Settle each dial held before anybody is named against a stranger's dial
-    /// coming the other way, answering the held dials whose prompt waits.
-    ///
-    /// Two phones held at the gate that dial each other each hold the link they
-    /// dialed, under digits the other phone does not show. Neither is named
-    /// yet, so both order the two links by transcript instead of by pubkey: the
-    /// held dial with the higher transcript stays quiet, and closes once the
-    /// stranger on the lower one names itself. `docs/discovery.md#the-consent-gate`.
-    fn settle_held_dials(&mut self) -> std::collections::BTreeSet<LinkId> {
-        let mut quiet = std::collections::BTreeSet::new();
-        let mut closing = Vec::new();
-
-        for held in self
-            .sessions
-            .values()
-            .filter(|session| session.holds_unnamed_dial())
-        {
-            let Some(ours) = held.transcript() else {
-                continue;
-            };
-
-            let shadow = self.sessions.values().find(|other| {
-                other.defers_stranger()
-                    && (other.opened_at - held.opened_at).abs() <= DUPLICATE_WINDOW_SECONDS
-                    && other.transcript().is_some_and(|theirs| theirs < ours)
-            });
-
-            match shadow {
-                Some(stranger) if stranger.peer.is_some() => closing.push(held.link),
-                Some(_) => {
-                    quiet.insert(held.link);
-                }
-                None => {}
-            }
-        }
-
-        for link in closing {
-            if let Some(session) = self.sessions.get_mut(&link) {
-                session.close(Ending::Refused);
-            }
-        }
-
-        quiet
     }
 
     /// Offer events the store just saved to every connected peer.
@@ -1349,19 +1289,16 @@ impl Node {
     }
 
     /// What to tell a user who is not looking: somebody asking to pair on one
-    /// of `asking`, and new writing. A held gate names nobody, and a peer
-    /// already named is asking only if this device did not recognize them.
-    fn notifications(&mut self, asking: Vec<(LinkId, Option<(PublicKey, bool)>)>) -> Vec<Action> {
+    /// of `asking`, and new writing. A contact this device recognized is not
+    /// asking anything new; one it did not recognize has forgotten the user.
+    fn notifications(&mut self, asking: Vec<(PublicKey, bool)>) -> Vec<Action> {
         let background = self.presence != Some(Presence::Foreground);
         let mut notifications = Vec::new();
 
-        for (link, identified) in asking {
-            let asks = identified.is_none_or(|(pubkey, recognized)| {
-                !recognized || !self.policy.graph.contacts.contains(&pubkey)
-            });
-            let pubkey = identified.map(|(pubkey, _)| pubkey);
+        for (pubkey, recognized) in asking {
+            let asks = !recognized || !self.policy.graph.contacts.contains(&pubkey);
 
-            if asks && let Some(notification) = self.notifier.pairing(link, pubkey, background) {
+            if asks && let Some(notification) = self.notifier.pairing(pubkey, background) {
                 notifications.push(Action::Notify(notification));
             }
         }
@@ -1560,8 +1497,7 @@ fn published_as(db: &Db, identity: &PublicKey) -> bool {
 #[cfg(test)]
 mod tests {
     use super::scheduler::{
-        DECLINED_BACKOFF_SECONDS, NEVER_ANSWERED_BACKOFF_SECONDS, REFUSED_BACKOFF_SECONDS,
-        WALKED_AWAY_BACKOFF_SECONDS,
+        NEVER_ANSWERED_BACKOFF_SECONDS, REFUSED_BACKOFF_SECONDS, WALKED_AWAY_BACKOFF_SECONDS,
     };
     use super::*;
     use coracle_lib::tags::Tags;
@@ -2226,7 +2162,7 @@ mod tests {
     }
 
     #[test]
-    fn two_phones_dialing_each_other_at_once_show_the_same_digits() {
+    fn two_phones_dialing_each_other_at_once_pair_over_the_link_both_kept() {
         let mut one = node();
         let mut two = node();
 
@@ -2245,47 +2181,30 @@ mod tests {
 
         let (heard_by_one, heard_by_two) = interleave(&mut one, &mut two, ones, twos);
 
-        assert_eq!(codes(&heard_by_one).len(), 1, "one is asked about one link");
-        assert_eq!(
-            codes(&heard_by_one),
-            codes(&heard_by_two),
-            "both see the same digits"
-        );
-    }
+        let kept = |node: &Node| node.sessions.keys().copied().collect::<Vec<_>>();
 
-    #[test]
-    fn a_pairing_prompt_stops_waiting_on_a_link_that_never_names_anybody() {
-        let mut one = node();
-        let mut two = node();
+        // Each end hears who is on each link as it is proved; the duplicate closes once both have.
+        assert!(!codes(&heard_by_one).is_empty() && !codes(&heard_by_two).is_empty());
+        assert_eq!(kept(&one).len(), 1);
 
-        one.notify_foregrounded();
-        two.notify_foregrounded();
-
-        clock::at(1_000, || {
-            // A stranger's link that will never name anybody sits beside the pairing.
-            one.link_up(LinkId(9), None, Role::Receiver, 4096).unwrap();
-            two.link_up(LinkId(1), None, Role::Receiver, 4096).unwrap();
-            let opening = one
-                .link_up(LinkId(1), Some(peripheral(1)), Role::Dialer, 4096)
-                .unwrap();
-            settle(&mut one, &mut two, opening);
-
-            assert!(
-                codes(&one.tick()).is_empty(),
-                "the prompt waits on the silent link"
-            );
-        });
-
-        let heard = clock::at(1_000 + DUPLICATE_SETTLE_SECONDS, || one.tick());
+        let asked = one.request_pairing(None).unwrap();
+        let heard = settle(&mut one, &mut two, asked);
+        let requests = pairing_requests(&heard);
+        let link = kept(&one)[0];
 
         assert_eq!(
-            codes(&heard).len(),
+            requests.len(),
             1,
-            "and gives up waiting once it has settled"
+            "two is asked once, over the link both kept"
+        );
+        assert_eq!(
+            Some(requests[0].2),
+            one.sessions[&link].pairing_code(),
+            "and the digits are the ones one shows for it"
         );
     }
 
-    /// A node that holds every stranger for its user, as in a quiet time.
+    /// A node that holds every stranger met in the background.
     fn shy_node() -> Node {
         let db = db();
 
@@ -2297,72 +2216,6 @@ mod tests {
             Arc::new(crate::blobs::MemoryBlobStore::default()),
         )
         .unwrap()
-    }
-
-    fn approvals(actions: &[Action]) -> Vec<(LinkId, u32)> {
-        actions
-            .iter()
-            .filter_map(|action| match action {
-                Action::RequestApproval(link, code) => Some((*link, *code)),
-                _ => None,
-            })
-            .collect()
-    }
-
-    #[test]
-    fn two_held_phones_dialing_each_other_are_asked_over_the_same_digits() {
-        let mut one = shy_node();
-        let mut two = shy_node();
-
-        two.link_up(LinkId(1), None, Role::Receiver, 4096).unwrap();
-        one.link_up(LinkId(2), None, Role::Receiver, 4096).unwrap();
-        let ones = one
-            .link_up(LinkId(1), Some(peripheral(1)), Role::Dialer, 4096)
-            .unwrap();
-        let twos = two
-            .link_up(LinkId(2), Some(peripheral(2)), Role::Dialer, 4096)
-            .unwrap();
-
-        let (heard_by_one, heard_by_two) = interleave(&mut one, &mut two, ones, twos);
-        let asked = [approvals(&heard_by_one), approvals(&heard_by_two)];
-
-        assert_eq!(
-            asked.iter().map(Vec::len).sum::<usize>(),
-            1,
-            "only one phone is asked first"
-        );
-
-        // Whoever was asked approves, which is what asks the other phone.
-        let (first, link, code) = if asked[0].is_empty() {
-            (false, asked[1][0].0, asked[1][0].1)
-        } else {
-            (true, asked[0][0].0, asked[0][0].1)
-        };
-        let (from, into) = if first {
-            (&mut one, &mut two)
-        } else {
-            (&mut two, &mut one)
-        };
-        let opening = from.approve(link, true).unwrap();
-        let heard = settle(from, into, opening);
-        let later = approvals(&heard);
-
-        assert_eq!(
-            later,
-            vec![(link, code)],
-            "the other phone is asked over the same digits"
-        );
-
-        let other = if link == LinkId(1) {
-            LinkId(2)
-        } else {
-            LinkId(1)
-        };
-
-        assert!(
-            !into.sessions.contains_key(&other),
-            "the dial it held quietly closes once the stranger names itself"
-        );
     }
 
     #[test]
@@ -2970,36 +2823,6 @@ mod tests {
     }
 
     #[test]
-    fn a_declined_peer_is_backed_off_longer_than_a_walked_away_one() {
-        let mut node = clock::at(1_000, node);
-        let peer = peripheral(1);
-
-        clock::at(1_000, || {
-            node.peripheral_seen(&peer, -80);
-        });
-        clock::at(1_000, || {
-            node.link_up(LinkId(9), Some(peer.clone()), Role::Dialer, 100)
-                .unwrap();
-            node.approve(LinkId(9), false).unwrap();
-        });
-
-        // A decline outlasts the walked-away tier even if the report arrives after it.
-        clock::at(1_000, || {
-            node.link_down(LinkId(9));
-        });
-
-        clock::at(1_000 + WALKED_AWAY_BACKOFF_SECONDS + 1, || {
-            assert!(node.peripheral_seen(&peer, -80).is_empty());
-        });
-        clock::at(1_000 + DECLINED_BACKOFF_SECONDS, || {
-            assert_eq!(
-                node.peripheral_seen(&peer, -80),
-                vec![Action::Connect(peer)]
-            );
-        });
-    }
-
-    #[test]
     fn exporting_the_key_asks_for_a_share_sheet_and_finishing_takes_the_file_back() {
         let cache = TempDir::new("export");
         let mut node = node();
@@ -3304,6 +3127,73 @@ mod tests {
         assert!(node.offer_identity(LinkId(1)).is_err());
         assert!(node.answer_identity_transfer(LinkId(1), true).is_err());
         assert!(node.take_transferred_identity(LinkId(1)).is_none());
+    }
+
+    fn pairing_requests(actions: &[Action]) -> Vec<(LinkId, PublicKey, u32)> {
+        actions
+            .iter()
+            .filter_map(|action| match action {
+                Action::PairingRequested { link, pubkey, code } => Some((*link, *pubkey, *code)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn pressing_add_contact_asks_everybody_in_range_the_user_has_not_named() {
+        let (mut one, mut two) = attended_pair();
+
+        let asked = one.request_pairing(None).unwrap();
+        let heard = settle(&mut one, &mut two, asked);
+        let requests = pairing_requests(&heard);
+
+        assert_eq!(requests.len(), 1, "the other phone is asked once");
+        assert_eq!(requests[0].0, LinkId(1));
+        assert_eq!(
+            Some(requests[0].2),
+            two.sessions[&LinkId(1)].pairing_code(),
+            "over the digits both phones show for the link"
+        );
+
+        // Asking back over the one link is what puts the request in front of the first user.
+        let answered = two.request_pairing(Some(LinkId(1))).unwrap();
+        let heard = settle(&mut two, &mut one, answered);
+
+        assert_eq!(pairing_requests(&heard).len(), 1);
+    }
+
+    #[test]
+    fn a_contact_is_not_asked_to_pair_again_by_the_button() {
+        let (mut dialer, mut receiver) = contacts_pair();
+
+        let asked = dialer.request_pairing(None).unwrap();
+        let heard = settle(&mut dialer, &mut receiver, asked);
+
+        assert!(pairing_requests(&heard).is_empty());
+    }
+
+    #[test]
+    fn a_stranger_held_in_the_background_is_admitted_when_the_app_comes_to_the_front() {
+        let mut one = node();
+        let mut two = shy_node();
+
+        one.notify_foregrounded();
+        two.link_up(LinkId(1), None, Role::Receiver, 4096).unwrap();
+        let opening = one
+            .link_up(LinkId(1), Some(peripheral(1)), Role::Dialer, 4096)
+            .unwrap();
+        settle(&mut one, &mut two, opening);
+
+        assert!(matches!(
+            two.sessions[&LinkId(1)].state,
+            State::GatePending { .. }
+        ));
+
+        let admitted = two.notify_foregrounded();
+        settle(&mut two, &mut one, admitted);
+
+        assert_eq!(one.sessions[&LinkId(1)].state, State::Syncing);
+        assert_eq!(two.sessions[&LinkId(1)].state, State::Syncing);
     }
 
     /// How the shells answer the L2CAP upgrade in `settle_with_l2cap`.

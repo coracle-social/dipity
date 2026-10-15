@@ -14,21 +14,16 @@ import {registerPlugin, type PluginListenerHandle} from "@capacitor/core"
 import type {HashedEvent} from "@welshman/util"
 
 /**
- * A question the core put to the user, waiting on an answer.
+ * Somebody asking to pair from their own phone, over a link that has already
+ * proved who they are.
  *
  * `code` is the pairing comparison value, derived from the same handshake hash
- * `TransferPrompt` derives its six digits from under a label of its own. There
- * is nothing else here to identify the peer by, because the gate runs before
- * either side has named a pubkey. The code is what the two users compare, and
- * the pet name is for the person in front of them.
- * `docs/discovery.md#the-consent-gate`.
+ * `TransferPrompt` derives its six digits from under a label of its own. It is
+ * what the two users compare, and the pet name is for the person in front of
+ * them. `docs/discovery.md#meeting-somebody`.
  */
-export type Approval = {link: number; code: number}
+export type PairingRequest = {link: number; pubkey: string; code: number}
 
-/**
- * Who the peer on a link turned out to be, once both sides have authenticated,
- * and the six digits both users compare before naming them.
- */
 /** Who proved themselves on a link, and whether this phone recognized them by their pairing. */
 export type PeerIdentity = {
   link: number
@@ -208,8 +203,12 @@ export type DipCore = {
   /** Store and offer an event, with the media it attaches, base64 each. */
   publish(options: {event: string; media?: string[]}): Promise<void>
 
-  /** Answer a `requestApproval`. */
-  approve(options: {link: number; approved: boolean}): Promise<void>
+  /**
+   * Ask to pair: over one link, or over every link to somebody the user has
+   * not named when none is given. The other phone shows the request, and
+   * answers with one of its own once its user is looking at it.
+   */
+  requestPairing(options?: {link?: number}): Promise<void>
 
   /** Stored events matching the query, each NIP-01 JSON. */
   listEvents(options?: Query): Promise<{events: string[]}>
@@ -345,16 +344,12 @@ export type DipCore = {
     event: "bluetooth",
     handler: (power: {state: Bluetooth}) => void,
   ): Promise<PluginListenerHandle>
+  /** The person on a link asked to pair, from their own phone. */
   addListener(
-    event: "requestApproval",
-    handler: (approval: Approval) => void,
+    event: "pairingRequested",
+    handler: (request: PairingRequest) => void,
   ): Promise<PluginListenerHandle>
-  /**
-   * The peer on a link named a pubkey.
-   *
-   * A pet name is entered at the gate, which is before anyone has identified
-   * themselves. This is what binds the two together.
-   */
+  /** The peer on a link proved a pubkey, which is how the view knows who is in range. */
   addListener(
     event: "peerIdentified",
     handler: (peer: PeerIdentity) => void,

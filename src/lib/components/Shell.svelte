@@ -17,20 +17,12 @@
   import type {Item} from "$lib/data/feed"
   import {watchLinks} from "$lib/data/links"
   import {go, place} from "$lib/data/nav"
-  import {requestOn, requests, watchPairings} from "$lib/data/pairing"
+  import {requestOn, requests} from "$lib/data/pairing"
   import {session} from "$lib/data/session"
   import {step, watchTransfers} from "$lib/data/transfer"
 
   let composing = $state(false)
   let about = $state<Item | undefined>(undefined)
-
-  $effect(() => {
-    const watching = watchPairings()
-
-    return () => {
-      watching.then(stop => stop()).catch(() => undefined)
-    }
-  })
 
   $effect(() => {
     const watching = watchLinks()
@@ -61,7 +53,10 @@
   const asked = $derived.by(() => {
     const here = $place
 
-    return here.at === "pairing" ? requestOn($requests, here.link) : undefined
+    if (here.at !== "pairing") return undefined
+
+    // Opened by add contact rather than on a request, the screen shows whoever answers first.
+    return here.link === undefined ? $requests[0] : requestOn($requests, here.link)
   })
 </script>
 

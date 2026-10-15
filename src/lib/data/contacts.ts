@@ -192,9 +192,10 @@ export const mutedTopics: Readable<Set<string>> = derived(
 export type Listed = Contact & {connected: boolean}
 
 /**
- * The people list: whoever is connected right now first, then the ones the user
- * named. A connected peer the device knows nothing else about is listed too,
- * since being in the room is reason enough. The user is not among them.
+ * The people list: the ones the user named, whoever is in range first. A peer
+ * in range the user has not named is not listed, because being in the room is
+ * not an introduction; the count of phones in range says they are there. The
+ * user is not among them.
  */
 export const contacts: Readable<Listed[]> = derived(
   [social, session, links],
@@ -204,19 +205,6 @@ export const contacts: Readable<Listed[]> = derived(
 
     for (const contact of people.values()) {
       listed.set(contact.pubkey, {...contact, connected: here.has(contact.pubkey)})
-    }
-
-    for (const pubkey of here) {
-      if (!listed.has(pubkey)) {
-        listed.set(pubkey, {
-          pubkey,
-          aliases: [],
-          muted: false,
-          withheld: false,
-          blocked: false,
-          connected: true,
-        })
-      }
     }
 
     const label = (contact: Listed) =>

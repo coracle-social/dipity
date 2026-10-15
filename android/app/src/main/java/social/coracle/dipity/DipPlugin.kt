@@ -212,14 +212,12 @@ class DipPlugin : Plugin(), Encounters.View {
         perform(call, "that event could not be published") { it.node.publish(event, media) }
     }
 
-    /** The user answered a `requestApproval` the plugin sent up. */
+    /** Ask to pair over one link, or over every link to somebody the user has not named. */
     @PluginMethod
-    fun approve(call: PluginCall) {
-        val link = link(call) ?: return call.reject("approve needs a link")
+    fun requestPairing(call: PluginCall) {
+        val link = link(call)
 
-        perform(call, "that approval could not be recorded") {
-            it.node.approve(link, call.getBoolean("approved", false) == true)
-        }
+        perform(call, "that request could not be sent") { it.node.requestPairing(link) }
     }
 
     // ------------------------------------------------- Login with device
