@@ -247,6 +247,12 @@ pub struct Outbox {
     in_flight: BTreeMap<Pipe, bool>,
     /// Whether the blob channel has an L2CAP channel of its own to ride.
     bulk: bool,
+    /// Whether a blob frame has begun on GATT and not finished there.
+    ///
+    /// It finishes where it began, however the pipes change underneath it,
+    /// because nothing orders a GATT write against a stream read at the peer
+    /// and a frame split across the two could land out of order.
+    gatt_frame_open: bool,
 }
 
 impl Outbox {
@@ -264,12 +270,17 @@ impl Outbox {
     /// Throw away everything queued on a channel.
     pub fn discard(&mut self, channel: Channel) {
         self.queues.remove(&channel);
+
+        if channel == Channel::Blob {
+            self.gatt_frame_open = false;
+        }
     }
 
     /// Move the blob channel onto its own pipe, or back onto GATT.
     ///
-    /// Whatever is already queued goes with it: the fragments are the same
-    /// either way and only the pipe they leave on changes.
+    /// Whatever is already queued goes with it, once the frame under way on
+    /// GATT has finished there: the fragments are the same either way and only
+    /// the pipe they leave on changes.
     pub fn set_bulk(&mut self, open: bool) {
         self.bulk = open;
     }
@@ -284,11 +295,15 @@ impl Outbox {
             return None;
         }
 
-        let bulk = self.bulk;
+        let bulk = self.bulk && !self.gatt_frame_open;
         let queued = Channel::ALL
             .iter()
             .filter(|channel| channel.pipe(bulk) == pipe)
             .find_map(|channel| self.queues.get_mut(channel)?.pop_front())?;
+
+        if queued.0.channel == Channel::Blob && pipe == Pipe::Gatt {
+            self.gatt_frame_open = queued.0.more;
+        }
 
         self.in_flight.insert(pipe, true);
 
@@ -399,6 +414,42 @@ mod tests {
             reassembling.absorb(bulk[1].clone()).unwrap(),
             Some(frame(Channel::Blob, b"aaaaaaaa"))
         );
+    }
+
+    #[test]
+    fn a_blob_frame_begun_on_gatt_finishes_there_once_bulk_opens() {
+        let codec = Codec::default();
+        let mut outbox = Outbox::default();
+
+        outbox.push(
+            codec
+                .fragment(&frame(Channel::Blob, b"a frame of three fragments"), 10)
+                .unwrap(),
+            Secrecy::Sealed,
+        );
+        outbox.push(
+            codec.fragment(&frame(Channel::Blob, b"next"), 10).unwrap(),
+            Secrecy::Sealed,
+        );
+
+        let (first, _) = outbox.next_write(Pipe::Gatt).unwrap();
+        assert!(first.more);
+        outbox.acknowledge(Pipe::Gatt);
+
+        outbox.set_bulk(true);
+
+        // The rest of the frame stays on GATT, and the frame after it moves.
+        assert!(outbox.next_write(Pipe::Bulk).is_none());
+        let (second, _) = outbox.next_write(Pipe::Gatt).unwrap();
+        assert!(second.more);
+        outbox.acknowledge(Pipe::Gatt);
+        let (last, _) = outbox.next_write(Pipe::Gatt).unwrap();
+        assert!(!last.more);
+        outbox.acknowledge(Pipe::Gatt);
+
+        let (next, _) = outbox.next_write(Pipe::Bulk).unwrap();
+        assert_eq!(next.payload, b"next");
+        assert!(outbox.next_write(Pipe::Gatt).is_none());
     }
 
     #[test]

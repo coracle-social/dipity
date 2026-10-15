@@ -143,6 +143,14 @@ impl Upgrade {
         self.state == State::Open
     }
 
+    /// Whether the upgrade has been asked for and not given up: anywhere
+    /// between a request and a channel, where either end may have moved
+    /// blob traffic off GATT.
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        !matches!(self.state, State::Idle | State::Off)
+    }
+
     /// The upgrade will not happen, or the channel that had it went away.
     ///
     /// The peer is told whenever it may be counting on the channel: waiting on a

@@ -81,18 +81,22 @@ impl Wire {
         Ok(())
     }
 
-    /// The L2CAP channel went away, and bulk goes back on GATT.
+    /// The L2CAP channel went away, or never came, and bulk stays on GATT.
     ///
-    /// Whatever was queued for it is dropped, and so is the write in flight on
-    /// it, which nobody will acknowledge. The transfer resumes from what the
-    /// store already holds, because a fragment sized for the bulk MTU would
-    /// overrun an ATT write.
+    /// Whatever was queued for an open channel is dropped, and so is the write
+    /// in flight on it, which nobody will acknowledge: a fragment sized for the
+    /// bulk MTU would overrun an ATT write. A channel that never opened here
+    /// leaves the queue alone, since everything in it is cut for GATT. Either
+    /// way a blob frame half arrived is forgotten, because the peer may have
+    /// moved its remainder onto a channel this end never read.
     pub fn close_bulk(&mut self) {
-        self.bulk_mtu = None;
-        self.bulk_inbox.clear();
-        self.outbox.set_bulk(false);
-        self.outbox.discard(Channel::Blob);
-        self.outbox.acknowledge(Pipe::Bulk);
+        if self.bulk_mtu.take().is_some() {
+            self.bulk_inbox.clear();
+            self.outbox.set_bulk(false);
+            self.outbox.discard(Channel::Blob);
+            self.outbox.acknowledge(Pipe::Bulk);
+        }
+
         self.codec.forget(Channel::Blob);
     }
 

@@ -215,6 +215,13 @@ impl BlobExchange {
         self.active = None;
     }
 
+    /// Ask again although the peer refused earlier, because standing can
+    /// change mid-session: a peer that answered 429 as a stranger may have
+    /// named this device since.
+    pub fn forgive_refusal(&mut self) {
+        self.refused = false;
+    }
+
     /// The battery level in percent, which gates new transfers.
     pub fn set_battery(&mut self, level: Option<u8>) {
         self.battery = level;

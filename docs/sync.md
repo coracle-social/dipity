@@ -98,3 +98,5 @@ A peer is served the bytes when it may be served every event that references the
 ### Quotas
 
 Blob quotas are separate from and much tighter than event quotas. Each peer has a byte budget per rolling 24 hours in each direction, counted across sessions.
+
+A peer that answers 429 is not asked again that session, with one exception: a policy change rebinds the peer and forgets the refusal. Standing moves mid-session while two people pair, and the one who names the other first is refused as a stranger until named back. The refusal is taken under the old standing and would otherwise outlive it.

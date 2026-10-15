@@ -514,7 +514,9 @@ impl Node {
 
     /// The L2CAP channel is up, with the MTU it negotiated. Bulk moves onto it.
     pub fn l2cap_opened(&mut self, link: LinkId, mtu: usize) -> Result<Vec<Action>> {
-        self.on_session(link, |session| session.l2cap_opened(mtu))
+        let db = Arc::clone(&self.db);
+
+        self.on_session(link, move |session| session.l2cap_opened(&db, mtu))
     }
 
     /// The upgrade will not happen, or the channel that had it went away.
@@ -526,10 +528,7 @@ impl Node {
     pub fn l2cap_unavailable(&mut self, link: LinkId) -> Result<Vec<Action>> {
         let db = Arc::clone(&self.db);
 
-        self.on_session(link, move |session| {
-            session.l2cap_unavailable()?;
-            session.maybe_fetch_blob(&db)
-        })
+        self.on_session(link, move |session| session.l2cap_unavailable(&db))
     }
 
     /// Carry a shell answer to the session it belongs to, and collect.
@@ -734,6 +733,14 @@ impl Node {
 
         for session in self.sessions.values_mut() {
             session.set_policy(Arc::clone(&self.policy));
+
+            // A refusal just forgiven is worth one more ask, which the want list alone would not prompt.
+            if let Err(error) = session.maybe_fetch_blob(&self.db) {
+                log::error!(
+                    "asking for a wanted blob on link {:?} failed: {error:#}",
+                    session.link
+                );
+            }
         }
 
         if !self.policy.moves_sync(&before) {
@@ -3297,5 +3304,210 @@ mod tests {
         assert!(node.offer_identity(LinkId(1)).is_err());
         assert!(node.answer_identity_transfer(LinkId(1), true).is_err());
         assert!(node.take_transferred_identity(LinkId(1)).is_none());
+    }
+
+    /// How the shells answer the L2CAP upgrade in `settle_with_l2cap`.
+    #[derive(Clone, Copy)]
+    enum Shell {
+        /// The channel comes up at both ends.
+        Opens,
+        /// The end asked to publish cannot.
+        PublishFails,
+        /// The end asked to open cannot, and the publisher's accept fails with it.
+        OpenFails,
+        /// The publisher sees the channel open and the opener does not.
+        OpenFailsAtOneEnd,
+    }
+
+    /// Carry `actions` between two nodes as `settle` does, and answer the
+    /// L2CAP upgrade as `shell` would, `delay` GATT writes after it is asked —
+    /// which is to say while the first blob response is still streaming.
+    fn settle_with_l2cap(
+        dialer: &mut Node,
+        receiver: &mut Node,
+        actions: Vec<Action>,
+        shell: Shell,
+        delay: usize,
+    ) -> Vec<Action> {
+        use std::collections::VecDeque;
+
+        let mut rest = Vec::new();
+        let mut countdown: Option<usize> = None;
+        let mut queued: VecDeque<(bool, Action)> =
+            actions.into_iter().map(|action| (true, action)).collect();
+
+        while let Some((from_dialer, action)) = queued.pop_front() {
+            let (from, into): (&mut Node, &mut Node) = if from_dialer {
+                (&mut *dialer, &mut *receiver)
+            } else {
+                (&mut *receiver, &mut *dialer)
+            };
+
+            if matches!(action, Action::PublishL2cap(_) | Action::OpenL2cap(..)) {
+                match countdown {
+                    None => {
+                        countdown = Some(delay);
+                        queued.push_back((from_dialer, action));
+                        continue;
+                    }
+                    Some(left) if left > 0 => {
+                        queued.push_back((from_dialer, action));
+                        continue;
+                    }
+                    Some(_) => countdown = None,
+                }
+            }
+
+            let (answered, released) = match action {
+                Action::Send(link, write) => {
+                    if let Some(left) = countdown.as_mut() {
+                        *left = left.saturating_sub(1);
+                    }
+                    (into.bytes_received(link, &write), from.write_complete(link))
+                }
+                Action::SendBulk(link, write) => (
+                    into.bulk_received(link, &write),
+                    from.bulk_write_complete(link),
+                ),
+                Action::PublishL2cap(link) => {
+                    let own = match shell {
+                        Shell::PublishFails => from.l2cap_unavailable(link).unwrap(),
+                        _ => from.l2cap_published(link, 0x81).unwrap(),
+                    };
+                    (Vec::new(), own)
+                }
+                Action::OpenL2cap(link, _) => match shell {
+                    Shell::Opens => (
+                        into.l2cap_opened(link, 2048).unwrap(),
+                        from.l2cap_opened(link, 2048).unwrap(),
+                    ),
+                    Shell::OpenFailsAtOneEnd => (
+                        into.l2cap_opened(link, 2048).unwrap(),
+                        from.l2cap_unavailable(link).unwrap(),
+                    ),
+                    _ => (
+                        into.l2cap_unavailable(link).unwrap(),
+                        from.l2cap_unavailable(link).unwrap(),
+                    ),
+                },
+                other => {
+                    rest.push(other);
+                    continue;
+                }
+            };
+
+            queued.extend(answered.into_iter().map(|action| (!from_dialer, action)));
+            queued.extend(released.into_iter().map(|action| (from_dialer, action)));
+        }
+
+        rest
+    }
+
+    /// A picture past the bulk threshold, posted by the dialer and fetched by the receiver with `shell` answering the upgrade.
+    fn big_picture_fetched(shell: Shell) -> bool {
+        let (mut dialer, mut receiver) = contacts_pair();
+        let bytes: Vec<u8> = (0..(crate::sync::blob::L2CAP_THRESHOLD_BYTES as usize + 40_000))
+            .map(|at| (at % 251) as u8)
+            .collect();
+        let hash = BlobHash::digest(&bytes);
+        let post = note(
+            author(1),
+            clock::now(),
+            "big",
+            Tags::new().add("imeta", Node::media_tags(&bytes)),
+        );
+
+        let published = dialer.publish(&post, &[&bytes]).unwrap();
+        settle_with_l2cap(&mut dialer, &mut receiver, published, shell, 4);
+
+        query::get_blob(&receiver.db, &hash)
+            .unwrap()
+            .unwrap()
+            .complete
+    }
+
+    #[test]
+    fn a_picture_past_the_bulk_threshold_arrives_over_the_channel() {
+        assert!(big_picture_fetched(Shell::Opens));
+    }
+
+    #[test]
+    fn a_picture_still_arrives_when_the_channel_cannot_be_published() {
+        assert!(big_picture_fetched(Shell::PublishFails));
+    }
+
+    #[test]
+    fn a_picture_still_arrives_when_the_channel_cannot_be_opened() {
+        assert!(big_picture_fetched(Shell::OpenFails));
+    }
+
+    #[test]
+    fn a_picture_still_arrives_when_only_one_end_sees_the_channel_open() {
+        assert!(big_picture_fetched(Shell::OpenFailsAtOneEnd));
+    }
+
+    /// A refusal taken while the peer still saw this device as a stranger is forgotten once the peer names the user.
+    #[test]
+    fn a_picture_refused_before_the_peer_named_the_user_arrives_once_it_does() {
+        let bytes = b"a picture posted before the two paired";
+        let hash = BlobHash::digest(bytes);
+        let post = note(
+            author(2),
+            clock::now() - 60,
+            "mine",
+            Tags::new().add("imeta", Node::media_tags(bytes)),
+        );
+        let card = |by: u8, named: u8| {
+            crate::fixtures::event(
+                author(by),
+                CONTACT,
+                100,
+                "neighbour",
+                Tags::new().add("d", [author(named).to_hex()]),
+            )
+        };
+
+        let mut dialer = Node::new(
+            db(),
+            custody(secret(1)),
+            Arc::new(crate::blobs::MemoryBlobStore::default()),
+        )
+        .unwrap();
+        let mut receiver = Node::new(
+            db(),
+            custody(secret(2)),
+            Arc::new(crate::blobs::MemoryBlobStore::default()),
+        )
+        .unwrap();
+
+        // Only the dialer has named the other, so the receiver's picture is asked for and refused.
+        dialer.publish(&card(1, 2), &[]).unwrap();
+        receiver.publish(&post, &[bytes]).unwrap();
+        receiver
+            .link_up(LinkId(1), None, Role::Receiver, 4096)
+            .unwrap();
+        let opening = dialer
+            .link_up(LinkId(1), Some(peripheral(1)), Role::Dialer, 4096)
+            .unwrap();
+        settle(&mut dialer, &mut receiver, opening);
+
+        assert!(query::get_event(&dialer.db, &post.id).unwrap().is_some());
+        assert!(
+            !query::get_blob(&dialer.db, &hash)
+                .unwrap()
+                .unwrap()
+                .complete
+        );
+
+        // Naming the dialer back makes it a contact, and the refusal is not held against it.
+        let named = receiver.publish(&card(2, 1), &[]).unwrap();
+        settle(&mut receiver, &mut dialer, named);
+
+        assert!(
+            query::get_blob(&dialer.db, &hash)
+                .unwrap()
+                .unwrap()
+                .complete
+        );
     }
 }

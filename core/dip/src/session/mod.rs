@@ -320,6 +320,9 @@ impl Session {
     pub fn set_policy(&mut self, policy: Arc<Policy>) {
         self.policy = policy;
         self.bind_peer();
+
+        // The peer's standing may have moved too, as it does while pairing, and a 429 taken before that is stale.
+        self.blobs.forgive_refusal();
     }
 
     /// Answer the consent gate's hold, from the user's decision.
@@ -895,13 +898,13 @@ impl Session {
     ///
     /// A channel too small to carry a fragment is one this link does without,
     /// rather than a reason to end it: the upgrade is bandwidth.
-    pub fn l2cap_opened(&mut self, mtu: usize) -> Result<()> {
+    pub fn l2cap_opened(&mut self, db: &Db, mtu: usize) -> Result<()> {
         log::debug!("L2CAP open on {:?} at MTU {mtu}", self.link);
 
         if let Err(error) = self.wire.open_bulk(mtu) {
             log::warn!("staying on GATT on {:?}: {error:#}", self.link);
 
-            return self.l2cap_unavailable();
+            return self.l2cap_unavailable(db);
         }
 
         self.upgrade.opened();
@@ -911,26 +914,32 @@ impl Session {
 
     /// The channel went away, or the shell could not make one.
     ///
-    /// Either way this link finishes on GATT. What the blob channel had on the
-    /// bulk pipe is lost, and a fetch waiting on it starts again from the store.
-    pub fn l2cap_unavailable(&mut self) -> Result<()> {
-        log::debug!("L2CAP unavailable on {:?}, staying on GATT", self.link);
+    /// Either way this link finishes on GATT, and a fetch under way starts
+    /// again from the store. A shell reporting it twice, or on a link that
+    /// never asked, has nothing to fall back from.
+    pub fn l2cap_unavailable(&mut self, db: &Db) -> Result<()> {
+        if !self.upgrade.is_live() {
+            return Ok(());
+        }
 
-        self.fall_back_to_gatt();
+        log::debug!("L2CAP unavailable on {:?}, staying on GATT", self.link);
 
         let owed = self.upgrade.unavailable();
 
-        self.tell_l2cap(owed)
+        self.tell_l2cap(owed)?;
+        self.fall_back_to_gatt(db)
     }
 
-    /// Move bulk back onto GATT. A fetch whose bytes were on the channel is
-    /// dropped, and whoever calls this asks for the next one.
-    fn fall_back_to_gatt(&mut self) {
-        if self.wire.bulk_is_open() {
-            self.blobs.abandon_in_flight();
-        }
-
+    /// Move bulk back onto GATT and start the fetch in flight over, from what
+    /// the store holds.
+    ///
+    /// The fetch starts over whether or not a channel opened here, because the
+    /// peer's may have: a response begun on GATT can have finished on a pipe
+    /// this end never read, and nothing would ever complete it.
+    fn fall_back_to_gatt(&mut self, db: &Db) -> Result<()> {
         self.wire.close_bulk();
+        self.blobs.abandon_in_flight();
+        self.maybe_fetch_blob(db)
     }
 
     /// Bulk is wanted on this link, from whichever end this is.
@@ -944,16 +953,16 @@ impl Session {
 
     /// One step of the upgrade exchange, off the control channel.
     ///
-    /// The peer losing a channel this end still thinks is open moves this end
-    /// off it too, since nothing written to it would ever arrive.
+    /// The peer giving up an upgrade this end was counting on moves this end
+    /// off it too, whether a channel had opened here or not: what the peer had
+    /// queued for it is gone either way.
     fn on_l2cap(&mut self, db: &Db, payload: &[u8]) -> Result<()> {
-        let was_open = self.upgrade.is_open();
+        let was_live = self.upgrade.is_live();
         let owed = self.upgrade.receive(payload)?;
 
-        if was_open && !self.upgrade.is_open() {
-            log::debug!("the peer lost L2CAP on {:?}, staying on GATT", self.link);
-            self.fall_back_to_gatt();
-            self.maybe_fetch_blob(db)?;
+        if was_live && !self.upgrade.is_live() {
+            log::debug!("the peer gave up L2CAP on {:?}, staying on GATT", self.link);
+            self.fall_back_to_gatt(db)?;
         }
 
         self.tell_l2cap(owed)
@@ -2516,7 +2525,7 @@ mod tests {
         pump(&mut receiver, &mut dialer, &db);
         assert_eq!(dialer.poll_l2cap().unwrap(), Some(Step::Open(0x0080)));
 
-        dialer.l2cap_opened(512).unwrap();
+        dialer.l2cap_opened(&db, 512).unwrap();
         assert!(dialer.wire.bulk_is_open());
     }
 
@@ -2547,7 +2556,7 @@ mod tests {
         pump(&mut dialer, &mut receiver, &db);
         receiver.poll_l2cap().unwrap();
 
-        receiver.l2cap_unavailable().unwrap();
+        receiver.l2cap_unavailable(&db).unwrap();
         pump(&mut receiver, &mut dialer, &db);
 
         // The dialer heard it: a PSM arriving afterwards is not acted on.
@@ -2561,9 +2570,10 @@ mod tests {
 
     #[test]
     fn losing_the_channel_mid_write_leaves_nothing_in_flight() {
+        let db = Db::open_in_memory().unwrap();
         let (mut dialer, _receiver) = secured_pair(policy());
 
-        dialer.l2cap_opened(512).unwrap();
+        dialer.l2cap_opened(&db, 512).unwrap();
         dialer
             .send(&Frame {
                 channel: Channel::Blob,
@@ -2573,7 +2583,7 @@ mod tests {
         assert!(dialer.wire.next_write(Pipe::Bulk).unwrap().is_some());
 
         // The close acknowledges the write, because nobody can on a channel that is gone.
-        dialer.l2cap_unavailable().unwrap();
+        dialer.l2cap_unavailable(&db).unwrap();
 
         // What is left is the notice telling the peer, and it goes on GATT.
         assert!(dialer.wire.next_write(Pipe::Bulk).unwrap().is_none());
@@ -2595,11 +2605,11 @@ mod tests {
         receiver.l2cap_published(0x0080).unwrap();
         pump(&mut receiver, &mut dialer, &db);
         dialer.poll_l2cap().unwrap();
-        dialer.l2cap_opened(512).unwrap();
-        receiver.l2cap_opened(512).unwrap();
+        dialer.l2cap_opened(&db, 512).unwrap();
+        receiver.l2cap_opened(&db, 512).unwrap();
 
         // The dialer's end of the channel dies, and the receiver's streams never say so.
-        dialer.l2cap_unavailable().unwrap();
+        dialer.l2cap_unavailable(&db).unwrap();
         pump(&mut dialer, &mut receiver, &db);
 
         assert!(!dialer.wire.bulk_is_open());
