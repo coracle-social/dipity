@@ -70,13 +70,13 @@
         : unpaired
           ? "Nothing here yet. Add a contact while you are next to them, and what they share shows up whenever your phones are near each other."
           : "No activity yet. Posts arrive when you are near other people."}
+    {#snippet action()}
+      {#if unpaired}
+        <Button onclick={seek}>
+          <UserPlus />
+          Add a contact
+        </Button>
+      {/if}
+    {/snippet}
   </EmptyState>
-  {#if unpaired}
-    <div class="flex justify-center pb-16">
-      <Button onclick={seek}>
-        <UserPlus />
-        Add a contact
-      </Button>
-    </div>
-  {/if}
 {/if}
