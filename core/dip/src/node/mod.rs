@@ -35,7 +35,7 @@ mod scheduler;
 
 pub use scheduler::{MAX_LINKS, RSSI_FLOOR};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -187,6 +187,21 @@ pub enum Action {
     WakeAt(i64),
 }
 
+/// Somebody on a live link, as the view was told of them when they proved a pubkey.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InRange {
+    /// The link they are on.
+    pub link: LinkId,
+    /// The pubkey they proved.
+    pub pubkey: PublicKey,
+    /// The value both users compare before naming each other.
+    pub code: u32,
+    /// Whether this device dialed the link.
+    pub dialed: bool,
+    /// Whether this device recognized the pubkey by its pair secret.
+    pub recognized: bool,
+}
+
 /// Every live session, the store behind them, and the key they authenticate
 /// with.
 pub struct Node {
@@ -215,6 +230,11 @@ pub struct Node {
     /// Where the app is, which an identity transfer needs. `None` until the
     /// shell first reports it.
     presence: Option<Presence>,
+    /// Whether the user is waiting on the pairing screen, which asks everybody
+    /// unnamed who syncs meanwhile, not only whoever was there at the press.
+    seeking: bool,
+    /// The links asked under the current wait, once each.
+    sought: BTreeSet<LinkId>,
     /// This store's event channel, through which a stored own event is offered
     /// to every connected peer without the writer knowing.
     events: broadcast::Receiver<EventChange>,
@@ -281,6 +301,8 @@ impl Node {
             scheduler: Scheduler::default(),
             spending,
             presence: None,
+            seeking: false,
+            sought: BTreeSet::new(),
             events_swept_at: None,
             key_backup: None,
             radio_started: false,
@@ -655,27 +677,86 @@ impl Node {
         self.collect()
     }
 
-    /// Ask to pair: over one link, or over every link to somebody the user
-    /// has not named, which is what pressing the button with nobody picked
-    /// out means. A contact is never asked, since they are one already.
+    /// Ask to pair: over one link, or with nobody picked out, which is what
+    /// pressing the button means. The latter asks everybody syncing the user
+    /// has not named and keeps asking whoever syncs until the user stops
+    /// waiting, since a phone still shaking hands at the press would otherwise
+    /// never be asked. A contact is never asked, since they are one already.
     /// `docs/discovery.md#meeting-somebody`.
     pub fn request_pairing(&mut self, link: Option<LinkId>) -> Result<Vec<Action>> {
-        let contacts = &self.policy.graph.contacts;
-
-        for session in self.sessions.values_mut() {
-            let wanted = match link {
-                Some(link) => session.link == link,
-                None => session.peer.as_ref().is_some_and(|peer| {
-                    !peer.pubkeys.iter().any(|pubkey| contacts.contains(pubkey))
-                }),
-            };
-
-            if wanted {
-                session.request_pairing()?;
+        match link {
+            Some(link) => {
+                if let Some(session) = self.sessions.get_mut(&link) {
+                    session.request_pairing()?;
+                }
+            }
+            None => {
+                self.seeking = true;
+                self.sought.clear();
             }
         }
 
         Ok(self.collect())
+    }
+
+    /// The user left the pairing screen, so nobody who syncs from now on is asked.
+    pub fn stop_pairing(&mut self) -> Vec<Action> {
+        self.seeking = false;
+        self.sought.clear();
+
+        self.collect()
+    }
+
+    /// Ask everybody syncing the user has not named to pair, once a link, while the user waits.
+    fn seek(&mut self) {
+        if !self.seeking {
+            return;
+        }
+
+        let contacts = &self.policy.graph.contacts;
+
+        for session in self.sessions.values_mut() {
+            let unnamed = session
+                .peer
+                .as_ref()
+                .is_some_and(|peer| !peer.pubkeys.iter().any(|pubkey| contacts.contains(pubkey)));
+
+            if session.state != State::Syncing || !unnamed || !self.sought.insert(session.link) {
+                continue;
+            }
+
+            if let Err(error) = session.request_pairing() {
+                log::error!(
+                    "asking to pair on link {:?} failed: {error:#}",
+                    session.link
+                );
+            }
+        }
+    }
+
+    /// Who is on each live link, as the shell was told of them: one entry per
+    /// pubkey a peer proved. The view reads this when it starts and when it
+    /// comes back to the front, because the announcements fire whether or not
+    /// a view is attached to hear them.
+    #[must_use]
+    pub fn in_range(&self) -> Vec<InRange> {
+        self.sessions
+            .values()
+            .filter(|session| session.state != State::Closed)
+            .flat_map(|session| {
+                let code = session.pairing_code();
+
+                session.announced().filter_map(move |pubkey| {
+                    Some(InRange {
+                        link: session.link,
+                        pubkey: *pubkey,
+                        code: code?,
+                        dialed: session.role == Role::Dialer,
+                        recognized: session.recognized(pubkey),
+                    })
+                })
+            })
+            .collect()
     }
 
     /// Offer this device's identity to the peer on `link`, which is the user
@@ -947,6 +1028,8 @@ impl Node {
             }
         }
 
+        self.seek();
+
         let mut actions = Vec::new();
         let mut asking = Vec::new();
 
@@ -1057,6 +1140,7 @@ impl Node {
         // Grading is one decision because every teardown passes through here.
         for (link, ending, harvested, synced) in closed {
             self.sessions.remove(&link);
+            self.sought.remove(&link);
 
             let duplicate = self.duplicates.remove(&link);
 
@@ -3160,6 +3244,60 @@ mod tests {
         let heard = settle(&mut two, &mut one, answered);
 
         assert_eq!(pairing_requests(&heard).len(), 1);
+    }
+
+    #[test]
+    fn whoever_syncs_while_the_user_waits_is_asked_until_they_stop_waiting() {
+        let mut one = node();
+        let mut two = node();
+        one.notify_foregrounded();
+        two.notify_foregrounded();
+
+        // Pressed with nobody in range yet.
+        assert!(pairing_requests(&one.request_pairing(None).unwrap()).is_empty());
+
+        two.link_up(LinkId(1), None, Role::Receiver, 4096).unwrap();
+        let opening = one
+            .link_up(LinkId(1), Some(peripheral(1)), Role::Dialer, 4096)
+            .unwrap();
+        let heard = settle(&mut one, &mut two, opening);
+
+        assert_eq!(pairing_requests(&heard).len(), 1, "asked once they sync");
+
+        one.stop_pairing();
+        let mut three = node();
+        three.notify_foregrounded();
+        three
+            .link_up(LinkId(2), None, Role::Receiver, 4096)
+            .unwrap();
+        let opening = one
+            .link_up(LinkId(2), Some(peripheral(2)), Role::Dialer, 4096)
+            .unwrap();
+        let heard = settle(&mut one, &mut three, opening);
+
+        assert!(
+            pairing_requests(&heard).is_empty(),
+            "nobody is asked once the user has left the screen"
+        );
+    }
+
+    #[test]
+    fn who_is_in_range_can_be_read_back_after_the_announcement_was_missed() {
+        let (dialer, receiver) = attended_pair();
+
+        let seen = dialer.in_range();
+
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].link, LinkId(1));
+        assert_eq!(seen[0].pubkey, receiver.identity);
+        assert!(seen[0].dialed);
+        assert!(!seen[0].recognized);
+        assert_eq!(
+            Some(seen[0].code),
+            receiver.sessions[&LinkId(1)].pairing_code(),
+            "under the digits the other phone shows"
+        );
+        assert!(!receiver.in_range()[0].dialed);
     }
 
     #[test]

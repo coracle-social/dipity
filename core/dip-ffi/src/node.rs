@@ -45,6 +45,22 @@ pub struct LinkId {
     pub value: u64,
 }
 
+/// Somebody on a live link, as `PeerIdentified` announced them, for a view
+/// that was not attached to hear it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct InRange {
+    /// The link they are on.
+    pub link: LinkId,
+    /// The pubkey they proved, hex.
+    pub pubkey: String,
+    /// The value both users compare before naming each other.
+    pub code: u32,
+    /// Whether this device dialed the link.
+    pub dialed: bool,
+    /// Whether this device recognized the pubkey by its pair secret.
+    pub recognized: bool,
+}
+
 /// A BLE peripheral, as the platform names it.
 ///
 /// Opaque and per-app, and stable only until the peer's BLE address rotates.
@@ -493,6 +509,29 @@ impl Node {
         drive!(self, |node| node
             .request_pairing(link.map(Into::into))
             .map_err(|error| NodeError::core(&error))?)
+    }
+
+    /// The user left the pairing screen: nobody who syncs from now on is asked.
+    pub fn stop_pairing(&self) -> Result<Vec<Action>, NodeError> {
+        drive!(self, |node| node.stop_pairing())
+    }
+
+    /// Who is on each live link, one entry per pubkey proved, for a view that
+    /// starts or comes back to the front after the announcements went out.
+    pub fn in_range(&self) -> Result<Vec<InRange>, NodeError> {
+        let guard = self.inner.lock().map_err(|_| NodeError::poisoned())?;
+
+        Ok(guard
+            .in_range()
+            .into_iter()
+            .map(|peer| InRange {
+                link: peer.link.into(),
+                pubkey: peer.pubkey.to_hex(),
+                code: peer.code,
+                dialed: peer.dialed,
+                recognized: peer.recognized,
+            })
+            .collect())
     }
 
     /// Everything the user has said about who gets what, as JSON, with the

@@ -14,6 +14,7 @@ import {get, readable, writable, type Readable} from "svelte/store"
 import type {PluginListenerHandle} from "@capacitor/core"
 import {Dip} from "$lib/core"
 import {name, social, type Social} from "$lib/data/contacts"
+import {links, type Link} from "$lib/data/links"
 import {go} from "$lib/data/nav"
 import {session} from "$lib/data/session"
 
@@ -75,10 +76,7 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
       .catch(() => undefined)
 
   // Every identified link so that a request can move to another link to the same person when its own one closes.
-  const identified = new Map<
-    number,
-    {pubkey: string; code: number; dialed: boolean; recognized: boolean}
-  >()
+  const identified = new Map<number, Link>()
 
   // Two links to one person resolve to the one the lower pubkey dialed; both phones pick it and show its digits.
   const dialer = (link: number) => {
@@ -96,11 +94,49 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
       : request
   }
 
-  hold(
-    Dip.addListener("peerIdentified", ({link, pubkey, code, dialed, recognized}) => {
-      identified.set(link, {pubkey, code, dialed, recognized})
-    }),
-  )
+  // A link that left the list closed, whoever was on it and whether or not this view heard the announcements.
+  const closed = (link: number) => {
+    const gone = identified.get(link)
+
+    identified.delete(link)
+    looked.delete(link)
+
+    // Somebody who left may ask again when they are back.
+    if (gone && ![...identified.values()].some(peer => peer.pubkey === gone.pubkey)) {
+      answered.delete(gone.pubkey)
+    }
+
+    pending.update(waiting =>
+      waiting.flatMap(request => {
+        if (request.link !== link) return [request]
+
+        // The person is still here over another link: the request stays, under that link's digits.
+        const still = [...identified].find(([, peer]) => peer.pubkey === request.pubkey)
+
+        return still
+          ? [
+              {
+                ...request,
+                link: still[0],
+                code: still[1].code,
+                formerly: [...(request.formerly ?? []), link],
+              },
+            ]
+          : []
+      }),
+    )
+  }
+
+  // The links store is the one reading of who is in range, kept whole by the shell.
+  const following = links.subscribe(present => {
+    const open = new Set(present.map(peer => peer.link))
+
+    for (const link of [...identified.keys()]) {
+      if (!open.has(link)) closed(link)
+    }
+
+    for (const peer of present) identified.set(peer.link, peer)
+  })
 
   // One request per person: a device may prove several pubkeys, and two phones may briefly hold two links.
   hold(
@@ -126,44 +162,11 @@ export const requests: Readable<Request[]> = readable<Request[]>([], set => {
     }),
   )
 
-  hold(
-    Dip.addListener("linkClosed", ({link}) => {
-      const gone = identified.get(link)
-
-      identified.delete(link)
-      looked.delete(link)
-
-      // Somebody who left may ask again when they are back.
-      if (gone && ![...identified.values()].some(peer => peer.pubkey === gone.pubkey)) {
-        answered.delete(gone.pubkey)
-      }
-
-      pending.update(waiting =>
-        waiting.flatMap(request => {
-          if (request.link !== link) return [request]
-
-          // The person is still here over another link: the request stays, under that link's digits.
-          const still = [...identified].find(([, peer]) => peer.pubkey === request.pubkey)
-
-          return still
-            ? [
-                {
-                  ...request,
-                  link: still[0],
-                  code: still[1].code,
-                  formerly: [...(request.formerly ?? []), link],
-                },
-              ]
-            : []
-        }),
-      )
-    }),
-  )
-
   return () => {
     live = false
     unsubscribe()
     unwatch()
+    following()
     handles.forEach(handle => handle.remove())
   }
 })
@@ -179,8 +182,12 @@ export const seek = async () => {
   await Dip.requestPairing({}).catch(error => console.error("asking to pair failed", error))
 }
 
-/** The user left the pairing screen, answered or not. */
-export const stopSeeking = () => seeking.set(false)
+/** The user left the pairing screen, answered or not, so nobody who syncs from now on is asked. */
+export const stopSeeking = async () => {
+  seeking.set(false)
+
+  await Dip.stopPairing().catch(error => console.error("ending the wait failed", error))
+}
 
 /**
  * The user is looking at a request. Ask back over its link, once, so that the

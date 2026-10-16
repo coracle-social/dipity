@@ -220,6 +220,37 @@ class DipPlugin : Plugin(), Encounters.View {
         perform(call, "that request could not be sent") { it.node.requestPairing(link) }
     }
 
+    /** The user left the pairing screen, so nobody who syncs from now on is asked. */
+    @PluginMethod
+    fun stopPairing(call: PluginCall) {
+        perform(call, "the wait could not be ended") { it.node.stopPairing() }
+    }
+
+    /** Who is on each live link, for a view that missed the announcements. */
+    @PluginMethod
+    fun inRange(call: PluginCall) {
+        val core = this.core ?: return call.reject("inRange needs a started core")
+
+        try {
+            val peers = JSArray()
+
+            for (peer in core.node.inRange()) {
+                peers.put(
+                    JSObject()
+                        .put("link", peer.link.value.toLong())
+                        .put("pubkey", peer.pubkey)
+                        .put("code", peer.code.toLong())
+                        .put("dialed", peer.dialed)
+                        .put("recognized", peer.recognized)
+                )
+            }
+
+            call.resolve(JSObject().put("peers", peers))
+        } catch (error: Exception) {
+            call.reject("who is in range could not be read", error)
+        }
+    }
+
     // ------------------------------------------------- Login with device
 
     /**

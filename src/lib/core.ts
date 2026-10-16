@@ -210,6 +210,16 @@ export type DipCore = {
    */
   requestPairing(options?: {link?: number}): Promise<void>
 
+  /** The user left the pairing screen, so nobody who syncs from now on is asked. */
+  stopPairing(): Promise<void>
+
+  /**
+   * Who is on each live link, one entry per pubkey proved, as `peerIdentified`
+   * announced them. Read when the view starts and when it comes back to the
+   * front, because the announcements fire whether or not a view hears them.
+   */
+  inRange(): Promise<{peers: PeerIdentity[]}>
+
   /** Stored events matching the query, each NIP-01 JSON. */
   listEvents(options?: Query): Promise<{events: string[]}>
 

@@ -39,6 +39,8 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "mediaTags", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "publish", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "requestPairing", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stopPairing", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "inRange", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "exportKey", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "offerIdentity", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "answerIdentityTransfer", returnType: CAPPluginReturnPromise),
@@ -181,6 +183,31 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
 
         perform(call, "that request could not be sent") {
             try $0.node.requestPairing(link: link)
+        }
+    }
+
+    /// The user left the pairing screen, so nobody who syncs from now on is asked.
+    @objc func stopPairing(_ call: CAPPluginCall) {
+        perform(call, "the wait could not be ended") { $0.node.stopPairing() }
+    }
+
+    /// Who is on each live link, for a view that missed the announcements.
+    @objc func inRange(_ call: CAPPluginCall) {
+        onMain {
+            guard let core = self.core else { return call.reject("inRange needs a started core") }
+
+            do {
+                let peers = try core.node.inRange().map { peer -> [String: Any] in
+                    [
+                        "link": Int(peer.link.value), "pubkey": peer.pubkey, "code": Int(peer.code),
+                        "dialed": peer.dialed, "recognized": peer.recognized,
+                    ]
+                }
+
+                call.resolve(["peers": peers])
+            } catch {
+                call.reject("who is in range could not be read", nil, error)
+            }
         }
     }
 

@@ -718,6 +718,12 @@ impl Session {
         self.recognized.contains(pubkey)
     }
 
+    /// Every pubkey the peer proved that the shell has been told of, which is
+    /// who the view lists as in range.
+    pub fn announced(&self) -> impl Iterator<Item = &PublicKey> {
+        self.announced.iter()
+    }
+
     /// Whether the two ever synced on this link.
     #[must_use]
     pub fn synced(&self) -> bool {

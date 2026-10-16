@@ -130,6 +130,10 @@ export class Simulator extends WebPlugin implements DipCore {
   /** What the user attached to what they published, base64 by hash, since only the core keeps files. */
   private media = new Map<string, string>()
   private live = new Map<number, Person>()
+  /** The digits each live link shows, as the core derives them from its transcript. */
+  private codes = new Map<number, number>()
+  /** Whether the user is waiting on the pairing screen, which asks every stranger who turns up meanwhile. */
+  private seeking = false
   private transfer: Transfer | undefined
   /** The link a transfer last delivered a key over, and whose key it was. */
   private delivered: {link: number; pubkey: string} | undefined
@@ -319,8 +323,8 @@ export class Simulator extends WebPlugin implements DipCore {
 
     this.open(link, person, known)
 
-    // A stranger syncs like anybody else; one in three presses add contact on their own phone.
-    if (!known && faker.datatype.boolean({probability: 0.33})) {
+    // A stranger syncs like anybody else; one in three presses add contact on their own phone, and anybody is asked while the user waits.
+    if (!known && (this.seeking || faker.datatype.boolean({probability: 0.33}))) {
       setTimeout(() => this.ask(link), LOOK_DELAY)
     }
 
@@ -348,11 +352,14 @@ export class Simulator extends WebPlugin implements DipCore {
    * naming a link knows when there is nothing behind it.
    */
   private open(link: number, person: Person, recognized: boolean) {
+    const code = shortCode()
+
     this.live.set(link, person)
+    this.codes.set(link, code)
     this.notifyListeners("peerIdentified", {
       link,
       pubkey: person.pubkey,
-      code: shortCode(),
+      code,
       dialed: false,
       recognized,
     })
@@ -366,6 +373,8 @@ export class Simulator extends WebPlugin implements DipCore {
   /** They walked out of range, which ends anything running over the link. */
   private close(link: number) {
     if (this.live.delete(link)) {
+      this.codes.delete(link)
+
       if (this.transfer?.link === link) this.finish(link, "refused")
 
       this.notifyListeners("linkClosed", {link})
@@ -494,9 +503,29 @@ export class Simulator extends WebPlugin implements DipCore {
       link === undefined ? !this.paired.has(person.pubkey) : at === link,
     )
 
+    if (link === undefined) this.seeking = true
+
     log(`asked ${asked.length} ${asked.length === 1 ? "phone" : "phones"} to pair`)
 
     for (const [at] of asked) setTimeout(() => this.ask(at), LOOK_DELAY)
+  }
+
+  /** The user left the pairing screen, so a stranger turning up now is not asked. */
+  async stopPairing() {
+    this.seeking = false
+  }
+
+  /** Who is on each live link, as the announcements said. */
+  async inRange() {
+    return {
+      peers: [...this.live].map(([link, person]) => ({
+        link,
+        pubkey: person.pubkey,
+        code: this.codes.get(link) ?? 0,
+        dialed: false,
+        recognized: this.paired.has(person.pubkey),
+      })),
+    }
   }
 
   async listEvents(query?: Query) {

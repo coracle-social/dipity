@@ -50,6 +50,8 @@ Seven screens under `src/lib/components/`, switched by a `place` store rather th
 
 **Pairing is asked for, never noticed.** `Node::request_pairing` sends a `PAIR` control frame over one link or over every link to somebody the user has not named, and the peer's node raises `PairingRequested` with the link's code, which is `session::sas` over the handshake transcript, six digits that `Digits` draws as login with device does. The view's `seek` presses the button and waits on the pairing screen, `look` asks back over a request's link when the user opens it so both screens show the digits, and `accept` writes the card. A held gate prompts nobody: `Session::reconsider_gate` admits the stranger when the app comes to the front. `peerIdentified` only says who is on each link.
 
+**Who is in range is read, not only heard.** `src/lib/data/links.ts` follows `peerIdentified` and `linkClosed`, and reads the whole list through `inRange` when it starts and whenever the document becomes visible, because the core announces a peer whether or not a view is attached and on iOS the view is often not. `pairing.ts` takes its map of links from that store rather than listening on its own. Pressing add contact is a standing ask in the core: `Node::seek` asks every unnamed peer that reaches syncing until `stop_pairing`, which leaving the pairing screen sends.
+
 A picture (kind 20) is the one post that attaches a file. `src/lib/data/media.ts` re-encodes it, and the view draws a whole blob from the path `blobPath` answers. The simulator keeps the bytes of what the user publishes and emits no pictures of its own.
 
 ## The core, module by module
