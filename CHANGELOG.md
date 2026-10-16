@@ -1,5 +1,13 @@
 # Changelog
 
+# 0.1.4
+
+* Add a contact by pressing a button on the people page, or on the board when it is empty; the other phone shows the request only when you press it
+* Pairing no longer pops up on its own, and anybody who comes into range while you wait is asked too
+* The people page lists only the people you have named, with a count of phones in range above them
+* Pictures now arrive when the faster transfer between two phones fails to open, and after the two phones first pair
+* The count of phones in range is right after reopening the app on iPhone
+
 # 0.1.3
 
 * Both phones now show the same pairing digits when they find each other at the same moment
