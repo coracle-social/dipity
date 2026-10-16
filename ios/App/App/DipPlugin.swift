@@ -188,7 +188,7 @@ public class DipPlugin: CAPPlugin, CAPBridgedPlugin {
 
     /// The user left the pairing screen, so nobody who syncs from now on is asked.
     @objc func stopPairing(_ call: CAPPluginCall) {
-        perform(call, "the wait could not be ended") { $0.node.stopPairing() }
+        perform(call, "the wait could not be ended") { try $0.node.stopPairing() }
     }
 
     /// Who is on each live link, for a view that missed the announcements.
