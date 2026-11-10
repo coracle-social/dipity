@@ -3,8 +3,11 @@
 // `registerPlugin` answers a proxy on every platform, and on a device the
 // implementation behind it is the shell. In the browser there is none, so
 // `just dev` gets the simulator in `$lib/dev` instead: the same surface over an
-// in-memory store and a neighborhood that walks past on a timer. A device never
-// loads it — the branch below is dead code under `import.meta.env.DEV`.
+// in-memory store and a neighborhood that walks past on a timer. A device loads
+// it only in a demo session, which App Review starts by logging in with
+// `DEMO_KEY`: the radio stays off, no key reaches secure storage, and the view
+// runs over the staged street until the user logs out. The choice is made once
+// per page load, because listeners are registered against whichever is chosen.
 //
 // Nothing here names a peer, and nothing here decides anything the core
 // decides. A link is a number the shell assigned; there is no way to reach one
@@ -404,8 +407,47 @@ export type DipCore = {
   ): Promise<PluginListenerHandle>
 }
 
-const web = import.meta.env.DEV
-  ? {web: () => import("$lib/dev/simulator").then(({simulated}) => simulated())}
-  : {}
+/** What App Review types into "Log in with a key" to start a demo session. */
+export const DEMO_KEY = "testingkey"
 
-export const Dip = registerPlugin<DipCore>("Dip", web)
+const DEMO_FLAG = "dip.demo"
+
+/** Whether this load runs over the simulator rather than the shell. */
+export const demoing = localStorage.getItem(DEMO_FLAG) !== null
+
+/** Start a demo session, which takes a reload to put the simulator behind `Dip`. */
+export const enterDemo = () => {
+  localStorage.setItem(DEMO_FLAG, "on")
+  location.reload()
+}
+
+/** End a demo session; the next load reaches the shell again. */
+export const leaveDemo = () => {
+  localStorage.removeItem(DEMO_FLAG)
+  location.reload()
+}
+
+const street = () =>
+  demoing ? "demo" : new URLSearchParams(location.search).has("scene") ? "scene" : "neighborhood"
+
+const simulator = () => import("$lib/dev/simulator").then(({simulated}) => simulated(street()))
+
+/** The simulator behind the same surface, each call awaiting the chunk's first load. */
+const deferred = new Proxy({} as DipCore, {
+  get: (_, method) =>
+    // `then` stays undefined so that nothing mistakes the core for a promise.
+    method === "then"
+      ? undefined
+      : async (...args: unknown[]) => {
+          const loaded = (await simulator()) as unknown as Record<
+            PropertyKey,
+            (...args: unknown[]) => unknown
+          >
+
+          return loaded[method](...args)
+        },
+})
+
+const web = import.meta.env.DEV ? {web: simulator} : {}
+
+export const Dip = demoing ? deferred : registerPlugin<DipCore>("Dip", web)

@@ -30,7 +30,7 @@ A plugin method is one of three shapes, and adding one means picking which: `ans
 
 The core's `log` goes nowhere until a shell installs a `Logger`. `Logging.swift` and `Logging.kt` implement one over `os.Logger` and logcat, and `Encounters` installs it before the core is opened. The Rust module path is the record's target and becomes the category or the tag, which is the only thing making a subsystem filterable on a device.
 
-A browser has no shell. `just dev` runs against `src/lib/dev/` — the plugin surface over an in-memory store and a neighborhood on a timer, reachable as `window.dip` for `receiveOffer`, since a browser has no second phone to offer it an identity. It is loaded by a dynamic import under `import.meta.env.DEV` and is in no shipped bundle. Nothing outside it imports it, and no view code branches on `DEV`: a browser-only fallback in the view is a path that never runs on a device.
+A browser has no shell. `just dev` runs against `src/lib/dev/` — the plugin surface over an in-memory store and a neighborhood on a timer, reachable as `window.dip` for `receiveOffer`, since a browser has no second phone to offer it an identity. It is loaded by a dynamic import, under `import.meta.env.DEV` or in a demo session. A device fetches its chunk only when somebody logs in with the key `testingkey`, which is how App Review sees a populated app: `core.ts` sets a flag, reloads, and puts the simulator behind `Dip` over the hand-written scene under a fresh key until the user logs out. Nothing outside `core.ts` imports it, and no view code branches on `DEV` or on the demo: a browser-only fallback in the view is a path that never runs on a device.
 
 ## The view
 

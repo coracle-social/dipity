@@ -32,7 +32,7 @@ The cost: nothing updates itself. A fix upstream reaches us only if someone re-r
 | `src/lib/components/` | Our components. Everything app-specific. |
 | `src/lib/kinds/` | Domain kinds — a `KindFactory` (reader + writer) per event kind. |
 | `src/lib/data/` | The controller layer — queries against the core, and the caches over them. |
-| `src/lib/dev/` | The simulated core `just dev` runs against. Never in a shipped bundle. |
+| `src/lib/dev/` | The simulated core `just dev` runs against, and a demo session on a device. A chunk of its own, fetched only then. |
 | `src/lib/utils.ts` | `cn()` and the prop-type helpers shadcn components import. |
 | `components.json` | CLI config: aliases, base color, style. Read by `just ui`, not at build time. |
 

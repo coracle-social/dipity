@@ -1,4 +1,4 @@
-// The street `just dev` stages at `?scene` for store screenshots, written by hand and the same on every load.
+// The street `just dev` stages at `?scene` for store screenshots and a demo session stages for App Review, written by hand.
 //
 // The faker neighborhood reads as lorem ipsum in a store listing. This one has
 // the same shape, with people and posts a reader would believe, and nobody
@@ -6,7 +6,7 @@
 //
 // The photographs are from Unsplash, under its license, by André Spieker,
 // Matthew Wiebe, veeterzy, Webvilla, Brian Jimenez, Carli Jean and Olenka
-// Kotyk. They load inline and only here, so none of them reaches a build.
+// Kotyk. They load inline, in a chunk only the simulator imports.
 
 import {sha256} from "@noble/hashes/sha2.js"
 import {bytesToHex} from "@noble/hashes/utils.js"
@@ -37,9 +37,6 @@ import type {Person} from "$lib/dev/neighborhood"
 const HOUR = 3600
 
 const DAY = 86_400
-
-/** Whether this load is the staged street. */
-export const staged = new URLSearchParams(location.search).has("scene")
 
 /** A stable key for a name, so the same person is the same pubkey on every load. */
 const keyOf = (name: string) => bytesToHex(sha256(new TextEncoder().encode(`dip scene ${name}`)))
@@ -87,8 +84,8 @@ const photo = (inline: string, dim: string) => {
   }
 }
 
-/** The street, written as of `now`. */
-export const stage = async (now: number): Promise<Staged[]> => {
+/** The street, written as of `now` around `user`. */
+export const stage = async (now: number, user: string): Promise<Staged[]> => {
   const staged: Staged[] = []
   const ago = (hours: number) => now - Math.round(hours * HOUR)
 
@@ -147,8 +144,8 @@ export const stage = async (now: number): Promise<Staged[]> => {
 
   for (const contact of cast.filter(contact => contact.known)) {
     staged.push({
-      event: card(identity, contact.pubkey, contact.petname, now - 20 * DAY),
-      from: identity,
+      event: card(user, contact.pubkey, contact.petname, now - 20 * DAY),
+      from: user,
       at: now - 20 * DAY,
     })
   }
@@ -393,9 +390,9 @@ export const stage = async (now: number): Promise<Staged[]> => {
       .setContent("The book swap shelf is back up outside number 12. Take one, leave one.")
       .addTags(["t", "notices"])
       .renderTemplate(),
-    identity,
+    user,
     ago(20),
-    identity,
+    user,
     ago(20),
   )
 

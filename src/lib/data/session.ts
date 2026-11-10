@@ -6,7 +6,7 @@
 
 import {writable, type Readable} from "svelte/store"
 import {nip19} from "nostr-tools"
-import {Dip} from "$lib/core"
+import {DEMO_KEY, Dip, demoing, enterDemo, leaveDemo} from "$lib/core"
 import {reset} from "$lib/data/nav"
 
 /** How far the core has got, from the view's side of the bridge. */
@@ -60,8 +60,10 @@ export const createIdentity = async () => {
   await ready()
 }
 
-/** Take an identity the user pasted in, and open the store under it. */
+/** Take an identity the user pasted in, and open the store under it, or start a demo session for the demo key. */
 export const importIdentity = async (nsec: string) => {
+  if (nsec.trim() === DEMO_KEY) return enterDemo()
+
   await Dip.importIdentity({nsec: nsec.trim()})
   await ready()
 }
@@ -86,6 +88,8 @@ export const awaitIdentity = async () => {
 /** Erase the key and everything gathered under it, and go back to first run. */
 export const logOut = async () => {
   await Dip.deleteIdentity()
+
+  if (demoing) return leaveDemo()
 
   reset({at: "board"})
   store.set({state: "absent"})

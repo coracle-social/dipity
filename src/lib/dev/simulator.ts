@@ -14,8 +14,9 @@
 // it from: a peer offering this device its identity is `dip.receiveOffer(link)`,
 // since nothing in a neighborhood should volunteer a key on a timer.
 //
-// Loaded by a dynamic import under `import.meta.env.DEV` so that neither this
-// module nor faker reaches the bundle the shells load.
+// Loaded by a dynamic import, under `import.meta.env.DEV` or in a demo session,
+// so this module, faker and the scene's photographs are a chunk a device only
+// fetches when somebody logged in with the demo key.
 
 import {WebPlugin} from "@capacitor/core"
 import {faker} from "@faker-js/faker"
@@ -44,10 +45,14 @@ import {emoji, post, remark, shortCode, type Person} from "$lib/dev/neighborhood
 import * as scene from "$lib/dev/scene"
 import {Store} from "$lib/dev/store"
 
-/** Who lives on the street this load runs, the staged one at `?scene`. */
-const {identity, people} = scene.staged
-  ? {identity: scene.identity, people: scene.cast}
-  : neighborhood
+/**
+ * Which street a load runs on.
+ *
+ * `neighborhood` is faker walking past on a timer, `scene` the hand-written
+ * street standing still for screenshots, and `demo` that street under a fresh
+ * key with its people still walking past, so App Review can pair with one.
+ */
+export type Street = "neighborhood" | "scene" | "demo"
 
 const HOUR = 3600
 
@@ -121,7 +126,8 @@ type Transfer = {
 /** The core as the browser gets to have one. */
 export class Simulator extends WebPlugin implements DipCore {
   private store = new Store()
-  private identity = identity
+  private identity: string
+  private people: Person[]
 
   /** What the phone would say about notifications; a browser has no background to notify from. */
   private notifying: NotificationPermission = "prompt"
@@ -141,10 +147,18 @@ export class Simulator extends WebPlugin implements DipCore {
   private nextLink = 1
   private clock: ReturnType<typeof setTimeout> | undefined
 
-  constructor() {
+  constructor(private street: Street) {
     super()
 
-    for (const person of people.filter(person => person.known)) {
+    this.identity =
+      street === "neighborhood"
+        ? neighborhood.identity
+        : street === "scene"
+          ? scene.identity
+          : getPubkey(makeSecret())
+    this.people = street === "neighborhood" ? neighborhood.people : scene.cast
+
+    for (const person of this.people.filter(person => person.known)) {
       this.paired.add(person.pubkey)
     }
 
@@ -158,7 +172,7 @@ export class Simulator extends WebPlugin implements DipCore {
   private async backlog() {
     const at = now()
     const busiest = faker.number.int({min: 2, max: BAND_HOURS - 2})
-    const known = people.filter(person => this.paired.has(person.pubkey))
+    const known = this.people.filter(person => this.paired.has(person.pubkey))
 
     this.cards(at - DAY)
 
@@ -189,7 +203,7 @@ export class Simulator extends WebPlugin implements DipCore {
 
   /** The street staged for screenshots, which stands still once it is set out. */
   private async stage() {
-    const staged = await scene.stage(now())
+    const staged = await scene.stage(now(), this.identity)
 
     for (const {event, from, at, media} of staged) {
       this.keep(event, from, at, media ? [media] : [])
@@ -215,15 +229,15 @@ export class Simulator extends WebPlugin implements DipCore {
    * for somebody is how a person it never met arrives with a name on them.
    */
   private cards(at: number) {
-    const known = people.filter(person => person.known)
+    const known = this.people.filter(person => person.known)
 
     for (const person of known) {
-      this.store.record(card(this.identity, person.pubkey, person.petname, at), identity, at)
+      this.store.record(card(this.identity, person.pubkey, person.petname, at), this.identity, at)
     }
 
     for (const person of known) {
       const theirs = faker.helpers.arrayElements(
-        people.filter(other => other.pubkey !== person.pubkey),
+        this.people.filter(other => other.pubkey !== person.pubkey),
         3,
       )
 
@@ -317,7 +331,7 @@ export class Simulator extends WebPlugin implements DipCore {
 
   /** Everything one encounter produces: a link, a burst, and now and then a stranger asking to pair. */
   private async encounter() {
-    const person = faker.helpers.arrayElement(people)
+    const person = faker.helpers.arrayElement(this.people)
     const link = this.nextLink++
     const known = this.paired.has(person.pubkey)
 
@@ -328,7 +342,12 @@ export class Simulator extends WebPlugin implements DipCore {
       setTimeout(() => this.ask(link), LOOK_DELAY)
     }
 
-    await this.gossip(person, faker.number.int({min: 1, max: person.talkative}))
+    // The demo street hands over nothing new, because faker's posts would read as placeholder text to a reviewer.
+    if (this.street === "demo") {
+      this.handOn(person, 3, now())
+    } else {
+      await this.gossip(person, faker.number.int({min: 1, max: person.talkative}))
+    }
 
     this.tick()
   }
@@ -450,14 +469,15 @@ export class Simulator extends WebPlugin implements DipCore {
     // A reloaded view starts again over the same core, which seeds its backlog once.
     if (!this.started) {
       this.started = true
-      if (scene.staged) {
-        await this.stage()
-      } else {
+      if (this.street === "neighborhood") {
         await this.backlog()
-        this.tick()
+      } else {
+        await this.stage()
       }
 
-      log(`started as ${short(this.identity)}, ${people.length} people in range`)
+      if (this.street !== "scene") this.tick()
+
+      log(`started as ${short(this.identity)}, ${this.people.length} people in range`)
     }
 
     return {identity: this.identity}
@@ -837,4 +857,4 @@ export class Simulator extends WebPlugin implements DipCore {
  */
 let running: Simulator | undefined
 
-export const simulated = () => (running ??= new Simulator())
+export const simulated = (street: Street) => (running ??= new Simulator(street))
