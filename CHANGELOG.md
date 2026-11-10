@@ -1,5 +1,9 @@
 # Changelog
 
+# 0.1.5
+
+* Log in with the key `testingkey` to try a demo with sample posts and people, which logging out leaves
+
 # 0.1.4
 
 * Add a contact by pressing a button on the people page, or on the board when it is empty; the other phone shows the request only when you press it
