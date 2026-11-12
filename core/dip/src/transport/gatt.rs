@@ -16,8 +16,8 @@
 /// The primary service, and the whole advertisement.
 pub const SERVICE_UUID: &str = "80E0688B-A648-4D1D-BB0D-BC58993CF926";
 
-/// The one characteristic, supporting `notify`, `write` and
-/// `writeWithoutResponse`.
+/// The one characteristic, declaring `notify`, `write` and
+/// `writeWithoutResponse`, of which only the first two are used.
 pub const CHARACTERISTIC_UUID: &str = "5C020905-A8FC-4D19-AB51-1FFDB97FB90A";
 
 #[cfg(test)]

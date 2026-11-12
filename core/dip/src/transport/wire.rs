@@ -149,14 +149,26 @@ impl Wire {
 
     /// Take one write off `pipe`, opening it under that pipe's nonce sequence.
     fn receive_on(&mut self, pipe: Pipe, write: &[u8]) -> Result<Option<Frame>> {
-        let mut fragment = Fragment::decode(write)?;
+        let (byte, more, sealed) = Fragment::split(write)?;
 
         // Everything after the handshake is sealed, and one that will not open is not theirs.
-        if self.noise.is_complete() {
-            fragment.payload = self.noise.decrypt(pipe, &fragment.payload)?;
-        }
+        let payload = if self.noise.is_complete() {
+            self.noise.decrypt(pipe, sealed)?
+        } else {
+            sealed.to_vec()
+        };
 
-        self.codec.absorb(fragment)
+        // A channel a later version added still spent a nonce, so it is dropped only once opened.
+        let Some(channel) = Channel::from_byte(byte) else {
+            log::debug!("dropping a fragment on unknown channel {byte}");
+            return Ok(None);
+        };
+
+        self.codec.absorb(Fragment {
+            channel,
+            more,
+            payload,
+        })
     }
 
     /// The next fragment for the shell to write on `pipe`, if the last one
@@ -412,6 +424,34 @@ mod tests {
                     payload: b"early".to_vec(),
                 })
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn a_fragment_on_an_unknown_channel_is_dropped_and_the_cipher_stays_in_step() {
+        let (mut dialer, mut receiver) = secured_pair(4096);
+
+        for payload in [&b"from a later version"[..], &b"the quick brown fox"[..]] {
+            dialer
+                .send(&Frame {
+                    channel: Channel::Sync,
+                    payload: payload.to_vec(),
+                })
+                .unwrap();
+        }
+
+        // The header is in the clear, so the first write can be relabeled without disturbing its seal.
+        let mut unknown = dialer.next_write(Pipe::Gatt).unwrap().unwrap();
+        dialer.acknowledge_write(Pipe::Gatt);
+        unknown[0] = 7;
+
+        assert_eq!(receiver.receive(&unknown).unwrap(), None);
+        assert_eq!(
+            pump(&mut dialer, &mut receiver),
+            vec![Frame {
+                channel: Channel::Sync,
+                payload: b"the quick brown fox".to_vec(),
+            }]
         );
     }
 

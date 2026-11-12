@@ -35,7 +35,7 @@ pub use recognition::{Tag, Tags};
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use coracle_lib::events::HashedEvent;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::PublicKey;
@@ -82,29 +82,28 @@ pub const IDENTIFY_CAP_SECONDS: i64 = 60;
 
 /// Control-frame discriminants, one byte ahead of the payload.
 ///
-/// The first byte names what follows, because recognition tags, mutual `AUTH`
-/// and the heartbeat share the control channel. The handshake frames that
-/// precede encryption carry no discriminant: they are raw Noise messages and
-/// only [`State::Linked`] ever sees them.
+/// The first byte names what follows, because recognition tags, the heartbeat,
+/// the L2CAP upgrade, pairing and the identity transfer share the control
+/// channel. `AUTH` is not among them: NIP-P2 carries it with the rest of the
+/// relay protocol, on the sync channel. The handshake frames that precede
+/// encryption carry no discriminant: they are raw Noise messages and only
+/// [`State::Linked`] ever sees them.
 mod control {
     /// A list of 32-byte recognition tags.
     pub const TAGS: u8 = 0x01;
-    /// A NIP-42 message, encoded as the relay protocol encodes it: either
-    /// `["AUTH", <challenge>]` or `["AUTH", <event>]`. Both directions share
-    /// one discriminant, because the payload says which.
-    pub const AUTH: u8 = 0x02;
     /// A liveness beacon, carrying nothing.
-    pub const HEARTBEAT: u8 = 0x03;
-    /// One step of an identity transfer, its own discriminant ahead of the
-    /// payload. `docs/keys.md#login-with-device`.
-    pub const TRANSFER: u8 = 0x04;
+    pub const HEARTBEAT: u8 = 0x02;
     /// One step of the L2CAP upgrade.
     /// `docs/transport.md#the-l2cap-bandwidth-upgrade`.
-    pub const L2CAP: u8 = 0x05;
+    pub const L2CAP: u8 = 0x03;
     /// The user at the other end asked to pair over this link. Carries
     /// nothing: the link already says who is asking.
     /// `docs/discovery.md#meeting-somebody`.
-    pub const PAIR: u8 = 0x06;
+    pub const PAIR: u8 = 0x04;
+    /// One step of an identity transfer, its own discriminant ahead of the
+    /// payload. In the range NIP-BE leaves to applications, because no other
+    /// implementation has a use for it. `docs/keys.md#login-with-device`.
+    pub const TRANSFER: u8 = 0x80;
 }
 
 /// Where a link is in its lifecycle.
@@ -528,8 +527,8 @@ impl Session {
         }
     }
 
-    /// Handle one frame on the sync channel, routing it to the blob, relay or
-    /// client half.
+    /// Handle one frame on the sync channel: `AUTH`, which identifies the
+    /// peer, and then everything routed to the relay or client half.
     pub fn handle_sync(&mut self, db: &Db, frame: &Frame) -> Result<()> {
         let message = match Message::decode(&frame.payload) {
             Ok(message) => message,
@@ -542,6 +541,13 @@ impl Session {
                 return Ok(());
             }
         };
+
+        if matches!(
+            message,
+            Message::AuthChallenge(_) | Message::AuthResponse(_)
+        ) {
+            return self.on_auth(db, message);
+        }
 
         let Some(peer) = self.peer.as_ref().cloned() else {
             bail!("sync traffic before the peer is identified");
@@ -1238,7 +1244,6 @@ impl Session {
 
         match discriminant {
             control::TAGS => self.on_tags(db, payload)?,
-            control::AUTH => self.on_auth(db, payload)?,
             control::HEARTBEAT => {
                 // The write itself proved liveness in `receive`; a beacon carries nothing else.
             }
@@ -1246,7 +1251,8 @@ impl Session {
             control::L2CAP => self.on_l2cap(db, payload)?,
             // A request before the link syncs names nobody, and is not one.
             control::PAIR => self.pair_requested = self.state == State::Syncing,
-            other => bail!("an unknown control frame {other} arrived"),
+            // A frame a later version added is skipped rather than ending the link. NIP-BE.
+            other => log::debug!("ignoring control frame {other:#04x} on {:?}", self.link),
         }
 
         // Both identities bind once the peer is verified and this device has disclosed.
@@ -1277,6 +1283,11 @@ impl Session {
             Verdict::Pending => self.hold(),
         }
 
+        // AUTH rides the sync channel and the tags the control channel, so a challenge can land first.
+        if self.state == State::Secured && self.auth.peer_challenge.is_some() {
+            self.take_turn(db)?;
+        }
+
         Ok(())
     }
 
@@ -1296,22 +1307,41 @@ impl Session {
             .any(|pubkey| self.policy.graph.standing(pubkey) == Standing::Contact)
     }
 
-    /// Dispatch one NIP-42 message, which is a challenge from the peer or its
-    /// response to ours.
-    fn on_auth(&mut self, db: &Db, payload: &[u8]) -> Result<()> {
-        match Message::decode(payload).context("the control channel carried a malformed AUTH")? {
-            Message::AuthChallenge(challenge) => self.on_challenge(db, challenge),
-            Message::AuthResponse(event) => self.on_auth_response(db, &event),
+    /// Dispatch one NIP-42 message off the sync channel, which is a challenge
+    /// from the peer or its response to ours. NIP-P2 carries `AUTH` with the
+    /// rest of the relay protocol.
+    fn on_auth(&mut self, db: &Db, message: Message) -> Result<()> {
+        match self.state {
+            State::Linked => bail!("AUTH arrived before the handshake completed"),
+            State::Draining { .. } | State::Closed => return Ok(()),
+            _ => {}
+        }
+
+        match message {
+            Message::AuthChallenge(challenge) => self.on_challenge(db, challenge)?,
+            Message::AuthResponse(event) => self.on_auth_response(db, &event)?,
             other => bail!("{other:?} is not a NIP-42 message"),
         }
+
+        // Both identities bind once the peer is verified and this device has disclosed.
+        if self.peer.is_some() && self.auth.disclosed {
+            self.enter_syncing(db)?;
+        }
+
+        Ok(())
     }
 
-    /// Take the peer's challenge. The receiver challenges back without
-    /// answering; the dialer answers, identifying first. A challenge arriving
-    /// before the gate passes waits; approval resumes the turn.
+    /// Take the peer's challenge, and this device's turn if the gate allows
+    /// it. A challenge arriving before the gate passes waits; approval
+    /// resumes the turn.
     fn on_challenge(&mut self, db: &Db, challenge: String) -> Result<()> {
         self.auth.receive_challenge(challenge);
+        self.take_turn(db)
+    }
 
+    /// The receiver challenges back without answering; the dialer answers,
+    /// identifying first.
+    fn take_turn(&mut self, db: &Db) -> Result<()> {
         if !self.gate.passed && !self.gate.deferred {
             return Ok(());
         }
@@ -1374,7 +1404,7 @@ impl Session {
     fn challenge_peer(&mut self) -> Result<()> {
         let challenge = self.auth.make_challenge()?;
 
-        self.send_control(control::AUTH, &Message::AuthChallenge(challenge).encode())
+        self.send_sync(&Message::AuthChallenge(challenge))
     }
 
     /// Answer the peer's challenge, disclosing this device's identity — if one
@@ -1397,7 +1427,7 @@ impl Session {
             Some(event) => {
                 let message = Message::AuthResponse(Box::new(event));
 
-                self.send_control(control::AUTH, &message.encode())?;
+                self.send_sync(&message)?;
 
                 if self.gate.spends_budget && !self.proved_known() {
                     crate::db::command::spend_disclosure(
@@ -1853,14 +1883,30 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_control_frame_is_an_error() {
+    fn an_unknown_control_frame_is_ignored_and_the_link_carries_on() {
         let db = Db::open_in_memory().unwrap();
         let mut session = secured_session(policy());
         session.identify([author(2)]);
 
         let frame = Frame {
             channel: crate::transport::Channel::Control,
-            payload: vec![0xEE],
+            payload: vec![0xEE, 1, 2, 3],
+        };
+
+        session.advance(&db, &frame).unwrap();
+
+        assert_eq!(session.state, State::Identified);
+    }
+
+    #[test]
+    fn an_empty_control_frame_is_still_an_error() {
+        let db = Db::open_in_memory().unwrap();
+        let mut session = secured_session(policy());
+        session.identify([author(2)]);
+
+        let frame = Frame {
+            channel: crate::transport::Channel::Control,
+            payload: Vec::new(),
         };
 
         assert!(session.advance(&db, &frame).is_err());
@@ -1950,60 +1996,93 @@ mod tests {
         let signed = hashed
             .clone()
             .with_sig(secret(2).sign(hashed.id.as_bytes()));
-        let mut payload = vec![control::AUTH];
-        payload.extend_from_slice(&Message::AuthResponse(Box::new(signed)).encode());
-
         let frame = Frame {
-            channel: crate::transport::Channel::Control,
-            payload,
+            channel: Channel::Sync,
+            payload: Message::AuthResponse(Box::new(signed)).encode(),
         };
 
-        assert!(session.advance(&db, &frame).is_err());
+        assert!(session.handle_sync(&db, &frame).is_err());
         assert!(session.peer.as_ref().is_none());
     }
 
     #[test]
-    fn auth_travels_as_the_nip_42_message() {
-        // NIP-42's own `["AUTH", …]` on the control channel. `docs/nips/p2p-auth.md`.
+    fn auth_travels_as_the_nip_42_message_with_the_rest_of_the_relay_protocol() {
+        // NIP-P2: `["AUTH", …]` exactly as NIP-42 writes it, on the sync channel beside `REQ` and `EVENT`.
         let db = Db::open_in_memory().unwrap();
         let (mut dialer, mut receiver) = secured_pair(policy());
 
         dialer.challenge_peer().unwrap();
 
         let frame = pump_frame(&mut dialer, &mut receiver);
-        let (discriminant, payload) = frame.payload.split_first().unwrap();
 
-        assert_eq!(*discriminant, control::AUTH);
+        assert_eq!(frame.channel, Channel::Sync);
         assert!(matches!(
-            Message::decode(payload).unwrap(),
+            Message::decode(&frame.payload).unwrap(),
             Message::AuthChallenge(_)
         ));
 
         // The response side: the dialer answers a challenge outright, because it identifies first.
         dialer.gate.passed = true;
         dialer
-            .advance(
+            .handle_sync(
                 &db,
                 &Frame {
-                    channel: crate::transport::Channel::Control,
-                    payload: [
-                        &[control::AUTH][..],
-                        &Message::AuthChallenge("abc123".into()).encode(),
-                    ]
-                    .concat(),
+                    channel: Channel::Sync,
+                    payload: Message::AuthChallenge("abc123".into()).encode(),
                 },
             )
             .unwrap();
 
         let response = pump_frame(&mut dialer, &mut receiver);
-        let (discriminant, payload) = response.payload.split_first().unwrap();
 
-        assert_eq!(*discriminant, control::AUTH);
+        assert_eq!(response.channel, Channel::Sync);
         assert!(matches!(
-            Message::decode(payload).unwrap(),
+            Message::decode(&response.payload).unwrap(),
             Message::AuthResponse(_)
         ));
         assert_eq!(dialer.state, State::DialerIdentified);
+    }
+
+    #[test]
+    fn a_challenge_that_overtakes_the_tags_is_taken_up_once_they_arrive() {
+        // The tags and AUTH travel on different channels, so either may land first.
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) = secured_pair(policy());
+
+        receiver
+            .handle_sync(
+                &db,
+                &Frame {
+                    channel: Channel::Sync,
+                    payload: Message::AuthChallenge("abc123".into()).encode(),
+                },
+            )
+            .unwrap();
+
+        assert!(receiver.next_write(Pipe::Gatt).unwrap().is_none());
+
+        let tags = recognition::select(&[], &[0u8; 32]).unwrap().encode();
+
+        receiver
+            .advance(
+                &db,
+                &Frame {
+                    channel: Channel::Control,
+                    payload: [&[control::TAGS][..], &tags].concat(),
+                },
+            )
+            .unwrap();
+
+        let first = pump_frame(&mut receiver, &mut dialer);
+        let second = pump_frame(&mut receiver, &mut dialer);
+
+        assert_eq!(first.channel, Channel::Control);
+        assert_eq!(first.payload[0], control::TAGS);
+        assert_eq!(second.channel, Channel::Sync);
+        assert!(matches!(
+            Message::decode(&second.payload).unwrap(),
+            Message::AuthChallenge(_)
+        ));
     }
 
     #[test]
@@ -2136,7 +2215,11 @@ mod tests {
             .unwrap()
             .expect("a complete frame from one fragment");
 
-        receiver.advance(db, &frame).unwrap();
+        match frame.channel {
+            Channel::Control => receiver.advance(db, &frame).unwrap(),
+            Channel::Sync => receiver.handle_sync(db, &frame).unwrap(),
+            Channel::Blob => receiver.handle_blob(db, &frame).unwrap(),
+        }
     }
 
     /// Run the full secured exchange — handshake, recognition, mutual AUTH —

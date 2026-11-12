@@ -5,7 +5,8 @@
 //! by MACing this session's handshake hash under it, and the receiver
 //! trial-MACs its own secrets against the list. A tag is worthless outside the
 //! session it was minted in, because the handshake hash is fresh every time.
-//! `docs/discovery.md#recognition`.
+//! `docs/discovery.md#recognition`, and NIP-BE, which fixes the derivation so
+//! that another implementation recognizes the same peers.
 
 use anyhow::{Context, Result, bail};
 use coracle_lib::keys::PublicKey;
@@ -70,7 +71,7 @@ impl Tags {
 pub fn derive_secret(handshake_hash: &[u8; 32]) -> [u8; 32] {
     let mut hasher = Sha256::new();
 
-    hasher.update(b"dip/pair-secret");
+    hasher.update(b"nip-be/pair-secret");
     hasher.update(handshake_hash);
 
     hasher.finalize().into()

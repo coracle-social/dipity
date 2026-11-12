@@ -22,7 +22,7 @@ Once the negentropy reconciliation is complete, a regular `REQ` is used to retri
 
 ### The additions
 
-`REQ`, `EVENT`, `EOSE`, `CLOSE`, `OK`, `AUTH` and `NEG-*` are NIP-01 and NIP-77 unmodified. Four verbs are ours, in the same shape.
+`REQ`, `EVENT`, `EOSE`, `CLOSE`, `OK`, `AUTH` and `NEG-*` are NIP-01 and NIP-77 unmodified. Four verbs are added, in the same shape. The `BLOSSOM` pair is specified for any peer-to-peer transport in [NIP-P2](https://github.com/coracle-social/nips/blob/nip-be-dipity/P2.md#blobs); the other two are this app's own.
 
 | Message | Carries |
 | --- | --- |

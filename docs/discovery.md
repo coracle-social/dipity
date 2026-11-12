@@ -98,11 +98,11 @@ A list of any other length is refused and the link dropped: a short one is malfo
 The secret each tag is keyed on comes from the session that established it:
 
 ```
-pair_secret = SHA256("dip/pair-secret" ‖ h)      # h at pairing time
+pair_secret = SHA256("nip-be/pair-secret" ‖ h)   # h at pairing time
 tag         = HMAC-SHA256(pair_secret, h)        # h at this encounter
 ```
 
-Domain-separated so that the secret cannot collide with any other use of the handshake hash. A session that recognized the peer leaves the secret alone. One that authenticated the peer without recognizing it replaces the secret on both sides, so that a pairing that one device did not finish is repaired the next time the two meet.
+Domain-separated so that the secret cannot collide with any other use of the handshake hash, under NIP-BE's label so that another implementation derives the same one. A session that recognized the peer leaves the secret alone. One that authenticated the peer without recognizing it replaces the secret on both sides, so that a pairing that one device did not finish is repaired the next time the two meet.
 
 ### The consent gate
 
@@ -114,7 +114,7 @@ If a peer isn't recognized, the app may hold the connection depending on the use
 
 A receiver that would hold a stranger first lets the exchange run until the dialer has proved its pubkey, which the dialer discloses first. A pubkey the user has named, which is a [contact](./policy.md#social-graph), passes without a hold and without spending a disclosure, which repairs a pair secret only one of the two phones kept. Anybody else is held.
 
-Every link carries a comparison value, derived from the session's handshake hash under its own domain label the way [login with device](./keys.md#login-with-device) derives its six digits. That value is the only thing the two users have to check when they pair, because Noise XX authenticates nobody. A device in the middle completes two handshakes and the two screens then disagree. It is six decimal digits, as login with device shows, under its own label so that one ritual's value cannot stand in for the other's.
+Every link carries a comparison value, derived from the session's handshake hash under its own domain label the way [login with device](./keys.md#login-with-device) derives its six digits. That value is the only thing the two users have to check when they pair, because Noise XX authenticates nobody. A device in the middle completes two handshakes and the two screens then disagree. It is six decimal digits, as login with device shows, under its own label, `nip-be/pairing-code`, so that one ritual's value cannot stand in for the other's.
 
 The pubkey each side proves is announced to the shell as it is proved, which is how the view knows who is in range. The announcement goes out whether or not a view is attached to hear it, so the view also reads the whole list from the core when it starts and when it comes back to the front.
 

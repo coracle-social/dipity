@@ -35,13 +35,16 @@ impl Channel {
     /// Every channel, most urgent first.
     const ALL: [Channel; 3] = [Channel::Control, Channel::Sync, Channel::Blob];
 
-    /// The channel a header byte names.
-    fn from_byte(byte: u8) -> Result<Self> {
+    /// The channel a header byte names, if this build knows it.
+    ///
+    /// An unknown channel is one a later version added. The wire opens its
+    /// payload, to keep the nonce sequence in step, and drops it. NIP-BE.
+    pub fn from_byte(byte: u8) -> Option<Self> {
         match byte {
-            0 => Ok(Channel::Control),
-            1 => Ok(Channel::Sync),
-            2 => Ok(Channel::Blob),
-            other => bail!("frame names channel {other}, which does not exist"),
+            0 => Some(Channel::Control),
+            1 => Some(Channel::Sync),
+            2 => Some(Channel::Blob),
+            _ => None,
         }
     }
 
@@ -125,8 +128,25 @@ impl Fragment {
         write
     }
 
-    /// Read one write off the characteristic.
+    /// Read one write off the characteristic, refusing a channel this build
+    /// does not know.
     pub fn decode(write: &[u8]) -> Result<Self> {
+        let (byte, more, payload) = Self::split(write)?;
+
+        let Some(channel) = Channel::from_byte(byte) else {
+            bail!("frame names channel {byte}, which does not exist");
+        };
+
+        Ok(Self {
+            channel,
+            more,
+            payload: payload.to_vec(),
+        })
+    }
+
+    /// Split one write into its channel byte, whether more fragments follow,
+    /// and its payload, refusing a reserved flag but not an unknown channel.
+    pub fn split(write: &[u8]) -> Result<(u8, bool, &[u8])> {
         let [channel, flags, payload @ ..] = write else {
             bail!(
                 "a write of {} bytes is too short to be a fragment",
@@ -134,11 +154,7 @@ impl Fragment {
             );
         };
 
-        Ok(Self {
-            channel: Channel::from_byte(*channel)?,
-            more: Self::more_from_flags(*flags)?,
-            payload: payload.to_vec(),
-        })
+        Ok((*channel, Self::more_from_flags(*flags)?, payload))
     }
 
     /// Whether more fragments follow, refusing a reserved bit.

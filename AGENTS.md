@@ -127,8 +127,8 @@ The packages in use are listed explicitly in `package.json` rather than resolved
 | [`ui.md`](./docs/ui.md) | Component framework, design tokens, the conventions the linter enforces |
 | [`stories.md`](./docs/stories.md) | What a person does with the app, the screen that answers each, and what has no screen yet |
 | [`release.md`](./docs/release.md) | Cutting a release, the pipeline's steps, and the credentials each needs |
-| [`nips/p2p-auth.md`](./docs/nips/p2p-auth.md) | Peer authentication — the NIP-42 additions covering transports without URLs |
-| [`nips/imeta-blake3.md`](./docs/nips/imeta-blake3.md) | The `imeta` addition carrying a BLAKE3 root, for verified streaming of blobs |
+| [`nips/p2p-auth.md`](./docs/nips/p2p-auth.md) | Peer authentication — the reasoning behind NIP-P2's additions to NIP-42 for transports without URLs |
+| [`nips/imeta-blake3.md`](./docs/nips/imeta-blake3.md) | The `imeta` field carrying a BLAKE3 root, for verified streaming of blobs, proposed for NIP-94 |
 
 ## Reference materials
 

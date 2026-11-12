@@ -16,8 +16,9 @@ use sha2::{Digest, Sha256};
 /// Domain separation for login with device.
 pub const LOGIN_LABEL: &[u8] = b"dip/login-with-device/sas";
 
-/// Domain separation for the consent gate.
-pub const PAIRING_LABEL: &[u8] = b"dip/pairing/sas";
+/// Domain separation for pairing, as NIP-BE names it, so that another
+/// implementation shows the same digits.
+pub const PAIRING_LABEL: &[u8] = b"nip-be/pairing-code";
 
 /// How many values a comparison screen shows: six decimal digits, as Bluetooth
 /// numeric comparison uses.

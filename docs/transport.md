@@ -2,11 +2,13 @@
 
 One transport: BLE. Discovery, session establishment, sync and blobs all happen there or not at all, and L2CAP is a bandwidth upgrade within a session BLE already established rather than a second way to reach anyone.
 
+What goes on the air is written up for other implementations as NIP-BE, and what runs over it on any transport without a URL as NIP-P2. Both are drafts in [coracle-social/nips](https://github.com/coracle-social/nips/tree/nip-be-dipity). This document is why the wire is the way it is; those are what another implementation has to match.
+
 ## BLE
 
 ### Link layer
 
-Dual role: every device runs a GATT peripheral and a GATT central simultaneously. One primary service, one characteristic supporting `notify`, `write`, and `writeWithoutResponse`. Discovery is `scanForPeripherals(withServices:)` against our service UUID — see [`discovery.md`](./discovery.md).
+Dual role: every device runs a GATT peripheral and a GATT central simultaneously. One primary service, one characteristic declaring `notify`, `write`, and `writeWithoutResponse`, of which only the first two are used. Discovery is `scanForPeripherals(withServices:)` against our service UUID — see [`discovery.md`](./discovery.md).
 
 Both UUIDs are random, chosen once, and live in `core/dip/src/transport/gatt.rs` rather than in Swift and Kotlin: an iPhone and an Android phone have to name the same service, and two hard-coded copies is one place to disagree. Changing either is a protocol break — a device on the old one is invisible to a device on the new.
 
@@ -29,7 +31,7 @@ Our own, directly over GATT. The codec is core-side — pure byte manipulation t
 - **Multiplexed.** A channel id in the frame header lets control traffic, event sync, and blob transfer share the one link.
 - **Priority-scheduled.** Separate characteristics would not give QoS isolation, because the ATT queue is per-connection. The sender interleaves instead: control frames pre-empt bulk fragments, which keeps the heartbeat alive during a media transfer.
 - **Fragmented.** Chunked to `maximumWriteValueLength(for:)` minus the header, and minus the AEAD tag once the channel is encrypted — roughly 480 bytes usable at a 512-byte MTU, often less.
-- **Reliable.** Acknowledged ATT writes give ordered reliable delivery on the control and sync channels. The blob channel uses `writeWithoutResponse` with application-level acking and pacing, at 25–30 ms between fragments to avoid loss.
+- **Reliable.** Ordered, reliable delivery on every channel, with one write in flight per pipe. The dialer writes with response, and the receiver notifies and releases the next fragment when the platform reports the last one sent: `peripheralManagerIsReady` on iOS, `onNotificationSent` on Android. Blob fragments travel the same way and differ only in yielding to the other channels, and in moving to L2CAP where a channel opens.
 - **Resumable.** Blob transfers survive disconnection and resume by group, each of which is verified as it arrives. See [`sync.md`](./sync.md#blob-sync).
 
 #### The wire format
@@ -42,7 +44,7 @@ Every write is one fragment: a two-byte header, then the payload.
 | 1 | Flags. Bit 0 set means more fragments follow for this frame; the rest are reserved, must be zero, and a fragment that sets one is refused |
 | 2.. | Payload, sealed once the channel is encrypted |
 
-A frame is the concatenation of its fragments' payloads. Reassembly is per channel so that an interleaved control frame does not disturb a blob transfer mid-frame. A frame whose fragments exceed 1 MiB is refused rather than buffered, and the link is dropped.
+A frame is the concatenation of its fragments' payloads. Reassembly is per channel so that an interleaved control frame does not disturb a blob transfer mid-frame. A frame whose fragments exceed 1 MiB is refused rather than buffered, and the link is dropped. A fragment on a channel this build does not know is opened and discarded, because it spent a nonce, so that a later version can add a channel without cutting off this one. A reserved flag still ends the link, because it may change how the fragment reassembles; a later version sets one only once a control frame has shown the peer understands it.
 
 No frame is empty. The heartbeat is a control frame carrying only [its discriminant](#the-control-channels-header).
 
@@ -53,12 +55,14 @@ Channel 0 carries several kinds of application frame, distinguished by a payload
 | Byte | Frame | Payload |
 | --- | --- | --- |
 | `0x01` | Recognition tags | The [tag list](./discovery.md#recognition) |
-| `0x02` | Mutual `AUTH` | `["AUTH", <challenge>]` or `["AUTH", <event>]`, exactly as NIP-42 writes them |
-| `0x03` | Heartbeat | Nothing |
-| `0x04` | [Identity transfer](./keys.md#login-with-device) | A step byte — `0x01` offer, `0x02` accept, `0x03` key, `0x04` decline — and, for the key, the 32 secret bytes |
-| `0x05` | [L2CAP upgrade](#the-l2cap-bandwidth-upgrade) | A step byte — `0x01` request, `0x02` published, `0x03` unavailable — and, for a publication, the PSM as two big-endian bytes |
+| `0x02` | Heartbeat | Nothing |
+| `0x03` | [L2CAP upgrade](#the-l2cap-bandwidth-upgrade) | A step byte — `0x01` request, `0x02` published, `0x03` unavailable — and, for a publication, the PSM as two big-endian bytes |
+| `0x04` | [Pair request](./discovery.md#meeting-somebody) | Nothing. The link already says who is asking, and a request before the link syncs is no request |
+| `0x80` | [Identity transfer](./keys.md#login-with-device) | A step byte — `0x01` offer, `0x02` accept, `0x03` key, `0x04` decline — and, for the key, the 32 secret bytes |
 
-Both directions of `AUTH` share one byte, because the message names itself. The handshake travels on the same channel with no byte: its frames are the only ones to arrive before the channel is encrypted, and they are raw Noise messages read by the peer's handshake state rather than by anything that dispatches on a byte. Channels 1 and 2 need no byte either, since both carry NIP-01 arrays, which name themselves in their first element.
+A byte this device does not know is skipped and the link carries on, so that a later version can add a frame without cutting off the one before it. `0x80` and above are left for applications, which is where the identity transfer sits, since no other implementation has a use for it.
+
+Mutual `AUTH` is not a control frame. It travels on channel 1 with the rest of the relay protocol, as NIP-P2 has it, so a challenge can overtake the tags it follows and a session takes its turn whichever lands first. The handshake travels on channel 0 with no byte: its frames are the only ones to arrive before the channel is encrypted, and they are raw Noise messages read by the peer's handshake state rather than by anything that dispatches on a byte. Channels 1 and 2 need no byte either, since both carry NIP-01 arrays, which name themselves in their first element.
 
 **The payload is sealed as it leaves the queue, not as it is queued.** Each pipe has its own nonce sequence, GATT on the even nonces and an L2CAP channel on the odd ones, because the two deliver independently and a shared sequence would fail to open whichever write overtook the other. A sequence keeps no window, while the scheduler lets a control frame overtake queued bulk; sealing at enqueue would hand the peer ciphertext in an order it cannot open. The handshake is the exception: its messages are queued in the clear and stay that way even though the sender's own session may already have finished, because the peer must read them with its handshake state.
 
