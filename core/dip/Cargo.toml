@@ -10,7 +10,6 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 bao.workspace = true
-base64.workspace = true
 coracle-kinds.workspace = true
 coracle-lib.workspace = true
 getrandom.workspace = true

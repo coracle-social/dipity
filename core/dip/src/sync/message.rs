@@ -9,7 +9,6 @@
 //! `docs/nips/p2p-auth.md`.
 
 use anyhow::{Context, Result};
-use base64::Engine as _;
 use coracle_lib::events::{Event, EventId, HashedEvent};
 use coracle_lib::filters::Filter;
 use serde_json::{Value, json};
@@ -53,48 +52,13 @@ pub enum Message {
     NegClose(SubscriptionId),
     /// The relay could not run one, and why. Relay → client.
     NegErr(SubscriptionId, String),
-    /// A Blossom request, wrapped because there is no HTTP on a BLE link.
-    /// `docs/sync.md#blob-sync`.
-    BlossomRequest(Box<BlossomRequest>),
-    /// A Blossom response.
-    BlossomResponse(Box<BlossomResponse>),
-}
-
-/// A Blossom request, `["BLOSSOM-REQ", id, method, path, headers, body]`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BlossomRequest {
-    /// Correlates the response with this request.
-    pub id: String,
-    /// `HEAD` to test for a blob and learn its length, `GET` to fetch a range.
-    pub method: String,
-    /// `/<sha256>`.
-    pub path: String,
-    /// Range and content headers, carrying the Bao slice bounds.
-    pub headers: Vec<(String, String)>,
-    /// The body for a `PUT`, empty otherwise.
-    pub body: Vec<u8>,
-}
-
-/// A Blossom response, `["BLOSSOM-RES", id, status, headers, body]`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BlossomResponse {
-    /// The request it answers.
-    pub id: String,
-    /// HTTP status: `200` when the whole blob is in the body, `206` for a
-    /// range, `404` when this device does not hold it.
-    pub status: u16,
-    /// Content and range headers.
-    pub headers: Vec<(String, String)>,
-    /// The body for a `GET`, empty otherwise.
-    pub body: Vec<u8>,
 }
 
 impl Message {
     /// Parse one message off the sync channel.
     ///
-    /// A NIP-01 array whose first element names the message type. Frames are
-    /// hex and bodies are base64, which is what the relay protocol moved to
-    /// once it had to carry bytes that a WebSocket never has.
+    /// A NIP-01 array whose first element names the message type. Negentropy
+    /// frames, signatures and proofs travel as hex, as NIP-77 has frames.
     pub fn decode(payload: &[u8]) -> Result<Self> {
         let value: Value = serde_json::from_slice(payload).context("decoding a message")?;
         let array = value
@@ -130,32 +94,6 @@ impl Message {
             let value = string(items)?;
 
             hex::decode(&value).context("a frame is hex")
-        }
-
-        fn headers<'a>(
-            items: &mut impl Iterator<Item = &'a Value>,
-        ) -> Result<Vec<(String, String)>> {
-            let headers = items
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("no headers"))?
-                .as_object()
-                .ok_or_else(|| anyhow::anyhow!("headers are not an object"))?;
-
-            headers
-                .iter()
-                .map(|(key, value)| {
-                    value
-                        .as_str()
-                        .map(|value| (key.clone(), value.to_string()))
-                        .ok_or_else(|| anyhow::anyhow!("a header is not a string"))
-                })
-                .collect()
-        }
-
-        fn body<'a>(items: &mut impl Iterator<Item = &'a Value>) -> Result<Vec<u8>> {
-            base64::engine::general_purpose::STANDARD
-                .decode(string(items)?)
-                .context("decoding a body")
         }
 
         // An id that is not the event's hash still decodes: admission refuses it, which drops one message rather than the link.
@@ -270,34 +208,6 @@ impl Message {
 
                 Ok(Self::NegErr(subscription, string(&mut items)?))
             }
-            "BLOSSOM-REQ" => {
-                let id = string(&mut items)?;
-                let method = string(&mut items)?;
-                let path = string(&mut items)?;
-
-                Ok(Self::BlossomRequest(Box::new(BlossomRequest {
-                    id,
-                    method,
-                    path,
-                    headers: headers(&mut items)?,
-                    body: body(&mut items)?,
-                })))
-            }
-            "BLOSSOM-RES" => {
-                let id = string(&mut items)?;
-                let status: u16 = items
-                    .next()
-                    .and_then(Value::as_u64)
-                    .and_then(|value| u16::try_from(value).ok())
-                    .ok_or_else(|| anyhow::anyhow!("BLOSSOM-RES has no status"))?;
-
-                Ok(Self::BlossomResponse(Box::new(BlossomResponse {
-                    id,
-                    status,
-                    headers: headers(&mut items)?,
-                    body: body(&mut items)?,
-                })))
-            }
             other => Err(anyhow::anyhow!("unknown message kind {other}")),
         }
     }
@@ -305,16 +215,9 @@ impl Message {
     /// Serialize one for the wire.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
         let hex = |bytes: &[u8]| hex::encode(bytes);
         let to_event = |event: &HashedEvent| serde_json::to_value(event).expect("event to JSON");
         let to_filter = |filter: &Filter| serde_json::to_value(filter).expect("filter to JSON");
-        let header_map = |headers: &[(String, String)]| {
-            headers
-                .iter()
-                .map(|(key, value)| (key.clone(), json!(value)))
-                .collect::<serde_json::Map<_, _>>()
-        };
 
         let bytes = |value: Value| serde_json::to_vec(&value).expect("a Value serializes");
 
@@ -362,21 +265,6 @@ impl Message {
             Self::NegErr(subscription, reason) => {
                 bytes(json!(["NEG-ERR", subscription.0.clone(), reason]))
             }
-            Self::BlossomRequest(payload) => bytes(json!([
-                "BLOSSOM-REQ",
-                payload.id.clone(),
-                payload.method.clone(),
-                payload.path.clone(),
-                header_map(&payload.headers),
-                b64(&payload.body),
-            ])),
-            Self::BlossomResponse(payload) => bytes(json!([
-                "BLOSSOM-RES",
-                payload.id.clone(),
-                payload.status,
-                header_map(&payload.headers),
-                b64(&payload.body),
-            ])),
         }
     }
 }
@@ -438,23 +326,6 @@ mod tests {
             EventId::new([1u8; 32]),
             Box::new([3u8; 160]),
         ));
-
-        let request = BlossomRequest {
-            id: "id".into(),
-            method: "HEAD".into(),
-            path: "/sha256".into(),
-            headers: vec![("range".into(), "0-".into())],
-            body: vec![],
-        };
-        round_trips(Message::BlossomRequest(Box::new(request)));
-
-        let response = BlossomResponse {
-            id: "id".into(),
-            status: 206,
-            headers: vec![("content-range".into(), "bytes 0-3/4".into())],
-            body: vec![0, 1, 2, 255],
-        };
-        round_trips(Message::BlossomResponse(Box::new(response)));
     }
 
     #[test]

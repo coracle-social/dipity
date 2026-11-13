@@ -1,6 +1,6 @@
 # imeta: BLAKE3 root
 
-An optional field proposed for [NIP-94](https://github.com/coracle-social/nips/blob/nip-be-dipity/94.md), which `imeta` tags take up through [NIP-92](https://github.com/nostr-protocol/nips/blob/master/92.md). The verified range fetch that uses it is in [NIP-P2](https://github.com/coracle-social/nips/blob/nip-be-dipity/P2.md#fetching). Those are the specification; this note keeps the reasoning.
+An optional field proposed for [NIP-94](https://github.com/coracle-social/nips/blob/nip-be-dipity/94.md), which `imeta` tags take up through [NIP-92](https://github.com/nostr-protocol/nips/blob/master/92.md). The verified range fetch that uses it is in [NIP-BE](https://github.com/coracle-social/nips/blob/nip-be-dipity/BE.md#blobs). Those are the specification; this note keeps the reasoning.
 
 ## The change
 

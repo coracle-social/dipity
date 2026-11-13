@@ -1,7 +1,8 @@
-//! Blob transfers: the Blossom request/response pair over the sync channel.
+//! Blob transfers: the binary query and fetch pair on the blob channel, as
+//! [`BlobMessage`] encodes them.
 //!
 //! [`BlobExchange`] is one session's blob half, both directions at once. The
-//! relay direction serves a peer's `BLOSSOM-REQ` from the [`BlobStore`] — the
+//! relay direction serves a peer's requests from the [`BlobStore`] — the
 //! core's file-backed store by default — and the client direction pulls blobs
 //! a stored event references and this device does not hold, one group of
 //! bytes at a time. Each group is written as it arrives; the record is
@@ -13,21 +14,22 @@
 //! read of their battery in the other.
 //! `docs/sync.md#quotas-1`.
 //!
-//! A fetch is two stages: a `HEAD` for the length and how much of it the peer
-//! holds, and then a `GET` per group. Where the blob's `imeta` names a BLAKE3
-//! root, each group comes back as a Bao slice — the subtree hashes on the path
-//! down to the bytes, then the bytes — and is checked against that root before
-//! any of it reaches the disk. So a bad group costs one group and names the
-//! peer, and what is on disk is proved, which is what lets the next session
-//! resume from it rather than fetch it again. A blob with no root has nothing
-//! to check a group against: those are fetched whole from a peer holding the
-//! whole file, checked once against the `x` SHA-256 at the end, and started
-//! over when a transfer drops. [`blobs::verified`](crate::blobs::verified).
+//! A fetch is two stages: a query for the length and how much of it the peer
+//! holds, and then a fetch per group. Where the blob's `imeta` names a BLAKE3
+//! root, each group comes back as a Bao slice, and is checked against that
+//! root before any of it reaches the disk. So a bad group costs one group and
+//! names the peer, and what is on disk is proved, which is what lets the next
+//! session resume from it rather than fetch it again. An answer cut short
+//! keeps the chunks it proved, and the next fetch starts where they end. A
+//! blob with no root has nothing to check a group against: those are fetched
+//! whole from a peer holding the whole file, checked once against the `x`
+//! SHA-256 at the end, and started over when a transfer drops.
+//! [`blobs::verified`](crate::blobs::verified).
 
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use coracle_lib::filters::Filter;
 
 use crate::blobs::{BlobStore, verified};
@@ -37,10 +39,10 @@ use crate::db::query as db_query;
 use crate::model::{Blob, BlobDigest, BlobHash, Identity};
 use crate::session::Peer;
 use crate::sync::Quota;
-use crate::sync::message::{BlossomRequest, BlossomResponse};
+use crate::sync::blob_message::{BlobMessage, BlobStatus};
 use crate::sync::relay;
 
-/// The bytes one `GET` asks for, and the bytes one slice proves.
+/// The bytes one fetch asks for, and the bytes one slice proves.
 ///
 /// Sixteen BLAKE3 chunks. A group is a whole number of them, and a slice over
 /// one carries no chunk the fetch does not need. [`CHUNK_BYTES`] is
@@ -49,11 +51,6 @@ use crate::sync::relay;
 ///
 /// [`CHUNK_BYTES`]: verified::CHUNK_BYTES
 pub const GROUP_BYTES: u64 = 16 * verified::CHUNK_BYTES;
-
-/// What a proved range is called on the wire: asked for with
-/// `accept-encoding`, offered by a `HEAD` under the same name, and answered
-/// with `content-encoding`.
-const PROOF_ENCODING: &str = "bao";
 
 /// The battery floor, percent, below which blob transfers do not start.
 /// A transfer starves the link for minutes; a low battery makes that worse.
@@ -66,19 +63,21 @@ pub const BLOB_MIN_BATTERY: u8 = 20;
 /// `docs/transport.md#the-l2cap-bandwidth-upgrade`.
 pub const L2CAP_THRESHOLD_BYTES: u64 = 4 * GROUP_BYTES;
 
+/// The most content one answer carries, however long a range it was asked.
+///
+/// NIP-BE caps a frame at 1 MiB, and a Bao slice carries its proof beside the
+/// bytes it proves. Half the cap leaves room for any proof, and is a whole
+/// number of chunks, so that a proved range cut here still ends on one.
+pub const ANSWER_BYTES: u64 = 512 * verified::CHUNK_BYTES;
+
 /// How much of a blob this device can answer for, and how much there is.
-struct Holding {
+struct Held {
     /// Bytes that may be served, which is what is on disk bounded by `total`.
     available: u64,
     /// The whole blob's length, once anything says what it is.
     total: Option<u64>,
-}
-
-impl Holding {
-    /// Whether what may be served is the entire blob.
-    fn whole(&self) -> bool {
-        self.total.is_some_and(|total| self.available >= total)
-    }
+    /// Whether a range can be proved, which takes the tree over a whole copy.
+    provable: bool,
 }
 
 /// One in-flight fetch of one blob.
@@ -86,17 +85,17 @@ impl Holding {
 struct BlobFetch {
     /// What is being fetched, metadata and all.
     blob: Blob,
-    /// The blob's length once a `HEAD` has answered, if it has.
+    /// The blob's length once the query has answered, if it has.
     total: Option<u64>,
     /// How much of it this peer holds, which a partial holding caps.
     available: u64,
-    /// Verified bytes held so far, which is where the next GET resumes.
+    /// Verified bytes held so far, which is where the next fetch resumes.
     stored: u64,
-    /// How many bytes the outstanding GET asked for, which bounds its answer.
+    /// How many bytes the outstanding fetch asked for, which bounds its answer.
     requested: u64,
     /// Correlates the outstanding request with its answer.
-    request_id: String,
-    /// Whether the outstanding request is still the `HEAD`.
+    request_id: u16,
+    /// Whether the outstanding request is still the query.
     probing: bool,
     /// The BLAKE3 root the anchoring event committed to, when it named one.
     /// Its presence is what makes every group of this fetch a proved one.
@@ -104,9 +103,9 @@ struct BlobFetch {
 }
 
 impl BlobFetch {
-    /// A fetch picking `blob` up from the `stored` bytes already proved.
-    fn begin(blob: Blob, stored: u64) -> Self {
-        let request_id = format!("blob-{}", blob.sha256.short());
+    /// A fetch picking `blob` up from the `stored` bytes already proved, asked
+    /// for first under `request_id`.
+    fn begin(blob: Blob, stored: u64, request_id: u16) -> Self {
         let root = declared_root(&blob);
 
         Self {
@@ -153,6 +152,9 @@ pub struct BlobExchange {
     fetched_bytes: u64,
     /// Blob bytes served to the peer this session.
     served_bytes: u64,
+    /// The id the next request goes out under. Every request has its own, so
+    /// that an answer to one this device gave up on is not taken for another.
+    next_id: u16,
 }
 
 impl BlobExchange {
@@ -169,7 +171,16 @@ impl BlobExchange {
             refused: false,
             fetched_bytes: 0,
             served_bytes: 0,
+            next_id: 0,
         }
+    }
+
+    /// The id for the next request, wrapping where it runs out.
+    fn take_id(&mut self) -> u16 {
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+
+        id
     }
 
     /// Whether a transfer is in flight, waiting on the peer's next answer.
@@ -216,8 +227,8 @@ impl BlobExchange {
     }
 
     /// Ask again although the peer refused earlier, because standing can
-    /// change mid-session: a peer that answered 429 as a stranger may have
-    /// named this device since.
+    /// change mid-session: a peer that refused this device as a stranger may
+    /// have named it since.
     pub fn forgive_refusal(&mut self) {
         self.refused = false;
     }
@@ -232,220 +243,120 @@ impl BlobExchange {
         std::mem::take(&mut self.wants_l2cap)
     }
 
-    /// Answer one of the peer's `BLOSSOM-REQ`s against the store.
+    /// Answer one of the peer's requests against the store.
     ///
-    /// A hash the peer could not be offered the anchoring event for is a 404
-    /// like any other miss: it does not exist to them, and neither response
-    /// says which. A peer that has spent its blob budget gets a 429, which
-    /// does say which — it is the answer that stops it asking.
+    /// A hash the peer could not be offered the anchoring event for is not
+    /// served like any other miss: it does not exist to them, and the answer
+    /// does not say which. A peer that has spent its blob budget is told so,
+    /// which does say which — it is the answer that stops it asking.
     pub fn serve(
         &mut self,
         db: &Db,
         peer: &Peer,
         local: &Identity,
-        request: &BlossomRequest,
+        request: &BlobMessage,
         quota: Quota,
-    ) -> Result<BlossomResponse> {
+    ) -> Result<BlobMessage> {
+        let (id, hash) = match request {
+            BlobMessage::Query { id, hash } | BlobMessage::Fetch { id, hash, .. } => (*id, hash),
+            other => bail!("{other:?} is an answer, not a request"),
+        };
+
         let budget = quota.blob_bytes.saturating_sub(self.served_bytes);
 
         // This also tells a stranger, whose blob budget is zero, that there are no bytes here.
         if budget == 0 {
-            return Ok(status(&request.id, 429));
+            return Ok(refusal(request, BlobStatus::BudgetSpent));
         }
 
-        // A path that is not a hash names nothing, and is answered like anything unheld.
-        let Ok(hash) = BlobHash::parse(request.path.trim_start_matches('/')) else {
-            return Ok(missing(&request.id));
+        let Some(blob) = offerable_blob(db, peer, local, hash)? else {
+            return Ok(refusal(request, BlobStatus::NotServed));
         };
 
-        let Some(blob) = offerable_blob(db, peer, local, &hash)? else {
-            return Ok(missing(&request.id));
-        };
-
-        let Some(held) = self.store.len(&blob.sha256)? else {
+        let Some(on_disk) = self.store.len(&blob.sha256)? else {
             log::debug!("blob {hash} is recorded and offerable but no bytes are held");
-            return Ok(missing(&request.id));
+            return Ok(refusal(request, BlobStatus::NotServed));
         };
 
         // The event id commits to the whole file's length; what is served is what is on disk.
         let total = blob
             .declared_size()
-            .or_else(|| blob.complete.then_some(held));
-        let holding = Holding {
-            available: total.map_or(held, |total| held.min(total)),
+            .or_else(|| blob.complete.then_some(on_disk));
+        let held = Held {
+            available: total.map_or(on_disk, |total| on_disk.min(total)),
             total,
+            // A prefix serves raw, because a range is proved out of the outboard over the whole file.
+            provable: self.store.outboard_len(&blob.sha256)?.is_some(),
         };
 
-        if holding.available == 0 {
-            log::debug!("blob {hash} has {held} bytes held and none available to serve");
-            return Ok(missing(&request.id));
+        if held.available == 0 {
+            log::debug!("blob {hash} has {on_disk} bytes held and none available to serve");
+            return Ok(refusal(request, BlobStatus::NotServed));
         }
 
-        // A prefix serves raw, because a range is proved out of the outboard over the whole file.
-        let provable = self.store.outboard_len(&blob.sha256)?.is_some();
-
-        match request.method.as_str() {
-            "HEAD" => Ok(self.head(request, &blob, &holding, provable)),
-            "GET" => self.get(request, &blob, &holding, provable, budget),
-            _ => Ok(status(&request.id, 405)),
-        }
-    }
-
-    /// Answer a `HEAD`: the content type, and how much of the blob is here.
-    ///
-    /// A partial holding answers 206 with the range that is available, which
-    /// tells the fetcher the whole length without passing a prefix off as it.
-    /// `docs/sync.md#blob-sync`.
-    fn head(
-        &self,
-        request: &BlossomRequest,
-        blob: &Blob,
-        holding: &Holding,
-        provable: bool,
-    ) -> BlossomResponse {
-        let mut headers = vec![
-            ("accept-ranges".to_string(), "bytes".to_string()),
-            ("content-length".to_string(), holding.available.to_string()),
-        ];
-
-        // Whether a `GET` here can be asked for a proof, decided before any bytes move.
-        if provable {
-            headers.push(("accept-encoding".to_string(), PROOF_ENCODING.to_string()));
-        }
-
-        if let Some(mime) = &blob.mime_type {
-            headers.push(("content-type".to_string(), mime.clone()));
-        }
-
-        if !holding.whole() {
-            headers.push((
-                "content-range".to_string(),
-                content_range(0, holding.available - 1, holding.total),
-            ));
-        }
-
-        BlossomResponse {
-            id: request.id.clone(),
-            status: if holding.whole() { 200 } else { 206 },
-            headers,
-            body: Vec::new(),
+        match *request {
+            BlobMessage::Fetch {
+                offset,
+                length,
+                proof,
+                ..
+            } => self.fetch(id, &blob, &held, (offset, length, proof), budget),
+            _ => Ok(BlobMessage::Holding {
+                id,
+                status: BlobStatus::Ok,
+                total: held.total,
+                held: held.available,
+                provable: held.provable,
+            }),
         }
     }
 
-    /// Answer a `GET`, whole or by range, up to what the peer's budget allows.
-    fn get(
+    /// Answer a fetch of `offset`, `length` and whether to prove it, up to
+    /// what the peer's budget allows.
+    fn fetch(
         &mut self,
-        request: &BlossomRequest,
+        id: u16,
         blob: &Blob,
-        holding: &Holding,
-        provable: bool,
+        held: &Held,
+        (offset, length, proof): (u64, u32, bool),
         budget: u64,
-    ) -> Result<BlossomResponse> {
-        let Some(wanted) = requested_range(request) else {
-            return Ok(status(&request.id, 400));
-        };
+    ) -> Result<BlobMessage> {
+        let answer = |status, body| BlobMessage::Bytes { id, status, body };
 
-        let (start, end) = match wanted {
-            Requested::Whole => (0, None),
-            Requested::Range { start, end } => (start, end),
-        };
-
-        // Inclusive on both ends, per HTTP, and never past what is here.
-        let last = end
-            .unwrap_or(holding.available - 1)
-            .min(holding.available - 1);
-
-        if start > last {
-            return Ok(status(&request.id, 416));
+        // An empty range asks for nothing, and one past the end for nothing here.
+        if length == 0 || offset >= held.available {
+            return Ok(answer(BlobStatus::OutOfRange, Vec::new()));
         }
 
-        let len = (last - start + 1).min(budget);
+        let last = offset
+            .saturating_add(u64::from(length) - 1)
+            .min(held.available - 1);
+        // A range one frame cannot hold is cut to what one can, the way the budget cuts it.
+        let len = (last - offset + 1).min(budget).min(ANSWER_BYTES);
 
-        if header(&request.headers, "accept-encoding") == Some(PROOF_ENCODING) {
-            // A prefix cannot be proved; a range is proved out of the outboard over the whole file.
-            if provable {
-                return self.prove(request, blob, holding, start, len);
+        if proof {
+            if !held.provable {
+                return Ok(answer(BlobStatus::CannotProve, Vec::new()));
             }
 
-            return Ok(status(&request.id, 406));
+            // The answer is the subtree hashes on the path to the range, then its bytes.
+            let body = verified::slice(self.store.as_ref(), &blob.sha256, offset, len)?;
+
+            // The budget covers the proof too, because it rides the same radio as the bytes.
+            self.served(body.len() as u64);
+
+            return Ok(answer(BlobStatus::Ok, body));
         }
 
-        let bytes = self.store.read(&blob.sha256, start, len)?;
+        let bytes = self.store.read(&blob.sha256, offset, len)?;
 
         if bytes.is_empty() {
-            return Ok(missing(&request.id));
+            return Ok(answer(BlobStatus::NotServed, Vec::new()));
         }
 
         self.served(bytes.len() as u64);
 
-        let last = start + bytes.len() as u64 - 1;
-        let mut headers = vec![("content-length".to_string(), bytes.len().to_string())];
-
-        if let Some(mime) = &blob.mime_type {
-            headers.push(("content-type".to_string(), mime.clone()));
-        }
-
-        // Only an answer that is the entire blob is a 200; anything less says which range.
-        let entire = holding.whole()
-            && matches!(wanted, Requested::Whole)
-            && bytes.len() as u64 == holding.available;
-
-        if entire {
-            headers.push(("accept-ranges".to_string(), "bytes".to_string()));
-        } else {
-            headers.push((
-                "content-range".to_string(),
-                content_range(start, last, holding.total),
-            ));
-        }
-
-        Ok(BlossomResponse {
-            id: request.id.clone(),
-            status: if entire { 200 } else { 206 },
-            headers,
-            body: bytes,
-        })
-    }
-
-    /// Answer a `GET` with the range as a Bao slice: the subtree hashes on the
-    /// path down to those bytes, then the bytes.
-    ///
-    /// Nothing here has to be believed, including which device sent it,
-    /// because the peer checks the whole answer against the root its own copy
-    /// of the event names.
-    fn prove(
-        &mut self,
-        request: &BlossomRequest,
-        blob: &Blob,
-        holding: &Holding,
-        start: u64,
-        len: u64,
-    ) -> Result<BlossomResponse> {
-        let body = verified::slice(self.store.as_ref(), &blob.sha256, start, len)?;
-
-        // The budget covers the proof too, because it rides the same radio as the bytes.
-        self.served(body.len() as u64);
-
-        let mut headers = vec![
-            ("content-length".to_string(), body.len().to_string()),
-            ("content-encoding".to_string(), PROOF_ENCODING.to_string()),
-            (
-                "content-range".to_string(),
-                content_range(start, start + len - 1, holding.total),
-            ),
-        ];
-
-        if let Some(mime) = &blob.mime_type {
-            headers.push(("content-type".to_string(), mime.clone()));
-        }
-
-        // A slice is never the whole body, whatever range it covers: it carries a proof.
-        Ok(BlossomResponse {
-            id: request.id.clone(),
-            status: 206,
-            headers,
-            body,
-        })
+        Ok(answer(BlobStatus::Ok, bytes))
     }
 
     /// Note bytes going out to the peer, as a spend against the peer's budget.
@@ -456,9 +367,9 @@ impl BlobExchange {
         self.served_bytes = self.served_bytes.saturating_add(bytes);
     }
 
-    /// Start the next fetch if none is in flight, returning the `HEAD` that
+    /// Start the next fetch if none is in flight, returning the query that
     /// probes it before any bytes move.
-    pub fn poll(&mut self, db: &Db, quota: Quota) -> Result<Option<BlossomRequest>> {
+    pub fn poll(&mut self, db: &Db, quota: Quota) -> Result<Option<BlobMessage>> {
         if self.active.is_some() || self.refused {
             return Ok(None);
         }
@@ -482,12 +393,15 @@ impl BlobExchange {
         };
 
         let stored = self.resume_from(db, &wanted)?;
-        let fetch = BlobFetch::begin(wanted, stored);
-        let head = request(&fetch, "HEAD", &[]);
+        let id = self.take_id();
+        let query = BlobMessage::Query {
+            id,
+            hash: wanted.sha256.clone(),
+        };
 
-        self.active = Some(fetch);
+        self.active = Some(BlobFetch::begin(wanted, stored, id));
 
-        Ok(Some(head))
+        Ok(Some(query))
     }
 
     /// Where a fetch of `blob` picks up: the bytes already on disk, verified.
@@ -498,9 +412,10 @@ impl BlobExchange {
     fn resume_from(&self, db: &Db, blob: &Blob) -> Result<u64> {
         let recorded = blob.stored();
         let held = self.store.len(&blob.sha256)?.unwrap_or(0);
-        let whole_groups = recorded % GROUP_BYTES == 0 || blob.declared_size() == Some(recorded);
+        let whole_chunks =
+            recorded % verified::CHUNK_BYTES == 0 || blob.declared_size() == Some(recorded);
 
-        if declared_root(blob).is_some() && recorded == held && whole_groups {
+        if declared_root(blob).is_some() && recorded == held && whole_chunks {
             return Ok(recorded);
         }
 
@@ -522,27 +437,27 @@ impl BlobExchange {
             .find(|blob| !self.unavailable.contains(&blob.sha256)))
     }
 
-    /// Advance the in-flight fetch on one `BLOSSOM-RES`, returning the next
-    /// request if the fetch continues. A response that ends the fetch — done,
-    /// missing, or refused — frees the slot for [`poll`](Self::poll).
+    /// Advance the in-flight fetch on one answer, returning the next request
+    /// if the fetch continues. An answer that ends the fetch — done, missing,
+    /// or refused — frees the slot for [`poll`](Self::poll).
     pub fn on_response(
         &mut self,
         db: &Db,
         peer: &Peer,
-        response: &BlossomResponse,
+        response: &BlobMessage,
         quota: Quota,
-    ) -> Result<Option<BlossomRequest>> {
+    ) -> Result<Option<BlobMessage>> {
         let Some(mut fetch) = self.active.take() else {
             return Ok(None);
         };
 
-        if fetch.request_id != response.id {
+        if fetch.request_id != response.id() {
             self.active = Some(fetch);
             return Ok(None);
         }
 
         // Nothing else asked this session is answered once the peer has no blob budget left.
-        if response.status == 429 {
+        if response.status() == Some(BlobStatus::BudgetSpent) {
             self.refused = true;
             return Ok(None);
         }
@@ -571,16 +486,32 @@ impl BlobExchange {
         Ok(Some(next))
     }
 
-    /// Take the `HEAD` answer: what the blob's length is, how much of it this
-    /// peer holds, and whether it can prove what it sends.
+    /// Take the answer to the query: what the blob's length is, how much of it
+    /// this peer holds, and whether it can prove what it sends.
     fn on_probe(
         &mut self,
         peer: &Peer,
         fetch: &mut BlobFetch,
-        response: &BlossomResponse,
+        response: &BlobMessage,
         quota: Quota,
     ) -> Result<bool> {
-        let Some((total, available)) = probed(fetch, response) else {
+        let &BlobMessage::Holding {
+            status,
+            total,
+            held,
+            provable,
+            ..
+        } = response
+        else {
+            self.give_up(
+                peer,
+                &fetch.blob.sha256,
+                "answered a query with something else",
+            );
+            return Ok(false);
+        };
+
+        let Some((total, available)) = probed(fetch, status, total, held) else {
             self.give_up(peer, &fetch.blob.sha256, "cannot serve the blob");
             return Ok(false);
         };
@@ -589,7 +520,7 @@ impl BlobExchange {
         let resumable = fetch.root.is_some();
 
         // Only a device holding the whole file can prove any of it, which rules out a prefix.
-        if resumable && header(&response.headers, "accept-encoding") != Some(PROOF_ENCODING) {
+        if resumable && !provable {
             self.give_up(peer, &fetch.blob.sha256, "cannot prove what it holds");
             return Ok(false);
         }
@@ -624,10 +555,19 @@ impl BlobExchange {
         db: &Db,
         peer: &Peer,
         fetch: &mut BlobFetch,
-        response: &BlossomResponse,
+        response: &BlobMessage,
         quota: Quota,
     ) -> Result<bool> {
-        if response.status != 200 && response.status != 206 {
+        let BlobMessage::Bytes { status, body, .. } = response else {
+            self.give_up(
+                peer,
+                &fetch.blob.sha256,
+                "answered a fetch with something else",
+            );
+            return Ok(false);
+        };
+
+        if *status != BlobStatus::Ok {
             // The peer is not asked for this hash again this session, freed slot or not.
             self.give_up(peer, &fetch.blob.sha256, "does not hold it");
             return Ok(false);
@@ -639,7 +579,7 @@ impl BlobExchange {
             .min(quota.blob_bytes.saturating_sub(self.fetched_bytes));
 
         // A group that does not prove out costs that group and the peer; the rest stands.
-        let Some(content) = content_of(fetch, response) else {
+        let Some(content) = content_of(fetch, body) else {
             self.give_up(
                 peer,
                 &fetch.blob.sha256,
@@ -662,9 +602,7 @@ impl BlobExchange {
         fetch.stored += content.len() as u64;
 
         // The budget covers the proof too, because it rides the same radio as the bytes.
-        self.fetched_bytes = self
-            .fetched_bytes
-            .saturating_add(response.body.len() as u64);
+        self.fetched_bytes = self.fetched_bytes.saturating_add(body.len() as u64);
 
         command::record_blob_progress(db, &fetch.blob.sha256, fetch.stored)?;
 
@@ -673,11 +611,11 @@ impl BlobExchange {
 
     /// The next request of the fetch, or `None` when there is nothing this
     /// peer can still be asked for inside what is left of the budget.
-    fn next_request(&self, fetch: &mut BlobFetch, quota: Quota) -> Option<BlossomRequest> {
+    fn next_request(&mut self, fetch: &mut BlobFetch, quota: Quota) -> Option<BlobMessage> {
         let total = fetch.total?;
         let wanted = total.saturating_sub(fetch.stored).min(GROUP_BYTES);
 
-        // A whole group at a time: a part of one cannot be checked against a chaining value.
+        // A group at a time, of what this peer holds and the budget still covers.
         if wanted == 0
             || fetch.stored + wanted > fetch.available
             || wanted > quota.blob_bytes.saturating_sub(self.fetched_bytes)
@@ -686,16 +624,16 @@ impl BlobExchange {
         }
 
         fetch.requested = wanted;
-
-        let end = fetch.stored + wanted - 1;
-        let mut headers = vec![("range".to_string(), format!("bytes={}-{end}", fetch.stored))];
+        fetch.request_id = self.take_id();
 
         // Every start lands on a chunk boundary, because groups are a whole number of chunks.
-        if fetch.root.is_some() {
-            headers.push(("accept-encoding".to_string(), PROOF_ENCODING.to_string()));
-        }
-
-        Some(request(fetch, "GET", &headers))
+        Some(BlobMessage::Fetch {
+            id: fetch.request_id,
+            hash: fetch.blob.sha256.clone(),
+            offset: fetch.stored,
+            length: u32::try_from(wanted).ok()?,
+            proof: fetch.root.is_some(),
+        })
     }
 
     /// Mark a fetch whole after verifying the assembled bytes.
@@ -765,31 +703,6 @@ impl BlobExchange {
     }
 }
 
-/// What a `range` header asks for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Requested {
-    /// No range header: the whole blob.
-    Whole,
-    /// `bytes=start-end`, or `bytes=start-` for everything from `start` on.
-    Range {
-        /// The first byte wanted.
-        start: u64,
-        /// The last byte wanted, inclusive, or `None` for the rest of it.
-        end: Option<u64>,
-    },
-}
-
-/// One Blossom request over the fetch's blob.
-fn request(fetch: &BlobFetch, method: &str, headers: &[(String, String)]) -> BlossomRequest {
-    BlossomRequest {
-        id: fetch.request_id.clone(),
-        method: method.to_string(),
-        path: format!("/{}", fetch.blob.sha256),
-        headers: headers.to_vec(),
-        body: Vec::new(),
-    }
-}
-
 /// The BLAKE3 root a blob's `imeta` committed to, when it named one that
 /// parses.
 ///
@@ -802,100 +715,54 @@ fn declared_root(blob: &Blob) -> Option<verified::Root> {
         .and_then(|value| verified::root(value).ok())
 }
 
-/// The content bytes a response carries: its body for an unproved transfer,
-/// and what the slice yields for a proved one.
+/// The content bytes an answer carries: its body for an unproved transfer,
+/// and what the slice yields for a proved one, which is fewer than asked for
+/// when the answer was cut short.
 ///
 /// `None` is a peer that answered a proved fetch with something other than a
 /// slice over the range it was asked, which is the one answer a verified
 /// transfer treats as a bad peer rather than as bytes.
-fn content_of(fetch: &BlobFetch, response: &BlossomResponse) -> Option<Vec<u8>> {
+fn content_of(fetch: &BlobFetch, body: &[u8]) -> Option<Vec<u8>> {
     let Some(root) = &fetch.root else {
-        return Some(response.body.clone());
+        return Some(body.to_vec());
     };
 
-    if header(&response.headers, "content-encoding") != Some(PROOF_ENCODING) {
-        return None;
-    }
-
-    verified::verify(&response.body, root, fetch.stored, fetch.requested).ok()
+    verified::verify(body, root, fetch.stored, fetch.requested).ok()
 }
 
-/// What a `HEAD` answer says the blob's whole length is and how much of it the
+/// What a holding says the blob's whole length is and how much of it the
 /// peer holds, or `None` when there is nothing here worth fetching from it.
 ///
-/// A 206 means the peer holds a prefix. A prefix is only worth having if each
-/// group of it can be checked as it arrives — and only a device holding the
-/// whole file has the outboard tree that proves any of it. A rooted blob is
-/// therefore fetched from a whole holding, and the prefix is refused at the
+/// A holding short of the total is a prefix. A prefix is only worth having if
+/// each group of it can be checked as it arrives — and only a device holding
+/// the whole file has the outboard tree that proves any of it. A rooted blob
+/// is therefore fetched from a whole holding, and the prefix is refused at the
 /// proof check. Otherwise the hash waits for a peer that holds the file.
-fn probed(fetch: &BlobFetch, response: &BlossomResponse) -> Option<(u64, u64)> {
-    let available: u64 = header(&response.headers, "content-length")?.parse().ok()?;
-    let total = match response.status {
-        200 => available,
-        206 if fetch.root.is_some() => {
-            complete_length(header(&response.headers, "content-range")?)?
-        }
-        _ => return None,
-    };
-
-    // The event committed to the size; another length is another file.
-    if total == 0
-        || available > total
-        || fetch.blob.declared_size().is_some_and(|size| size != total)
-    {
+fn probed(
+    fetch: &BlobFetch,
+    status: BlobStatus,
+    total: Option<u64>,
+    held: u64,
+) -> Option<(u64, u64)> {
+    if status != BlobStatus::Ok {
         return None;
     }
 
-    Some((total, available))
-}
+    let total = total?;
 
-/// The whole blob's length out of a `content-range`, which `*` withholds.
-fn complete_length(value: &str) -> Option<u64> {
-    value.rsplit_once('/')?.1.trim().parse().ok()
-}
-
-/// A header's value, matched the way HTTP matches header names.
-fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    headers
-        .iter()
-        .find(|(header, _)| header.eq_ignore_ascii_case(name))
-        .map(|(_, value)| value.trim())
-}
-
-/// A `content-range` value: which bytes these are, over the length of the
-/// whole blob. RFC 7233 wants the complete length after the slash — `*` where
-/// this device does not know it — never the end of the range.
-fn content_range(start: u64, last: u64, total: Option<u64>) -> String {
-    match total {
-        Some(total) => format!("bytes {start}-{last}/{total}"),
-        None => format!("bytes {start}-{last}/*"),
+    if held < total && fetch.root.is_none() {
+        return None;
     }
+
+    // The event committed to the size; another length is another file.
+    if total == 0 || held > total || fetch.blob.declared_size().is_some_and(|size| size != total) {
+        return None;
+    }
+
+    Some((total, held))
 }
 
-/// What the request's `range` header asks for, or `None` if it is malformed.
-///
-/// No header is a request for the whole blob rather than a range of it, and an
-/// open-ended `bytes=N-` is the ordinary way to ask for the rest.
-fn requested_range(request: &BlossomRequest) -> Option<Requested> {
-    let Some(value) = header(&request.headers, "range") else {
-        return Some(Requested::Whole);
-    };
-
-    let spec = value.strip_prefix("bytes=")?;
-    let (start, end) = spec.split_once('-')?;
-    let end = end.trim();
-
-    Some(Requested::Range {
-        start: start.trim().parse().ok()?,
-        end: if end.is_empty() {
-            None
-        } else {
-            Some(end.parse().ok()?)
-        },
-    })
-}
-
-/// The blob a request path names, if the peer may be served every event that references it. `docs/sync.md#blob-sync`.
+/// The blob a request names, if the peer may be served every event that references it. `docs/sync.md#blob-sync`.
 fn offerable_blob(db: &Db, peer: &Peer, local: &Identity, hash: &BlobHash) -> Result<Option<Blob>> {
     let Some(blob) = db_query::get_blob(db, hash)? else {
         log::debug!("blob {hash} has no record here");
@@ -920,19 +787,22 @@ fn offerable_blob(db: &Db, peer: &Peer, local: &Identity, hash: &BlobHash) -> Re
     Ok(offerable.then_some(blob))
 }
 
-/// A bodyless answer carrying only its status.
-fn status(id: &str, status: u16) -> BlossomResponse {
-    BlossomResponse {
-        id: id.to_string(),
-        status,
-        headers: Vec::new(),
-        body: Vec::new(),
+/// The answer to `request` that carries nothing but `status`.
+fn refusal(request: &BlobMessage, status: BlobStatus) -> BlobMessage {
+    match request {
+        BlobMessage::Fetch { id, .. } => BlobMessage::Bytes {
+            id: *id,
+            status,
+            body: Vec::new(),
+        },
+        other => BlobMessage::Holding {
+            id: other.id(),
+            status,
+            total: None,
+            held: 0,
+            provable: false,
+        },
     }
-}
-
-/// The 404 every miss looks like.
-fn missing(id: &str) -> BlossomResponse {
-    status(id, 404)
 }
 
 /// Whether a whole blob verifies against the `x` hash its record names.
@@ -1043,70 +913,113 @@ mod tests {
         hash.clone()
     }
 
-    /// One request the peer makes of us.
-    fn ask(method: &str, path: &str, headers: &[(&str, &str)]) -> BlossomRequest {
-        BlossomRequest {
-            id: format!("{method}-1"),
-            method: method.to_string(),
-            path: path.to_string(),
-            headers: headers
-                .iter()
-                .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
-                .collect(),
-            body: Vec::new(),
+    /// The peer asking how much of `hash` this device holds.
+    fn query(hash: &BlobHash) -> BlobMessage {
+        BlobMessage::Query {
+            id: 1,
+            hash: hash.clone(),
         }
     }
 
-    /// One answer to the request `id`.
-    fn answer(id: &str, status: u16, headers: &[(&str, &str)], body: &[u8]) -> BlossomResponse {
-        BlossomResponse {
-            id: id.to_string(),
-            status,
-            headers: headers
-                .iter()
-                .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
-                .collect(),
+    /// The peer asking for `length` bytes of `hash` from `offset`.
+    fn fetch(hash: &BlobHash, offset: u64, length: u32, proof: bool) -> BlobMessage {
+        BlobMessage::Fetch {
+            id: 1,
+            hash: hash.clone(),
+            offset,
+            length,
+            proof,
+        }
+    }
+
+    /// A peer holding `held` bytes of a blob `total` long, answering `request`.
+    fn holding(request: &BlobMessage, total: u64, held: u64) -> BlobMessage {
+        BlobMessage::Holding {
+            id: request.id(),
+            status: BlobStatus::Ok,
+            total: Some(total),
+            held,
+            provable: false,
+        }
+    }
+
+    /// A peer answering `request` with `body`.
+    fn bytes_for(request: &BlobMessage, body: &[u8]) -> BlobMessage {
+        BlobMessage::Bytes {
+            id: request.id(),
+            status: BlobStatus::Ok,
             body: body.to_vec(),
         }
     }
 
-    /// Run one whole fetch — HEAD, then GETs until the body is in — against
-    /// `blobs`, returning the blob's hash.
+    /// What a holding reports: how it went, the whole length, the prefix held,
+    /// and whether a range can be proved.
+    fn reported(answer: &BlobMessage) -> (BlobStatus, Option<u64>, u64, bool) {
+        match *answer {
+            BlobMessage::Holding {
+                status,
+                total,
+                held,
+                provable,
+                ..
+            } => (status, total, held, provable),
+            ref other => panic!("expected a holding, got {other:?}"),
+        }
+    }
+
+    /// What an answer to a fetch carries: how it went, and the bytes.
+    fn carried(answer: &BlobMessage) -> (BlobStatus, &[u8]) {
+        match answer {
+            BlobMessage::Bytes { status, body, .. } => (*status, body),
+            other => panic!("expected bytes, got {other:?}"),
+        }
+    }
+
+    /// The range a fetch asks for, and whether it asks for a proof.
+    fn range(request: &BlobMessage) -> (u64, u32, bool) {
+        match *request {
+            BlobMessage::Fetch {
+                offset,
+                length,
+                proof,
+                ..
+            } => (offset, length, proof),
+            ref other => panic!("expected a fetch, got {other:?}"),
+        }
+    }
+
+    /// The blob a query asks about.
+    fn queried(request: &BlobMessage) -> BlobHash {
+        match request {
+            BlobMessage::Query { hash, .. } => hash.clone(),
+            other => panic!("expected a query, got {other:?}"),
+        }
+    }
+
+    /// Run one whole fetch — a query, then fetches until the body is in —
+    /// against `blobs`, returning the blob's hash.
     fn drive_fetch(blobs: &mut BlobExchange, db: &Db, bytes: &[u8]) -> BlobHash {
         let hash = given_wanted(db, bytes);
         let quota = quota(Quota::CONTACT.blob_bytes);
+        let len = bytes.len() as u64;
 
-        // The fetch begins with a HEAD.
-        let head = blobs.poll(db, quota).unwrap().expect("a HEAD to probe");
-        assert_eq!(head.method, "HEAD");
+        // The fetch begins with a query.
+        let probe = blobs.poll(db, quota).unwrap().expect("a query to probe");
+        assert_eq!(queried(&probe), hash);
 
-        // The HEAD answers with the length, and a GET follows.
+        // The holding carries the length, and a fetch follows.
         let mut next = blobs
-            .on_response(
-                db,
-                &peer(),
-                &answer(
-                    &head.id,
-                    200,
-                    &[("content-length", &bytes.len().to_string())],
-                    &[],
-                ),
-                quota,
-            )
+            .on_response(db, &peer(), &holding(&probe, len, len), quota)
             .unwrap();
 
-        // Each GET is answered with exactly the group it asked for.
-        while let Some(get) = next {
-            assert_eq!(get.method, "GET");
-
-            let (start, end) = match requested_range(&get).unwrap() {
-                Requested::Range { start, end } => (start, end.unwrap()),
-                Requested::Whole => panic!("the fetcher asked for no range"),
-            };
-            let group = &bytes[start as usize..=(end as usize).min(bytes.len() - 1)];
+        // Each fetch is answered with exactly the group it asked for.
+        while let Some(request) = next {
+            let (offset, length, _) = range(&request);
+            let end = (offset + u64::from(length)).min(len);
+            let group = &bytes[offset as usize..end as usize];
 
             next = blobs
-                .on_response(db, &peer(), &answer(&get.id, 206, &[], group), quota)
+                .on_response(db, &peer(), &bytes_for(&request, group), quota)
                 .unwrap();
         }
 
@@ -1114,153 +1027,146 @@ mod tests {
     }
 
     #[test]
-    fn a_peer_can_head_and_get_a_blob_it_is_offered() {
-        let db = Db::open_in_memory().unwrap();
-        let (mut blobs, store) = exchange();
-        let bytes = b"the quick brown fox";
-        let blob = given_blob(&db, &store, bytes);
-        let path = format!("/{}", blob.sha256);
-
-        let head = blobs
-            .serve(
-                &db,
-                &peer(),
-                &local(),
-                &ask("HEAD", &path, &[]),
-                quota(1024),
-            )
-            .unwrap();
-
-        // A whole holding answers 200, with the content type the event declared and the length.
-        assert_eq!(head.status, 200);
-        assert_eq!(header(&head.headers, "content-length"), Some("19"));
-        assert_eq!(header(&head.headers, "content-type"), Some("image/jpeg"));
-        assert_eq!(header(&head.headers, "accept-ranges"), Some("bytes"));
-
-        let get = blobs
-            .serve(
-                &db,
-                &peer(),
-                &local(),
-                &ask("GET", &path, &[("range", "bytes=4-14")]),
-                quota(1024),
-            )
-            .unwrap();
-
-        assert_eq!(get.status, 206);
-        assert_eq!(get.body, b"quick brown" as &[u8]);
-        // The complete length after the slash, never the end of the range.
-        assert_eq!(header(&get.headers, "content-range"), Some("bytes 4-14/19"));
-        assert_eq!(header(&get.headers, "content-length"), Some("11"));
-    }
-
-    #[test]
-    fn a_rangeless_get_is_a_200_over_the_whole_blob() {
-        let db = Db::open_in_memory().unwrap();
-        let (mut blobs, store) = exchange();
-        let bytes = b"the quick brown fox";
-        let blob = given_blob(&db, &store, bytes);
-
-        let get = blobs
-            .serve(
-                &db,
-                &peer(),
-                &local(),
-                &ask("GET", &format!("/{}", blob.sha256), &[]),
-                quota(1024),
-            )
-            .unwrap();
-
-        // A rangeless GET is not a partial response, whatever the body is.
-        assert_eq!(get.status, 200);
-        assert_eq!(get.body, bytes);
-        assert_eq!(header(&get.headers, "content-range"), None);
-    }
-
-    #[test]
-    fn an_open_ended_range_is_the_rest_of_the_blob() {
+    fn a_peer_can_query_and_fetch_a_blob_it_is_offered() {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, store) = exchange();
         let blob = given_blob(&db, &store, b"the quick brown fox");
 
-        let get = blobs
+        let answer = blobs
+            .serve(&db, &peer(), &local(), &query(&blob.sha256), quota(1024))
+            .unwrap();
+
+        // A whole holding reports the length twice: what there is, and what is here.
+        assert_eq!(reported(&answer), (BlobStatus::Ok, Some(19), 19, false));
+
+        let answer = blobs
             .serve(
                 &db,
                 &peer(),
                 &local(),
-                &ask(
-                    "GET",
-                    &format!("/{}", blob.sha256),
-                    &[("range", "bytes=4-")],
-                ),
+                &fetch(&blob.sha256, 4, 11, false),
                 quota(1024),
             )
             .unwrap();
 
-        assert_eq!(get.status, 206);
-        assert_eq!(get.body, b"quick brown fox" as &[u8]);
-        assert_eq!(header(&get.headers, "content-range"), Some("bytes 4-18/19"));
-
-        // A range that starts past the end is unsatisfiable, not a miss.
-        let past = blobs
-            .serve(
-                &db,
-                &peer(),
-                &local(),
-                &ask(
-                    "GET",
-                    &format!("/{}", blob.sha256),
-                    &[("range", "bytes=99-200")],
-                ),
-                quota(1024),
-            )
-            .unwrap();
-
-        assert_eq!(past.status, 416);
-
-        // A range that is not bytes at all is the peer's error.
-        let malformed = blobs
-            .serve(
-                &db,
-                &peer(),
-                &local(),
-                &ask(
-                    "GET",
-                    &format!("/{}", blob.sha256),
-                    &[("range", "items=1-2")],
-                ),
-                quota(1024),
-            )
-            .unwrap();
-
-        assert_eq!(malformed.status, 400);
+        assert_eq!(carried(&answer), (BlobStatus::Ok, &b"quick brown"[..]));
     }
 
     #[test]
-    fn a_partial_holding_is_served_as_the_range_it_is() {
+    fn a_fetch_reaching_past_the_end_is_cut_to_it() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut blobs, store) = exchange();
+        let blob = given_blob(&db, &store, b"the quick brown fox");
+        let mut serve = |request| {
+            blobs
+                .serve(&db, &peer(), &local(), &request, quota(1024))
+                .unwrap()
+        };
+
+        let rest = serve(fetch(&blob.sha256, 4, u32::MAX, false));
+        assert_eq!(carried(&rest), (BlobStatus::Ok, &b"quick brown fox"[..]));
+
+        // A range that starts past the end, or asks for nothing, is out of range rather than a miss.
+        let past = serve(fetch(&blob.sha256, 99, 101, false));
+        assert_eq!(carried(&past).0, BlobStatus::OutOfRange);
+
+        let empty = serve(fetch(&blob.sha256, 0, 0, false));
+        assert_eq!(carried(&empty).0, BlobStatus::OutOfRange);
+    }
+
+    #[test]
+    fn an_answer_is_cut_to_what_one_frame_holds() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut blobs, store) = exchange();
+        let bytes = filler(2 * ANSWER_BYTES as usize);
+        let hash = given_wanted_verifiable(&db, &bytes);
+
+        store.append(&hash, &bytes).unwrap();
+        verified::build(store.as_ref(), &hash).unwrap();
+        db_command::complete_blob(&db, &hash, bytes.len() as u64).unwrap();
+
+        let mut serve = |request| {
+            blobs
+                .serve(&db, &peer(), &local(), &request, quota(1 << 24))
+                .unwrap()
+        };
+
+        let plain = serve(fetch(&hash, 0, u32::MAX, false));
+        assert_eq!(carried(&plain).1.len() as u64, ANSWER_BYTES);
+
+        // The proof rides in the same frame, and the fetcher proves what came against what it asked.
+        let proved = serve(fetch(&hash, 0, u32::MAX, true));
+        let (status, body) = carried(&proved);
+
+        assert_eq!(status, BlobStatus::Ok);
+        assert!(body.len() + 4 <= 1024 * 1024);
+        assert_eq!(
+            verified::verify(
+                body,
+                &verified::root(&root_of(&bytes)).unwrap(),
+                0,
+                bytes.len() as u64
+            )
+            .unwrap(),
+            bytes[..ANSWER_BYTES as usize]
+        );
+    }
+
+    /// The holder's budget runs out partway through a group: the fetcher keeps
+    /// the chunks that came, and asks for the rest from where they end.
+    #[test]
+    fn a_proved_answer_cut_short_is_kept_and_the_rest_asked_for() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut blobs, store) = exchange();
+        let bytes = filler(2 * GROUP_BYTES as usize);
+        let hash = given_wanted_verifiable(&db, &bytes);
+        let mut holder = given_holder(&bytes, bytes.len());
+        let tight = quota(5 * 1024 + 100);
+        let ample = quota(1 << 20);
+
+        let probe = blobs.poll(&db, ample).unwrap().unwrap();
+        let answer = as_peer(&mut holder, &db, &probe);
+        let first = blobs
+            .on_response(&db, &peer(), &answer, ample)
+            .unwrap()
+            .unwrap();
+
+        // The cut lands inside the sixth chunk, which the slice carries whole.
+        let cut = holder.serve(&db, &peer(), &local(), &first, tight).unwrap();
+        let mut next = blobs.on_response(&db, &peer(), &cut, ample).unwrap();
+
+        assert_eq!(store.len(&hash).unwrap(), Some(6 * 1024));
+        assert_eq!(
+            range(next.as_ref().unwrap()),
+            (6 * 1024, GROUP_BYTES as u32, true)
+        );
+
+        while let Some(request) = next {
+            let answer = as_peer(&mut holder, &db, &request);
+            next = blobs.on_response(&db, &peer(), &answer, ample).unwrap();
+        }
+
+        assert_eq!(store.read(&hash, 0, u64::MAX).unwrap(), bytes);
+        assert!(db_query::get_blob(&db, &hash).unwrap().unwrap().complete);
+    }
+
+    #[test]
+    fn a_partial_holding_reports_the_prefix_and_the_whole_length() {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, store) = exchange();
 
-        // A 2 MiB blob held 4 KiB of: reporting 4 KiB would stop the fetcher early.
+        // A 2 MiB blob held 4 KiB of: reporting 4 KiB as the length would stop the fetcher early.
         let hash = BlobHash::digest(b"a big file");
         given_wanted_sized(&db, &hash, 2 * 1024 * 1024);
         store.append(&hash, &vec![7u8; 4096]).unwrap();
 
-        let head = blobs
-            .serve(
-                &db,
-                &peer(),
-                &local(),
-                &ask("HEAD", &format!("/{hash}"), &[]),
-                quota(1024 * 1024),
-            )
+        let answer = blobs
+            .serve(&db, &peer(), &local(), &query(&hash), quota(1024 * 1024))
             .unwrap();
 
-        assert_eq!(head.status, 206);
-        assert_eq!(header(&head.headers, "content-length"), Some("4096"));
         assert_eq!(
-            header(&head.headers, "content-range"),
-            Some("bytes 0-4095/2097152")
+            reported(&answer),
+            (BlobStatus::Ok, Some(2 * 1024 * 1024), 4096, false)
         );
     }
 
@@ -1272,22 +1178,9 @@ mod tests {
 
         given_wanted_sized(&db, &BlobHash::digest(b"a big file"), 2 * 1024 * 1024);
 
-        let head = blobs.poll(&db, quota).unwrap().unwrap();
+        let probe = blobs.poll(&db, quota).unwrap().unwrap();
         let next = blobs
-            .on_response(
-                &db,
-                &peer(),
-                &answer(
-                    &head.id,
-                    206,
-                    &[
-                        ("content-length", "4096"),
-                        ("content-range", "bytes 0-4095/2097152"),
-                    ],
-                    &[],
-                ),
-                quota,
-            )
+            .on_response(&db, &peer(), &holding(&probe, 2 * 1024 * 1024, 4096), quota)
             .unwrap();
 
         // A prefix that cannot be verified or resumed is not started.
@@ -1320,22 +1213,9 @@ mod tests {
 
         db_command::publish_event(&db, &event, &author(1), 1).unwrap();
 
-        let head = blobs.poll(&db, quota).unwrap().unwrap();
+        let probe = blobs.poll(&db, quota).unwrap().unwrap();
         let next = blobs
-            .on_response(
-                &db,
-                &peer(),
-                &answer(
-                    &head.id,
-                    206,
-                    &[
-                        ("content-length", "32768"),
-                        ("content-range", "bytes 0-32767/2097152"),
-                    ],
-                    &[],
-                ),
-                quota,
-            )
+            .on_response(&db, &peer(), &holding(&probe, 2_097_152, 32_768), quota)
             .unwrap();
 
         assert!(next.is_none());
@@ -1343,36 +1223,16 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_hash_is_a_404() {
+    fn an_unknown_hash_is_not_served() {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, _) = exchange();
+        let unknown = BlobHash::parse(&"ab".repeat(32)).unwrap();
 
-        let response = blobs
-            .serve(
-                &db,
-                &peer(),
-                &local(),
-                &ask("HEAD", &format!("/{}", "ab".repeat(32)), &[]),
-                quota(1024),
-            )
+        let answer = blobs
+            .serve(&db, &peer(), &local(), &query(&unknown), quota(1024))
             .unwrap();
 
-        assert_eq!(response.status, 404);
-    }
-
-    #[test]
-    fn a_path_that_is_not_a_hash_is_a_404_rather_than_an_error() {
-        let db = Db::open_in_memory().unwrap();
-        let (mut blobs, _) = exchange();
-
-        // A peer choosing the path cannot end the session, or name a file outside the store.
-        for path in ["/ab", "/../../etc/passwd", "/", "/not-hex"] {
-            let response = blobs
-                .serve(&db, &peer(), &local(), &ask("HEAD", path, &[]), quota(1024))
-                .unwrap();
-
-            assert_eq!(response.status, 404, "{path} was not a miss");
-        }
+        assert_eq!(reported(&answer).0, BlobStatus::NotServed);
     }
 
     #[test]
@@ -1382,17 +1242,17 @@ mod tests {
         let blob = given_blob(&db, &store, b"the quick brown fox");
 
         // `Quota::STRANGER` carries no blob budget, and this refusal is what means it.
-        let head = blobs
+        let answer = blobs
             .serve(
                 &db,
                 &peer(),
                 &local(),
-                &ask("HEAD", &format!("/{}", blob.sha256), &[]),
+                &query(&blob.sha256),
                 Quota::STRANGER,
             )
             .unwrap();
 
-        assert_eq!(head.status, 429);
+        assert_eq!(reported(&answer).0, BlobStatus::BudgetSpent);
 
         given_wanted(&db, b"something wanted");
         assert!(blobs.poll(&db, Quota::STRANGER).unwrap().is_none());
@@ -1403,27 +1263,17 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, store) = exchange();
         let blob = given_blob(&db, &store, b"the quick brown fox");
-        let path = format!("/{}", blob.sha256);
         let quota = quota(10);
+        let whole = fetch(&blob.sha256, 0, 19, false);
 
         // Ten bytes of budget: the answer is clipped, and what follows is refused.
-        let first = blobs
-            .serve(&db, &peer(), &local(), &ask("GET", &path, &[]), quota)
-            .unwrap();
+        let first = blobs.serve(&db, &peer(), &local(), &whole, quota).unwrap();
 
-        assert_eq!(first.status, 206);
-        assert_eq!(first.body, b"the quick " as &[u8]);
-        assert_eq!(
-            header(&first.headers, "content-range"),
-            Some("bytes 0-9/19")
-        );
+        assert_eq!(carried(&first), (BlobStatus::Ok, &b"the quick "[..]));
 
-        let second = blobs
-            .serve(&db, &peer(), &local(), &ask("GET", &path, &[]), quota)
-            .unwrap();
+        let second = blobs.serve(&db, &peer(), &local(), &whole, quota).unwrap();
 
-        assert_eq!(second.status, 429);
-        assert!(second.body.is_empty());
+        assert_eq!(carried(&second), (BlobStatus::BudgetSpent, &[][..]));
     }
 
     #[test]
@@ -1440,7 +1290,7 @@ mod tests {
     }
 
     #[test]
-    fn a_wanted_blob_is_driven_through_head_and_get() {
+    fn a_wanted_blob_is_driven_through_a_query_and_fetches() {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, store) = exchange();
 
@@ -1450,6 +1300,37 @@ mod tests {
         assert_eq!(store.len(&hash).unwrap(), Some(19));
         assert!(db_query::get_blob(&db, &hash).unwrap().unwrap().complete);
         assert!(blobs.active.is_none());
+    }
+
+    /// Every request goes out under its own id, so a late answer to one the
+    /// fetcher gave up on is not taken for the request that replaced it.
+    #[test]
+    fn an_answer_to_a_request_given_up_on_is_not_taken_for_the_next() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut blobs, _) = exchange();
+        let quota = quota(Quota::CONTACT.blob_bytes);
+        let bytes = b"the quick brown fox";
+
+        given_wanted(&db, bytes);
+
+        let abandoned = blobs.poll(&db, quota).unwrap().unwrap();
+        blobs.abandon_in_flight();
+        let current = blobs.poll(&db, quota).unwrap().unwrap();
+
+        assert_ne!(abandoned.id(), current.id());
+
+        let late = blobs
+            .on_response(&db, &peer(), &holding(&abandoned, 19, 19), quota)
+            .unwrap();
+
+        assert!(late.is_none());
+        assert!(blobs.active.is_some());
+
+        let next = blobs
+            .on_response(&db, &peer(), &holding(&current, 19, 19), quota)
+            .unwrap();
+
+        assert_eq!(range(&next.unwrap()), (0, 19, false));
     }
 
     /// A blob lives as long as an event references it, however much else is held.
@@ -1523,9 +1404,9 @@ mod tests {
 
         given_wanted(&db, b"nobody holds this");
 
-        let head = blobs.poll(&db, quota).unwrap().unwrap();
+        let probe = blobs.poll(&db, quota).unwrap().unwrap();
         let next = blobs
-            .on_response(&db, &peer(), &answer(&head.id, 404, &[], &[]), quota)
+            .on_response(&db, &peer(), &refusal(&probe, BlobStatus::NotServed), quota)
             .unwrap();
 
         // The blob is still wanted, but asking this peer the moment a slot frees is a loop.
@@ -1543,20 +1424,16 @@ mod tests {
         let first = given_wanted(&db, b"the first one");
         let second = given_wanted(&db, b"the second one");
 
-        let head = blobs.poll(&db, quota).unwrap().unwrap();
+        let probe = blobs.poll(&db, quota).unwrap().unwrap();
         blobs
-            .on_response(&db, &peer(), &answer(&head.id, 404, &[], &[]), quota)
+            .on_response(&db, &peer(), &refusal(&probe, BlobStatus::NotServed), quota)
             .unwrap();
 
         // The next poll asks for the other blob rather than the same one.
         let next = blobs.poll(&db, quota).unwrap().unwrap();
-        let asked = [first, second]
-            .into_iter()
-            .find(|hash| next.path == format!("/{hash}"))
-            .expect("a wanted blob");
 
-        assert_ne!(next.path, head.path);
-        assert!(next.path.ends_with(asked.as_str()));
+        assert_ne!(queried(&next), queried(&probe));
+        assert!([first, second].contains(&queried(&next)));
     }
 
     #[test]
@@ -1567,19 +1444,9 @@ mod tests {
         let bytes = b"the quick brown fox";
         let hash = given_wanted(&db, bytes);
 
-        let head = blobs.poll(&db, quota).unwrap().unwrap();
-        let get = blobs
-            .on_response(
-                &db,
-                &peer(),
-                &answer(
-                    &head.id,
-                    200,
-                    &[("content-length", &bytes.len().to_string())],
-                    &[],
-                ),
-                quota,
-            )
+        let probe = blobs.poll(&db, quota).unwrap().unwrap();
+        let request = blobs
+            .on_response(&db, &peer(), &holding(&probe, 19, 19), quota)
             .unwrap()
             .unwrap();
 
@@ -1588,7 +1455,7 @@ mod tests {
             .on_response(
                 &db,
                 &peer(),
-                &answer(&get.id, 206, &[], b"the quick brown FOX"),
+                &bytes_for(&request, b"the quick brown FOX"),
                 quota,
             )
             .unwrap();
@@ -1614,14 +1481,9 @@ mod tests {
         let quota = quota(Quota::CONTACT.blob_bytes);
         let hash = given_wanted_sized(&db, &BlobHash::digest(b"small"), 8);
 
-        let head = blobs.poll(&db, quota).unwrap().unwrap();
-        let get = blobs
-            .on_response(
-                &db,
-                &peer(),
-                &answer(&head.id, 200, &[("content-length", "8")], &[]),
-                quota,
-            )
+        let probe = blobs.poll(&db, quota).unwrap().unwrap();
+        let request = blobs
+            .on_response(&db, &peer(), &holding(&probe, 8, 8), quota)
             .unwrap()
             .unwrap();
 
@@ -1630,7 +1492,7 @@ mod tests {
             .on_response(
                 &db,
                 &peer(),
-                &answer(&get.id, 206, &[], &vec![0u8; 1024 * 1024]),
+                &bytes_for(&request, &vec![0u8; 1024 * 1024]),
                 quota,
             )
             .unwrap();
@@ -1647,14 +1509,9 @@ mod tests {
 
         given_wanted_sized(&db, &BlobHash::digest(b"small"), 8);
 
-        let head = blobs.poll(&db, quota).unwrap().unwrap();
+        let probe = blobs.poll(&db, quota).unwrap().unwrap();
         let next = blobs
-            .on_response(
-                &db,
-                &peer(),
-                &answer(&head.id, 200, &[("content-length", "1048576")], &[]),
-                quota,
-            )
+            .on_response(&db, &peer(), &holding(&probe, 1_048_576, 1_048_576), quota)
             .unwrap();
 
         // Another length is another file, because the event id commits to the size in `imeta`.
@@ -1670,14 +1527,9 @@ mod tests {
 
         given_wanted_sized(&db, &BlobHash::digest(b"a big file"), 64 * 1024);
 
-        let head = blobs.poll(&db, quota).unwrap().unwrap();
+        let probe = blobs.poll(&db, quota).unwrap().unwrap();
         let next = blobs
-            .on_response(
-                &db,
-                &peer(),
-                &answer(&head.id, 200, &[("content-length", "65536")], &[]),
-                quota,
-            )
+            .on_response(&db, &peer(), &holding(&probe, 65_536, 65_536), quota)
             .unwrap();
 
         assert!(next.is_none());
@@ -1689,22 +1541,13 @@ mod tests {
         let (mut blobs, _) = exchange();
         let quota = quota(GROUP_BYTES);
         let bytes = vec![3u8; 2 * GROUP_BYTES as usize];
+        let len = bytes.len() as u64;
 
         given_wanted(&db, &bytes);
 
-        let head = blobs.poll(&db, quota).unwrap().unwrap();
+        let probe = blobs.poll(&db, quota).unwrap().unwrap();
         let next = blobs
-            .on_response(
-                &db,
-                &peer(),
-                &answer(
-                    &head.id,
-                    200,
-                    &[("content-length", &bytes.len().to_string())],
-                    &[],
-                ),
-                quota,
-            )
+            .on_response(&db, &peer(), &holding(&probe, len, len), quota)
             .unwrap();
 
         // Two groups wanted, one group of budget: it is not begun at all.
@@ -1725,17 +1568,12 @@ mod tests {
         // One over the threshold does pay, and asks exactly once.
         given_wanted_sized(&db, &BlobHash::digest(b"a big file"), L2CAP_THRESHOLD_BYTES);
 
-        let head = blobs.poll(&db, quota).unwrap().unwrap();
+        let probe = blobs.poll(&db, quota).unwrap().unwrap();
         blobs
             .on_response(
                 &db,
                 &peer(),
-                &answer(
-                    &head.id,
-                    200,
-                    &[("content-length", &L2CAP_THRESHOLD_BYTES.to_string())],
-                    &[],
-                ),
+                &holding(&probe, L2CAP_THRESHOLD_BYTES, L2CAP_THRESHOLD_BYTES),
                 quota,
             )
             .unwrap();
@@ -1753,9 +1591,14 @@ mod tests {
         given_wanted(&db, b"the first one");
         given_wanted(&db, b"the second one");
 
-        let head = blobs.poll(&db, quota).unwrap().unwrap();
+        let probe = blobs.poll(&db, quota).unwrap().unwrap();
         blobs
-            .on_response(&db, &peer(), &answer(&head.id, 429, &[], &[]), quota)
+            .on_response(
+                &db,
+                &peer(),
+                &refusal(&probe, BlobStatus::BudgetSpent),
+                quota,
+            )
             .unwrap();
 
         // No other hash will fare better once the peer's budget is spent.
@@ -1814,7 +1657,7 @@ mod tests {
     }
 
     #[test]
-    fn a_blob_a_peer_may_not_be_served_the_event_for_is_a_404() {
+    fn a_blob_a_peer_may_not_be_served_the_event_for_is_not_served() {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, store) = exchange();
         let blob = given_blob(&db, &store, b"the quick brown fox");
@@ -1825,17 +1668,11 @@ mod tests {
 
         let refused = Peer::bind(LinkId(1), [author(2), author(3)], &policy);
         assert!(refused.policy.is_refused());
-        let response = blobs
-            .serve(
-                &db,
-                &refused,
-                &local(),
-                &ask("HEAD", &format!("/{}", blob.sha256), &[]),
-                quota(1024),
-            )
+        let answer = blobs
+            .serve(&db, &refused, &local(), &query(&blob.sha256), quota(1024))
             .unwrap();
 
-        assert_eq!(response.status, 404);
+        assert_eq!(reported(&answer).0, BlobStatus::NotServed);
     }
 
     /// The narrowest referencing event wins, or a peer could publish an event
@@ -1845,19 +1682,12 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, store) = exchange();
         let blob = given_blob(&db, &store, b"the quick brown fox");
-        let path = format!("/{}", blob.sha256);
 
         let offered = blobs
-            .serve(
-                &db,
-                &peer(),
-                &local(),
-                &ask("HEAD", &path, &[]),
-                quota(1024),
-            )
+            .serve(&db, &peer(), &local(), &query(&blob.sha256), quota(1024))
             .unwrap();
 
-        assert_eq!(offered.status, 200);
+        assert_eq!(reported(&offered).0, BlobStatus::Ok);
 
         let held = note(
             author(3),
@@ -1869,16 +1699,10 @@ mod tests {
         db_command::receive_event(&db, &held, &[author(3)], 2).unwrap();
 
         let narrowed = blobs
-            .serve(
-                &db,
-                &peer(),
-                &local(),
-                &ask("HEAD", &path, &[]),
-                quota(1024),
-            )
+            .serve(&db, &peer(), &local(), &query(&blob.sha256), quota(1024))
             .unwrap();
 
-        assert_eq!(narrowed.status, 404);
+        assert_eq!(reported(&narrowed).0, BlobStatus::NotServed);
     }
 
     /// A copy the user threw away is judged by who could see it, so it does not take the live one's media.
@@ -1887,7 +1711,6 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, store) = exchange();
         let blob = given_blob(&db, &store, b"the quick brown fox");
-        let path = format!("/{}", blob.sha256);
         let copy = note(
             author(1),
             2,
@@ -1898,22 +1721,16 @@ mod tests {
         db_command::publish_event(&db, &copy, &author(1), 2).unwrap();
         db_command::set_trashed(&db, &copy.id, true, 3).unwrap();
 
-        let response = blobs
-            .serve(
-                &db,
-                &peer(),
-                &local(),
-                &ask("HEAD", &path, &[]),
-                quota(1024),
-            )
+        let answer = blobs
+            .serve(&db, &peer(), &local(), &query(&blob.sha256), quota(1024))
             .unwrap();
 
-        assert_eq!(response.status, 200);
+        assert_eq!(reported(&answer).0, BlobStatus::Ok);
     }
 
     /// Media only the trash still references is not handed on, since nothing it belongs to is.
     #[test]
-    fn media_only_a_trashed_post_references_is_a_404() {
+    fn media_only_a_trashed_post_references_is_not_served() {
         let db = Db::open_in_memory().unwrap();
         let (mut blobs, store) = exchange();
         let blob = given_blob(&db, &store, b"the quick brown fox");
@@ -1921,17 +1738,11 @@ mod tests {
 
         db_command::set_trashed(&db, &referencing[0], true, 3).unwrap();
 
-        let response = blobs
-            .serve(
-                &db,
-                &peer(),
-                &local(),
-                &ask("HEAD", &format!("/{}", blob.sha256), &[]),
-                quota(1024),
-            )
+        let answer = blobs
+            .serve(&db, &peer(), &local(), &query(&blob.sha256), quota(1024))
             .unwrap();
 
-        assert_eq!(response.status, 404);
+        assert_eq!(reported(&answer).0, BlobStatus::NotServed);
     }
 
     /// The BLAKE3 root of `bytes`, the way an `imeta` tag carries it.
@@ -1984,10 +1795,10 @@ mod tests {
     }
 
     /// What the peer answers, out of its own serving half rather than out of a
-    /// hand-written response: the wire is then the same one the code speaks.
-    fn as_peer(holder: &mut BlobExchange, db: &Db, ask: &BlossomRequest) -> BlossomResponse {
+    /// hand-written answer: the wire is then the same one the code speaks.
+    fn as_peer(holder: &mut BlobExchange, db: &Db, request: &BlobMessage) -> BlobMessage {
         holder
-            .serve(db, &peer(), &local(), ask, quota(1 << 24))
+            .serve(db, &peer(), &local(), request, quota(1 << 24))
             .unwrap()
     }
 
@@ -1999,16 +1810,16 @@ mod tests {
         bytes: &[u8],
         available: usize,
         quota: Quota,
-    ) -> Vec<BlossomRequest> {
+    ) -> Vec<BlobMessage> {
         let mut holder = given_holder(bytes, available);
         let mut made = Vec::new();
         let mut next = blobs.poll(db, quota).unwrap();
 
-        while let Some(ask) = next {
-            let response = as_peer(&mut holder, db, &ask);
+        while let Some(request) = next {
+            let answer = as_peer(&mut holder, db, &request);
 
-            made.push(ask);
-            next = blobs.on_response(db, &peer(), &response, quota).unwrap();
+            made.push(request);
+            next = blobs.on_response(db, &peer(), &answer, quota).unwrap();
         }
 
         made
@@ -2025,14 +1836,10 @@ mod tests {
 
         let made = drive_against(&mut blobs, &db, &bytes, bytes.len(), quota(1 << 20));
 
-        // A `HEAD`, then one `GET` per group and a fourth for the remainder.
-        assert_eq!(made[0].method, "HEAD");
+        // A query, then one fetch per group and a fourth for the remainder, each asking for a proof.
+        assert_eq!(queried(&made[0]), hash);
         assert_eq!(made.len(), 1 + 4);
-        assert!(
-            made[1..]
-                .iter()
-                .all(|ask| header(&ask.headers, "accept-encoding") == Some(PROOF_ENCODING))
-        );
+        assert!(made[1..].iter().all(|request| range(request).2));
 
         assert_eq!(store.read(&hash, 0, u64::MAX).unwrap(), bytes);
         assert!(db_query::get_blob(&db, &hash).unwrap().unwrap().complete);
@@ -2057,10 +1864,10 @@ mod tests {
         let mut next = first.poll(&db, quota).unwrap();
 
         while store.len(&hash).unwrap() < Some(2 * GROUP_BYTES) {
-            let ask = next.expect("the fetch to still be going");
-            let response = as_peer(&mut holder, &db, &ask);
+            let request = next.expect("the fetch to still be going");
+            let answer = as_peer(&mut holder, &db, &request);
 
-            next = first.on_response(&db, &peer(), &response, quota).unwrap();
+            next = first.on_response(&db, &peer(), &answer, quota).unwrap();
         }
 
         assert_eq!(
@@ -2075,20 +1882,14 @@ mod tests {
         let mut second = BlobExchange::new(store.clone());
         let made = drive_against(&mut second, &db, &bytes, bytes.len(), quota);
 
-        assert_eq!(
-            requested_range(&made[1]).unwrap(),
-            Requested::Range {
-                start: 2 * GROUP_BYTES,
-                end: Some(3 * GROUP_BYTES - 1),
-            }
-        );
+        assert_eq!(range(&made[1]), (2 * GROUP_BYTES, GROUP_BYTES as u32, true));
 
         assert_eq!(store.read(&hash, 0, u64::MAX).unwrap(), bytes);
         assert!(db_query::get_blob(&db, &hash).unwrap().unwrap().complete);
     }
 
     /// A prefix cannot be proved — the tree is over the whole file — so a peer
-    /// holding one says nothing about proofs and a rooted blob passes it by.
+    /// holding one offers no proofs and a rooted blob passes it by.
     #[test]
     fn a_peer_holding_a_prefix_cannot_prove_it_and_is_passed_by() {
         let db = Db::open_in_memory().unwrap();
@@ -2104,9 +1905,9 @@ mod tests {
             quota(1 << 20),
         );
 
-        // The `HEAD` is the whole conversation: no bytes are asked for.
+        // The query is the whole conversation: no bytes are asked for.
         assert_eq!(made.len(), 1);
-        assert_eq!(made[0].method, "HEAD");
+        assert_eq!(queried(&made[0]), hash);
         assert!(store.len(&hash).unwrap().is_none());
     }
 
@@ -2123,19 +1924,19 @@ mod tests {
         let mut next = blobs.poll(&db, quota).unwrap();
         let mut groups = 0;
 
-        while let Some(ask) = next {
-            let mut response = as_peer(&mut holder, &db, &ask);
+        while let Some(request) = next {
+            let mut answer = as_peer(&mut holder, &db, &request);
 
-            if ask.method == "GET" {
+            if let BlobMessage::Bytes { body, .. } = &mut answer {
                 groups += 1;
 
                 // The second group arrives altered by one bit.
                 if groups == 2 {
-                    response.body[3] ^= 1;
+                    body[3] ^= 1;
                 }
             }
 
-            next = blobs.on_response(&db, &peer(), &response, quota).unwrap();
+            next = blobs.on_response(&db, &peer(), &answer, quota).unwrap();
         }
 
         assert_eq!(groups, 2);
@@ -2163,51 +1964,28 @@ mod tests {
         db_command::complete_blob(&db, &hash, bytes.len() as u64).unwrap();
 
         let probe = blobs
+            .serve(&db, &peer(), &local(), &query(&hash), quota(1 << 20))
+            .unwrap();
+
+        assert!(reported(&probe).3, "a whole copy did not offer proofs");
+
+        let answer = blobs
             .serve(
                 &db,
                 &peer(),
                 &local(),
-                &ask("HEAD", &format!("/{hash}"), &[]),
+                &fetch(&hash, GROUP_BYTES, GROUP_BYTES as u32, true),
                 quota(1 << 20),
             )
             .unwrap();
+        let (status, body) = carried(&answer);
 
-        assert_eq!(probe.status, 200);
-        assert_eq!(
-            header(&probe.headers, "accept-encoding"),
-            Some(PROOF_ENCODING)
-        );
-
-        let response = blobs
-            .serve(
-                &db,
-                &peer(),
-                &local(),
-                &ask(
-                    "GET",
-                    &format!("/{hash}"),
-                    &[
-                        (
-                            "range",
-                            &format!("bytes={GROUP_BYTES}-{}", 2 * GROUP_BYTES - 1),
-                        ),
-                        ("accept-encoding", PROOF_ENCODING),
-                    ],
-                ),
-                quota(1 << 20),
-            )
-            .unwrap();
-
-        assert_eq!(response.status, 206);
-        assert_eq!(
-            header(&response.headers, "content-encoding"),
-            Some(PROOF_ENCODING)
-        );
+        assert_eq!(status, BlobStatus::Ok);
         // The answer is longer than the range it carries, because the proof rides with the bytes.
-        assert!(response.body.len() > GROUP_BYTES as usize);
+        assert!(body.len() > GROUP_BYTES as usize);
 
         let proved = verified::verify(
-            &response.body,
+            body,
             &verified::root(&root_of(&bytes)).unwrap(),
             GROUP_BYTES,
             GROUP_BYTES,
@@ -2218,6 +1996,20 @@ mod tests {
             proved,
             bytes[GROUP_BYTES as usize..2 * GROUP_BYTES as usize]
         );
+    }
+
+    /// A peer holding only a prefix is asked for a proof it cannot give, and
+    /// says so rather than sending bytes nothing can check.
+    #[test]
+    fn a_proof_asked_of_a_prefix_is_refused() {
+        let db = Db::open_in_memory().unwrap();
+        let bytes = filler(4 * GROUP_BYTES as usize);
+        let hash = given_wanted_verifiable(&db, &bytes);
+        let mut holder = given_holder(&bytes, 2 * GROUP_BYTES as usize);
+
+        let answer = as_peer(&mut holder, &db, &fetch(&hash, 0, GROUP_BYTES as u32, true));
+
+        assert_eq!(carried(&answer), (BlobStatus::CannotProve, &[][..]));
     }
 
     /// A blob of one group is proved the same way anything larger is: Bao has

@@ -149,14 +149,7 @@ impl Wire {
 
     /// Take one write off `pipe`, opening it under that pipe's nonce sequence.
     fn receive_on(&mut self, pipe: Pipe, write: &[u8]) -> Result<Option<Frame>> {
-        let (byte, more, sealed) = Fragment::split(write)?;
-
-        // Everything after the handshake is sealed, and one that will not open is not theirs.
-        let payload = if self.noise.is_complete() {
-            self.noise.decrypt(pipe, sealed)?
-        } else {
-            sealed.to_vec()
-        };
+        let (byte, more, payload) = self.open(pipe, write)?;
 
         // A channel a later version added still spent a nonce, so it is dropped only once opened.
         let Some(channel) = Channel::from_byte(byte) else {
@@ -171,6 +164,22 @@ impl Wire {
         })
     }
 
+    /// Open one write off `pipe` into its channel byte, whether more fragments
+    /// follow, and its payload.
+    fn open(&mut self, pipe: Pipe, write: &[u8]) -> Result<(u8, bool, Vec<u8>)> {
+        // Everything after the handshake is sealed, header included, and one that will not open is not theirs.
+        if !self.noise.is_complete() {
+            let (byte, more, payload) = Fragment::split(write)?;
+
+            return Ok((byte, more, payload.to_vec()));
+        }
+
+        let opened = self.noise.decrypt(pipe, write)?;
+        let (byte, more, payload) = Fragment::split(&opened)?;
+
+        Ok((byte, more, payload.to_vec()))
+    }
+
     /// The next fragment for the shell to write on `pipe`, if the last one
     /// there has been acknowledged.
     ///
@@ -183,15 +192,19 @@ impl Wire {
             return Ok(None);
         };
 
+        let mut plain = fragment.encode();
+
         // The plaintext goes once it is sealed: a control frame can carry the identity key.
-        if secrecy == Secrecy::Sealed {
-            let sealed = self.noise.encrypt(pipe, &fragment.payload)?;
+        let write = match secrecy {
+            Secrecy::Sealed => {
+                let sealed = self.noise.encrypt(pipe, &plain)?;
 
-            fragment.payload.zeroize();
-            fragment.payload = sealed;
-        }
-
-        let write = fragment.encode();
+                plain.zeroize();
+                fragment.payload.zeroize();
+                sealed
+            }
+            Secrecy::Clear => plain,
+        };
 
         Ok(Some(match pipe {
             Pipe::Gatt => write,
@@ -209,14 +222,20 @@ impl Wire {
         let mut frames = Vec::new();
 
         while let Some(write) = self.take_bulk_write()? {
-            let fragment = Fragment::decode(&write)?;
+            let (byte, more, payload) = self.open(Pipe::Bulk, &write)?;
 
             // The bulk pipe carries one channel; anything else on it is a peer misbehaving.
-            if fragment.channel != Channel::Blob {
-                bail!("{:?} arrived on the bulk pipe", fragment.channel);
+            if byte != Channel::Blob as u8 {
+                bail!("channel {byte} arrived on the bulk pipe");
             }
 
-            if let Some(frame) = self.receive_on(Pipe::Bulk, &write)? {
+            let fragment = Fragment {
+                channel: Channel::Blob,
+                more,
+                payload,
+            };
+
+            if let Some(frame) = self.codec.absorb(fragment)? {
                 frames.push(frame);
             }
         }
@@ -431,19 +450,15 @@ mod tests {
     fn a_fragment_on_an_unknown_channel_is_dropped_and_the_cipher_stays_in_step() {
         let (mut dialer, mut receiver) = secured_pair(4096);
 
-        for payload in [&b"from a later version"[..], &b"the quick brown fox"[..]] {
-            dialer
-                .send(&Frame {
-                    channel: Channel::Sync,
-                    payload: payload.to_vec(),
-                })
-                .unwrap();
-        }
+        // A later version's channel, sealed under the next nonce the way the wire seals any fragment.
+        let unknown = dialer.noise.encrypt(Pipe::Gatt, &[7, 0, b'x']).unwrap();
 
-        // The header is in the clear, so the first write can be relabeled without disturbing its seal.
-        let mut unknown = dialer.next_write(Pipe::Gatt).unwrap().unwrap();
-        dialer.acknowledge_write(Pipe::Gatt);
-        unknown[0] = 7;
+        dialer
+            .send(&Frame {
+                channel: Channel::Sync,
+                payload: b"the quick brown fox".to_vec(),
+            })
+            .unwrap();
 
         assert_eq!(receiver.receive(&unknown).unwrap(), None);
         assert_eq!(
@@ -453,6 +468,24 @@ mod tests {
                 payload: b"the quick brown fox".to_vec(),
             }]
         );
+    }
+
+    #[test]
+    fn a_header_rewritten_on_the_air_does_not_open() {
+        let (mut dialer, mut receiver) = secured_pair(4096);
+
+        dialer
+            .send(&Frame {
+                channel: Channel::Sync,
+                payload: b"the quick brown fox".to_vec(),
+            })
+            .unwrap();
+
+        // The channel and flags are under the tag, so moving a fragment to another channel breaks it.
+        let mut write = dialer.next_write(Pipe::Gatt).unwrap().unwrap();
+        write[0] ^= 0x03;
+
+        assert!(receiver.receive(&write).is_err());
     }
 
     #[test]

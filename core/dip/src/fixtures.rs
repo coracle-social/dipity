@@ -70,8 +70,8 @@ pub(crate) fn id(event: &HashedEvent) -> EventId {
     event.id
 }
 
-/// Deliver the writes in `actions` and everything the two nodes then say to
-/// each other, answering with what is left over.
+/// Deliver the writes and disconnects in `actions` and everything the two
+/// nodes then say to each other, answering with what is left over.
 ///
 /// This is the shell the `node` module's header describes: two nodes handing
 /// each other bytes, with nothing between them.
@@ -83,6 +83,17 @@ pub(crate) fn settle(from: &mut Node, into: &mut Node, actions: Vec<Action>) -> 
     // One queue keeps each node's own fragments in order, which the cipher requires.
     while let Some((from_side, action)) = queued.pop_front() {
         let Action::Send(link, write) = action else {
+            // Tearing a link down at one end is the disconnect the other end's radio reports.
+            if let Action::Disconnect(link) = &action {
+                let reported = if from_side {
+                    into.link_down(*link)
+                } else {
+                    from.link_down(*link)
+                };
+
+                queued.extend(reported.into_iter().map(|action| (!from_side, action)));
+            }
+
             rest.push(action);
             continue;
         };

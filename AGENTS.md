@@ -41,7 +41,7 @@ The central constraint on the whole app: **everything that must survive backgrou
 
 **Policy is stored as user preferences and interpreted by the core**, because there is no user to prompt during a background wake. The view edits preferences and computes nothing the core depends on — no author set, no contact graph. [`policy.md`](./docs/policy.md), [`discovery.md`](./docs/discovery.md#the-consent-gate).
 
-Peers speak the **nostr relay wire protocol**: `REQ`/`EVENT`/`EOSE`/`CLOSE`/`OK`/`AUTH`/`NEG-*`, plus four verbs of ours in the same NIP-01 shape — `RECIPIENT-SIGNATURE`, `AUTHORSHIP-PROOF`, `BLOSSOM-REQ` and `BLOSSOM-RES`. The view does not — it reads the store through a query method that filters on seen time and peer, which the relay protocol cannot express. [`sync.md`](./docs/sync.md#the-additions), [`storage.md`](./docs/storage.md#the-sqlite-store).
+Peers speak the **nostr relay wire protocol**: `REQ`/`EVENT`/`EOSE`/`CLOSE`/`OK`/`AUTH`/`NEG-*`, plus two verbs of ours in the same NIP-01 shape — `RECIPIENT-SIGNATURE` and `AUTHORSHIP-PROOF` — and binary blob messages on a channel of their own. The view does not — it reads the store through a query method that filters on seen time and peer, which the relay protocol cannot express. [`sync.md`](./docs/sync.md#the-additions), [`storage.md`](./docs/storage.md#the-sqlite-store).
 
 **The view addresses one store, never a peer.** Queries go over the bridge to the core's SQLite; `ble://` exists only in the core, and there is no way to name a peer from TypeScript — peers get proof checking, `AUTH` and policy, none of which the view has. Events crossing the bridge arrive verified; do not re-check them. [`storage.md`](./docs/storage.md).
 
@@ -127,7 +127,7 @@ The packages in use are listed explicitly in `package.json` rather than resolved
 | [`ui.md`](./docs/ui.md) | Component framework, design tokens, the conventions the linter enforces |
 | [`stories.md`](./docs/stories.md) | What a person does with the app, the screen that answers each, and what has no screen yet |
 | [`release.md`](./docs/release.md) | Cutting a release, the pipeline's steps, and the credentials each needs |
-| [`nips/p2p-auth.md`](./docs/nips/p2p-auth.md) | Peer authentication — the reasoning behind NIP-P2's additions to NIP-42 for transports without URLs |
+| [`nips/p2p-auth.md`](./docs/nips/p2p-auth.md) | Peer authentication — the reasoning behind NIP-BE's additions to NIP-42 for a transport without URLs |
 | [`nips/imeta-blake3.md`](./docs/nips/imeta-blake3.md) | The `imeta` field carrying a BLAKE3 root, for verified streaming of blobs, proposed for NIP-94 |
 
 ## Reference materials

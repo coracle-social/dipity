@@ -22,18 +22,16 @@ Once the negentropy reconciliation is complete, a regular `REQ` is used to retri
 
 ### The additions
 
-`REQ`, `EVENT`, `EOSE`, `CLOSE`, `OK`, `AUTH` and `NEG-*` are NIP-01 and NIP-77 unmodified. Four verbs are added, in the same shape. The `BLOSSOM` pair is specified for any peer-to-peer transport in [NIP-P2](https://github.com/coracle-social/nips/blob/nip-be-dipity/P2.md#blobs); the other two are this app's own.
+`REQ`, `EVENT`, `EOSE`, `CLOSE`, `OK`, `AUTH` and `NEG-*` are NIP-01 and NIP-77 unmodified. Two verbs are this app's own, in the same shape. Blobs travel as [binary messages](#blob-sync) on a channel of their own.
 
 | Message | Carries |
 | --- | --- |
 | `["RECIPIENT-SIGNATURE", <sub>, <event id>, <64-byte sig, hex>]` | An author's signature over `event_id ‖ recipient_pubkey`, for an event the sender wrote |
 | `["AUTHORSHIP-PROOF", <sub>, <event id>, <160-byte proof, hex>]` | A designated-verifier proof, for an event the sender is forwarding |
-| `["BLOSSOM-REQ", <id>, <method>, <path>, <headers>, <body>]` | A Blossom request, wrapped because there is no HTTP on the link |
-| `["BLOSSOM-RES", <id>, <status>, <headers>, <body>]` | Its response, correlated by the shared `<id>` |
 
-The first two exist because an unsigned event needs something alongside it that the relay protocol has no way to carry. The proof's 160 bytes are five 32-byte fields in order: the author's signature nonce point, then the challenge and response of the author branch, then the challenge and response of the verifier branch. [`proofs.md`](./proofs.md#authorship-proofs) has the construction.
+Both exist because an unsigned event needs something alongside it that the relay protocol has no way to carry. The proof's 160 bytes are five 32-byte fields in order: the author's signature nonce point, then the challenge and response of the author branch, then the challenge and response of the verifier branch. [`proofs.md`](./proofs.md#authorship-proofs) has the construction.
 
-The sender attaches recipient signatures or authorship proofs to an event, never both, and one per pubkey the receiving peer authenticated as. Each follows the `EVENT` on the same subscription, and the receiver keys it on the event id rather than on arrival order, since either may be dropped without the other. A device that has neither sends the bare event, which then goes no further than the peer receiving it. The BLOSSOM pair drives [blob sync](#blob-sync).
+The sender attaches recipient signatures or authorship proofs to an event, never both, and one per pubkey the receiving peer authenticated as. Each follows the `EVENT` on the same subscription, and the receiver keys it on the event id rather than on arrival order, since either may be dropped without the other. A device that has neither sends the bare event, which then goes no further than the peer receiving it.
 
 ### How policy reaches the wire
 
@@ -75,19 +73,21 @@ Blobs follow, on their own channel. They are addressed by the SHA-256 in the eve
 
 The want list is every hash a stored event references and the device does not hold. There is no per-blob decision: [Accept](./policy.md#accept) gates ingest against the author of each inbound event. A stored event has therefore already passed the scope check, and its blobs are in scope for the same reason its text is. A partly-fetched blob takes precedence over one not yet started, so that the most nearly complete transfer is the first to be finished. A session asks for the next blob when it starts syncing, when a fetch finishes, and whenever an event stored mid-session adds to the list. An image posted while two phones are in range therefore arrives without the link coming up again.
 
-A bad group costs one group and names the peer that sent it, because each group verifies against the BLAKE3 root as it arrives. A forwarder cannot alter the root: it rides in `imeta`, and the event id commits to it. A transfer that drops leaves the groups that proved out on disk, and the next session picks the blob up there, from whichever peer is in range then.
+A bad group costs one group and names the peer that sent it, because each group verifies against the BLAKE3 root as it arrives. A forwarder cannot alter the root: it rides in `imeta`, and the event id commits to it. A transfer that drops leaves the chunks that proved out on disk, and the next session picks the blob up there, from whichever peer is in range then.
 
 Blob sync is only started above an RSSI and battery threshold. On a weak link a 32 KB blob can take 30 seconds and starve other traffic. It also yields to control traffic so that the heartbeat survives a large transfer. It runs on its own channel so it cannot block event sync, and moves to the L2CAP channel wherever one opens.
 
-To detect the presence of a blob, we first run `HEAD /<sha256>`. This also gives us the content type, and length. If only part of the blob is held, content-range should describe the range available (groups are fetched in order).
+A fetch opens with a query, which the peer answers with how much of the blob it holds, the blob's whole length where it knows it, and whether it can prove a range. Groups are fetched in order, so a partial holding is always a prefix.
 
-We then request each group individually using `GET /<sha256>` with a `range` header and, where the blob carries a root, `accept-encoding: bao`. The answer to that is a [Bao](https://github.com/oconnor663/bao) slice over the range — the subtree hashes on the path down to those bytes, then the bytes — under `content-encoding: bao`. The fetcher checks the whole answer against the root before a byte of it reaches the disk. Nothing about the sending device has to be believed, and nothing has to be fetched or stored ahead of the bytes to make that possible.
+Each group is then fetched by offset and length, asking for a proof where the blob carries a root. The answer to that is a [Bao slice](https://github.com/oconnor663/bao/blob/master/docs/spec.md#slice-format) over the range, in Bao's own format rather than one of ours: the eight-byte length, then the parent nodes and chunks that cover the range, in the order of the whole encoding. The fetcher decodes it against the root, and only the chunks the decoder has checked reach the disk. Nothing about the sending device has to be believed, and nothing has to be fetched or stored ahead of the bytes to make that possible.
+
+An answer can carry less than was asked, when the range runs past what the peer holds, the budget runs out, or the bytes would not fit in a frame. A slice leaves out everything after its range, so the slice of the shorter range is the start of the slice that was asked for. The fetcher decodes it as the slice it asked for, keeps the chunks that arrive whole, and asks again from where they end. This is why a budget cut needs no refusal of its own: what was sent is proved, and the next ask is the one told the budget is spent.
 
 A group is 16 KiB, which is sixteen of Bao's 1 KiB chunks. The chunk size is Bao's and is not ours to raise, because verification is defined over 1 KiB. A range starting inside a chunk pays for the whole chunk anyway, and sizing the group as a whole number of chunks is what keeps a slice from carrying one the fetcher already holds. The proof is around a sixteenth of the group it proves. Both budgets are spent on the size of the answer rather than on the size of what it carried, because the proof rides the same radio as the bytes.
 
-A device proves a range out of the outboard tree over its own copy, which it builds once the file is whole and keeps beside the bytes. A `HEAD` offers `accept-encoding: bao` only from a whole copy, because only a whole copy can be proved that way — and a peer holding a prefix of a rooted blob is passed by rather than taken from, since unproved bytes are what the root exists to end. A blob whose `imeta` carries no root at all is fetched from a peer holding the entire file, checked once against the SHA-256 at the end, and started over when a transfer drops.
+A device proves a range out of the outboard tree over its own copy, which it builds once the file is whole and keeps beside the bytes. Its answer to a query offers proofs only from a whole copy, because only a whole copy can be proved that way — and a peer holding a prefix of a rooted blob is passed by rather than taken from, since unproved bytes are what the root exists to end. A blob whose `imeta` carries no root at all is fetched from a peer holding the entire file, checked once against the SHA-256 at the end, and started over when a transfer drops.
 
-Each exchange then travels as the two BLOSSOM verbs of [the additions](#the-additions), on the blob channel — its own queue, yielding to control and sync, and the one thing that moves to L2CAP where [an upgrade](./transport.md#the-l2cap-bandwidth-upgrade) opens.
+The query, the fetch and their answers are binary rather than NIP-01 arrays, because blob bytes are most of what crosses a link and a text encoding would add a third to them. Each opens with a kind byte and an id that pairs an answer with its request, and NIP-BE gives the layout. They travel on the blob channel, which has its own queue, yields to control and sync, and is the one channel that moves to L2CAP where [an upgrade](./transport.md#the-l2cap-bandwidth-upgrade) opens. An answer carries at most 512 KiB of a range however much was asked, because it is one frame and a frame is capped at 1 MiB. Half the cap leaves room for the proof, and is a whole number of chunks.
 
 When an event references a blob, we save a record to the `blob` table which maps the sha256 to the blob's metadata, including everything in the `imeta` tag. The record and the bytes live as long as any event references the hash, and there is no cache to evict them from. The metadata is the first referring event's, by `seen_at` rather than `created_at`: a later event's copy of the tag says nothing about bytes the hash already addresses.
 
@@ -99,4 +99,4 @@ A peer is served the bytes when it may be served every event that references the
 
 Blob quotas are separate from and much tighter than event quotas. Each peer has a byte budget per rolling 24 hours in each direction, counted across sessions.
 
-A peer that answers 429 is not asked again that session, with one exception: a policy change rebinds the peer and forgets the refusal. Standing moves mid-session while two people pair, and the one who names the other first is refused as a stranger until named back. The refusal is taken under the old standing and would otherwise outlive it.
+A peer that says the budget is spent is not asked again that session, with one exception: a policy change rebinds the peer and forgets the refusal. Standing moves mid-session while two people pair, and the one who names the other first is refused as a stranger until named back. The refusal is taken under the old standing and would otherwise outlive it.

@@ -66,6 +66,22 @@ impl BlobHash {
     pub fn short(&self) -> &str {
         &self.0[..SHORT_CHARS]
     }
+
+    /// The hash the blob channel carries as 32 raw bytes.
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+        Self(hex::encode(bytes))
+    }
+
+    /// The 32 raw bytes the blob channel carries.
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; 32] {
+        let mut bytes = [0u8; 32];
+
+        hex::decode_to_slice(&self.0, &mut bytes).expect("a hash is 64 hex characters");
+
+        bytes
+    }
 }
 
 impl fmt::Display for BlobHash {

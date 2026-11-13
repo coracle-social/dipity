@@ -3073,7 +3073,7 @@ mod tests {
                 .unwrap();
         });
 
-        // The dialer has no record of the hash yet, so the first ask was a 404.
+        // The dialer has no record of the hash yet, so the first ask was not served.
         assert!(
             !query::get_blob(&receiver.db, &hash)
                 .unwrap()

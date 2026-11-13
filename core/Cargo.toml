@@ -48,8 +48,6 @@ hmac = "0.12"
 # Auxiliary randomness for the proof nonce, and nothing else. The derivation is
 # safe without it — see docs/proofs.md#nonce-derivation.
 getrandom = "0.2"
-# Wire encoding for bodies inside a NIP-01 JSON array, which can hold binary.
-base64 = "0.22"
 # The logging facade only. Inert until a shell installs a logger; `dip-ffi`s
 # `logging` module is the hook it does that through, and the shell is what
 # routes a record to os_log or logcat. Nothing in the core picks one.

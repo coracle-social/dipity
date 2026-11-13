@@ -9,10 +9,16 @@
 //!
 //! Bao is that proof format. A serving device keeps an outboard tree beside
 //! the content — the merkle nodes, with the bytes left where they are — and
-//! answers a range with a [slice](slice): the subtree hashes on the path to
-//! those bytes, then the bytes. A fetching device [verifies](verify) the slice
-//! against the root alone, which the event id already commits to. Nothing
-//! about the tree has to be trusted or fetched first.
+//! answers a range with a [slice](slice), exactly as Bao defines one: the
+//! eight-byte little-endian length, then the parent nodes and chunks that
+//! cover the range, in the order the whole encoding has them. A fetching
+//! device [verifies](verify) the slice against the root alone, which the event
+//! id already commits to. Nothing about the tree has to be trusted or fetched
+//! first.
+//!
+//! Nothing after the range is in a slice, so the slice of a shorter range is
+//! where the slice of a longer one starts. An answer cut short therefore
+//! verifies as far as it goes, and the fetcher keeps the chunks it carries.
 //!
 //! Every byte that reaches the disk has been checked, and the bytes already
 //! there are where the next session resumes, because verification is per
@@ -72,9 +78,9 @@ pub fn build(store: &dyn BlobStore, sha256: &BlobHash) -> Result<Root> {
 /// The slice proving `len` bytes from `start`, for a peer to check against the
 /// root.
 ///
-/// It is larger than the bytes it carries — one 64-byte parent node per level
-/// of the path down to them — which is what the fetcher meters and the sender
-/// does not charge for.
+/// It is larger than the bytes it carries by the length and a 64-byte parent
+/// node per subtree it passes through, which both ends charge to the budget
+/// because the proof rides the same radio as the bytes.
 pub fn slice(store: &dyn BlobStore, sha256: &BlobHash, start: u64, len: u64) -> Result<Vec<u8>> {
     let mut extractor = SliceExtractor::new_outboard(
         StoreCursor::content(store, sha256),
@@ -91,20 +97,23 @@ pub fn slice(store: &dyn BlobStore, sha256: &BlobHash, start: u64, len: u64) -> 
     Ok(slice)
 }
 
-/// The content bytes a slice carries, once the slice verifies against `root`.
+/// The content bytes a slice of `len` bytes from `start` carries, as far as
+/// it verifies against `root`.
 ///
-/// An error is a peer that sent bytes belonging to some other file, or none.
-/// The answer holds no unverified byte, because the decoder checks every chunk
-/// against the tree on the way past.
+/// A slice that ends early is the slice of a shorter range, and yields the
+/// chunks it got to, which may be none. An error is a peer that sent bytes
+/// belonging to some other file. The answer holds no unverified byte, because
+/// the decoder checks every chunk against the tree before handing it over.
 pub fn verify(slice: &[u8], root: &Root, start: u64, len: u64) -> Result<Vec<u8>> {
     let mut decoder = SliceDecoder::new(slice, root, start, len);
     let mut content = Vec::new();
 
-    decoder
-        .read_to_end(&mut content)
-        .context("verifying a blob slice against its BLAKE3 root")?;
-
-    Ok(content)
+    match decoder.read_to_end(&mut content) {
+        Ok(_) => Ok(content),
+        // Running out of slice is an answer cut short, and what was read before it is proved.
+        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => Ok(content),
+        Err(error) => Err(error).context("verifying a blob slice against its BLAKE3 root"),
+    }
 }
 
 /// A `Read + Seek` view of one of a blob's two files.
@@ -242,6 +251,38 @@ mod tests {
         proof[last] ^= 1;
 
         assert!(verify(&proof, &root, 0, 16 * 1024).is_err());
+    }
+
+    /// A shorter range's slice is where a longer one's starts, so an answer cut
+    /// anywhere verifies as the range asked for and yields the whole chunks it holds.
+    #[test]
+    fn a_slice_cut_short_yields_the_chunks_it_carries() {
+        let store = MemoryBlobStore::default();
+        let (hash, bytes) = blob(&store, 40 * 1024);
+        let root = build(&store, &hash).unwrap();
+        let whole = slice(&store, &hash, 16 * 1024, 16 * 1024).unwrap();
+        let shorter = slice(&store, &hash, 16 * 1024, 5 * 1024).unwrap();
+
+        assert!(whole.starts_with(&shorter));
+        assert_eq!(
+            verify(&shorter, &root, 16 * 1024, 16 * 1024).unwrap(),
+            bytes[16 * 1024..21 * 1024]
+        );
+
+        // Cut inside a chunk, the chunk it was cut in is not handed over.
+        let cut = &whole[..shorter.len() + 100];
+
+        assert_eq!(
+            verify(cut, &root, 16 * 1024, 16 * 1024).unwrap(),
+            bytes[16 * 1024..21 * 1024]
+        );
+
+        // A slice cut short and then tampered with is still refused.
+        let mut tampered = shorter.clone();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 1;
+
+        assert!(verify(&tampered, &root, 16 * 1024, 16 * 1024).is_err());
     }
 
     /// The proof for one file does not verify against another's root, which is

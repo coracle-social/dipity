@@ -11,7 +11,8 @@
 //! be sealed in the order it goes on the wire, which is [`Wire`](super::Wire)'s
 //! job at dequeue.
 //!
-//! Header: one byte of channel, one byte of flags. `docs/transport.md#framing`.
+//! Header: one byte of channel, one byte of flags, sealed with the payload
+//! once there is a cipher. `docs/transport.md#framing`.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -80,8 +81,9 @@ const FLAG_RESERVED: u8 = !FLAG_MORE;
 
 /// The header, which every fragment carries.
 ///
-/// It stays in the clear, because the receiver routes and reassembles on it
-/// before there is a channel to hand the payload to.
+/// Sealed with the payload once the handshake completes, so that the radio can
+/// neither read which channel a fragment is on nor rewrite it. Only the
+/// handshake's own messages carry it in the clear.
 pub const HEADER: usize = 2;
 
 /// The largest reassembled frame the codec accepts.
@@ -110,8 +112,8 @@ pub struct Fragment {
     pub channel: Channel,
     /// Whether further fragments of the same frame follow.
     pub more: bool,
-    /// The slice this write carries. Plaintext here; ciphertext only between
-    /// [`Wire`](super::Wire) sealing it and the peer opening it.
+    /// The slice this write carries. Plaintext here; [`Wire`](super::Wire)
+    /// seals it together with the header.
     pub payload: Vec<u8>,
 }
 

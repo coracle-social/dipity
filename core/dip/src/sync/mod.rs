@@ -13,6 +13,7 @@
 //! a single `handle` entry point over the same [`Db`](crate::db::Db).
 
 pub mod blob;
+pub mod blob_message;
 pub mod client;
 pub mod message;
 pub mod relay;

@@ -475,7 +475,6 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "bao",
- "base64",
  "coracle-kinds",
  "coracle-lib",
  "getrandom 0.2.17",

@@ -35,7 +35,7 @@ pub use recognition::{Tag, Tags};
 
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use coracle_lib::events::HashedEvent;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::PublicKey;
@@ -48,6 +48,7 @@ use crate::keys::{Batch, KeyCustody};
 use crate::link::{LinkId, Role};
 use crate::model::{BlobHash, Identity, Policy, Standing};
 use crate::sync::blob::BlobExchange;
+use crate::sync::blob_message::BlobMessage;
 use crate::sync::client::Client;
 use crate::sync::relay::{self, Relay};
 use crate::sync::spending::{SessionSpending, SpendingLedger};
@@ -82,24 +83,28 @@ pub const IDENTIFY_CAP_SECONDS: i64 = 60;
 
 /// Control-frame discriminants, one byte ahead of the payload.
 ///
-/// The first byte names what follows, because recognition tags, the heartbeat,
-/// the L2CAP upgrade, pairing and the identity transfer share the control
-/// channel. `AUTH` is not among them: NIP-P2 carries it with the rest of the
-/// relay protocol, on the sync channel. The handshake frames that precede
-/// encryption carry no discriminant: they are raw Noise messages and only
-/// [`State::Linked`] ever sees them.
+/// The first byte names what follows, because recognition tags, mutual `AUTH`,
+/// the heartbeat, the L2CAP upgrade, pairing and the identity transfer share
+/// the control channel. The handshake frames that precede encryption carry no
+/// discriminant: they are raw Noise messages and only [`State::Linked`] ever
+/// sees them.
 mod control {
     /// A list of 32-byte recognition tags.
     pub const TAGS: u8 = 0x01;
+    /// A NIP-42 message, encoded as the relay protocol encodes it:
+    /// `["AUTH", <challenge>]`, `["AUTH", <event>]`, or the `OK` that answers
+    /// an event. Both directions share one discriminant, because the payload
+    /// says which.
+    pub const AUTH: u8 = 0x02;
     /// A liveness beacon, carrying nothing.
-    pub const HEARTBEAT: u8 = 0x02;
+    pub const HEARTBEAT: u8 = 0x03;
     /// One step of the L2CAP upgrade.
     /// `docs/transport.md#the-l2cap-bandwidth-upgrade`.
-    pub const L2CAP: u8 = 0x03;
+    pub const L2CAP: u8 = 0x04;
     /// The user at the other end asked to pair over this link. Carries
     /// nothing: the link already says who is asking.
     /// `docs/discovery.md#meeting-somebody`.
-    pub const PAIR: u8 = 0x04;
+    pub const PAIR: u8 = 0x05;
     /// One step of an identity transfer, its own discriminant ahead of the
     /// payload. In the range NIP-BE leaves to applications, because no other
     /// implementation has a use for it. `docs/keys.md#login-with-device`.
@@ -325,7 +330,7 @@ impl Session {
         self.policy = policy;
         self.bind_peer();
 
-        // The peer's standing may have moved too, as it does while pairing, and a 429 taken before that is stale.
+        // The peer's standing may have moved too, as it does while pairing, and a refusal taken before that is stale.
         self.blobs.forgive_refusal();
     }
 
@@ -527,9 +532,19 @@ impl Session {
         }
     }
 
-    /// Handle one frame on the sync channel: `AUTH`, which identifies the
-    /// peer, and then everything routed to the relay or client half.
+    /// Handle one frame on the sync channel, routing it to the relay or
+    /// client half.
     pub fn handle_sync(&mut self, db: &Db, frame: &Frame) -> Result<()> {
+        // NIP-BE closes a link that syncs before authenticating, whether or not this build reads it.
+        let Some(peer) = self.peer.as_ref().cloned() else {
+            bail!("sync traffic before the peer is identified");
+        };
+
+        // A peer the gate holds has proved who it is, and is served nothing until the user answers.
+        if matches!(self.state, State::GatePending { .. }) {
+            bail!("sync traffic while the gate holds the peer");
+        }
+
         let message = match Message::decode(&frame.payload) {
             Ok(message) => message,
             // One message this build cannot read is one message lost, not the link.
@@ -541,22 +556,6 @@ impl Session {
                 return Ok(());
             }
         };
-
-        if matches!(
-            message,
-            Message::AuthChallenge(_) | Message::AuthResponse(_)
-        ) {
-            return self.on_auth(db, message);
-        }
-
-        let Some(peer) = self.peer.as_ref().cloned() else {
-            bail!("sync traffic before the peer is identified");
-        };
-
-        // A peer the gate holds has proved who it is, and is served nothing until the user answers.
-        if matches!(self.state, State::GatePending { .. }) {
-            bail!("sync traffic while the gate holds the peer");
-        }
 
         // Draining finishes what is in flight and starts nothing new.
         if matches!(self.state, State::Draining { .. }) {
@@ -600,15 +599,25 @@ impl Session {
         Ok(())
     }
 
-    /// Handle one frame on the blob channel, which carries the two Blossom
-    /// verbs and nothing else.
+    /// Handle one frame on the blob channel, which carries the binary blob
+    /// requests and their answers and nothing else.
     ///
     /// Blobs are metered against the same quota as the event halves; what the
     /// channel buys them is a queue of their own, and an L2CAP channel to ride
     /// wherever one opens.
     pub fn handle_blob(&mut self, db: &Db, frame: &Frame) -> Result<()> {
-        let message = match Message::decode(&frame.payload) {
-            Ok(message) => message,
+        let Some(peer) = self.peer.as_ref().cloned() else {
+            bail!("blob traffic before the peer is identified");
+        };
+
+        if matches!(self.state, State::GatePending { .. }) {
+            bail!("blob traffic while the gate holds the peer");
+        }
+
+        let message = match BlobMessage::decode(&frame.payload) {
+            Ok(Some(message)) => message,
+            // A kind a later version added is skipped, as NIP-BE has it.
+            Ok(None) => return Ok(()),
             Err(error) => {
                 log::warn!(
                     "dropping a malformed blob message on {:?}: {error:#}",
@@ -618,64 +627,51 @@ impl Session {
             }
         };
 
-        let Some(peer) = self.peer.as_ref().cloned() else {
-            bail!("blob traffic before the peer is identified");
-        };
-
-        if matches!(self.state, State::GatePending { .. }) {
-            bail!("blob traffic while the gate holds the peer");
-        }
-
         let quota = self.quota();
 
-        match message {
-            Message::BlossomRequest(request) => {
-                let before = self.blobs.served_bytes();
-                let reply = self
-                    .blobs
-                    .serve(db, &peer, &self.local(), &request, quota)?;
-                let given = self.blobs.served_bytes().saturating_sub(before);
+        if message.is_request() {
+            let before = self.blobs.served_bytes();
+            let reply = self
+                .blobs
+                .serve(db, &peer, &self.local(), &message, quota)?;
+            let given = self.blobs.served_bytes().saturating_sub(before);
 
-                log::debug!(
-                    "answered {} {} on {:?} with {} and {given} bytes",
-                    request.method,
-                    request.path,
-                    self.link,
-                    reply.status
-                );
+            log::debug!(
+                "answered blob request {} on {:?} with {:?} and {given} bytes",
+                message.id(),
+                self.link,
+                reply.status()
+            );
 
-                if given > 0 {
-                    self.spending.record_served(&peer, given);
-                }
-
-                self.send_blob(&Message::BlossomResponse(Box::new(reply)))
+            if given > 0 {
+                self.spending.record_served(&peer, given);
             }
-            Message::BlossomResponse(response) => {
-                log::debug!(
-                    "blob reply {} on {:?}: {} with {} bytes",
-                    response.id,
-                    self.link,
-                    response.status,
-                    response.body.len()
-                );
 
-                let before = self.blobs.fetched_bytes();
-                let next = self.blobs.on_response(db, &peer, &response, quota)?;
-                let taken = self.blobs.fetched_bytes().saturating_sub(before);
-
-                if taken > 0 {
-                    self.spending.record_blob(&peer, taken);
-                }
-
-                if let Some(request) = next {
-                    self.send_blob(&Message::BlossomRequest(Box::new(request)))?;
-                }
-
-                // A finished fetch frees the slot for the next wanted blob.
-                self.maybe_fetch_blob(db)
-            }
-            other => bail!("{other:?} arrived on the blob channel"),
+            return self.send_blob(&reply);
         }
+
+        log::debug!(
+            "blob reply {} on {:?}: {:?} in {} bytes",
+            message.id(),
+            self.link,
+            message.status(),
+            frame.payload.len()
+        );
+
+        let before = self.blobs.fetched_bytes();
+        let next = self.blobs.on_response(db, &peer, &message, quota)?;
+        let taken = self.blobs.fetched_bytes().saturating_sub(before);
+
+        if taken > 0 {
+            self.spending.record_blob(&peer, taken);
+        }
+
+        if let Some(request) = next {
+            self.send_blob(&request)?;
+        }
+
+        // A finished fetch frees the slot for the next wanted blob.
+        self.maybe_fetch_blob(db)
     }
 
     /// Whether the relay half answers this message.
@@ -858,13 +854,8 @@ impl Session {
         let quota = self.quota();
 
         if let Some(request) = self.blobs.poll(db, quota)? {
-            log::debug!(
-                "asking for {} {} on {:?}",
-                request.method,
-                request.path,
-                self.link
-            );
-            self.send_blob(&Message::BlossomRequest(Box::new(request)))?;
+            log::debug!("asking for {request:?} on {:?}", self.link);
+            self.send_blob(&request)?;
         }
 
         Ok(())
@@ -1244,6 +1235,7 @@ impl Session {
 
         match discriminant {
             control::TAGS => self.on_tags(db, payload)?,
+            control::AUTH => self.on_auth(db, payload)?,
             control::HEARTBEAT => {
                 // The write itself proved liveness in `receive`; a beacon carries nothing else.
             }
@@ -1283,11 +1275,6 @@ impl Session {
             Verdict::Pending => self.hold(),
         }
 
-        // AUTH rides the sync channel and the tags the control channel, so a challenge can land first.
-        if self.state == State::Secured && self.auth.peer_challenge.is_some() {
-            self.take_turn(db)?;
-        }
-
         Ok(())
     }
 
@@ -1307,28 +1294,16 @@ impl Session {
             .any(|pubkey| self.policy.graph.standing(pubkey) == Standing::Contact)
     }
 
-    /// Dispatch one NIP-42 message off the sync channel, which is a challenge
-    /// from the peer or its response to ours. NIP-P2 carries `AUTH` with the
-    /// rest of the relay protocol.
-    fn on_auth(&mut self, db: &Db, message: Message) -> Result<()> {
-        match self.state {
-            State::Linked => bail!("AUTH arrived before the handshake completed"),
-            State::Draining { .. } | State::Closed => return Ok(()),
-            _ => {}
-        }
-
-        match message {
-            Message::AuthChallenge(challenge) => self.on_challenge(db, challenge)?,
-            Message::AuthResponse(event) => self.on_auth_response(db, &event)?,
+    /// Dispatch one NIP-42 message: a challenge from the peer, its response
+    /// to ours, or its `OK` to this device's response.
+    fn on_auth(&mut self, db: &Db, payload: &[u8]) -> Result<()> {
+        match Message::decode(payload).context("the control channel carried a malformed AUTH")? {
+            Message::AuthChallenge(challenge) => self.on_challenge(db, challenge),
+            Message::AuthResponse(event) => self.on_auth_response(db, &event),
+            Message::Ok(_, true, _) => Ok(()),
+            Message::Ok(_, false, reason) => bail!("the peer refused this device's AUTH: {reason}"),
             other => bail!("{other:?} is not a NIP-42 message"),
         }
-
-        // Both identities bind once the peer is verified and this device has disclosed.
-        if self.peer.is_some() && self.auth.disclosed {
-            self.enter_syncing(db)?;
-        }
-
-        Ok(())
     }
 
     /// Take the peer's challenge, and this device's turn if the gate allows
@@ -1375,6 +1350,10 @@ impl Session {
 
         let pubkey = self.auth.verify(event, self.wire.noise.local_static)?;
 
+        // NIP-42's answer to an event that verified; one that did not ends the link instead.
+        let accepted = Message::Ok(event.id.to_hex(), true, String::new());
+        self.send_control(control::AUTH, &accepted.encode())?;
+
         self.identify([pubkey]);
 
         if self.state == State::Closed {
@@ -1404,7 +1383,7 @@ impl Session {
     fn challenge_peer(&mut self) -> Result<()> {
         let challenge = self.auth.make_challenge()?;
 
-        self.send_sync(&Message::AuthChallenge(challenge))
+        self.send_control(control::AUTH, &Message::AuthChallenge(challenge).encode())
     }
 
     /// Answer the peer's challenge, disclosing this device's identity — if one
@@ -1427,7 +1406,7 @@ impl Session {
             Some(event) => {
                 let message = Message::AuthResponse(Box::new(event));
 
-                self.send_sync(&message)?;
+                self.send_control(control::AUTH, &message.encode())?;
 
                 if self.gate.spends_budget && !self.proved_known() {
                     crate::db::command::spend_disclosure(
@@ -1500,9 +1479,9 @@ impl Session {
         })
     }
 
-    /// Queue a Blossom message as a frame on the blob channel, which is what
+    /// Queue a blob message as a frame on the blob channel, which is what
     /// rides L2CAP once one is open.
-    fn send_blob(&mut self, message: &Message) -> Result<()> {
+    fn send_blob(&mut self, message: &BlobMessage) -> Result<()> {
         let payload = message.encode();
 
         self.send(&Frame {
@@ -1847,7 +1826,7 @@ mod tests {
 
     #[test]
     fn a_busy_link_skips_the_beat_and_treats_traffic_as_liveness() {
-        let mut session = clock::at(1_000, || secured_session(policy()));
+        let (mut session, mut peer) = clock::at(1_000, || secured_pair(policy()));
         session.identify([author(2)]);
 
         // Queued traffic stands in for the beat.
@@ -1862,9 +1841,8 @@ mod tests {
             session.maybe_heartbeat().unwrap();
         });
 
-        // The first fragment out is the queued traffic, not a beat.
-        let fragment = session.next_write(Pipe::Gatt).unwrap().unwrap();
-        assert_eq!(fragment[0], Channel::Sync as u8);
+        // The first frame out is the queued traffic, not a beat.
+        assert_eq!(pump_frame(&mut session, &mut peer).channel, Channel::Sync);
     }
 
     #[test]
@@ -1997,92 +1975,119 @@ mod tests {
             .clone()
             .with_sig(secret(2).sign(hashed.id.as_bytes()));
         let frame = Frame {
-            channel: Channel::Sync,
-            payload: Message::AuthResponse(Box::new(signed)).encode(),
+            channel: Channel::Control,
+            payload: [
+                &[control::AUTH][..],
+                &Message::AuthResponse(Box::new(signed)).encode(),
+            ]
+            .concat(),
         };
 
-        assert!(session.handle_sync(&db, &frame).is_err());
+        assert!(session.advance(&db, &frame).is_err());
         assert!(session.peer.as_ref().is_none());
     }
 
     #[test]
-    fn auth_travels_as_the_nip_42_message_with_the_rest_of_the_relay_protocol() {
-        // NIP-P2: `["AUTH", …]` exactly as NIP-42 writes it, on the sync channel beside `REQ` and `EVENT`.
+    fn auth_travels_as_the_nip_42_message_on_the_control_channel() {
+        // NIP-42's own `["AUTH", …]`, behind its discriminant. `docs/nips/p2p-auth.md`.
         let db = Db::open_in_memory().unwrap();
         let (mut dialer, mut receiver) = secured_pair(policy());
 
         dialer.challenge_peer().unwrap();
 
         let frame = pump_frame(&mut dialer, &mut receiver);
+        let (discriminant, payload) = frame.payload.split_first().unwrap();
 
-        assert_eq!(frame.channel, Channel::Sync);
+        assert_eq!(frame.channel, Channel::Control);
+        assert_eq!(*discriminant, control::AUTH);
         assert!(matches!(
-            Message::decode(&frame.payload).unwrap(),
+            Message::decode(payload).unwrap(),
             Message::AuthChallenge(_)
         ));
 
         // The response side: the dialer answers a challenge outright, because it identifies first.
         dialer.gate.passed = true;
         dialer
-            .handle_sync(
+            .advance(
                 &db,
                 &Frame {
-                    channel: Channel::Sync,
-                    payload: Message::AuthChallenge("abc123".into()).encode(),
+                    channel: Channel::Control,
+                    payload: [
+                        &[control::AUTH][..],
+                        &Message::AuthChallenge("abc123".into()).encode(),
+                    ]
+                    .concat(),
                 },
             )
             .unwrap();
 
         let response = pump_frame(&mut dialer, &mut receiver);
+        let (discriminant, payload) = response.payload.split_first().unwrap();
 
-        assert_eq!(response.channel, Channel::Sync);
+        assert_eq!(*discriminant, control::AUTH);
         assert!(matches!(
-            Message::decode(&response.payload).unwrap(),
+            Message::decode(payload).unwrap(),
             Message::AuthResponse(_)
         ));
         assert_eq!(dialer.state, State::DialerIdentified);
     }
 
     #[test]
-    fn a_challenge_that_overtakes_the_tags_is_taken_up_once_they_arrive() {
-        // The tags and AUTH travel on different channels, so either may land first.
+    fn a_verified_auth_event_is_answered_with_ok() {
         let db = Db::open_in_memory().unwrap();
-        let (mut dialer, mut receiver) = secured_pair(policy());
+        let mut dialer = pair(4096, Role::Dialer, 1);
+        let mut receiver = pair(4096, Role::Receiver, 2);
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
 
-        receiver
-            .handle_sync(
-                &db,
-                &Frame {
-                    channel: Channel::Sync,
-                    payload: Message::AuthChallenge("abc123".into()).encode(),
-                },
-            )
-            .unwrap();
+        dialer.initiate().unwrap();
+        pump(&mut dialer, &mut receiver, &db); // msg1
+        pump(&mut receiver, &mut dialer, &db); // reply
+        pump(&mut dialer, &mut receiver, &db); // msg3
+        pump(&mut dialer, &mut receiver, &db); // dialer tags
+        pump(&mut dialer, &mut receiver, &db); // dialer challenge
+        pump(&mut receiver, &mut dialer, &db); // receiver tags
+        pump(&mut receiver, &mut dialer, &db); // receiver challenge
+        pump(&mut dialer, &mut receiver, &db); // dialer response
 
-        assert!(receiver.next_write(Pipe::Gatt).unwrap().is_none());
+        // The receiver accepts the dialer's event before it answers the dialer's challenge.
+        let answer = pump_frame(&mut receiver, &mut dialer);
+        let (discriminant, payload) = answer.payload.split_first().unwrap();
 
-        let tags = recognition::select(&[], &[0u8; 32]).unwrap().encode();
-
-        receiver
-            .advance(
-                &db,
-                &Frame {
-                    channel: Channel::Control,
-                    payload: [&[control::TAGS][..], &tags].concat(),
-                },
-            )
-            .unwrap();
-
-        let first = pump_frame(&mut receiver, &mut dialer);
-        let second = pump_frame(&mut receiver, &mut dialer);
-
-        assert_eq!(first.channel, Channel::Control);
-        assert_eq!(first.payload[0], control::TAGS);
-        assert_eq!(second.channel, Channel::Sync);
+        assert_eq!(*discriminant, control::AUTH);
         assert!(matches!(
-            Message::decode(&second.payload).unwrap(),
-            Message::AuthChallenge(_)
+            Message::decode(payload).unwrap(),
+            Message::Ok(_, true, _)
         ));
+    }
+
+    #[test]
+    fn anything_on_the_sync_or_blob_channel_before_auth_ends_the_link() {
+        let db = Db::open_in_memory().unwrap();
+        let mut session = secured_session(policy());
+
+        // Unreadable on both channels, which a peer that has authenticated would only lose a message for.
+        let garbage = |channel| Frame {
+            channel,
+            payload: b"not a message".to_vec(),
+        };
+
+        assert!(session.handle_sync(&db, &garbage(Channel::Sync)).is_err());
+        assert!(session.handle_blob(&db, &garbage(Channel::Blob)).is_err());
+    }
+
+    #[test]
+    fn a_peer_refusing_this_devices_auth_ends_the_link() {
+        let db = Db::open_in_memory().unwrap();
+        let mut session = secured_session(policy());
+
+        let refusal = Message::Ok("ab".repeat(32), false, "restricted: not here".into());
+        let frame = Frame {
+            channel: Channel::Control,
+            payload: [&[control::AUTH][..], &refusal.encode()].concat(),
+        };
+
+        assert!(session.advance(&db, &frame).is_err());
     }
 
     #[test]
@@ -2234,7 +2239,9 @@ mod tests {
         pump(receiver, dialer, db); // receiver tags
         pump(receiver, dialer, db); // receiver challenge
         pump(dialer, receiver, db); // dialer response
+        pump(receiver, dialer, db); // receiver's OK for it
         pump(receiver, dialer, db); // receiver response
+        pump(dialer, receiver, db); // dialer's OK for it
 
         assert_eq!(dialer.state, State::Syncing);
         assert_eq!(receiver.state, State::Syncing);
@@ -2278,6 +2285,7 @@ mod tests {
 
         // The dialer's response lets the receiver identify it and disclose in turn.
         pump(&mut dialer, &mut receiver, &db); // response: receiver identifies + discloses
+        pump(&mut receiver, &mut dialer, &db); // the receiver's OK for it
         pump(&mut receiver, &mut dialer, &db); // response: dialer identifies
 
         assert_eq!(dialer.state, State::Syncing);
@@ -2305,9 +2313,15 @@ mod tests {
             vec![author(1)]
         );
 
-        // The payload is encrypted; the frame header is not.
-        let opening = dialer.next_write(Pipe::Gatt).unwrap().unwrap();
-        assert_eq!(opening[0], Channel::Sync as u8);
+        // The dialer answers the receiver's response, then opens the reconciliation.
+        assert_eq!(
+            pump_frame(&mut dialer, &mut receiver).channel,
+            Channel::Control
+        );
+        assert_eq!(
+            pump_frame(&mut dialer, &mut receiver).channel,
+            Channel::Sync
+        );
     }
 
     #[test]
@@ -2343,7 +2357,9 @@ mod tests {
         pump(receiver, dialer, dialer_db); // receiver tags
         pump(receiver, dialer, dialer_db); // receiver challenge
         pump(dialer, receiver, receiver_db); // dialer response
+        pump(receiver, dialer, dialer_db); // receiver's OK for it
         pump(receiver, dialer, dialer_db); // receiver response
+        pump(dialer, receiver, receiver_db); // dialer's OK for it
 
         assert_eq!(dialer.state, State::Syncing);
         assert_eq!(receiver.state, State::Syncing);
@@ -2421,6 +2437,7 @@ mod tests {
         pump(receiver, dialer, db); // receiver tags
         pump(receiver, dialer, db); // receiver challenge: the dialer answers
         pump(dialer, receiver, db); // dialer response: the receiver holds
+        pump(receiver, dialer, db); // receiver's OK for it: the dialer waits
     }
 
     #[test]
@@ -2530,6 +2547,7 @@ mod tests {
             pump(&mut receiver, &mut dialer, &db); // receiver tags: dialer admits
             pump(&mut receiver, &mut dialer, &db); // receiver challenge: dialer answers
             pump(&mut dialer, &mut receiver, &db); // dialer response: receiver discloses
+            pump(&mut receiver, &mut dialer, &db); // receiver's OK for it
             pump(&mut receiver, &mut dialer, &db); // receiver response: dialer identifies
         });
 
