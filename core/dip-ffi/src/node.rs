@@ -198,6 +198,18 @@ pub enum Action {
         /// The PSM the peer published at.
         psm: u16,
     },
+    /// Close this link's L2CAP channel, or withdraw it if it is only
+    /// published, and keep the link up.
+    ///
+    /// Raised when the upgrade is given up on a link whose shell was asked for
+    /// a channel or reported one, and again for a channel a publish or an open
+    /// still under way delivers after that. Holding nothing for the link, do
+    /// nothing. Reporting the closed channel to [`Node::l2cap_unavailable`]
+    /// changes nothing.
+    CloseL2cap {
+        /// The link whose channel to close.
+        link: LinkId,
+    },
     /// Show the user this six-digit comparison value and ask whether the other
     /// device shows the same one.
     ///
@@ -808,6 +820,7 @@ impl From<CoreAction> for Action {
                 link: link.into(),
                 psm,
             },
+            CoreAction::CloseL2cap(link) => Self::CloseL2cap { link: link.into() },
             CoreAction::ConfirmIdentityTransfer(link, code) => Self::ConfirmIdentityTransfer {
                 link: link.into(),
                 code,
@@ -978,6 +991,7 @@ mod tests {
             CoreAction::SendBulk(link, vec![3]),
             CoreAction::PublishL2cap(link),
             CoreAction::OpenL2cap(link, 129),
+            CoreAction::CloseL2cap(link),
             CoreAction::ConfirmIdentityTransfer(link, 123_456),
             CoreAction::IdentityTransfer(link, Outcome::Received),
             CoreAction::WakeAt(1_700_000_000),
@@ -1023,6 +1037,7 @@ mod tests {
                 },
                 Action::PublishL2cap { link },
                 Action::OpenL2cap { link, psm: 129 },
+                Action::CloseL2cap { link },
                 Action::ConfirmIdentityTransfer {
                     link,
                     code: 123_456

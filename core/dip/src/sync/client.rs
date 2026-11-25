@@ -73,7 +73,7 @@ pub struct Negotiation {
     /// Ids this device has that the peer lacks. Not yet on the wire.
     have: Vec<EventId>,
     /// Ids the peer has that this device lacks, accumulated every round.
-    /// What the terminating `REQ` asks for, once reconciliation completes.
+    /// What the `REQ` after the diff asks for, once reconciliation completes.
     pub need: Vec<EventId>,
     /// The reply budget for the next message.
     budget: FrameBudget,
@@ -121,32 +121,42 @@ impl Negotiation {
         Ok((negotiation, message))
     }
 
-    /// Consume one `NEG-MSG` from the peer's relay, returning what comes next.
+    /// Consume one `NEG-MSG` from the peer's relay, returning the next round's
+    /// `NEG-MSG`, or `None` once the diff is over.
     ///
-    /// The reply is the next round's frame, or the `REQ` for the accumulated
-    /// `need` once the exchange terminates, or `NEG-CLOSE` when the frame does
-    /// not decode, which abandons this diff and nothing else.
-    pub fn step(&mut self, frame: &[u8]) -> Result<Vec<Message>> {
-        let Ok(incoming) = coracle_lib::sync::Message::decode(frame) else {
-            return Ok(vec![Message::NegClose(self.subscription.clone())]);
-        };
+    /// A diff is over when reconciliation completes, or when the peer's frame
+    /// does not decode, which abandons this diff and nothing else. Either way
+    /// [`need`](Self::need) holds what it found missing.
+    pub fn step(&mut self, frame: &[u8]) -> Option<Message> {
+        let incoming = coracle_lib::sync::Message::decode(frame).ok()?;
         let out = coracle_lib::sync::reconcile_initiator(&self.local, &incoming, self.budget);
 
         self.have.extend(out.have);
         self.need.extend(out.need);
 
-        match out.next {
-            Some(reply) => Ok(vec![Message::NegMsg(
-                self.subscription.clone(),
-                reply.encode(),
-            )]),
-            None => {
-                let need = self.need.iter().copied().collect::<BTreeSet<_>>();
-                let filter = self.filter.clone().add_ids(need);
+        let reply = out.next?;
 
-                Ok(vec![Message::Req(self.subscription.clone(), vec![filter])])
-            }
+        Some(Message::NegMsg(self.subscription.clone(), reply.encode()))
+    }
+
+    /// The `REQ` for what the finished diff found missing, and the fetch that
+    /// follows it, or `None` when it found nothing.
+    ///
+    /// It reuses the negotiation's id, which NIP-77 keeps in a namespace apart
+    /// from `REQ` ids, and which the `NEG-CLOSE` ahead of it has released.
+    fn fetch(&self) -> Option<(Message, Fetch)> {
+        let need: BTreeSet<EventId> = self.need.iter().copied().collect();
+
+        if need.is_empty() {
+            return None;
         }
+
+        let request = Message::Req(
+            self.subscription.clone(),
+            vec![self.filter.clone().add_ids(need.clone())],
+        );
+
+        Some((request, Fetch::new(need)))
     }
 }
 
@@ -318,40 +328,25 @@ impl Client {
                 Ok(self.open_live()?.into_iter().collect())
             }
             Message::NegMsg(subscription, frame) => {
-                let Some(negotiation) = self.negotiations.get_mut(&subscription) else {
+                let Some(mut negotiation) = self.negotiations.remove(&subscription) else {
                     bail!("a NEG-MSG arrived for a subscription that is not open");
                 };
 
-                let mut replies = negotiation.step(&frame)?;
+                if let Some(next) = negotiation.step(&frame) {
+                    self.negotiations.insert(subscription, negotiation);
 
-                if matches!(replies.first(), Some(Message::NegClose(..))) {
-                    self.negotiations.remove(&subscription);
-                    replies.extend(self.open_live()?);
-
-                    return Ok(replies);
+                    return Ok(vec![next]);
                 }
 
-                // The terminating reply is a REQ on the same subscription: the exchange is over.
-                let terminated =
-                    matches!(replies.last(), Some(Message::Req(sub, _)) if *sub == subscription);
-                let need: BTreeSet<EventId> = if terminated {
-                    negotiation.need.iter().copied().collect()
-                } else {
-                    BTreeSet::new()
-                };
+                // NIP-77 has the initiator release the peer's side once the diff is over.
+                let mut replies = vec![Message::NegClose(subscription.clone())];
 
-                if terminated {
-                    self.negotiations.remove(&subscription);
-
-                    if need.is_empty() {
-                        // An empty id set matches nothing and is not worth a round trip.
-                        replies.pop();
-                    } else {
-                        self.fetches.insert(subscription.clone(), Fetch::new(need));
-                    }
-
-                    replies.extend(self.open_live()?);
+                if let Some((request, fetch)) = negotiation.fetch() {
+                    self.fetches.insert(subscription, fetch);
+                    replies.push(request);
                 }
+
+                replies.extend(self.open_live()?);
 
                 Ok(replies)
             }
@@ -882,44 +877,102 @@ mod tests {
         assert!(!ingest(&db, &peer, &local(), &forwarded, Some(&proof)).unwrap());
     }
 
-    #[test]
-    fn a_negotiation_spells_out_what_is_missing() {
-        // Bob has a note Alice does not; Alice has none herself.
-        let alice = Db::open_in_memory().unwrap();
-        let bob = Db::open_in_memory().unwrap();
-
-        let bobs_note = note_from(3, 200);
-        command::publish_event(&bob, &bobs_note, &author(3), 20).unwrap();
-
-        // Alice begins diffing against Bob over everything.
-        let (mut negotiation, opening) = open(&alice, Filter::new()).unwrap();
+    /// Bob's relay half answering the opening of a diff over everything, holding `held` and nothing else.
+    fn answered(opening: &Message, held: &[&HashedEvent]) -> Vec<u8> {
         let Message::NegOpen(_, _, frame) = opening else {
             panic!("expected a NEG-OPEN");
         };
 
-        // Bob's relay half answers with its own set.
-        let incoming = coracle_lib::sync::Message::decode(&frame).unwrap();
-        let bob_items = SyncSet::from_items(vec![Item {
-            timestamp: bobs_note.created_at,
-            id: bobs_note.id,
-        }]);
-        let reply =
-            coracle_lib::sync::reconcile_responder(&bob_items, &incoming, FrameBudget::unlimited());
+        let incoming = coracle_lib::sync::Message::decode(frame).unwrap();
+        let items = SyncSet::from_items(held.iter().map(|event| Item {
+            timestamp: event.created_at,
+            id: event.id,
+        }));
 
-        let out = negotiation.step(&reply.encode()).unwrap();
+        coracle_lib::sync::reconcile_responder(&items, &incoming, FrameBudget::unlimited()).encode()
+    }
 
-        match out.last() {
-            Some(Message::Req(subscription, filters)) => {
-                assert_eq!(subscription, &negotiation.subscription);
-                let ids = filters
-                    .first()
-                    .and_then(|filter| filter.ids.as_ref())
-                    .map(|ids| ids.iter().copied().collect::<Vec<_>>())
-                    .unwrap();
-                assert_eq!(ids, vec![bobs_note.id]);
+    #[test]
+    fn a_negotiation_spells_out_what_is_missing() {
+        // Bob has a note Alice does not; Alice has none herself.
+        let alice = Db::open_in_memory().unwrap();
+        let bobs_note = note_from(3, 200);
+
+        // Alice begins diffing against Bob over everything, and Bob's relay half answers with its own set.
+        let (mut negotiation, opening) = open(&alice, Filter::new()).unwrap();
+        let reply = answered(&opening, &[&bobs_note]);
+
+        assert_eq!(negotiation.step(&reply), None, "the diff took one round");
+        assert_eq!(negotiation.need, vec![bobs_note.id]);
+    }
+
+    #[test]
+    fn a_finished_negotiation_is_closed_before_what_it_found_is_requested() {
+        let db = Db::open_in_memory().unwrap();
+        let bobs_note = note_from(3, 200);
+        let (negotiation, opening) = open(&db, Filter::new()).unwrap();
+        let subscription = negotiation.subscription.clone();
+        let mut client = Client::default();
+        client.open_negotiation(negotiation);
+
+        let replies = client
+            .handle(
+                &db,
+                &peer([author(2)]),
+                &local(),
+                Message::NegMsg(subscription.clone(), answered(&opening, &[&bobs_note])),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
+
+        // NIP-77's NEG-CLOSE, then the REQ for what was missing on the same id, then the live subscription.
+        match replies.as_slice() {
+            [
+                Message::NegClose(closed),
+                Message::Req(fetching, filters),
+                Message::Req(live, _),
+            ] => {
+                assert_eq!(closed, &subscription);
+                assert_eq!(fetching, &subscription);
+                assert_ne!(live, &subscription);
+                assert_eq!(
+                    filters.first().and_then(|filter| filter.ids.as_ref()),
+                    Some(&fetched(&bobs_note))
+                );
             }
-            _ => panic!("expected the terminating REQ"),
+            other => panic!("expected NEG-CLOSE, then two REQs, got {other:?}"),
         }
+        assert!(client.negotiations.is_empty());
+        assert!(client.fetches.contains_key(&subscription));
+    }
+
+    #[test]
+    fn a_negotiation_that_found_nothing_missing_is_closed_and_requests_nothing() {
+        let db = Db::open_in_memory().unwrap();
+        let (negotiation, opening) = open(&db, Filter::new()).unwrap();
+        let subscription = negotiation.subscription.clone();
+        let mut client = Client::default();
+        client.open_negotiation(negotiation);
+
+        let replies = client
+            .handle(
+                &db,
+                &peer([author(2)]),
+                &local(),
+                Message::NegMsg(subscription.clone(), answered(&opening, &[])),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
+
+        assert!(matches!(&replies[0], Message::NegClose(closed) if *closed == subscription));
+        assert!(
+            !replies
+                .iter()
+                .any(|reply| matches!(reply, Message::Req(sub, _) if *sub == subscription))
+        );
+        assert!(client.fetches.is_empty());
     }
 
     #[test]

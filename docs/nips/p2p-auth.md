@@ -1,6 +1,6 @@
 # Peer authentication
 
-Sessions authenticate with [NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md), as [NIP-BE](https://github.com/coracle-social/nips/blob/nip-be-dipity/BE.md#authentication) extends it for a transport with no URL. The two things this app needs — naming a peer that has no URL, and running the exchange in both directions — are specified there rather than here. NIP-BE is the specification; where it and this document disagree, it wins. This document keeps the reasoning, and the rules this app holds itself to where NIP-BE leaves them to NIP-42 or says nothing: a byte-exact `relay` comparison, the signer's check, challenges that are random and accepted once, and no check on `created_at`.
+Sessions authenticate with [NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md), as [NIP-BE](https://github.com/coracle-social/nips/blob/nip-be-dipity/BE.md#authentication) extends it for a transport with no URL. The two things this app needs — naming a peer that has no URL, and running the exchange in both directions — are specified there rather than here. NIP-BE is the specification; where it and this document disagree, it wins. This document keeps the reasoning, and the rules this app holds itself to where NIP-BE leaves them to NIP-42 or says nothing: a byte-exact `relay` comparison, the signer's check, challenges that are random and scoped to one connection, and no check on `created_at`.
 
 ## The rules
 
@@ -28,7 +28,9 @@ Both are needed, and the second is the one that is easy to skip. An attacker pos
 
 ### Challenges
 
-A challenge carries at least 128 bits from a CSPRNG, is scoped to a single connection, and is accepted once. A predictable or reused challenge lets a captured auth event be replayed to the same relay on a later connection.
+A challenge carries at least 128 bits from a CSPRNG and is scoped to a single connection. A predictable or reused challenge lets a captured auth event be replayed to the same relay on a later connection.
+
+Each party sends one challenge per connection, and it stays valid until the connection closes. The challenge a party verifies against therefore never changes while an answer to it is in flight, and an event replayed inside the connection proves only a pubkey that it has already proved. A party that authenticates as several pubkeys answers the one challenge once for each. Every party ignores any later challenge from its peer, so all the events it sends answer the same challenge.
 
 ### Mutual authentication
 
@@ -38,7 +40,7 @@ Independence also means a party may **defer** its own exchange until the peer's 
 
 ### Verification
 
-Two of NIP-42's existing checks are extended, and a third is dropped: `created_at` is not checked, for the reason [below](#what-it-means-here). A challenge must also not have been consumed already, and the `relay` tag comparison splits by scheme: `ws` and `wss` keep the existing tolerance for URL normalization, while every other scheme compares byte-exactly with normalization forbidden, each scheme defining a single canonical encoding for its authority.
+One of NIP-42's existing checks is extended, and another is dropped: `created_at` is not checked, for the reason [below](#what-it-means-here). The `relay` tag comparison splits by scheme: `ws` and `wss` keep the existing tolerance for URL normalization, while every other scheme compares byte-exactly with normalization forbidden, each scheme defining a single canonical encoding for its authority.
 
 Transports should also provide confidentiality. Not against replay, which the rules above cover, but because authenticating discloses a long-term identity to anyone listening, and on a proximity transport it discloses physical presence at a time and place.
 
@@ -48,7 +50,7 @@ Transports should also provide confidentiality. Not against replay, which the ru
 - **The messages are NIP-42's, on the control channel.** `["AUTH", <challenge>]` and `["AUTH", <event>]` as written, carried on [channel 0](../transport.md#the-control-channels-header) behind their own byte rather than alongside `REQ` and `EVENT`, and after the recognition tags. An event that verifies is answered with NIP-42's `OK`; one that does not ends the link, as does an `OK` that refuses. Only the channel is ours; the messages are unmodified.
 - **The party that dialed authenticates first.** A local ordering rule, permitted by the independence of the two directions above. It lets the dialed side evaluate policy against a known pubkey before disclosing its own — see [`discovery.md`](../discovery.md#the-consent-gate).
 - **A captured auth event is useless against a relay.** No relay will ever match it, because on these transports the `relay` tag never holds a URL.
-- **A peer may authenticate as several pubkeys**, since NIP-42 allows a sequence of `AUTH` messages. Ingest therefore tests set membership rather than equality — see [`sync.md`](../sync.md#authorship).
+- **A peer may authenticate as several pubkeys**, answering the one challenge with an `AUTH` event for each, the lowest first, and getting an `OK` for each. Ingest therefore tests set membership rather than equality — see [`sync.md`](../sync.md#authorship). The lowest goes first because two devices that dialed each other compare by it to pick which link to keep, which they may do before the rest arrive — see [`discovery.md`](../discovery.md#connection-scheduling).
 - **Authentication sits behind the consent gate**, because it discloses presence. Sessions are never established automatically with unknown peers, and since the gate is usually evaluated with nobody looking at the screen, the decision comes from stored preferences rather than a prompt — see [`discovery.md`](../discovery.md#the-consent-gate).
 - **The signature is produced in the background, by us.** This exchange is the reason custody is limited to a key the device holds: it runs during a CoreBluetooth wake, with the view suspended and possibly with no network, and a peer that cannot complete it can neither send nor receive. It is also why the identity key must be readable while the device is locked — see [`keys.md`](../keys.md#key-custody).
 - **`created_at` is not checked.** NIP-42's ~10-minute window assumes a network time source, and devices that have been offline for days drift. Freshness comes from the challenge and the `noise://` tag instead, both unique to the session.

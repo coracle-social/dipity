@@ -180,11 +180,14 @@ pub enum Secrecy {
 
 /// Cuts frames into fragments, and reassembles the fragments that arrive.
 ///
-/// One per link, because reassembly is per channel and per connection.
+/// One per link. Reassembly is per pipe as well as per channel, because the two
+/// pipes deliver independently: the last fragment of a blob frame on GATT and
+/// the first of the next on L2CAP can arrive in either order. NIP-BE.
 #[derive(Debug, Default)]
 pub struct Codec {
-    /// Partial frames, one per channel, since channels interleave.
-    partial: BTreeMap<Channel, Vec<u8>>,
+    /// Partial frames, one per pipe and channel, since channels interleave and
+    /// pipes race.
+    partial: BTreeMap<(Pipe, Channel), Vec<u8>>,
 }
 
 impl Codec {
@@ -220,15 +223,17 @@ impl Codec {
         Ok(fragments)
     }
 
-    /// Take one opened fragment, returning a frame once its last one lands.
-    pub fn absorb(&mut self, fragment: Fragment) -> Result<Option<Frame>> {
-        let buffered = self.partial.entry(fragment.channel).or_default();
+    /// Take one opened fragment off `pipe`, returning a frame once its last
+    /// one lands there.
+    pub fn absorb(&mut self, pipe: Pipe, fragment: Fragment) -> Result<Option<Frame>> {
+        let key = (pipe, fragment.channel);
+        let buffered = self.partial.entry(key).or_default();
 
         // The link ends on fragments past the frame cap, which are an attack on memory.
         if buffered.len() + fragment.payload.len() > MAX_FRAME_BYTES {
-            self.partial.remove(&fragment.channel);
+            self.partial.remove(&key);
             bail!(
-                "a frame on {:?} exceeds the reassembly cap",
+                "a frame on {:?} over {pipe:?} exceeds the reassembly cap",
                 fragment.channel
             );
         }
@@ -241,13 +246,14 @@ impl Codec {
 
         Ok(Some(Frame {
             channel: fragment.channel,
-            payload: self.partial.remove(&fragment.channel).unwrap_or_default(),
+            payload: self.partial.remove(&key).unwrap_or_default(),
         }))
     }
 
-    /// Throw away whatever of a channel has arrived but not completed a frame.
-    pub fn forget(&mut self, channel: Channel) {
-        self.partial.remove(&channel);
+    /// Throw away whatever arrived on `pipe` without completing a frame, once
+    /// the pipe is gone and the rest of every such frame with it.
+    pub fn forget(&mut self, pipe: Pipe) {
+        self.partial.retain(|(from, _), _| *from != pipe);
     }
 }
 
@@ -285,22 +291,43 @@ impl Outbox {
         }
     }
 
-    /// Throw away everything queued on a channel.
-    pub fn discard(&mut self, channel: Channel) {
-        self.queues.remove(&channel);
-
-        if channel == Channel::Blob {
-            self.gatt_frame_open = false;
-        }
-    }
-
-    /// Move the blob channel onto its own pipe, or back onto GATT.
+    /// Move the blob channel onto the bulk pipe.
     ///
     /// Whatever is already queued goes with it, once the frame under way on
     /// GATT has finished there: the fragments are the same either way and only
     /// the pipe they leave on changes.
-    pub fn set_bulk(&mut self, open: bool) {
-        self.bulk = open;
+    pub fn open_bulk(&mut self) {
+        self.bulk = true;
+    }
+
+    /// Move the blob channel back onto GATT, because the bulk pipe is gone.
+    ///
+    /// The rest of a blob frame begun on GATT stays queued and finishes there,
+    /// because the peer is still reassembling it. Every other blob fragment
+    /// goes, and so does the write in flight on bulk, which nobody will
+    /// acknowledge: the rest of a frame begun on bulk went with the pipe, and a
+    /// frame not yet begun may be cut for the bulk MTU, which would overrun an
+    /// ATT write. The fetcher reissues whatever that cuts short. NIP-BE.
+    pub fn close_bulk(&mut self) {
+        self.bulk = false;
+        self.in_flight.insert(Pipe::Bulk, false);
+
+        let Some(queue) = self.queues.get_mut(&Channel::Blob) else {
+            return;
+        };
+
+        // Nothing goes to bulk while a frame is open on GATT, so the rest of that frame heads the queue.
+        let kept = if self.gatt_frame_open {
+            queue
+                .iter()
+                .take_while(|(fragment, _)| fragment.more)
+                .count()
+                + 1
+        } else {
+            0
+        };
+
+        queue.truncate(kept);
     }
 
     /// The next fragment to write on `pipe`, or `None` if a write is in flight
@@ -404,7 +431,7 @@ mod tests {
         let mut reassembled = None;
 
         for fragment in fragments {
-            reassembled = reassembling.absorb(fragment).unwrap();
+            reassembled = reassembling.absorb(Pipe::Gatt, fragment).unwrap();
         }
 
         assert_eq!(reassembled, Some(subject));
@@ -423,14 +450,57 @@ mod tests {
         let mut reassembling = Codec::default();
 
         // The heartbeat lands in the middle of the transfer.
-        assert!(reassembling.absorb(bulk[0].clone()).unwrap().is_none());
+        assert!(
+            reassembling
+                .absorb(Pipe::Gatt, bulk[0].clone())
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
-            reassembling.absorb(beat[0].clone()).unwrap(),
+            reassembling.absorb(Pipe::Gatt, beat[0].clone()).unwrap(),
             Some(frame(Channel::Control, b"ping"))
         );
         assert_eq!(
-            reassembling.absorb(bulk[1].clone()).unwrap(),
+            reassembling.absorb(Pipe::Gatt, bulk[1].clone()).unwrap(),
             Some(frame(Channel::Blob, b"aaaaaaaa"))
+        );
+    }
+
+    #[test]
+    fn losing_a_pipe_forgets_only_what_arrived_on_it() {
+        let codec = Codec::default();
+        let gatt = codec
+            .fragment(&frame(Channel::Blob, b"aaaabbbb"), 4)
+            .unwrap();
+        let bulk = codec
+            .fragment(&frame(Channel::Blob, b"ccccdddd"), 4)
+            .unwrap();
+
+        let mut reassembling = Codec::default();
+
+        assert!(
+            reassembling
+                .absorb(Pipe::Gatt, gatt[0].clone())
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            reassembling
+                .absorb(Pipe::Bulk, bulk[0].clone())
+                .unwrap()
+                .is_none()
+        );
+
+        reassembling.forget(Pipe::Bulk);
+
+        // The head that arrived on bulk is gone, and the frame half arrived on GATT is not.
+        assert_eq!(
+            reassembling.absorb(Pipe::Bulk, bulk[1].clone()).unwrap(),
+            Some(frame(Channel::Blob, b"dddd"))
+        );
+        assert_eq!(
+            reassembling.absorb(Pipe::Gatt, gatt[1].clone()).unwrap(),
+            Some(frame(Channel::Blob, b"aaaabbbb"))
         );
     }
 
@@ -454,7 +524,7 @@ mod tests {
         assert!(first.more);
         outbox.acknowledge(Pipe::Gatt);
 
-        outbox.set_bulk(true);
+        outbox.open_bulk();
 
         // The rest of the frame stays on GATT, and the frame after it moves.
         assert!(outbox.next_write(Pipe::Bulk).is_none());
@@ -534,10 +604,15 @@ mod tests {
         };
 
         for _ in 0..MAX_FRAME_BYTES / 512 {
-            assert!(codec.absorb(fragment.clone()).unwrap().is_none());
+            assert!(
+                codec
+                    .absorb(Pipe::Gatt, fragment.clone())
+                    .unwrap()
+                    .is_none()
+            );
         }
 
         // One more fragment crosses the cap.
-        assert!(codec.absorb(fragment).is_err());
+        assert!(codec.absorb(Pipe::Gatt, fragment).is_err());
     }
 }

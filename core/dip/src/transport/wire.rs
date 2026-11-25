@@ -76,28 +76,27 @@ impl Wire {
         }
 
         self.bulk_mtu = Some(mtu.min(MAX_BULK_MTU));
-        self.outbox.set_bulk(true);
+        self.outbox.open_bulk();
 
         Ok(())
     }
 
     /// The L2CAP channel went away, or never came, and bulk stays on GATT.
     ///
-    /// Whatever was queued for an open channel is dropped, and so is the write
-    /// in flight on it, which nobody will acknowledge: a fragment sized for the
-    /// bulk MTU would overrun an ATT write. A channel that never opened here
+    /// A channel that opened here hands the blob channel back to GATT as
+    /// [`Outbox::close_bulk`] says: a frame begun on GATT finishes there, and
+    /// the rest of the queue is dropped. A channel that never opened here
     /// leaves the queue alone, since everything in it is cut for GATT. Either
-    /// way a blob frame half arrived is forgotten, because the peer may have
-    /// moved its remainder onto a channel this end never read.
+    /// way whatever half arrived on the channel is forgotten, because the rest
+    /// of it went with the channel, while a blob frame half arrived on GATT is
+    /// kept, because the peer finishes it there. NIP-BE.
     pub fn close_bulk(&mut self) {
         if self.bulk_mtu.take().is_some() {
-            self.bulk_inbox.clear();
-            self.outbox.set_bulk(false);
-            self.outbox.discard(Channel::Blob);
-            self.outbox.acknowledge(Pipe::Bulk);
+            self.outbox.close_bulk();
         }
 
-        self.codec.forget(Channel::Blob);
+        self.bulk_inbox.clear();
+        self.codec.forget(Pipe::Bulk);
     }
 
     /// Whether bulk is riding an L2CAP channel.
@@ -157,11 +156,14 @@ impl Wire {
             return Ok(None);
         };
 
-        self.codec.absorb(Fragment {
-            channel,
-            more,
-            payload,
-        })
+        self.codec.absorb(
+            pipe,
+            Fragment {
+                channel,
+                more,
+                payload,
+            },
+        )
     }
 
     /// Open one write off `pipe` into its channel byte, whether more fragments
@@ -235,7 +237,7 @@ impl Wire {
                 payload,
             };
 
-            if let Some(frame) = self.codec.absorb(fragment)? {
+            if let Some(frame) = self.codec.absorb(Pipe::Bulk, fragment)? {
                 frames.push(frame);
             }
         }
@@ -583,6 +585,73 @@ mod tests {
         // The later seal can land first, because the two pipes deliver independently.
         assert_eq!(receiver.receive_bulk(&bulk).unwrap(), vec![bytes]);
         assert_eq!(receiver.receive(&gatt).unwrap(), Some(events));
+    }
+
+    #[test]
+    fn blob_frames_interleaved_across_the_two_pipes_reassemble_apart() {
+        let mtu = HEADER + Noise::TAG + 4;
+        let (mut dialer, mut receiver) = secured_pair(mtu);
+
+        let begun = Frame {
+            channel: Channel::Blob,
+            payload: b"aaaabbbb".to_vec(),
+        };
+        let next = Frame {
+            channel: Channel::Blob,
+            payload: b"ccccdddd".to_vec(),
+        };
+
+        dialer.send(&begun).unwrap();
+        let begun_head = dialer.next_write(Pipe::Gatt).unwrap().unwrap();
+        dialer.acknowledge_write(Pipe::Gatt);
+
+        dialer.open_bulk(BULK_PREFIX + mtu).unwrap();
+        receiver.open_bulk(BULK_PREFIX + mtu).unwrap();
+        dialer.send(&next).unwrap();
+
+        // The last of the frame on GATT and the first of the next on bulk leave together.
+        let begun_tail = dialer.next_write(Pipe::Gatt).unwrap().unwrap();
+        let next_head = dialer.next_write(Pipe::Bulk).unwrap().unwrap();
+        dialer.acknowledge_write(Pipe::Bulk);
+        let next_tail = dialer.next_write(Pipe::Bulk).unwrap().unwrap();
+
+        // The peer may take the bulk fragment first, and neither frame takes the other's bytes.
+        assert_eq!(receiver.receive(&begun_head).unwrap(), None);
+        assert!(receiver.receive_bulk(&next_head).unwrap().is_empty());
+        assert_eq!(receiver.receive(&begun_tail).unwrap(), Some(begun));
+        assert_eq!(receiver.receive_bulk(&next_tail).unwrap(), vec![next]);
+    }
+
+    #[test]
+    fn closing_the_channel_keeps_the_rest_of_a_blob_frame_begun_on_gatt() {
+        let mtu = HEADER + Noise::TAG + 4;
+        let (mut dialer, mut receiver) = secured_pair(mtu);
+
+        let begun = Frame {
+            channel: Channel::Blob,
+            payload: b"aaaabbbb".to_vec(),
+        };
+
+        dialer.send(&begun).unwrap();
+        let begun_head = dialer.next_write(Pipe::Gatt).unwrap().unwrap();
+        dialer.acknowledge_write(Pipe::Gatt);
+        assert_eq!(receiver.receive(&begun_head).unwrap(), None);
+
+        dialer.open_bulk(BULK_PREFIX + mtu).unwrap();
+        receiver.open_bulk(BULK_PREFIX + mtu).unwrap();
+        dialer
+            .send(&Frame {
+                channel: Channel::Blob,
+                payload: b"ccccdddd".to_vec(),
+            })
+            .unwrap();
+
+        dialer.close_bulk();
+        receiver.close_bulk();
+
+        // The frame begun on GATT finishes there, and the one cut for the channel goes with it.
+        assert_eq!(pump(&mut dialer, &mut receiver), vec![begun]);
+        assert!(dialer.outbox.is_idle());
     }
 
     #[test]

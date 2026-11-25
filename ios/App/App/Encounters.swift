@@ -192,6 +192,8 @@ final class Encounters {
                 radio.publishL2cap(link.value)
             case .openL2cap(let link, let psm):
                 radio.openL2cap(link.value, psm)
+            case .closeL2cap(let link):
+                radio.closeL2cap(link.value)
             }
         }
     }

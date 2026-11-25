@@ -8,9 +8,11 @@ What goes on the air is written up for other implementations as NIP-BE, a draft 
 
 ### Link layer
 
-Dual role: every device runs a GATT peripheral and a GATT central simultaneously. One primary service, one characteristic declaring `notify`, `write`, and `writeWithoutResponse`, of which only the first two are used. Discovery is `scanForPeripherals(withServices:)` against our service UUID — see [`discovery.md`](./discovery.md).
+Dual role: every device runs a GATT peripheral and a GATT central simultaneously. There is one primary service, with one characteristic declaring `write` and `notify`. Discovery is `scanForPeripherals(withServices:)` against our service UUID — see [`discovery.md`](./discovery.md).
 
 Both UUIDs are random, chosen once, and live in `core/dip/src/transport/gatt.rs` rather than in Swift and Kotlin: an iPhone and an Android phone have to name the same service, and two hard-coded copies is one place to disagree. Changing either is a protocol break — a device on the old one is invisible to a device on the new.
+
+A link begins when the dialer subscribes to notifications, which it does before its first write. CoreBluetooth has no call that disconnects a central, so a receiver closes a link by refusing every later write on it with an ATT error, and the dialer closes the link when a write is refused. The receiver refuses a write from any central it has no link with in the same way, which includes a central that subscribed before a Bluetooth relaunch and whose link did not survive it. The characteristic declares only `write` and `notify`, because the dialer sends nothing else. The Android shell drops a write without response, which has no response to carry a refusal, and CoreBluetooth cannot tell one from a write request.
 
 iOS requires both `bluetooth-central` and `bluetooth-peripheral` background modes, plus CoreBluetooth **state restoration** in both roles. Restoration is not optional for an app the system will kill and relaunch; `willRestoreState` is implemented on both managers, following bitchat.
 
@@ -30,8 +32,8 @@ Our own, directly over GATT. The codec is core-side — pure byte manipulation t
 
 - **Multiplexed.** A channel id in the frame header lets control traffic, event sync, and blob transfer share the one link.
 - **Priority-scheduled.** Separate characteristics would not give QoS isolation, because the ATT queue is per-connection. The sender interleaves instead: control frames pre-empt bulk fragments, which keeps the heartbeat alive during a media transfer.
-- **Fragmented.** Chunked to `maximumWriteValueLength(for:)` minus the header, and minus the AEAD tag once the channel is encrypted — roughly 480 bytes usable at a 512-byte MTU, often less.
-- **Reliable.** Ordered, reliable delivery on every channel, with one write in flight per pipe. The dialer writes with response, and the receiver notifies and releases the next fragment when the platform reports the last one sent: `peripheralManagerIsReady` on iOS, `onNotificationSent` on Android. Blob fragments travel the same way and differ only in yielding to the other channels, and in moving to L2CAP where a channel opens.
+- **Fragmented.** A fragment is at most the ATT MTU minus 3 bytes, which is what one ATT request carries, and never more than 512 bytes, the longest value an attribute may hold. A longer write goes out as a long write, which splits one fragment across several requests, and the receiver refuses it. On iOS the dialer takes its size from `maximumWriteValueLength(for: .withoutResponse)` although it writes with response, because `.withResponse` answers 512 whatever the MTU. The header comes out of each fragment, and so does the AEAD tag once the channel is encrypted, which leaves at most 494 bytes of payload.
+- **Reliable.** Ordered, reliable delivery on every channel, with one fragment in flight per pipe. The dialer writes with response, and a write is in flight until the receiver acknowledges it. The receiver notifies, and a notification is in flight until the platform accepts it for sending: until `updateValue` returns true on iOS, and until `onNotificationSent` on Android. CoreBluetooth reports nothing after it accepts a notification, so an iOS receiver releases the next fragment as soon as the queue takes the last one. A notification the full queue refuses is retried from `peripheralManagerIsReady`. Blob fragments travel the same way and differ only in yielding to the other channels, and in moving to L2CAP where a channel opens.
 - **Resumable.** Blob transfers survive disconnection and resume by group, each of which is verified as it arrives. See [`sync.md`](./sync.md#blob-sync).
 
 #### The wire format
@@ -44,7 +46,7 @@ Every write is one fragment: a two-byte header, then the payload. Once the hands
 | 1 | Flags. Bit 0 set means more fragments follow for this frame; the rest are reserved, must be zero, and a fragment that sets one is refused |
 | 2.. | Payload |
 
-A frame is the concatenation of its fragments' payloads. Reassembly is per channel so that an interleaved control frame does not disturb a blob transfer mid-frame. A frame whose fragments exceed 1 MiB is refused rather than buffered, and the link is dropped. A fragment on a channel this build does not know is opened and discarded, because it spent a nonce, so that a later version can add a channel without cutting off this one. A reserved flag still ends the link, because it may change how the fragment reassembles; a later version sets one only once a control frame has shown the peer understands it.
+A frame is the concatenation of its fragments' payloads. Reassembly is per channel, so that an interleaved control frame does not disturb a blob transfer mid-frame. It is also per pipe, because GATT and an [L2CAP channel](#the-l2cap-bandwidth-upgrade) deliver independently. A frame whose fragments exceed 1 MiB is refused rather than buffered, and the link is dropped. A fragment on a channel this build does not know is opened and discarded, because it spent a nonce, so that a later version can add a channel without cutting off this one. A reserved flag still ends the link, because it may change how the fragment reassembles; a later version sets one only once a control frame has shown the peer understands it.
 
 No frame is empty. The heartbeat is a control frame carrying only [its discriminant](#the-control-channels-header).
 
@@ -99,10 +101,22 @@ The platform decides, not whoever wants the bandwidth: the GATT peripheral publi
 | --- | --- | --- |
 | `0x01` request | The dialer | It wants bulk and cannot publish |
 | `0x02` published | The receiver | A channel is open at this PSM |
-| `0x03` unavailable | Either | This end cannot. The link stays on GATT |
+| `0x03` unavailable | Either | This end cannot publish or open a channel, or has lost one. Bulk stays on GATT for the rest of the session |
 
-A `published` may arrive with no request behind it, because a receiver that wants bulk publishes without being asked. Every failure path is `unavailable` rather than a teardown: the upgrade is bandwidth, and a link that never gets one still syncs. If an open channel goes away, bulk returns to GATT and whatever had been cut to the larger MTU is dropped — the fragments would overrun an ATT write. The end that loses it sends `unavailable` even then, and the other end leaves the channel too, because a channel can die at one end while the other's streams never report it.
+A `published` may arrive with no request behind it, because a receiver that wants bulk publishes without being asked. Every failure path is `unavailable` rather than closing the link: the upgrade is bandwidth, and a link that never gets one still syncs. A `published` too short to hold a PSM is one more failure path, and is answered with `unavailable`. A step this build does not know is skipped, so that a later version can add one without cutting off this one.
 
-**An upgrade that fails after it was asked for starts the fetch in flight over at both ends**, from what the store already holds, whether or not a channel opened at this end. The upgrade is asked for while the first group is still streaming over GATT, and the peer may have opened a channel this end never read and moved the rest of its answer onto it. Nothing would ever complete that answer, and a fetch left waiting on it stalls for the session. A second `unavailable` on a link already back on GATT changes nothing.
+**A channel serves only the link it was published for.** Neither platform publishes a channel for one central, so any device connected to this one can open a channel at the PSM. The shell uses a channel only if the central of the link it was published for opened it, and closes any other. A channel from anybody else would be read as the peer's bulk pipe, and its first fragment would fail to open under the session's keys and close the link.
 
-**A frame finishes on the pipe it began on.** The blob channel moves to the bulk pipe once the frame under way on GATT has gone out, because nothing orders an ATT write against a stream read at the peer, and a frame split across the two could reassemble out of order.
+**A frame finishes on the pipe it began on.** The blob channel moves to the bulk pipe once the frame under way on GATT has gone out, because the peer reassembles each pipe on its own. Nothing orders an ATT write against a stream read at the peer, so the first fragments of the next frame can arrive over L2CAP before the last of this one arrives over GATT.
+
+#### Giving up the upgrade
+
+A device gives up the upgrade when it cannot publish or open a channel, when an open channel goes away, or when the peer sends `unavailable`. A device that gives up sends `unavailable` itself whenever the peer may be counting on the channel, because a channel can die at one end while the other's streams never report it.
+
+Giving up moves bulk back to GATT. Whatever had been cut to the larger MTU is dropped, because the fragments would overrun an ATT write, and a frame half received over the channel is discarded, because the rest of it went with the channel. A blob frame under way on GATT finishes there, because the peer is still reassembling it.
+
+**Giving up takes the channel down at this end.** The device closes any channel it has open and withdraws any it published, and a channel the shell reports open after the device gave up is closed rather than used. Otherwise a channel would sit idle for the rest of the session, and a published one would stay open to every device connected to this one. Closing or withdrawing a channel leaves the link up.
+
+**An upgrade that fails after it was asked for starts the fetch in flight over at both ends**, from what the store already holds, whether or not a channel opened at this end. The request in flight, or the answer to it, may have gone over a channel one end opened and the other never read. Nothing would ever answer that request, and a fetch left waiting on it stalls for the session. A second `unavailable` on a link already back on GATT changes nothing.
+
+**A session opens one channel at most.** A second channel could not restart the odd nonces, which would reuse a nonce under the session's key. It could not carry them on either, because fragments sealed for the lost channel may never have reached the peer, whose sequence opens strictly in order. Once the upgrade has failed or the channel has gone, bulk stays on GATT until the session ends, and a later `request` or `published` is answered with `unavailable`.

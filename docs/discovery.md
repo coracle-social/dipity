@@ -28,7 +28,7 @@ Attempts are rate-limited, candidates are ordered by RSSI so the nearest strange
 - Distinct backoff for "never answered a connect" versus "was connected and walked away." The second recovers fast, because those peers usually come back.
 - A dial that fails before a link comes up is retried within a few seconds, jittered, because the usual cause is two phones dialing each other at the same moment.
 - A dropped link is redialed when its backoff lapses, without waiting for the radio to report the peer again, because a peer stays queued after it is dialed.
-- Two phones that dial each other end up with two links to one person. Both keep the one the lower pubkey dialed and close the other as soon as both have named the peer, which needs no message between them. Each link has its own transcript and so its own six digits, and a pairing request that arrives over both before the duplicate closes is shown once, under the kept link's digits.
+- Two phones that dial each other end up with two links to one person. Both keep the one the lower pubkey dialed and close the other as soon as both have named the peer, which needs no message between them. A peer that proves several pubkeys is compared by its lowest, which it proves first, so the comparison does not change as the rest arrive. Each link has its own transcript and so its own six digits, and a pairing request that arrives over both before the duplicate closes is shown once, under the kept link's digits.
 - A peripheral that took a disclosure and left before syncing is not redialed until its address rotates, so that a harvester cannot drain the [disclosure bucket](./policy.md#discoverability) by being dialed again.
 - A peer that synced and then walked away is waited for: a standing connect that does not time out and survives the app being suspended, `connect` on iOS and an auto-connect on Android, given up once the peer's address has rotated. A suspended iPhone runs no timer. Without the standing connect, a peer coming back is reached only if somebody happens to scan. A link that never synced gets no wait, since a peer that refused us would be reconnected the moment it was back.
 - A walk-away in the background restarts the scan, because iOS reports each peripheral once per scan there and a peer it already reported would otherwise never be seen again.
@@ -81,11 +81,11 @@ Every state above IDENTIFIED has a deadline of its own as well, independent of t
 
 ### Recognition
 
-The first frames on the secured channel are a recognition exchange, and the consent gate reads its result. At pairing, both sides derive a **pair secret** from the authenticated session and store it against the peer. On a later encounter, each proves it holds one without naming it, by sending a tag that is an HMAC over the session's handshake hash, keyed on the pair secret. The sender emits one tag per pair secret it holds; the receiver trial-MACs its own secrets against the list. A match identifies the relationship.
+The first frames on the secured channel are a recognition exchange, and the consent gate reads its result. Once a session syncs, both devices derive a **pair secret** from its handshake hash and store it against each pubkey the other proved, whether or not the two users ever compare digits. On a later encounter, each device proves it holds a secret without naming it, by sending a tag that is an HMAC over the new session's handshake hash, keyed on the pair secret. The sender emits one tag per pair secret it holds, and the receiver trial-MACs its own secrets against the list. A match identifies the peer.
 
-The dialer sends first, and the peer answers only if a tag resolves or its disclosure bucket admits a stranger. A harvester that dials gets a list of random-looking bytes. A peer who would rather not be recognized omits their tag and arrives as a stranger. Removing somebody from contacts drops the pair secret held for them. The two then meet as strangers until a session completes and pairs them again.
+Each device sends one list per session, the dialer first, and follows it with its one [challenge](./nips/p2p-auth.md#challenges). The receiver answers with its own list unless the dialer's resolves to somebody refused. A harvester that dials gets a list of random-looking bytes. A peer who would rather not be recognized omits their tag and arrives as a stranger. Removing somebody from contacts drops the pair secret held for them, and the two meet as strangers until a session between them syncs again.
 
-The list is padded to a fixed count so that its length does not disclose how many peers the device has paired with, and a long history does not put more on the wire. Resolution stays cheap against the full set.
+The list is padded to a fixed count so that its length does not disclose how many pair secrets the device holds, and a long history does not put more on the wire. Resolution stays cheap against the full set. A secret stored against several pubkeys, for a peer that proved more than one, goes on the list once, because two equal tags among random bytes would mark the device in every session.
 
 #### On the wire
 
@@ -93,16 +93,18 @@ The list is 32 tags of 32 bytes concatenated, which is 1024 bytes from every dev
 
 A device holding fewer than 32 pair secrets fills the rest with bytes from the CSPRNG. One holding more sends a random sample, redrawn each session, so that a peer left out of one list is in the running for the next rather than permanently invisible. The list is shuffled either way, so that a peer that finds its own tag learns nothing from where it sat.
 
+The padding and the sample are drawn afresh for every list, but the tags are fixed by the session's handshake hash. A second list in the same session would therefore show which entries are tags, and so how many secrets the device holds.
+
 A list of any other length is refused and the link dropped: a short one is malformed, and a long one is an invitation to trial-MAC against an unbounded set.
 
 The secret each tag is keyed on comes from the session that established it:
 
 ```
-pair_secret = SHA256("nip-be/pair-secret" ‖ h)   # h at pairing time
-tag         = HMAC-SHA256(pair_secret, h)        # h at this encounter
+pair_secret = SHA256("nip-be/pair-secret" ‖ h)   # h of the session that stored it
+tag         = HMAC-SHA256(pair_secret, h)        # h of this session
 ```
 
-Domain-separated so that the secret cannot collide with any other use of the handshake hash, under NIP-BE's label so that another implementation derives the same one. A session that recognized the peer leaves the secret alone. One that authenticated the peer without recognizing it replaces the secret on both sides, so that a pairing that one device did not finish is repaired the next time the two meet.
+Domain-separated so that the secret cannot collide with any other use of the handshake hash, under NIP-BE's label so that another implementation derives the same one. A session that recognized the peer keeps the secret its tags matched, and stores that secret against any pubkey the peer proves that recognition did not name, because the peer already holds it. One that authenticated the peer without recognizing it replaces the secret on both sides, so that a secret only one device stored is repaired the next time the two meet.
 
 ### The consent gate
 
@@ -126,7 +128,7 @@ If the receiver wishes to continue, it then identifies itself to the dialer, whi
 
 The gate decides whether a link proceeds, and naming decides whether the person on it becomes a contact. A stranger the gate admits syncs without anybody being asked, and has no name on this device. Every [policy](./policy.md) the user can set about a person starts from naming them.
 
-**A pairing request is made by a person, not noticed by a phone.** Pressing add contact sends a request over every link to somebody the user has not named, as a control frame carrying nothing, because the link already says who is asking. The other phone puts the request in front of its user with the link's six digits and a name field, and the first phone waits. The request stands while the first user waits on the pairing screen: a phone still shaking hands at the press, or one that walks up afterwards, is asked as soon as it syncs, and leaving the screen withdraws it. Opening the request sends one back over that link, so that the first phone shows the same digits while the second user compares them. Either user names the other once the digits match, which writes their [contact card](./policy.md#social-graph) for the pubkey the session proved. Declining leaves the person unnamed and not asked about again until they have left and come back.
+**A pairing request is made by a person, not noticed by a phone.** Pressing add contact sends a request over every link to somebody the user has not named, as a control frame carrying nothing, because the link already says who is asking. The other phone puts the request in front of its user with the link's six digits and a name field, and the first phone waits. The request stands while the first user waits on the pairing screen: a phone still shaking hands at the press, or one that walks up afterwards, is asked as soon as it syncs, and leaving the screen withdraws it. Opening the request sends one back over that link, so that the first phone shows the same digits while the second user compares them. Each user names the other once the digits match, which writes their [contact card](./policy.md#social-graph) for the pubkey the session proved. Neither phone waits for the other user's answer, because no frame carries it. Declining leaves the person unnamed and not asked about again until they have left and come back.
 
 A request from a contact the phone recognized is nothing new and is not shown. One from a contact the phone did not recognize is somebody whose phone has forgotten the user, and is shown under the name the user already gave them. Somebody who has not been asked cannot be named: there is no screen for a stranger in range, only a count of phones in range, because being in the room is not an introduction.
 
@@ -135,6 +137,8 @@ A request from a contact the phone recognized is nothing new and is not shown. O
 The heartbeat is **liveness, not authorization**. The heartbeat's only job is cleanup, because proximity is already guaranteed by transport configuration (see [`transport.md`](./transport.md)), and it can afford to be lenient.
 
 Interval: 15–30 s when connected, jittered. A 60 s timeout is 2–4 missed beacons, matching bitchat's reachability window.
+
+A suspended iPhone runs no timer, so it cannot beat on a schedule of its own, but it wakes for every frame it receives. A device that has sent nothing for 15 s therefore answers a heartbeat with one of its own, and a backgrounded iPhone beats as often as its peer does.
 
 | Condition | Action |
 | --- | --- |

@@ -15,9 +15,23 @@
 //!
 //! Everything here is best-effort. Every failure path lands in [`State::Off`]
 //! rather than closing anything, because a link whose upgrade fails keeps
-//! working at GATT speed.
-
-use anyhow::{Result, bail};
+//! working at GATT speed. That includes a step this end cannot read: an empty
+//! one or an unknown step byte is ignored, bytes after the fields a step
+//! carries are ignored, and a PSM too short to read ends the upgrade the way
+//! `unavailable` does. NIP-BE.
+//!
+//! A session opens one channel at most, because the odd nonce sequence runs
+//! across channels and fragments lost with one would put it out of step. Once
+//! the upgrade is [`State::Off`] it stays there, a later request or PSM is
+//! answered with `unavailable`, and a channel the shell reports afterwards
+//! carries nothing and is closed.
+//!
+//! Giving up is also when the shell lets go. An upgrade that goes off while
+//! the shell holds a channel, or is publishing or opening one, answers
+//! [`Step::Close`] once, and so does a channel the shell reports after it went
+//! off. A publication left standing takes whatever connects to it, and a
+//! channel left open carries nothing for the rest of the session. Closing the
+//! channel never closes the link.
 
 use crate::link::Role;
 
@@ -26,7 +40,8 @@ use crate::link::Role;
 pub mod message {
     /// The dialer wants bulk and cannot publish. Carries nothing.
     pub const REQUEST: u8 = 0x01;
-    /// The receiver published a channel at this PSM, big-endian, two bytes.
+    /// The receiver published a channel at this PSM, big-endian, two bytes,
+    /// and anything a later version adds after them.
     pub const PUBLISHED: u8 = 0x02;
     /// This end cannot publish or could not open. Carries nothing.
     pub const UNAVAILABLE: u8 = 0x03;
@@ -56,7 +71,11 @@ enum State {
     /// The channel is up and bulk rides it.
     Open,
     /// Tried, and this link stays on GATT.
-    Off,
+    Off {
+        /// Whether the shell holds a channel for this link, or is making one,
+        /// that it has not been told to close.
+        unclosed: bool,
+    },
 }
 
 /// What the shell has to do next to move the upgrade along.
@@ -66,6 +85,9 @@ pub enum Step {
     Publish,
     /// Open the channel the peer published, at this PSM.
     Open(u16),
+    /// Close the channel, or withdraw it if it is only published, because
+    /// the upgrade went off. The link stays up.
+    Close,
 }
 
 /// The upgrade exchange on one link, from this end's side of it.
@@ -121,20 +143,43 @@ impl Upgrade {
 
                 Some(Step::Open(*psm))
             }
+            State::Off { unclosed } if *unclosed => {
+                *unclosed = false;
+
+                Some(Step::Close)
+            }
             _ => None,
         }
     }
 
-    /// The shell published a channel, whose PSM goes to the peer.
-    pub fn published(&mut self, psm: u16) -> Vec<u8> {
+    /// The shell published a channel, whose PSM goes to the peer, unless the
+    /// upgrade went off while the shell was publishing it, in which case the
+    /// shell is told to withdraw it.
+    pub fn published(&mut self, psm: u16) -> Option<Vec<u8>> {
+        if self.is_off() {
+            self.state = State::Off { unclosed: true };
+
+            return None;
+        }
+
         self.state = State::Published(psm);
 
-        [&[message::PUBLISHED], &psm.to_be_bytes()[..]].concat()
+        Some([&[message::PUBLISHED], &psm.to_be_bytes()[..]].concat())
     }
 
-    /// The channel is up and bulk rides it from here.
-    pub fn opened(&mut self) {
+    /// The channel is up, and bulk rides it from here unless the upgrade went
+    /// off while the shell was opening it, in which case the shell is told to
+    /// close it. Answers whether bulk rides it.
+    pub fn opened(&mut self) -> bool {
+        if self.is_off() {
+            self.state = State::Off { unclosed: true };
+
+            return false;
+        }
+
         self.state = State::Open;
+
+        true
     }
 
     /// Whether bulk rides an open channel on this link.
@@ -148,7 +193,34 @@ impl Upgrade {
     /// blob traffic off GATT.
     #[must_use]
     pub fn is_live(&self) -> bool {
-        !matches!(self.state, State::Idle | State::Off)
+        !matches!(self.state, State::Idle | State::Off { .. })
+    }
+
+    /// Whether the upgrade has been given up for the rest of the session.
+    fn is_off(&self) -> bool {
+        matches!(self.state, State::Off { .. })
+    }
+
+    /// Whether the shell holds a channel for this link, or is making one: it
+    /// was asked to publish or open one, or reported one, and has not been
+    /// told to close it.
+    fn shell_holds_channel(&self) -> bool {
+        matches!(
+            self.state,
+            State::Publishing { asked: true }
+                | State::Published(_)
+                | State::Opening { asked: true, .. }
+                | State::Open
+                | State::Off { unclosed: true }
+        )
+    }
+
+    /// Give the upgrade up for the rest of the session, owing the shell a
+    /// [`Step::Close`] if it holds a channel or is making one.
+    fn go_off(&mut self) {
+        self.state = State::Off {
+            unclosed: self.shell_holds_channel(),
+        };
     }
 
     /// The upgrade will not happen, or the channel that had it went away.
@@ -162,34 +234,42 @@ impl Upgrade {
             State::Publishing { .. } | State::Published(_) | State::Opening { .. } | State::Open
         );
 
-        self.state = State::Off;
+        self.go_off();
 
         owed.then(|| vec![message::UNAVAILABLE])
     }
 
     /// One step of the exchange, off the control channel. Answers what goes
     /// back, if anything.
-    pub fn receive(&mut self, payload: &[u8]) -> Result<Option<Vec<u8>>> {
-        let Some((&discriminant, body)) = payload.split_first() else {
-            bail!("an empty L2CAP frame arrived");
-        };
+    ///
+    /// Nothing here is an error, because nothing about the upgrade closes the
+    /// link: a step this end cannot read is ignored or ends the upgrade.
+    pub fn receive(&mut self, payload: &[u8]) -> Option<Vec<u8>> {
+        let (&step, body) = payload.split_first()?;
 
-        match discriminant {
-            message::REQUEST => Ok(self.on_request()),
-            message::PUBLISHED => self.on_published(body).map(|()| None),
+        match step {
+            message::REQUEST => self.on_request(),
+            message::PUBLISHED => self.on_published(body),
             message::UNAVAILABLE => {
-                self.state = State::Off;
+                self.go_off();
 
-                Ok(None)
+                None
             }
-            other => bail!("an unknown L2CAP frame {other} arrived"),
+            other => {
+                log::debug!("ignoring L2CAP step {other:#04x}");
+
+                None
+            }
         }
     }
 
     /// The peer wants bulk and cannot publish it itself.
     ///
     /// A dialer cannot publish either. It says as much and stays on GATT,
-    /// because neither end gives up a link over an optimization.
+    /// because neither end gives up a link over an optimization. A receiver
+    /// whose upgrade went off says the same, since it will not open another
+    /// channel this session, and one whose upgrade is under way has nothing to
+    /// add.
     fn on_request(&mut self) -> Option<Vec<u8>> {
         match (self.role, self.state) {
             (Role::Receiver, State::Idle) => {
@@ -197,9 +277,10 @@ impl Upgrade {
 
                 None
             }
+            (Role::Receiver, State::Off { .. }) => Some(vec![message::UNAVAILABLE]),
             (Role::Receiver, _) => None,
             (Role::Dialer, _) => {
-                self.state = State::Off;
+                self.go_off();
 
                 Some(vec![message::UNAVAILABLE])
             }
@@ -209,24 +290,33 @@ impl Upgrade {
     /// The peer published a PSM, and the channel behind it is wanted here.
     ///
     /// This arrives with no request behind it as often as not, because a
-    /// receiver that wants bulk publishes unprompted.
-    fn on_published(&mut self, body: &[u8]) -> Result<()> {
+    /// receiver that wants bulk publishes unprompted. One too short to carry a
+    /// PSM ends the upgrade as `unavailable` would, and an end whose upgrade
+    /// went off says it will not open another channel.
+    fn on_published(&mut self, body: &[u8]) -> Option<Vec<u8>> {
         let Some(psm) = psm(body) else {
-            bail!("an L2CAP PSM arrived as {} bytes, not 2", body.len());
+            self.go_off();
+
+            return Some(vec![message::UNAVAILABLE]);
         };
 
-        if self.role == Role::Dialer && matches!(self.state, State::Idle | State::Requested) {
-            self.state = State::Opening { psm, asked: false };
-        }
+        match (self.role, self.state) {
+            (_, State::Off { .. }) => Some(vec![message::UNAVAILABLE]),
+            (Role::Dialer, State::Idle | State::Requested) => {
+                self.state = State::Opening { psm, asked: false };
 
-        Ok(())
+                None
+            }
+            _ => None,
+        }
     }
 }
 
-/// Read the PSM off a `PUBLISHED` payload.
+/// Read the PSM off a `PUBLISHED` payload: its first two bytes, ignoring
+/// whatever a later version adds after them.
 fn psm(payload: &[u8]) -> Option<u16> {
     match payload {
-        &[high, low] => Some(u16::from_be_bytes([high, low])),
+        &[high, low, ..] => Some(u16::from_be_bytes([high, low])),
         _ => None,
     }
 }
@@ -236,14 +326,15 @@ mod tests {
     use super::*;
 
     fn published(psm: u16) -> Vec<u8> {
-        Upgrade::new(Role::Receiver).published(psm)
+        Upgrade::new(Role::Receiver).published(psm).unwrap()
     }
 
     #[test]
-    fn a_psm_is_exactly_two_bytes() {
+    fn a_psm_is_the_first_two_bytes_and_whatever_follows_is_ignored() {
         assert_eq!(psm(&0x1234u16.to_be_bytes()), Some(0x1234));
+        assert_eq!(psm(&[0x12, 0x34, 0x56]), Some(0x1234));
         assert_eq!(psm(&[0x12]), None);
-        assert_eq!(psm(&[0x12, 0x34, 0x56]), None);
+        assert_eq!(psm(&[]), None);
     }
 
     #[test]
@@ -253,10 +344,10 @@ mod tests {
         assert_eq!(dialer.poll(), None);
 
         let mut receiver = Upgrade::new(Role::Receiver);
-        assert_eq!(receiver.receive(&[message::REQUEST]).unwrap(), None);
+        assert_eq!(receiver.receive(&[message::REQUEST]), None);
         assert_eq!(receiver.poll(), Some(Step::Publish));
 
-        dialer.receive(&receiver.published(0x0080)).unwrap();
+        dialer.receive(&receiver.published(0x0080).unwrap());
         assert_eq!(dialer.poll(), Some(Step::Open(0x0080)));
     }
 
@@ -267,7 +358,7 @@ mod tests {
         assert_eq!(receiver.poll(), Some(Step::Publish));
 
         let mut dialer = Upgrade::new(Role::Dialer);
-        dialer.receive(&published(0x0081)).unwrap();
+        dialer.receive(&published(0x0081));
 
         assert_eq!(dialer.poll(), Some(Step::Open(0x0081)));
     }
@@ -280,7 +371,7 @@ mod tests {
         assert_eq!(receiver.poll(), None);
 
         let mut dialer = Upgrade::new(Role::Dialer);
-        dialer.receive(&published(0x0082)).unwrap();
+        dialer.receive(&published(0x0082));
         assert_eq!(dialer.poll(), Some(Step::Open(0x0082)));
         assert_eq!(dialer.poll(), None);
     }
@@ -290,17 +381,17 @@ mod tests {
         let mut dialer = Upgrade::new(Role::Dialer);
 
         assert_eq!(
-            dialer.receive(&[message::REQUEST]).unwrap(),
+            dialer.receive(&[message::REQUEST]),
             Some(vec![message::UNAVAILABLE])
         );
-        assert_eq!(dialer.state, State::Off);
+        assert_eq!(dialer.state, State::Off { unclosed: false });
         assert_eq!(dialer.poll(), None);
     }
 
     #[test]
     fn an_upgrade_that_went_off_never_starts_again() {
         let mut dialer = Upgrade::new(Role::Dialer);
-        dialer.receive(&[message::UNAVAILABLE]).unwrap();
+        dialer.receive(&[message::UNAVAILABLE]);
 
         assert_eq!(dialer.wanted(), None);
         assert_eq!(dialer.poll(), None);
@@ -330,24 +421,191 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_psm_is_an_error_rather_than_a_guess() {
+    fn a_psm_too_short_to_read_ends_the_upgrade_and_is_answered_unavailable() {
         let mut dialer = Upgrade::new(Role::Dialer);
         dialer.wanted();
 
-        assert!(dialer.receive(&[message::PUBLISHED, 0x80]).is_err());
-        assert!(dialer.receive(&[]).is_err());
-        assert!(dialer.receive(&[0xff]).is_err());
+        assert_eq!(
+            dialer.receive(&[message::PUBLISHED, 0x80]),
+            Some(vec![message::UNAVAILABLE])
+        );
+        assert_eq!(dialer.state, State::Off { unclosed: false });
+        assert_eq!(dialer.poll(), None);
+    }
+
+    #[test]
+    fn a_psm_carrying_more_than_two_bytes_is_opened_at_the_first_two() {
+        let mut dialer = Upgrade::new(Role::Dialer);
+
+        assert_eq!(
+            dialer.receive(&[message::PUBLISHED, 0x00, 0x86, 0xff]),
+            None
+        );
+        assert_eq!(dialer.poll(), Some(Step::Open(0x0086)));
+    }
+
+    #[test]
+    fn an_empty_or_unknown_step_is_ignored() {
+        let mut dialer = Upgrade::new(Role::Dialer);
+        dialer.wanted();
+
+        assert_eq!(dialer.receive(&[]), None);
+        assert_eq!(dialer.receive(&[0xff, 1, 2, 3]), None);
+        assert_eq!(dialer.state, State::Requested);
+    }
+
+    #[test]
+    fn a_receiver_whose_upgrade_went_off_answers_a_request_with_unavailable() {
+        let mut receiver = Upgrade::new(Role::Receiver);
+        receiver.receive(&[message::UNAVAILABLE]);
+
+        assert_eq!(
+            receiver.receive(&[message::REQUEST]),
+            Some(vec![message::UNAVAILABLE])
+        );
+        assert_eq!(receiver.state, State::Off { unclosed: false });
+        assert_eq!(receiver.poll(), None);
+    }
+
+    #[test]
+    fn a_dialer_whose_upgrade_went_off_answers_a_psm_with_unavailable() {
+        let mut dialer = Upgrade::new(Role::Dialer);
+        dialer.receive(&[message::UNAVAILABLE]);
+
+        assert_eq!(
+            dialer.receive(&published(0x0087)),
+            Some(vec![message::UNAVAILABLE])
+        );
+        assert_eq!(dialer.state, State::Off { unclosed: false });
+        assert_eq!(dialer.poll(), None);
+    }
+
+    #[test]
+    fn a_request_while_the_upgrade_is_under_way_is_ignored() {
+        let mut receiver = Upgrade::new(Role::Receiver);
+        receiver.wanted();
+        receiver.poll();
+
+        assert_eq!(receiver.receive(&[message::REQUEST]), None);
+        assert_eq!(receiver.poll(), None);
+
+        receiver.published(0x0088);
+        assert_eq!(receiver.receive(&[message::REQUEST]), None);
+        assert_eq!(receiver.state, State::Published(0x0088));
+    }
+
+    #[test]
+    fn a_channel_the_shell_reports_after_the_upgrade_went_off_is_not_used() {
+        let mut dialer = Upgrade::new(Role::Dialer);
+        dialer.receive(&published(0x0089));
+        dialer.poll();
+        dialer.receive(&[message::UNAVAILABLE]);
+        assert!(!dialer.opened());
+
+        let mut receiver = Upgrade::new(Role::Receiver);
+        receiver.wanted();
+        receiver.poll();
+        receiver.receive(&[message::UNAVAILABLE]);
+        assert_eq!(receiver.published(0x0089), None);
+        assert!(!receiver.opened());
+
+        assert!(dialer.is_off());
+        assert!(receiver.is_off());
+    }
+
+    #[test]
+    fn giving_up_a_channel_the_shell_was_asked_for_tells_it_to_close_once() {
+        let mut receiver = Upgrade::new(Role::Receiver);
+        receiver.wanted();
+        receiver.poll();
+        receiver.receive(&[message::UNAVAILABLE]);
+
+        assert_eq!(receiver.poll(), Some(Step::Close));
+        assert_eq!(receiver.poll(), None);
+
+        let mut dialer = Upgrade::new(Role::Dialer);
+        dialer.receive(&published(0x008a));
+        dialer.poll();
+        dialer.opened();
+        dialer.unavailable();
+
+        assert_eq!(dialer.poll(), Some(Step::Close));
+        assert_eq!(dialer.poll(), None);
+    }
+
+    #[test]
+    fn giving_up_before_the_shell_was_asked_for_a_channel_tells_it_nothing() {
+        let mut receiver = Upgrade::new(Role::Receiver);
+        receiver.wanted();
+        receiver.receive(&[message::UNAVAILABLE]);
+        assert_eq!(receiver.poll(), None);
+
+        let mut requested = Upgrade::new(Role::Dialer);
+        requested.wanted();
+        requested.unavailable();
+        assert_eq!(
+            requested.poll(),
+            None,
+            "asking the peer asks the shell nothing"
+        );
+
+        let mut dialer = Upgrade::new(Role::Dialer);
+        dialer.receive(&published(0x008b));
+        dialer.receive(&[message::UNAVAILABLE]);
+        assert_eq!(dialer.poll(), None);
+    }
+
+    #[test]
+    fn a_channel_the_shell_reports_after_the_upgrade_went_off_is_closed_too() {
+        let mut dialer = Upgrade::new(Role::Dialer);
+        dialer.receive(&published(0x008c));
+        dialer.poll();
+        dialer.receive(&[message::UNAVAILABLE]);
+        assert_eq!(dialer.poll(), Some(Step::Close), "the open still under way");
+
+        dialer.opened();
+        assert_eq!(dialer.poll(), Some(Step::Close), "the channel it delivered");
+        assert_eq!(dialer.poll(), None);
+
+        let mut receiver = Upgrade::new(Role::Receiver);
+        receiver.wanted();
+        receiver.poll();
+        receiver.receive(&[message::UNAVAILABLE]);
+        assert_eq!(receiver.poll(), Some(Step::Close));
+
+        receiver.published(0x008c);
+        assert_eq!(receiver.poll(), Some(Step::Close));
+        assert_eq!(receiver.poll(), None);
+    }
+
+    #[test]
+    fn a_channel_given_up_at_both_ends_at_once_is_closed_once() {
+        let mut dialer = Upgrade::new(Role::Dialer);
+        dialer.receive(&published(0x008d));
+        dialer.poll();
+        dialer.opened();
+
+        // The shell loses the channel and the peer gives it up as well, before the shell is told anything.
+        dialer.unavailable();
+        dialer.receive(&[message::UNAVAILABLE]);
+
+        assert_eq!(dialer.poll(), Some(Step::Close));
+        assert_eq!(dialer.poll(), None);
+
+        dialer.receive(&[message::UNAVAILABLE]);
+        dialer.receive(&[message::REQUEST]);
+        assert_eq!(dialer.poll(), None);
     }
 
     #[test]
     fn a_psm_arriving_after_the_channel_is_up_does_not_reopen_it() {
         let mut dialer = Upgrade::new(Role::Dialer);
         dialer.wanted();
-        dialer.receive(&published(0x0084)).unwrap();
+        dialer.receive(&published(0x0084));
         dialer.poll();
         dialer.opened();
 
-        dialer.receive(&published(0x0085)).unwrap();
+        assert_eq!(dialer.receive(&published(0x0085)), None);
 
         assert_eq!(dialer.state, State::Open);
         assert_eq!(dialer.poll(), None);

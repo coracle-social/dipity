@@ -50,8 +50,10 @@ final class BulkChannel: NSObject, StreamDelegate {
     }
 
     /// Give up the channel without reporting it, which is what a link going
-    /// down for its own reasons wants.
+    /// down for its own reasons wants. Closing twice is closing once.
     func close() {
+        guard !closed else { return }
+
         closed = true
 
         for stream in [input as Stream, output as Stream] {

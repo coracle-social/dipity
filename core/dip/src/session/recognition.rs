@@ -1,6 +1,6 @@
-//! Recognizing a paired peer without either side naming anything durable.
+//! Recognizing a peer met before without either side naming anything durable.
 //!
-//! At pairing both sides derive a pair secret from the authenticated session
+//! Once a session has authenticated, both sides derive a pair secret from it
 //! and store it against the peer. On a later encounter each proves it holds one
 //! by MACing this session's handshake hash under it, and the receiver
 //! trial-MACs its own secrets against the list. A tag is worthless outside the
@@ -45,7 +45,7 @@ impl Tags {
     ///
     /// Any other length is either malformed or an attempt to make this device
     /// trial-MAC against an unbounded list; the fixed count is also what keeps
-    /// the length from disclosing how many peers the sender has paired with.
+    /// the length from disclosing how many pair secrets the sender holds.
     pub fn decode(payload: &[u8]) -> Result<Self> {
         if payload.len() != TAG_COUNT * TAG_BYTES {
             bail!(
@@ -91,6 +91,10 @@ pub fn tag(pair_secret: &[u8; 32], handshake_hash: &[u8; 32]) -> Tag {
 /// The list to put on the wire for `secrets` in the session `handshake_hash`
 /// identifies: [`TAG_COUNT`] tags, however many pair secrets the device holds.
 ///
+/// A secret stored against several pubkeys, for a peer that proved more than
+/// one, is tagged once. Two equal tags in a list that is otherwise random
+/// would mark the device in every session.
+///
 /// Beyond that count the tags are a random sample, drawn again every session.
 /// A peer left out of one list is not recognized on that encounter — it arrives
 /// as a stranger and the consent gate judges it — but it is in the running for
@@ -102,6 +106,9 @@ pub fn select(secrets: &[(PublicKey, [u8; 32])], handshake_hash: &[u8; 32]) -> R
         .iter()
         .map(|(_, secret)| tag(secret, handshake_hash))
         .collect();
+
+    tags.sort_unstable();
+    tags.dedup();
 
     if tags.len() > TAG_COUNT {
         shuffle(&mut tags)?;
@@ -121,7 +128,7 @@ pub fn select(secrets: &[(PublicKey, [u8; 32])], handshake_hash: &[u8; 32]) -> R
     Ok(Tags(tags))
 }
 
-/// Which peers a list of tags resolves to.
+/// Which peers a list of tags resolves to, each with the pair secret it matched.
 ///
 /// Trial-MACs every pair secret this device holds against `handshake_hash` and
 /// looks each result up in `offered`, one MAC per stored secret. Every match is
@@ -133,11 +140,11 @@ pub fn resolve(
     offered: &Tags,
     secrets: &[(PublicKey, [u8; 32])],
     handshake_hash: &[u8; 32],
-) -> Vec<PublicKey> {
+) -> Vec<(PublicKey, [u8; 32])> {
     secrets
         .iter()
         .filter(|(_, secret)| offered.0.contains(&tag(secret, handshake_hash)))
-        .map(|(pubkey, _)| *pubkey)
+        .copied()
         .collect()
 }
 
@@ -195,7 +202,10 @@ mod tests {
         let secrets = [(pubkey, secret(3))];
         let their_tags = Tags(vec![tag(&secret(3), &[9; 32])]);
 
-        assert_eq!(resolve(&their_tags, &secrets, &[9; 32]), vec![pubkey]);
+        assert_eq!(
+            resolve(&their_tags, &secrets, &[9; 32]),
+            vec![(pubkey, secret(3))]
+        );
     }
 
     #[test]
@@ -205,10 +215,19 @@ mod tests {
         let secrets = [(author(2), shared), (author(3), shared)];
         let their_tags = Tags(vec![tag(&shared, &[9; 32])]);
 
-        assert_eq!(
-            resolve(&their_tags, &secrets, &[9; 32]),
-            vec![author(2), author(3)]
-        );
+        assert_eq!(resolve(&their_tags, &secrets, &[9; 32]), secrets);
+    }
+
+    #[test]
+    fn a_secret_stored_against_several_pubkeys_goes_on_the_list_once() {
+        let shared = secret(3);
+        let secrets = [(author(2), shared), (author(3), shared)];
+
+        let sent = select(&secrets, &[9; 32]).unwrap();
+        let mine = tag(&shared, &[9; 32]);
+
+        assert_eq!(sent.0.iter().filter(|tag| **tag == mine).count(), 1);
+        assert_eq!(resolve(&sent, &secrets, &[9; 32]), secrets);
     }
 
     #[test]

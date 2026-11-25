@@ -237,6 +237,7 @@ object Encounters : Radio.Delegate {
                 is Action.SendBulk -> radio.sendBulk(action.link.value, action.fragment)
                 is Action.PublishL2cap -> radio.publishL2cap(action.link.value)
                 is Action.OpenL2cap -> radio.openL2cap(action.link.value, action.psm)
+                is Action.CloseL2cap -> radio.closeL2cap(action.link.value)
             }
         }
     }

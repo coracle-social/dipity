@@ -165,6 +165,16 @@ pub enum Action {
     /// Open the L2CAP channel the peer published at this PSM, and report the
     /// result with [`Node::l2cap_opened`] or [`Node::l2cap_unavailable`].
     OpenL2cap(LinkId, u16),
+    /// Close this link's L2CAP channel, or withdraw it if it is only
+    /// published, and keep the link up.
+    ///
+    /// Raised once the upgrade has gone off on a link whose shell was asked
+    /// for a channel or reported one, and again for a channel reported after
+    /// that, which a publish or an open still under way can deliver. A shell
+    /// holding nothing for the link does nothing, and reporting the channel
+    /// this closes to [`Node::l2cap_unavailable`] changes nothing.
+    /// `docs/transport.md#the-l2cap-bandwidth-upgrade`.
+    CloseL2cap(LinkId),
     /// Show the user this six-digit comparison value and ask whether the other
     /// device shows the same one.
     ///
@@ -1109,6 +1119,7 @@ impl Node {
                 Ok(step) => actions.extend(step.map(|step| match step {
                     Step::Publish => Action::PublishL2cap(link),
                     Step::Open(psm) => Action::OpenL2cap(link, psm),
+                    Step::Close => Action::CloseL2cap(link),
                 })),
                 // The upgrade is bandwidth; a link that cannot ask for it still syncs.
                 Err(error) => log::error!("asking for L2CAP on link {link:?} failed: {error:#}"),
@@ -1183,7 +1194,10 @@ impl Node {
     ///
     /// Both ends keep the link the lower of the two pubkeys dialed, which lets
     /// both close the same one without a word passing between them. Two links
-    /// dialed by the same side cannot be told apart that way, and both stay.
+    /// dialed by the same side cannot be told apart that way, and both stay. A
+    /// peer that proves several pubkeys is compared by its lowest, which
+    /// NIP-BE has it prove first, so a comparison made before the rest arrive
+    /// already holds.
     fn close_duplicates(&mut self) {
         let identity = self.identity;
         let mut kept: BTreeMap<PublicKey, (PublicKey, LinkId)> = BTreeMap::new();
@@ -3201,6 +3215,10 @@ mod tests {
         let actions = dialer.l2cap_opened(LinkId(1), 1).unwrap();
 
         assert!(!actions.contains(&Action::Disconnect(LinkId(1))));
+        assert!(
+            actions.contains(&Action::CloseL2cap(LinkId(1))),
+            "the shell lets go of the channel the link does without"
+        );
         assert_eq!(dialer.sessions[&LinkId(1)].state, State::Syncing);
     }
 
@@ -3431,8 +3449,8 @@ mod tests {
         rest
     }
 
-    /// A picture past the bulk threshold, posted by the dialer and fetched by the receiver with `shell` answering the upgrade.
-    fn big_picture_fetched(shell: Shell) -> bool {
+    /// A picture past the bulk threshold, posted by the dialer and fetched by the receiver with `shell` answering the upgrade: whether it arrived, and what else the shells were asked to do.
+    fn big_picture_fetched(shell: Shell) -> (bool, Vec<Action>) {
         let (mut dialer, mut receiver) = contacts_pair();
         let bytes: Vec<u8> = (0..(crate::sync::blob::L2CAP_THRESHOLD_BYTES as usize + 40_000))
             .map(|at| (at % 251) as u8)
@@ -3446,32 +3464,60 @@ mod tests {
         );
 
         let published = dialer.publish(&post, &[&bytes]).unwrap();
-        settle_with_l2cap(&mut dialer, &mut receiver, published, shell, 4);
+        let rest = settle_with_l2cap(&mut dialer, &mut receiver, published, shell, 4);
+        let complete = query::get_blob(&receiver.db, &hash)
+            .unwrap()
+            .unwrap()
+            .complete;
 
-        query::get_blob(&receiver.db, &hash)
-            .unwrap()
-            .unwrap()
-            .complete
+        (complete, rest)
     }
 
     #[test]
     fn a_picture_past_the_bulk_threshold_arrives_over_the_channel() {
-        assert!(big_picture_fetched(Shell::Opens));
+        assert!(big_picture_fetched(Shell::Opens).0);
     }
 
     #[test]
     fn a_picture_still_arrives_when_the_channel_cannot_be_published() {
-        assert!(big_picture_fetched(Shell::PublishFails));
+        assert!(big_picture_fetched(Shell::PublishFails).0);
     }
 
     #[test]
     fn a_picture_still_arrives_when_the_channel_cannot_be_opened() {
-        assert!(big_picture_fetched(Shell::OpenFails));
+        assert!(big_picture_fetched(Shell::OpenFails).0);
     }
 
     #[test]
     fn a_picture_still_arrives_when_only_one_end_sees_the_channel_open() {
-        assert!(big_picture_fetched(Shell::OpenFailsAtOneEnd));
+        assert!(big_picture_fetched(Shell::OpenFailsAtOneEnd).0);
+    }
+
+    #[test]
+    fn each_shell_asked_for_a_channel_the_upgrade_gave_up_on_is_told_once_to_close_it() {
+        let closes = |shell| {
+            let (_, rest) = big_picture_fetched(shell);
+
+            assert!(
+                !rest
+                    .iter()
+                    .any(|action| matches!(action, Action::Disconnect(_))),
+                "giving up the channel kept the link"
+            );
+
+            rest.iter()
+                .filter(|action| matches!(action, Action::CloseL2cap(_)))
+                .count()
+        };
+
+        assert_eq!(closes(Shell::Opens), 0, "a working channel is kept");
+        assert_eq!(
+            closes(Shell::PublishFails),
+            1,
+            "only the end asked to publish"
+        );
+        assert_eq!(closes(Shell::OpenFails), 2);
+        assert_eq!(closes(Shell::OpenFailsAtOneEnd), 2);
     }
 
     /// A refusal taken while the peer still saw this device as a stranger is forgotten once the peer names the user.

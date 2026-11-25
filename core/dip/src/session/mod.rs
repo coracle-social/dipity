@@ -199,9 +199,9 @@ pub struct Session {
     identity: PublicKey,
     /// The proved pubkeys bound under policy, once the peer has proved any.
     pub peer: Option<Peer>,
-    /// Who the peer's recognition tags resolved to, which is who this device
-    /// already shares a working pair secret with.
-    recognized: Vec<PublicKey>,
+    /// Who the peer's recognition tags resolved to, each with the pair secret
+    /// it matched, which is a secret this device and the peer both hold.
+    recognized: Vec<(PublicKey, [u8; 32])>,
     /// The proved pubkeys the shell has already been told about.
     announced: Identity,
     /// Whether the peer asked to pair and the shell has not been told yet.
@@ -341,7 +341,7 @@ impl Session {
             return Ok(());
         }
 
-        let resolved = self.recognized.clone();
+        let resolved: Vec<PublicKey> = self.recognized.iter().map(|(pubkey, _)| *pubkey).collect();
 
         match self.gate.evaluate(db, &self.policy, &resolved)? {
             Verdict::Pass => self.admit(db),
@@ -373,22 +373,8 @@ impl Session {
 
         self.state = State::Secured;
 
-        // Resume the deferred turn, if its trigger has already arrived.
-        match self.role {
-            Role::Receiver => {
-                if self.auth.peer_challenge.is_some() {
-                    self.send_recognition_tags(db)?;
-                    self.challenge_peer()?;
-                }
-            }
-            Role::Dialer => {
-                if self.answer_peer_challenge(db)? {
-                    self.state = State::DialerIdentified;
-                }
-            }
-        }
-
-        Ok(())
+        // Resume the held turn, if the peer's challenge has already arrived.
+        self.take_turn(db)
     }
 
     /// Ask the peer to pair, which puts this device's request in front of
@@ -461,9 +447,15 @@ impl Session {
 
     /// The next fragment for the shell to write on `pipe`, if the last one
     /// there has been acknowledged. The wire seals it here, in the order it
-    /// goes out.
+    /// goes out, and the heartbeat counts it as this device being heard.
     pub fn next_write(&mut self, pipe: Pipe) -> Result<Option<Vec<u8>>> {
-        self.wire.next_write(pipe)
+        let write = self.wire.next_write(pipe)?;
+
+        if write.is_some() {
+            self.heartbeat.sent();
+        }
+
+        Ok(write)
     }
 
     /// Record that the fragment the shell was handed on `pipe` has been
@@ -484,8 +476,15 @@ impl Session {
     ///
     /// The bulk pipe carries the blob channel and nothing else — the wire
     /// refuses a fragment that says otherwise — so there is no dispatch to
-    /// make here, unlike the characteristic.
+    /// make here, unlike the characteristic. A read the shell delivers after
+    /// the upgrade went off is the tail of what went with the channel, and is
+    /// dropped rather than read as the peer misbehaving, because giving up the
+    /// channel never closes the link. NIP-BE.
     pub fn receive_bulk(&mut self, db: &Db, read: &[u8]) -> Result<()> {
+        if !self.upgrade.is_open() {
+            return Ok(());
+        }
+
         self.heartbeat.heard();
 
         for frame in self.wire.receive_bulk(read)? {
@@ -677,12 +676,15 @@ impl Session {
     /// Whether the relay half answers this message.
     ///
     /// A `NEG-MSG` naming a negotiation this device opened belongs to the
-    /// client half; everything the peer initiates belongs to the relay.
+    /// client half; everything the peer opens or closes belongs to the relay,
+    /// `NEG-CLOSE` included, which releases a negotiation the relay holds.
     fn is_for_relay(&self, message: &Message) -> bool {
         match message {
-            Message::Req(..) | Message::Close(..) | Message::NegOpen(..) | Message::Publish(..) => {
-                true
-            }
+            Message::Req(..)
+            | Message::Close(..)
+            | Message::NegOpen(..)
+            | Message::NegClose(..)
+            | Message::Publish(..) => true,
             Message::NegMsg(subscription, _) => {
                 !self.client.negotiations.contains_key(subscription)
             }
@@ -717,7 +719,7 @@ impl Session {
     /// Whether this device recognized `pubkey` by a pair secret on this link.
     #[must_use]
     pub fn recognized(&self, pubkey: &PublicKey) -> bool {
-        self.recognized.contains(pubkey)
+        self.recognized.iter().any(|(known, _)| known == pubkey)
     }
 
     /// Every pubkey the peer proved that the shell has been told of, which is
@@ -812,23 +814,29 @@ impl Session {
         self.maybe_fetch_blob(db)
     }
 
-    /// Store the pair secret derived from this session against every pubkey the
-    /// peer proved and recognition did not.
+    /// Store a pair secret against every pubkey the peer proved and
+    /// recognition did not.
     ///
-    /// A recognized peer already shares a secret with this device and keeps it.
-    /// One that was not either never paired or holds a secret this device does
-    /// not, because one side missed the end of an earlier session, and both
-    /// sides replacing theirs here is what brings the two back into agreement.
+    /// A recognized peer already shares a secret with this device and keeps it,
+    /// and a pubkey it proves that recognition did not name is stored against
+    /// that same secret, which the peer already holds. One that was not
+    /// recognized either never paired or holds a secret this device does not,
+    /// because one side missed the end of an earlier session, and both sides
+    /// replacing theirs with this session's is what brings the two back into
+    /// agreement.
     fn pair(&mut self, db: &Db) -> Result<()> {
         let Some(peer) = self.peer.as_ref() else {
             return Ok(());
         };
 
-        let secret = recognition::derive_secret(&self.wire.noise.handshake_hash()?);
+        let secret = match self.recognized.first() {
+            Some((_, matched)) => *matched,
+            None => recognition::derive_secret(&self.wire.noise.handshake_hash()?),
+        };
         let pubkeys: Vec<PublicKey> = peer
             .pubkeys
             .iter()
-            .filter(|pubkey| !self.recognized.contains(pubkey))
+            .filter(|pubkey| !self.recognized(pubkey))
             .copied()
             .collect();
 
@@ -873,29 +881,40 @@ impl Session {
         Ok(self.upgrade.poll())
     }
 
-    /// The shell published a channel, whose PSM goes to the peer.
+    /// The shell published a channel, whose PSM goes to the peer, or which
+    /// the shell is told to withdraw if the upgrade went off meanwhile.
     pub fn l2cap_published(&mut self, psm: u16) -> Result<()> {
         log::debug!("published L2CAP channel {psm} on {:?}", self.link);
 
         let announcement = self.upgrade.published(psm);
 
-        self.send_control(control::L2CAP, &announcement)
+        self.tell_l2cap(announcement)
     }
 
     /// The channel is up: bulk moves onto it at its MTU.
     ///
     /// A channel too small to carry a fragment is one this link does without,
-    /// rather than a reason to end it: the upgrade is bandwidth.
+    /// rather than a reason to end it: the upgrade is bandwidth. One reported
+    /// after the upgrade went off is left unused and the shell told to close
+    /// it, because both ends have moved blob traffic back to GATT for the rest
+    /// of the session. NIP-BE.
     pub fn l2cap_opened(&mut self, db: &Db, mtu: usize) -> Result<()> {
         log::debug!("L2CAP open on {:?} at MTU {mtu}", self.link);
+
+        if !self.upgrade.opened() {
+            log::debug!(
+                "the upgrade went off first on {:?}, staying on GATT",
+                self.link
+            );
+
+            return Ok(());
+        }
 
         if let Err(error) = self.wire.open_bulk(mtu) {
             log::warn!("staying on GATT on {:?}: {error:#}", self.link);
 
             return self.l2cap_unavailable(db);
         }
-
-        self.upgrade.opened();
 
         Ok(())
     }
@@ -922,8 +941,8 @@ impl Session {
     /// the store holds.
     ///
     /// The fetch starts over whether or not a channel opened here, because the
-    /// peer's may have: a response begun on GATT can have finished on a pipe
-    /// this end never read, and nothing would ever complete it.
+    /// peer's may have: the request in flight, or its answer, can have gone
+    /// over a channel one end never read, and nothing would ever answer it.
     fn fall_back_to_gatt(&mut self, db: &Db) -> Result<()> {
         self.wire.close_bulk();
         self.blobs.abandon_in_flight();
@@ -943,10 +962,11 @@ impl Session {
     ///
     /// The peer giving up an upgrade this end was counting on moves this end
     /// off it too, whether a channel had opened here or not: what the peer had
-    /// queued for it is gone either way.
+    /// queued for it is gone either way. A step this end cannot read does the
+    /// same at worst, and never closes the link.
     fn on_l2cap(&mut self, db: &Db, payload: &[u8]) -> Result<()> {
         let was_live = self.upgrade.is_live();
-        let owed = self.upgrade.receive(payload)?;
+        let owed = self.upgrade.receive(payload);
 
         if was_live && !self.upgrade.is_live() {
             log::debug!("the peer gave up L2CAP on {:?}, staying on GATT", self.link);
@@ -1193,6 +1213,23 @@ impl Session {
         Ok(())
     }
 
+    /// Answer the peer's beat with one of this device's own, if it has sent
+    /// nothing for [`heartbeat::QUIET_SECONDS`].
+    ///
+    /// The write itself proved the peer alive in `receive`. The answer is for
+    /// a phone whose platform suspends its timers in the background, which
+    /// then beats as often as its peer does rather than never. NIP-BE. Two
+    /// devices do not answer each other forever, because the answer counts as
+    /// sending: the peer that beat has just sent, and lets it pass.
+    fn answer_heartbeat(&mut self) -> Result<()> {
+        if !self.heartbeat.quiet() {
+            return Ok(());
+        }
+
+        self.heartbeat.reschedule()?;
+        self.send_control(control::HEARTBEAT, &[])
+    }
+
     /// Whether the heartbeat runs in this state: after the handshake, before
     /// teardown, and through the gate hold that keeps a pending link alive.
     fn beats(&self) -> bool {
@@ -1217,8 +1254,7 @@ impl Session {
 
             // The dialer sends its recognition tags and AUTH challenge first.
             if self.role == Role::Dialer {
-                self.send_recognition_tags(db)?;
-                self.challenge_peer()?;
+                self.open_exchange(db)?;
             }
         }
 
@@ -1236,9 +1272,7 @@ impl Session {
         match discriminant {
             control::TAGS => self.on_tags(db, payload)?,
             control::AUTH => self.on_auth(db, payload)?,
-            control::HEARTBEAT => {
-                // The write itself proved liveness in `receive`; a beacon carries nothing else.
-            }
+            control::HEARTBEAT => self.answer_heartbeat()?,
             control::TRANSFER => self.on_transfer(payload)?,
             control::L2CAP => self.on_l2cap(db, payload)?,
             // A request before the link syncs names nobody, and is not one.
@@ -1263,9 +1297,9 @@ impl Session {
             bail!("recognition tags arrived after the exchange moved past the gate");
         }
 
-        let resolved = self.resolve_recognition(db, payload)?;
+        self.recognized = self.resolve_recognition(db, payload)?;
 
-        self.recognized.clone_from(&resolved);
+        let resolved: Vec<PublicKey> = self.recognized.iter().map(|(pubkey, _)| *pubkey).collect();
 
         match self.gate.evaluate(db, &self.policy, &resolved)? {
             Verdict::Pass => {}
@@ -1275,14 +1309,18 @@ impl Session {
             Verdict::Pending => self.hold(),
         }
 
-        Ok(())
+        // A challenge that came ahead of the tags drew a turn that waited on the gate.
+        self.take_turn(db)
     }
 
-    /// Hold the link for the app to come to the front.
+    /// Hold the link for the app to come to the front, from the first time
+    /// it was held: a peer proving another pubkey does not extend the hold.
     fn hold(&mut self) {
-        self.state = State::GatePending {
-            since: clock::now(),
-        };
+        if !matches!(self.state, State::GatePending { .. }) {
+            self.state = State::GatePending {
+                since: clock::now(),
+            };
+        }
     }
 
     /// Whether the peer proved a contact's pubkey, which a receiver that
@@ -1309,24 +1347,34 @@ impl Session {
     /// Take the peer's challenge, and this device's turn if the gate allows
     /// it. A challenge arriving before the gate passes waits; approval
     /// resumes the turn.
+    ///
+    /// Only the first challenge counts. A later one changes nothing, because
+    /// this device answers the first for the whole session and has already
+    /// taken, or is holding, the turn it drew. NIP-BE.
     fn on_challenge(&mut self, db: &Db, challenge: String) -> Result<()> {
-        self.auth.receive_challenge(challenge);
+        if !self.auth.receive_challenge(challenge) {
+            log::debug!("ignoring a repeated AUTH challenge on {:?}", self.link);
+
+            return Ok(());
+        }
+
         self.take_turn(db)
     }
 
     /// The receiver challenges back without answering; the dialer answers,
     /// identifying first.
+    ///
+    /// Taken once the gate allows it and the peer's challenge has arrived,
+    /// whichever comes second, and harmless to take again: each device opens
+    /// its half of the exchange once and answers once.
     fn take_turn(&mut self, db: &Db) -> Result<()> {
-        if !self.gate.passed && !self.gate.deferred {
+        if (!self.gate.passed && !self.gate.deferred) || self.auth.peer_challenge.is_none() {
             return Ok(());
         }
 
         match self.role {
             // The receiver names no pubkey yet, and answers only after it has seen the dialer.
-            Role::Receiver => {
-                self.send_recognition_tags(db)?;
-                self.challenge_peer()?;
-            }
+            Role::Receiver => self.open_exchange(db)?,
             // The dialer identifies itself first.
             Role::Dialer => {
                 if self.answer_peer_challenge(db)? {
@@ -1338,11 +1386,15 @@ impl Session {
         Ok(())
     }
 
-    /// Verify the peer's AUTH response. The receiver discloses here, once it
-    /// has seen the dialer.
+    /// Verify one of the peer's AUTH events. The receiver discloses here, once
+    /// it has seen the dialer.
     ///
-    /// Nothing is accepted while the gate holds: a held stranger cannot
-    /// identify itself into being served before the user has answered.
+    /// A peer may send one event per pubkey it holds, each answering the same
+    /// challenge, and each is answered with its own `OK`. Nothing is accepted
+    /// while the gate holds: a held stranger cannot identify itself into being
+    /// served before the user has answered. A receiver that deferred its gate
+    /// to see who the dialer is keeps taking events while it holds, and one
+    /// proving a contact admits the dialer the way approval would.
     fn on_auth_response(&mut self, db: &Db, event: &coracle_lib::events::Event) -> Result<()> {
         if !self.gate.passed && !self.gate.deferred {
             bail!("an AUTH response arrived before the gate passed");
@@ -1354,21 +1406,27 @@ impl Session {
         let accepted = Message::Ok(event.id.to_hex(), true, String::new());
         self.send_control(control::AUTH, &accepted.encode())?;
 
+        let syncing = self.state == State::Syncing;
+
         self.identify([pubkey]);
 
         if self.state == State::Closed {
             return Ok(());
         }
 
+        // A pubkey proved once the two sync shares the pair secret the first ones hold.
+        if syncing {
+            return self.pair(db);
+        }
+
         // A deferred gate decides now: a contact passes, anybody else waits on the user.
         if self.gate.deferred && !self.gate.passed {
-            if !self.proved_known() {
-                self.hold();
-                return Ok(());
+            if self.proved_known() {
+                return self.admit(db);
             }
 
-            self.gate.deferred = false;
-            self.gate.passed = true;
+            self.hold();
+            return Ok(());
         }
 
         // The receiver now discloses, having evaluated the dialer's identity.
@@ -1379,10 +1437,18 @@ impl Session {
         Ok(())
     }
 
-    /// Send a NIP-42 challenge to the peer.
-    fn challenge_peer(&mut self) -> Result<()> {
-        let challenge = self.auth.make_challenge()?;
+    /// Open this device's half of the exchange: its recognition tags, then a
+    /// NIP-42 challenge, once per session.
+    ///
+    /// Both go once because the peer acts on each once. A second tag list is
+    /// refused, and a second challenge would leave the peer answering one this
+    /// device no longer holds. NIP-BE.
+    fn open_exchange(&mut self, db: &Db) -> Result<()> {
+        let Some(challenge) = self.auth.make_challenge()? else {
+            return Ok(());
+        };
 
+        self.send_recognition_tags(db)?;
         self.send_control(control::AUTH, &Message::AuthChallenge(challenge).encode())
     }
 
@@ -1425,8 +1491,8 @@ impl Session {
     // ------------------------------------------------------------ Recognition
 
     /// Send this device's recognition tags: always the constant count, so that the
-    /// length discloses neither how many peers this device has paired with nor
-    /// that it has paired with any.
+    /// length discloses neither how many pair secrets this device holds nor
+    /// that it holds any.
     fn send_recognition_tags(&mut self, db: &Db) -> Result<()> {
         let hash = self.wire.noise.handshake_hash()?;
         let secrets = crate::db::query::pair_secrets(db)?;
@@ -1440,8 +1506,8 @@ impl Session {
     }
 
     /// Trial-MAC the offered tags against every pair secret this device holds,
-    /// returning every pubkey they resolve to.
-    fn resolve_recognition(&self, db: &Db, payload: &[u8]) -> Result<Vec<PublicKey>> {
+    /// returning every pubkey they resolve to with the secret it matched.
+    fn resolve_recognition(&self, db: &Db, payload: &[u8]) -> Result<Vec<(PublicKey, [u8; 32])>> {
         let offered = recognition::Tags::decode(payload)?;
         let hash = self.wire.noise.handshake_hash()?;
         let secrets = crate::db::query::pair_secrets(db)?;
@@ -1846,6 +1912,40 @@ mod tests {
     }
 
     #[test]
+    fn a_beat_heard_after_a_quiet_spell_is_answered_and_the_answer_is_not() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) = clock::at(1_000, || secured_pair(policy()));
+        let beat_at = 1_000 + heartbeat::MAX_INTERVAL_SECONDS + 1;
+
+        clock::at(beat_at, || {
+            dialer.maybe_heartbeat().unwrap();
+            pump(&mut dialer, &mut receiver, &db);
+
+            // The receiver has sent nothing since the handshake, so it beats back and starts its own interval over.
+            let answer = pump_frame(&mut receiver, &mut dialer);
+            assert_eq!(answer.payload, vec![control::HEARTBEAT]);
+            assert!(receiver.heartbeat.next_beat_at >= beat_at + heartbeat::MIN_INTERVAL_SECONDS);
+
+            // The dialer has just beaten, so the answer goes unanswered.
+            dialer.advance(&db, &answer).unwrap();
+            assert!(dialer.next_write(Pipe::Gatt).unwrap().is_none());
+        });
+    }
+
+    #[test]
+    fn a_beat_heard_soon_after_this_device_sent_is_not_answered() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) = clock::at(1_000, || secured_pair(policy()));
+
+        clock::at(1_000 + heartbeat::QUIET_SECONDS - 1, || {
+            dialer.send_control(control::HEARTBEAT, &[]).unwrap();
+            pump(&mut dialer, &mut receiver, &db);
+
+            assert!(receiver.next_write(Pipe::Gatt).unwrap().is_none());
+        });
+    }
+
+    #[test]
     fn a_heartbeat_is_absorbed_without_moving_the_session() {
         let db = Db::open_in_memory().unwrap();
         let mut session = secured_session(policy());
@@ -1993,7 +2093,10 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let (mut dialer, mut receiver) = secured_pair(policy());
 
-        dialer.challenge_peer().unwrap();
+        dialer.open_exchange(&db).unwrap();
+
+        let tags = pump_frame(&mut dialer, &mut receiver);
+        assert_eq!(tags.payload.first(), Some(&control::TAGS));
 
         let frame = pump_frame(&mut dialer, &mut receiver);
         let (discriminant, payload) = frame.payload.split_first().unwrap();
@@ -2389,6 +2492,50 @@ mod tests {
     }
 
     #[test]
+    fn a_pubkey_a_recognized_peer_adds_is_recognized_on_the_next_encounter() {
+        let dialer_db = Db::open_in_memory().unwrap();
+        let receiver_db = Db::open_in_memory().unwrap();
+
+        let mut dialer = pair(4096, Role::Dialer, 1);
+        let mut receiver = pair(4096, Role::Receiver, 2);
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
+        exchange_apart(&mut dialer, &mut receiver, &dialer_db, &receiver_db);
+
+        // Recognized both ways, the dialer proves a second pubkey as well.
+        let mut dialer = pair(4096, Role::Dialer, 1);
+        let mut receiver = pair(4096, Role::Receiver, 2);
+        exchange_apart(&mut dialer, &mut receiver, &dialer_db, &receiver_db);
+        answer_again_as(&mut dialer, &secret(3));
+
+        while let Some(write) = dialer.next_write(Pipe::Gatt).unwrap() {
+            dialer.acknowledge_write(Pipe::Gatt);
+
+            if let Some(frame) = receiver.receive(&write).unwrap() {
+                dispatch(&mut receiver, &receiver_db, &frame);
+            }
+        }
+
+        assert!(bound(&receiver).contains(&author(3)));
+
+        // The dialer stored nothing new, so the receiver keeps every pubkey under the secret both hold.
+        let held = crate::db::query::pair_secrets(&dialer_db).unwrap();
+        assert_eq!(held.len(), 1);
+        assert!(
+            crate::db::query::pair_secrets(&receiver_db)
+                .unwrap()
+                .iter()
+                .all(|(_, secret)| *secret == held[0].1)
+        );
+
+        let mut dialer = pair(4096, Role::Dialer, 1);
+        let mut receiver = pair(4096, Role::Receiver, 2);
+        exchange_apart(&mut dialer, &mut receiver, &dialer_db, &receiver_db);
+
+        assert!(receiver.recognized(&author(3)));
+    }
+
+    #[test]
     fn both_ends_of_a_session_show_the_same_shapes() {
         let db = Db::open_in_memory().unwrap();
         let mut dialer = pair(4096, Role::Dialer, 1);
@@ -2490,6 +2637,276 @@ mod tests {
 
         // The dialer's bucket admitted a stranger, and the disclosure counts against it.
         assert_eq!(disclosed(&db), 1);
+    }
+
+    /// Have `device` answer the challenge it holds again, as `identity`, the way a device holding several pubkeys does.
+    fn answer_again_as(device: &mut Session, identity: &SecretKey) -> coracle_lib::events::Event {
+        let mut again = AuthExchange::default();
+        again.receive_challenge(device.auth.peer_challenge.clone().unwrap());
+
+        let event = again
+            .answer(identity, device.wire.noise.remote_static.unwrap())
+            .unwrap()
+            .unwrap();
+        device
+            .send_control(
+                control::AUTH,
+                &Message::AuthResponse(Box::new(event.clone())).encode(),
+            )
+            .unwrap();
+
+        event
+    }
+
+    /// Run an exchange up to the dialer's first AUTH event, queued and not yet sent.
+    fn up_to_the_dialer_answering(dialer: &mut Session, receiver: &mut Session, db: &Db) {
+        dialer.initiate().unwrap();
+        pump(dialer, receiver, db); // msg1
+        pump(receiver, dialer, db); // reply
+        pump(dialer, receiver, db); // msg3
+        pump(dialer, receiver, db); // dialer tags
+        pump(dialer, receiver, db); // dialer challenge: the receiver challenges back
+        pump(receiver, dialer, db); // receiver tags
+        pump(receiver, dialer, db); // receiver challenge: the dialer answers
+    }
+
+    /// The ids of every `OK` that accepted an AUTH event among `frames`.
+    fn accepted(frames: &[Frame]) -> Vec<String> {
+        frames
+            .iter()
+            .filter(|frame| frame.channel == Channel::Control)
+            .filter_map(|frame| match frame.payload.split_first() {
+                Some((&control::AUTH, payload)) => match Message::decode(payload).unwrap() {
+                    Message::Ok(id, true, _) => Some(id),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Every pubkey `session` has bound its peer as.
+    fn bound(session: &Session) -> Vec<PublicKey> {
+        session
+            .peer
+            .as_ref()
+            .unwrap()
+            .pubkeys
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn a_dialer_holding_two_pubkeys_answers_one_challenge_twice_and_is_bound_as_both() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) =
+            (pair(4096, Role::Dialer, 1), pair(4096, Role::Receiver, 2));
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
+
+        up_to_the_dialer_answering(&mut dialer, &mut receiver, &db);
+        let second = answer_again_as(&mut dialer, &secret(3));
+        let into_dialer = quiesce(&mut receiver, &mut dialer, &db);
+
+        let mut both = vec![author(1), author(3)];
+        both.sort();
+        assert_eq!(bound(&receiver), both);
+        assert_eq!(receiver.state, State::Syncing);
+        assert_eq!(dialer.state, State::Syncing);
+
+        // Each event got its own OK.
+        let oks = accepted(&into_dialer);
+        assert_eq!(oks.len(), 2);
+        assert!(oks.contains(&second.id.to_hex()));
+
+        // The second pubkey is paired too, under the session's one secret.
+        let secrets = crate::db::query::pair_secrets(&db).unwrap();
+        assert!(secrets.iter().any(|(pubkey, _)| *pubkey == author(3)));
+        assert!(secrets.windows(2).all(|both| both[0].1 == both[1].1));
+    }
+
+    #[test]
+    fn a_receiver_holding_two_pubkeys_is_bound_as_both_on_the_dialer() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) =
+            (pair(4096, Role::Dialer, 1), pair(4096, Role::Receiver, 2));
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
+
+        up_to_the_dialer_answering(&mut dialer, &mut receiver, &db);
+        pump(&mut dialer, &mut receiver, &db); // dialer response: the receiver answers in turn
+        answer_again_as(&mut receiver, &secret(4));
+        let into_dialer = quiesce(&mut receiver, &mut dialer, &db);
+
+        let mut both = vec![author(2), author(4)];
+        both.sort();
+        assert_eq!(bound(&dialer), both);
+        assert_eq!(dialer.state, State::Syncing);
+        assert!(
+            into_dialer
+                .iter()
+                .any(|frame| frame.channel == Channel::Sync),
+            "the second event did not stop the sync"
+        );
+    }
+
+    /// Queue a fresh challenge from `device`, as a peer that challenges twice would.
+    fn challenge_again(device: &mut Session) {
+        device
+            .send_control(
+                control::AUTH,
+                &Message::AuthChallenge("a second challenge".into()).encode(),
+            )
+            .unwrap();
+    }
+
+    /// The discriminant of every control frame `from` has queued, read off by `into` without acting on any.
+    fn control_frames(from: &mut Session, into: &mut Session) -> Vec<u8> {
+        let mut discriminants = Vec::new();
+
+        while let Some(write) = from.next_write(Pipe::Gatt).unwrap() {
+            from.acknowledge_write(Pipe::Gatt);
+
+            if let Some(frame) = into.wire.receive(&write).unwrap()
+                && frame.channel == Channel::Control
+            {
+                discriminants.push(frame.payload[0]);
+            }
+        }
+
+        discriminants
+    }
+
+    #[test]
+    fn a_dialer_that_challenges_again_still_proves_its_second_pubkey_under_the_first_challenge() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) =
+            (pair(4096, Role::Dialer, 1), pair(4096, Role::Receiver, 2));
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
+
+        up_to_the_dialer_answering(&mut dialer, &mut receiver, &db);
+        challenge_again(&mut dialer);
+        let second = answer_again_as(&mut dialer, &secret(3));
+        let into_dialer = quiesce(&mut receiver, &mut dialer, &db);
+
+        let mut both = vec![author(1), author(3)];
+        both.sort();
+        assert_eq!(bound(&receiver), both);
+        assert_eq!(receiver.state, State::Syncing);
+        assert_eq!(dialer.state, State::Syncing);
+        assert!(accepted(&into_dialer).contains(&second.id.to_hex()));
+    }
+
+    #[test]
+    fn a_repeated_challenge_draws_no_second_tag_list_challenge_or_answer() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) =
+            (pair(4096, Role::Dialer, 1), pair(4096, Role::Receiver, 2));
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
+
+        dialer.initiate().unwrap();
+        pump(&mut dialer, &mut receiver, &db); // msg1
+        pump(&mut receiver, &mut dialer, &db); // reply
+        pump(&mut dialer, &mut receiver, &db); // msg3
+        pump(&mut dialer, &mut receiver, &db); // dialer tags
+        pump(&mut dialer, &mut receiver, &db); // dialer challenge: the receiver opens its half
+        challenge_again(&mut dialer);
+        pump(&mut dialer, &mut receiver, &db); // the same again: nothing more
+
+        assert_eq!(
+            control_frames(&mut receiver, &mut dialer),
+            vec![control::TAGS, control::AUTH],
+            "the receiver sends one tag list and one challenge"
+        );
+
+        // The dialer, asked twice, answers once.
+        let (mut dialer, mut receiver) =
+            (pair(4096, Role::Dialer, 1), pair(4096, Role::Receiver, 2));
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
+
+        up_to_the_dialer_answering(&mut dialer, &mut receiver, &db);
+        challenge_again(&mut receiver);
+        pump(&mut receiver, &mut dialer, &db);
+
+        assert_eq!(
+            control_frames(&mut dialer, &mut receiver),
+            vec![control::AUTH],
+            "the dialer's one answer, to the first challenge"
+        );
+    }
+
+    #[test]
+    fn a_dialer_a_receiver_named_is_let_through_whatever_else_it_proves() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) =
+            (pair(4096, Role::Dialer, 1), pair(4096, Role::Receiver, 2));
+        dialer.gate.presence = Some(Presence::Foreground);
+
+        // The receiver holds strangers, and has named the dialer's first pubkey.
+        let mut named = quiet();
+        named.identity = author(2);
+        named.graph.contacts.insert(author(1));
+        receiver.set_policy(Arc::new(named));
+
+        up_to_the_dialer_answering(&mut dialer, &mut receiver, &db);
+        answer_again_as(&mut dialer, &secret(3));
+        quiesce(&mut dialer, &mut receiver, &db);
+
+        assert_eq!(receiver.state, State::Syncing);
+        assert_eq!(dialer.state, State::Syncing);
+        assert_eq!(bound(&receiver).len(), 2);
+        assert_eq!(disclosed(&db), 0);
+    }
+
+    #[test]
+    fn a_held_dialer_whose_next_pubkey_is_a_contact_is_admitted() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) =
+            (pair(4096, Role::Dialer, 1), pair(4096, Role::Receiver, 2));
+        dialer.gate.presence = Some(Presence::Foreground);
+
+        // The receiver holds strangers, and has named the dialer's second pubkey only.
+        let mut named = quiet();
+        named.identity = author(2);
+        named.graph.contacts.insert(author(3));
+        receiver.set_policy(Arc::new(named));
+
+        held_after_the_dialer_names_itself(&mut dialer, &mut receiver, &db);
+        assert!(matches!(receiver.state, State::GatePending { .. }));
+        assert!(!receiver.auth.disclosed);
+
+        answer_again_as(&mut dialer, &secret(3));
+        quiesce(&mut dialer, &mut receiver, &db);
+
+        assert_eq!(receiver.state, State::Syncing);
+        assert_eq!(dialer.state, State::Syncing);
+        assert_eq!(disclosed(&db), 0, "a contact costs the receiver nothing");
+    }
+
+    #[test]
+    fn a_held_dialer_proving_another_strangers_pubkey_is_held_from_when_it_was_first() {
+        let db = Db::open_in_memory().unwrap();
+        let mut dialer = clock::at(1_000, || pair(4096, Role::Dialer, 1));
+        let mut receiver = clock::at(1_000, || pair(4096, Role::Receiver, 2));
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.set_policy(Arc::new(quiet()));
+
+        clock::at(1_000, || {
+            held_after_the_dialer_names_itself(&mut dialer, &mut receiver, &db)
+        });
+
+        clock::at(1_100, || {
+            answer_again_as(&mut dialer, &secret(3));
+            pump(&mut dialer, &mut receiver, &db);
+        });
+
+        assert_eq!(receiver.state, State::GatePending { since: 1_000 });
+        assert!(!receiver.auth.disclosed);
+        assert_eq!(bound(&receiver).len(), 2);
     }
 
     #[test]
@@ -2656,13 +3073,101 @@ mod tests {
         receiver.l2cap_unavailable(&db).unwrap();
         pump(&mut receiver, &mut dialer, &db);
 
-        // The dialer heard it: a PSM arriving afterwards is not acted on.
+        // A channel the receiver's shell publishes late is not announced.
         receiver.l2cap_published(0x0080).unwrap();
+        assert!(receiver.next_write(Pipe::Gatt).unwrap().is_none());
+
+        // The dialer heard it: a PSM arriving afterwards is not acted on.
+        receiver
+            .send_control(control::L2CAP, &[l2cap::message::PUBLISHED, 0x00, 0x80])
+            .unwrap();
         pump(&mut receiver, &mut dialer, &db);
 
         assert_eq!(dialer.poll_l2cap().unwrap(), None);
         assert!(!dialer.wire.bulk_is_open());
         assert!(!receiver.wire.bulk_is_open());
+    }
+
+    #[test]
+    fn an_upgrade_step_this_end_cannot_read_leaves_the_link_up() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) = secured_pair(policy());
+        dialer.want_l2cap().unwrap();
+        pump(&mut dialer, &mut receiver, &db);
+
+        // An empty step and an unknown one are passed over without an answer.
+        receiver.send_control(control::L2CAP, &[]).unwrap();
+        receiver
+            .send_control(control::L2CAP, &[0xff, 1, 2])
+            .unwrap();
+        pump(&mut receiver, &mut dialer, &db);
+        pump(&mut receiver, &mut dialer, &db);
+        assert!(dialer.next_write(Pipe::Gatt).unwrap().is_none());
+
+        // A PSM too short to read ends the upgrade, and the dialer says so.
+        receiver
+            .send_control(control::L2CAP, &[l2cap::message::PUBLISHED, 0x80])
+            .unwrap();
+        pump(&mut receiver, &mut dialer, &db);
+
+        assert_eq!(
+            pump_frame(&mut dialer, &mut receiver).payload,
+            vec![control::L2CAP, l2cap::message::UNAVAILABLE]
+        );
+        assert_eq!(dialer.state, State::Secured);
+        assert_eq!(dialer.poll_l2cap().unwrap(), None);
+        assert!(!dialer.wire.bulk_is_open());
+    }
+
+    #[test]
+    fn a_receiver_asked_again_after_the_upgrade_went_off_says_it_is_unavailable() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) = secured_pair(policy());
+
+        dialer.want_l2cap().unwrap();
+        pump(&mut dialer, &mut receiver, &db);
+        receiver.poll_l2cap().unwrap();
+        receiver.l2cap_unavailable(&db).unwrap();
+        pump(&mut receiver, &mut dialer, &db);
+
+        // A peer asking again gets the same answer, and no second channel is published.
+        dialer
+            .send_control(control::L2CAP, &[l2cap::message::REQUEST])
+            .unwrap();
+        pump(&mut dialer, &mut receiver, &db);
+
+        assert_eq!(
+            pump_frame(&mut receiver, &mut dialer).payload,
+            vec![control::L2CAP, l2cap::message::UNAVAILABLE]
+        );
+        assert_eq!(
+            receiver.poll_l2cap().unwrap(),
+            Some(Step::Close),
+            "the shell withdraws what it was asked for, and publishes nothing new"
+        );
+        assert_eq!(receiver.poll_l2cap().unwrap(), None);
+    }
+
+    #[test]
+    fn a_dialer_handed_a_psm_after_the_upgrade_went_off_says_it_is_unavailable() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) = secured_pair(policy());
+
+        receiver
+            .send_control(control::L2CAP, &[l2cap::message::UNAVAILABLE])
+            .unwrap();
+        pump(&mut receiver, &mut dialer, &db);
+
+        receiver
+            .send_control(control::L2CAP, &[l2cap::message::PUBLISHED, 0x00, 0x80])
+            .unwrap();
+        pump(&mut receiver, &mut dialer, &db);
+
+        assert_eq!(
+            pump_frame(&mut dialer, &mut receiver).payload,
+            vec![control::L2CAP, l2cap::message::UNAVAILABLE]
+        );
+        assert_eq!(dialer.poll_l2cap().unwrap(), None);
     }
 
     #[test]
@@ -2711,6 +3216,81 @@ mod tests {
 
         assert!(!dialer.wire.bulk_is_open());
         assert!(!receiver.wire.bulk_is_open());
+    }
+
+    #[test]
+    fn both_shells_let_go_of_a_channel_given_up_once_and_the_link_stays() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) = secured_pair(policy());
+
+        dialer.want_l2cap().unwrap();
+        pump(&mut dialer, &mut receiver, &db);
+        receiver.poll_l2cap().unwrap();
+        receiver.l2cap_published(0x0080).unwrap();
+        pump(&mut receiver, &mut dialer, &db);
+        dialer.poll_l2cap().unwrap();
+        dialer.l2cap_opened(&db, 512).unwrap();
+        receiver.l2cap_opened(&db, 512).unwrap();
+
+        dialer.l2cap_unavailable(&db).unwrap();
+        pump(&mut dialer, &mut receiver, &db);
+
+        for end in [&mut dialer, &mut receiver] {
+            assert_eq!(end.poll_l2cap().unwrap(), Some(Step::Close));
+            assert_eq!(end.poll_l2cap().unwrap(), None);
+            assert_eq!(end.state, State::Secured);
+        }
+    }
+
+    #[test]
+    fn a_channel_reported_open_after_the_peer_gave_up_carries_nothing() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) = secured_pair(policy());
+
+        dialer.want_l2cap().unwrap();
+        pump(&mut dialer, &mut receiver, &db);
+        receiver.poll_l2cap().unwrap();
+        receiver.l2cap_published(0x0080).unwrap();
+        pump(&mut receiver, &mut dialer, &db);
+        assert_eq!(dialer.poll_l2cap().unwrap(), Some(Step::Open(0x0080)));
+
+        // The receiver's end dies at once, and its notice overtakes the dialer's shell reporting the open.
+        receiver.l2cap_opened(&db, 512).unwrap();
+        receiver.l2cap_unavailable(&db).unwrap();
+        pump(&mut receiver, &mut dialer, &db);
+        dialer.l2cap_opened(&db, 512).unwrap();
+
+        assert!(!dialer.wire.bulk_is_open());
+        assert!(!receiver.wire.bulk_is_open());
+
+        // The shell that opened it is told to close it, once.
+        assert_eq!(dialer.poll_l2cap().unwrap(), Some(Step::Close));
+        assert_eq!(dialer.poll_l2cap().unwrap(), None);
+    }
+
+    #[test]
+    fn a_read_off_a_channel_already_given_up_is_dropped_and_the_link_stays() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) = secured_pair(policy());
+
+        dialer.l2cap_opened(&db, 512).unwrap();
+        receiver.l2cap_opened(&db, 512).unwrap();
+        receiver
+            .send(&Frame {
+                channel: Channel::Blob,
+                payload: vec![7; 2000],
+            })
+            .unwrap();
+        let first = receiver.next_write(Pipe::Bulk).unwrap().unwrap();
+        receiver.acknowledge_write(Pipe::Bulk);
+        let second = receiver.next_write(Pipe::Bulk).unwrap().unwrap();
+
+        // Half a write lands, the channel is given up, and the shell still hands over a read it had taken.
+        dialer.receive_bulk(&db, &first[..first.len() / 2]).unwrap();
+        dialer.l2cap_unavailable(&db).unwrap();
+
+        dialer.receive_bulk(&db, &second).unwrap();
+        assert_eq!(dialer.state, State::Secured);
     }
 
     /// Two sessions synchronizing, both with a user in front of the screen.
@@ -2911,6 +3491,45 @@ mod tests {
         receiver.handle_sync(&db, &garbage).unwrap();
 
         assert_eq!(receiver.state, State::Syncing);
+    }
+
+    #[test]
+    fn a_finished_negotiation_releases_the_relay_that_answered_it() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) = attended_pair(&db);
+
+        let sent: Vec<Message> = quiesce(&mut dialer, &mut receiver, &db)
+            .into_iter()
+            .filter(|frame| frame.channel == Channel::Sync)
+            .map(|frame| Message::decode(&frame.payload).unwrap())
+            .collect();
+        let opened = sent
+            .iter()
+            .find_map(|message| match message {
+                Message::NegOpen(subscription, ..) => Some(subscription.clone()),
+                _ => None,
+            })
+            .unwrap();
+
+        assert!(
+            sent.iter()
+                .any(|message| matches!(message, Message::NegClose(closed) if *closed == opened))
+        );
+
+        // The receiver's relay half let it go, and answers another round on it as closed.
+        dialer
+            .send_sync(&Message::NegMsg(opened.clone(), vec![0x61]))
+            .unwrap();
+        let answered: Vec<Message> = quiesce(&mut receiver, &mut dialer, &db)
+            .into_iter()
+            .filter(|frame| frame.channel == Channel::Sync)
+            .map(|frame| Message::decode(&frame.payload).unwrap())
+            .collect();
+
+        assert!(answered.iter().any(|message| matches!(
+            message,
+            Message::NegErr(closed, reason) if *closed == opened && reason.starts_with("closed:")
+        )));
     }
 
     #[test]

@@ -10,7 +10,7 @@ use crate::model::DisclosureBucket;
 /// Store a pair secret for a pubkey, replacing whatever was held for it.
 ///
 /// What it replaces is a secret the two devices no longer share, because the
-/// session calls this only for a peer it did not recognize.
+/// session calls this only for a pubkey it did not recognize.
 pub fn save_secret(tx: &Tx<'_>, pubkey: &PublicKey, secret: &[u8; 32], at: i64) -> Result<()> {
     tx.prepare_cached(
         "INSERT INTO pair_secret (pubkey, secret, updated_at) VALUES (?1, ?2, ?3)

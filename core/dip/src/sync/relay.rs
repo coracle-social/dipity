@@ -46,7 +46,9 @@ const NOT_OPEN: &str = "closed: no negotiation is open on this subscription";
 /// things. A `REQ` asks to be served matching events now and as they arrive; a
 /// `NEG-OPEN` asks to diff a set. Holding both in one map let a peer open a
 /// live subscription over everything by sending a reconciliation and no `REQ`
-/// at all.
+/// at all. Their ids are apart too, as NIP-77 has them: `CLOSE` ends only a
+/// subscription and `NEG-CLOSE` only a negotiation, whatever the other holds
+/// under the same id.
 #[derive(Default)]
 pub struct Relay {
     /// Open subscriptions, with every filter each one holds. The live-push
@@ -108,7 +110,6 @@ impl Relay {
             }
             Message::Close(subscription) => {
                 self.subscriptions.remove(&subscription);
-                self.negotiations.remove(&subscription);
 
                 Ok(Vec::new())
             }
@@ -790,6 +791,67 @@ mod tests {
         assert!(relay.subscriptions.is_empty());
     }
 
+    /// A relay holding a subscription and a negotiation under the one id, which NIP-77 keeps apart.
+    fn both_under(id: &str) -> Relay {
+        let mut relay = Relay::default();
+        relay
+            .subscriptions
+            .insert(SubscriptionId(id.into()), vec![Filter::new()]);
+        relay
+            .negotiations
+            .insert(SubscriptionId(id.into()), Filter::new());
+
+        relay
+    }
+
+    #[test]
+    fn a_close_leaves_a_negotiation_on_the_same_id_open() {
+        let db = Db::open_in_memory().unwrap();
+        let mut relay = both_under("shared");
+
+        relay
+            .handle(
+                &db,
+                &peer(),
+                &secret(1),
+                Message::Close(SubscriptionId("shared".into())),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
+
+        assert!(relay.subscriptions.is_empty());
+        assert!(
+            relay
+                .negotiations
+                .contains_key(&SubscriptionId("shared".into()))
+        );
+    }
+
+    #[test]
+    fn a_neg_close_leaves_a_subscription_on_the_same_id_open() {
+        let db = Db::open_in_memory().unwrap();
+        let mut relay = both_under("shared");
+
+        relay
+            .handle(
+                &db,
+                &peer(),
+                &secret(1),
+                Message::NegClose(SubscriptionId("shared".into())),
+                Quota::STRANGER,
+                &mut spending(),
+            )
+            .unwrap();
+
+        assert!(relay.negotiations.is_empty());
+        assert!(
+            relay
+                .subscriptions
+                .contains_key(&SubscriptionId("shared".into()))
+        );
+    }
+
     #[test]
     fn matching_names_the_subscriptions_an_event_falls_under() {
         let mut relay = Relay::default();
@@ -914,7 +976,7 @@ mod tests {
 
     #[test]
     fn a_negotiation_responder_tells_the_client_what_it_lacks() {
-        // Bob has an event Alice does not; the ids she lacks surface in the terminating REQ.
+        // Bob has an event Alice does not, and it is what her finished diff needs.
         let server = Db::open_in_memory().unwrap();
         let bobs_note = given(&server, author(2), 200, "bob's");
         let alice = Db::open_in_memory().unwrap();
@@ -941,23 +1003,13 @@ mod tests {
             )
             .unwrap();
 
-        // Feed Bob's reply round back through Alice's step.
+        // Feed Bob's reply round back through Alice's step, which finishes the diff.
         let Message::NegMsg(_, reply) = replies.last().unwrap() else {
             panic!("expected the relay's NEG-MSG");
         };
-        let out = negotiation.step(reply).unwrap();
 
-        match out.last() {
-            Some(Message::Req(_, filters)) => {
-                let ids = filters
-                    .first()
-                    .and_then(|filter| filter.ids.as_ref())
-                    .map(|ids| ids.iter().copied().collect::<Vec<_>>())
-                    .unwrap();
-                assert_eq!(ids, vec![bobs_note.id]);
-            }
-            _ => panic!("expected the terminating REQ"),
-        }
+        assert_eq!(negotiation.step(reply), None);
+        assert_eq!(negotiation.need, vec![bobs_note.id]);
     }
 
     #[test]

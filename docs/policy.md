@@ -10,13 +10,13 @@ Content can never be propagated more than two hops away due to how [authorship p
 
 Any peer that authenticates learns the user's nostr identity, and on a proximity transport also learns that the user was physically present at a time and place. The [consent gate](./discovery.md#the-consent-gate) decides who gets that far.
 
-Peers that have already been paired are stored against a **pair secret** derived from the authenticated session, and pass silently. They are [recognized](./discovery.md#recognition) without either side disclosing anything durable — not a pubkey, which is unavailable before authentication, and not a Noise static key, which does not survive between sessions.
+A peer this device has synced with before shares a **pair secret** with it, derived from that session, and passes silently. It is [recognized](./discovery.md#recognition) without either side disclosing anything durable — not a pubkey, which is unavailable before authentication, and not a Noise static key, which does not survive between sessions.
 
 Otherwise, a stranger is admitted without a prompt in one of two ways. While the app is open, every stranger is: a user looking at the screen is there to meet whoever is nearby, and being sighted while holding the phone up is what they came for. While it is not, a stranger is admitted while the **disclosure bucket** has room, if the user allows discovery in the background at all, which `policy.discover_in_background` says and which is on by default. Being found does not depend on having opened the app recently, because gossip in the background is what the app is for.
 
 Each disclosure gives a stranger the user's pubkey at a place and a time. The rate of disclosures sets what tracking the user costs, because nothing else the protocol discloses outlives a session. Every stranger met in the background draws on the one bucket, because a burner pubkey defeats any limit per identity. The bucket holds three disclosures and refills at 12 a day, fixed rather than a preference. An observer gets at most a burst of three and then one sighting every two hours on average. It limits how often the user can be sighted in their pocket. It does not make them untrackable, and with the app open it does not apply at all.
 
-A disclosure in the background is spent when the device sends its `AUTH` response, not when the exchange completes. The dialer identifies first and does not learn the peer's pubkey until afterwards. A harvester that collects an auth event and walks away therefore costs a disclosure all the same. Three peers cost nothing: one the user has paired with, which is recognized before anyone discloses; one met with the app in front; and a dialer who is a [contact](#social-graph), whose pubkey the receiver has seen before it answers. [Connection scheduling](./discovery.md#connection-scheduling) keeps a harvester from draining the bucket by being redialed.
+A disclosure in the background is spent when the device sends its `AUTH` response, not when the exchange completes. The dialer identifies first and does not learn the peer's pubkey until afterwards. A harvester that collects an auth event and walks away therefore costs a disclosure all the same. Three peers cost nothing: one this device has synced with before, which is recognized before anyone discloses; one met with the app in front; and a dialer who is a [contact](#social-graph), whose pubkey the receiver has seen before it answers. [Connection scheduling](./discovery.md#connection-scheduling) keeps a harvester from draining the bucket by being redialed.
 
 When the bucket is empty, a stranger is held until the app comes to the front, which admits them, or the hold lapses. The user is not asked, because nobody is named yet and there would be nothing to show but a wait. **Quiet times** are times of day, in the device's local timezone, when every stranger is held that way, in front or not. There are none by default.
 
@@ -81,7 +81,7 @@ Every contact is trusted until the user says otherwise, which adds them to `poli
 
 ## A device, not a pubkey
 
-A peer may prove several pubkeys over one session, since [NIP-42](./nips/p2p-auth.md#mutual-authentication) allows a sequence of exchanges. What the settings below say about it is nonetheless one answer, because the tiers name **people** and a session is with a **device**.
+A peer may prove several pubkeys over one session, answering its one [challenge](./nips/p2p-auth.md#challenges) with an `AUTH` event for each. What the settings below say about it is nonetheless one answer, because the tiers name **people** and a session is with a **device**.
 
 The set reduces to one standing, and the two directions reduce differently:
 

@@ -15,6 +15,7 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
@@ -27,6 +28,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelUuid
 import java.io.Closeable
 import java.io.IOException
@@ -118,6 +121,9 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
     /** Which thread that is so that a nested call runs now rather than later. */
     private val owner = queue.submit(Callable { Thread.currentThread() }).get()
+
+    /** Where a write the stack was too busy for waits before it is posted back to [queue]. */
+    private val later = Handler(Looper.getMainLooper())
 
     /** Every live link, both roles, keyed the way the core names them. */
     private val links = mutableMapOf<ULong, Link>()
@@ -312,14 +318,19 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     /** Give up waiting for a peripheral. */
     fun stopWaiting(peripheral: String) = confined { awaiting.remove(peripheral)?.close() }
 
+    /**
+     * End a link. A dialed one is forgotten when its disconnect is reported,
+     * which reports it down. A server cannot be relied on to hang up, so a
+     * received one is forgotten now, and every later write from its central is
+     * refused, which its dialer takes as the close.
+     */
     fun disconnect(link: ULong) = confined {
-        val held = links[link]
-
-        forget(link)
-
-        when (held) {
+        when (val held = links[link]) {
             is Link.Dialed -> held.gatt.disconnect()
-            is Link.Received -> server?.cancelConnection(held.device)
+            is Link.Received -> {
+                forget(link)
+                server?.cancelConnection(held.device)
+            }
             null -> Unit
         }
     }
@@ -360,7 +371,14 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                     null
                 }
 
-            confined { if (socket == null) delegate.bulkDown(link) else adopt(link, socket) }
+            confined {
+                when {
+                    // A link that went while the channel was connecting has nothing for it to carry.
+                    links[link] !is Link.Dialed -> socket?.let(::shut)
+                    socket == null -> delegate.bulkDown(link)
+                    else -> adopt(link, socket)
+                }
+            }
         }
     }
 
@@ -371,13 +389,25 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         channel.write(fragment)
     }
 
+    /**
+     * Let go of the L2CAP channel on [link], closing it if it is open and
+     * withdrawing it if this end published it, and keep the link.
+     *
+     * A dial still connecting is not chased: the channel it delivers is
+     * reported, and the core answers that with another close.
+     */
+    fun closeL2cap(link: ULong) = confined {
+        bulk.remove(link)?.close()
+        listening.remove(link)?.let(::shut)
+    }
+
     /** Write one fragment, already sized to this link's MTU by the core. */
     fun send(link: ULong, fragment: ByteArray) = confined {
         when (val held = links[link]) {
             // Acknowledged, because ordered reliable delivery is what the
             // control and sync channels are framed against.
-            is Link.Dialed -> write(held, fragment)
-            is Link.Received -> notify(held.device, fragment)
+            is Link.Dialed -> write(link, held, fragment)
+            is Link.Received -> notify(link, held.device, fragment)
             null -> Unit
         }
     }
@@ -387,7 +417,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         scan(false)
         advertise(false)
         links.keys.toList().forEach(::disconnect)
-        bulk.keys.toList().forEach(::forget)
+        bulk.keys.toList().forEach(::closeL2cap)
         awaiting.values.forEach(BluetoothGatt::close)
         awaiting.clear()
         server?.close()
@@ -418,8 +448,20 @@ class Radio(private val context: Context, private val delegate: Delegate) {
             is Link.Received -> negotiated.remove(held.device.address)
             null -> Unit
         }
-        bulk.remove(link)?.close()
-        listening.remove(link)?.let(::shut)
+        closeL2cap(link)
+    }
+
+    /**
+     * End a link whose write the stack refused or dropped, because that write
+     * will never be reported written and the core would wait on it for good.
+     */
+    private fun abandon(link: ULong) {
+        val held = links[link]
+
+        disconnect(link)
+
+        // A received link is forgotten as it is disconnected, so nothing else reports it down.
+        if (held is Link.Received) delegate.linkDown(link)
     }
 
     /** Wait for the peer this PSM was published for, and nobody else. */
@@ -434,6 +476,12 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         shut(server)
 
         confined {
+            // Withdrawn while it waited, because the link went or the upgrade was given up, so nothing it accepted is kept.
+            if (listening[link] !== server) {
+                socket?.let(::shut)
+                return@confined
+            }
+
             listening.remove(link)
 
             if (socket == null || socket.remoteDevice.address != device.address) {
@@ -471,7 +519,10 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     private val pump =
         object : BulkChannel.Delegate {
             override fun bulkRead(channel: BulkChannel, bytes: ByteArray) = confined {
-                delegate.bulkReceived(channel.link, bytes)
+                // A read taken off a channel just before it was closed belongs to nothing the core still reads.
+                if (bulk[channel.link] === channel) {
+                    delegate.bulkReceived(channel.link, bytes)
+                }
             }
 
             override fun bulkWrote(channel: BulkChannel) = confined {
@@ -494,8 +545,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
             BluetoothGattCharacteristic(
                 characteristicId,
                 BluetoothGattCharacteristic.PROPERTY_NOTIFY or
-                    BluetoothGattCharacteristic.PROPERTY_WRITE or
-                    BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
+                    BluetoothGattCharacteristic.PROPERTY_WRITE,
                 BluetoothGattCharacteristic.PERMISSION_WRITE,
             )
 
@@ -512,19 +562,39 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         server = manager.openGattServer(context, gattServer).also { it.addService(served) }
     }
 
-    private fun write(held: Link.Dialed, fragment: ByteArray) {
-        held.gatt.writeCharacteristic(
-            held.characteristic,
-            fragment,
-            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
-        )
+    /**
+     * Hand one fragment to the stack as an acknowledged write, asking again a
+     * few times while it is busy, and ending the link if it refuses.
+     */
+    private fun write(link: ULong, held: Link.Dialed, fragment: ByteArray, attempt: Int = 1) {
+        val result =
+            held.gatt.writeCharacteristic(
+                held.characteristic,
+                fragment,
+                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
+            )
+
+        when {
+            result == BluetoothStatusCodes.SUCCESS -> Unit
+            // The stack runs one write per device, and another one, perhaps another app's, is still going.
+            result == BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY && attempt < WRITE_ATTEMPTS ->
+                later.postDelayed(
+                    { confined { if (links[link] === held) write(link, held, fragment, attempt + 1) } },
+                    WRITE_RETRY_DELAY,
+                )
+            else -> abandon(link)
+        }
     }
 
-    private fun notify(device: BluetoothDevice, fragment: ByteArray) {
-        val exposed = characteristic ?: return
-        val gatt = server ?: return
+    /** Hand one fragment to the stack as a notification, ending the link if it refuses. */
+    private fun notify(link: ULong, device: BluetoothDevice, fragment: ByteArray) {
+        val result =
+            characteristic?.let { exposed ->
+                server?.notifyCharacteristicChanged(device, exposed, false, fragment)
+            }
 
-        gatt.notifyCharacteristicChanged(device, exposed, false, fragment)
+        // The stack has no busy answer for a notification, so every refusal is final.
+        if (result != BluetoothStatusCodes.SUCCESS) abandon(link)
     }
 
     // ------------------------------------------------------------- Scanning
@@ -634,9 +704,12 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                 characteristic: BluetoothGattCharacteristic,
                 status: Int,
             ) = confined {
-                // A failed write is still an answer: the core will not stall
-                // waiting for one that is never coming.
-                linkFor(gatt)?.let(delegate::wrote)
+                val link = linkFor(gatt) ?: return@confined
+
+                // A refused write is how a receiver closes the link, and the disconnect reports it down.
+                if (status != BluetoothGatt.GATT_SUCCESS) return@confined disconnect(link)
+
+                delegate.wrote(link)
             }
         }
 
@@ -663,13 +736,19 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                 offset: Int,
                 value: ByteArray,
             ) = confined {
-                // Subscribing is what makes a link: before it there is a
-                // connection with no way to write back over it.
-                if (linkFor(device) == null) {
-                    val link = take()
-                    links[link] = Link.Received(device)
+                val link = linkFor(device)
 
-                    delegate.linkUp(link, null, false, fragmentSize(device))
+                // Subscribing makes a link and unsubscribing ends one: before it there is no way to write back over the connection.
+                if (value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) {
+                    if (link == null) {
+                        val made = take()
+                        links[made] = Link.Received(device)
+
+                        delegate.linkUp(made, null, false, fragmentSize(device))
+                    }
+                } else if (link != null) {
+                    forget(link)
+                    delegate.linkDown(link)
                 }
 
                 if (responseNeeded) {
@@ -686,18 +765,23 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                 offset: Int,
                 value: ByteArray,
             ) = confined {
-                // A long write splits one fragment across requests, which the core would read as several.
+                // A write command is not one the characteristic offers, and there is no answer to refuse it with.
+                if (!responseNeeded) return@confined
+
+                val link = linkFor(device)
                 val status =
-                    if (preparedWrite || offset != 0) {
-                        BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED
-                    } else {
-                        linkFor(device)?.let { delegate.received(it, value) }
-                        BluetoothGatt.GATT_SUCCESS
+                    when {
+                        // A long write splits one fragment across requests, which the core would read as several.
+                        preparedWrite || offset != 0 -> BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED
+                        // No link means a device never subscribed or one this side closed, and refusing it is how it closes.
+                        link == null -> UNLIKELY_ERROR
+                        else -> {
+                            delegate.received(link, value)
+                            BluetoothGatt.GATT_SUCCESS
+                        }
                     }
 
-                if (responseNeeded) {
-                    server?.sendResponse(device, requestId, status, 0, null)
-                }
+                server?.sendResponse(device, requestId, status, 0, null)
             }
 
             override fun onMtuChanged(device: BluetoothDevice, mtu: Int) = confined {
@@ -705,7 +789,16 @@ class Radio(private val context: Context, private val delegate: Delegate) {
             }
 
             override fun onNotificationSent(device: BluetoothDevice, status: Int) = confined {
-                linkFor(device)?.let(delegate::wrote)
+                val link = linkFor(device) ?: return@confined
+
+                // Congested is still taken; anything else was dropped, and the peer would find a fragment missing.
+                if (status != BluetoothGatt.GATT_SUCCESS &&
+                    status != BluetoothGatt.GATT_CONNECTION_CONGESTED
+                ) {
+                    return@confined abandon(link)
+                }
+
+                delegate.wrote(link)
             }
         }
 
@@ -738,6 +831,18 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
         /** The longest attribute value BLE allows, whatever the MTU. */
         const val MAX_ATTRIBUTE = 512
+
+        /**
+         * ATT's Unlikely Error, which `BluetoothGatt` names no constant for and
+         * the stack sends as given. iOS refuses a write with the same code.
+         */
+        const val UNLIKELY_ERROR = 0x0E
+
+        /** How many times a write is handed to a stack busy with another before the link is given up. */
+        const val WRITE_ATTEMPTS = 5
+
+        /** How long a write the stack was busy for waits before it is handed over again, in milliseconds. */
+        const val WRITE_RETRY_DELAY = 100L
 
         /**
          * How long a published channel waits for its peer, in milliseconds.

@@ -1,6 +1,10 @@
 //! Liveness for one link: when to prove this device is alive, and when to
 //! conclude the peer no longer is.
 //!
+//! A beat is sent on a jittered timer, and answered when this device has been
+//! quiet, because a platform that suspends a backgrounded app's timers would
+//! otherwise leave it beating never. NIP-BE.
+//!
 //! Liveness, not authorization. The transport already guarantees proximity,
 //! which leaves the beat only cleanup to do, and cleanup can afford to be
 //! lenient. `docs/discovery.md#heartbeat-and-teardown`.
@@ -18,6 +22,16 @@ pub const MIN_INTERVAL_SECONDS: i64 = 15;
 /// The high bound on the jittered beat interval.
 pub const MAX_INTERVAL_SECONDS: i64 = 30;
 
+/// How long this device has to have sent nothing before it answers a beat
+/// from the peer: a device that answers whenever it has been quiet that long
+/// beats as often as its peer. NIP-BE.
+///
+/// The same fifteen seconds as [`MIN_INTERVAL_SECONDS`] today, and a separate
+/// constant because they answer to different rules: this one decides when a
+/// beat is owed back, and moving it has nothing to do with how soon this
+/// device beats on its own.
+pub const QUIET_SECONDS: i64 = 15;
+
 /// One link's liveness clock: what was last heard, and when to beat next.
 #[derive(Debug)]
 pub struct Heartbeat {
@@ -26,6 +40,8 @@ pub struct Heartbeat {
     /// When the next beat is due, so that a quiet session still proves it is alive
     /// before the peer's own timeout drains it.
     pub next_beat_at: i64,
+    /// When this device last handed the shell a write for the peer.
+    pub last_sent: i64,
 }
 
 impl Heartbeat {
@@ -36,12 +52,26 @@ impl Heartbeat {
         Ok(Self {
             last_heard: now,
             next_beat_at: now + jittered_interval()?,
+            last_sent: now,
         })
     }
 
     /// A frame arrived, whatever it carried: the peer is alive.
     pub fn heard(&mut self) {
         self.last_heard = clock::now();
+    }
+
+    /// A write went to the shell, whatever it carried: the peer hears this
+    /// device is alive.
+    pub fn sent(&mut self) {
+        self.last_sent = clock::now();
+    }
+
+    /// Whether this device has sent nothing for [`QUIET_SECONDS`], which is
+    /// when a beat from the peer is answered with one.
+    #[must_use]
+    pub fn quiet(&self) -> bool {
+        clock::now() - self.last_sent >= QUIET_SECONDS
     }
 
     /// Whether the peer has been silent past the timeout.
@@ -115,6 +145,16 @@ mod tests {
 
         assert!(clock::at(1_000 + MIN_INTERVAL_SECONDS - 1, || !heartbeat.due()));
         assert!(clock::at(1_000 + MAX_INTERVAL_SECONDS, || heartbeat.due()));
+    }
+
+    #[test]
+    fn a_device_is_quiet_once_it_has_sent_nothing_for_the_quiet_threshold() {
+        let mut heartbeat = clock::at(1_000, Heartbeat::new).unwrap();
+
+        clock::at(1_010, || heartbeat.sent());
+
+        assert!(clock::at(1_010 + QUIET_SECONDS - 1, || !heartbeat.quiet()));
+        assert!(clock::at(1_010 + QUIET_SECONDS, || heartbeat.quiet()));
     }
 
     #[test]

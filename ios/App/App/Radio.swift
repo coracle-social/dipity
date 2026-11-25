@@ -149,6 +149,9 @@ final class Radio: NSObject {
         central.cancelPeripheralConnection(target)
     }
 
+    /// End a link. A peripheral manager cannot disconnect a central, so a
+    /// received link is forgotten, and every later write from that central is
+    /// refused until it subscribes again, which its dialer takes as the close.
     func disconnect(_ link: UInt64) {
         guard case .dialed(let target, _)? = links[link] else {
             return forget(link)
@@ -188,6 +191,19 @@ final class Radio: NSObject {
         channel.write(fragment)
     }
 
+    /// Let go of the L2CAP channel on `link`, closing it if it is open and
+    /// withdrawing it if this end published it, and keep the link.
+    ///
+    /// A publication or an open still under way is not chased: the channel it
+    /// delivers is reported, and the core answers that with another close.
+    func closeL2cap(_ link: UInt64) {
+        bulk.removeValue(forKey: link)?.close()
+
+        if let psm = published.removeValue(forKey: link) {
+            peripheral.unpublishL2CAPChannel(psm)
+        }
+    }
+
     /// Stop both roles and drop every link.
     ///
     /// The GATT service stays registered, unlike Android's, because it is added
@@ -208,7 +224,7 @@ final class Radio: NSObject {
         scan(false)
         advertise(false)
         Array(links.keys).forEach(disconnect)
-        Array(bulk.keys).forEach(forget)
+        Array(bulk.keys).forEach(closeL2cap)
     }
 
     /// Write one fragment, already sized to this link's MTU by the core.
@@ -219,9 +235,7 @@ final class Radio: NSObject {
             // control and sync channels are framed against.
             target.writeValue(fragment, for: characteristic, type: .withResponse)
         case .received(let subscriber):
-            // A notify that the queue refused is retried from
-            // `peripheralManagerIsReady`, which is the same release the
-            // acknowledged path gets.
+            // CoreBluetooth reports nothing after it accepts a notification, so accepted is written, and refused waits for `peripheralManagerIsReady`.
             if peripheral.updateValue(
                 fragment, for: characteristic, onSubscribedCentrals: [subscriber])
             {
@@ -264,11 +278,7 @@ final class Radio: NSObject {
     /// unpublishes one whose link has gone.
     private func forget(_ link: UInt64) {
         links[link] = nil
-        bulk.removeValue(forKey: link)?.close()
-
-        if let psm = published.removeValue(forKey: link) {
-            peripheral.unpublishL2CAPChannel(psm)
-        }
+        closeL2cap(link)
     }
 
     /// Tell the core this link finishes on GATT.
@@ -293,6 +303,10 @@ final class Radio: NSObject {
     /// radio was given. CoreBluetooth negotiates the channel's MTU and exposes
     /// it nowhere, and the streams take a write of any size.
     private static let bulkMtu: UInt32 = 8192
+
+    /// The longest attribute value BLE allows, whatever the MTU, and so the
+    /// longest fragment a write or a notification carries.
+    private static let maxAttribute = 512
 }
 
 /// What the radio reports. Every one of these is a core entry point.
@@ -412,17 +426,29 @@ extension Radio: CBPeripheralDelegate {
 
         // Notify is how the peer writes back on a link this device dialed.
         target.setNotifyValue(true, for: found)
+    }
+
+    // The link is up once the subscription lands, because the receiver refuses a write from a central that has not subscribed.
+    func peripheral(
+        _ target: CBPeripheral,
+        didUpdateNotificationStateFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        guard characteristic.uuid == characteristicId, link(for: target) == nil else { return }
+        guard error == nil, characteristic.isNotifying else {
+            return central.cancelPeripheralConnection(target)
+        }
 
         let link = take()
-        links[link] = .dialed(target, found)
+        links[link] = .dialed(target, characteristic)
 
         delegate?.radio(
             self,
             upOn: link,
             peripheral: target.identifier.uuidString,
             dialer: true,
-            // The single-write size: `.withResponse` answers 512 whatever the ATT MTU, which is a long write.
-            mtu: UInt32(target.maximumWriteValueLength(for: .withoutResponse)))
+            // The single-write size, within an attribute: `.withResponse` answers 512 whatever the ATT MTU, which is a long write.
+            mtu: UInt32(min(target.maximumWriteValueLength(for: .withoutResponse), Self.maxAttribute)))
     }
 
     func peripheral(
@@ -442,8 +468,10 @@ extension Radio: CBPeripheralDelegate {
     ) {
         guard let link = link(for: target) else { return }
 
-        // The acknowledged write is what releases the next fragment. A failed
-        // one is still an answer: the core will not stall waiting for it.
+        // A refused write is how a receiver that cannot disconnect closes the link, and the disconnect reports it down.
+        guard error == nil else { return disconnect(link) }
+
+        // The acknowledged write is what releases the next fragment.
         delegate?.radio(self, wroteOn: link)
     }
 
@@ -463,7 +491,7 @@ extension Radio: CBPeripheralManagerDelegate {
 
         characteristic = CBMutableCharacteristic(
             type: characteristicId,
-            properties: [.notify, .write, .writeWithoutResponse],
+            properties: [.notify, .write],
             value: nil,
             permissions: [.writeable])
 
@@ -476,8 +504,7 @@ extension Radio: CBPeripheralManagerDelegate {
     }
 
     func peripheralManager(_ manager: CBPeripheralManager, willRestoreState state: [String: Any]) {
-        // The services come back with the app; the subscribers do not, and a
-        // subscriber reappears by writing, which is where the link is made.
+        // The services come back with the app and the links do not, so a write from a central still subscribed is refused.
         let restored = state[CBPeripheralManagerRestoredStateServicesKey] as? [CBMutableService]
 
         characteristic =
@@ -500,7 +527,7 @@ extension Radio: CBPeripheralManagerDelegate {
             upOn: link,
             peripheral: nil,
             dialer: false,
-            mtu: UInt32(subscriber.maximumUpdateValueLength))
+            mtu: UInt32(min(subscriber.maximumUpdateValueLength, Self.maxAttribute)))
     }
 
     func peripheralManager(
@@ -523,6 +550,11 @@ extension Radio: CBPeripheralManagerDelegate {
         // A long write splits one fragment across requests, which the core would read as several.
         guard requests.allSatisfy({ $0.offset == 0 }) else {
             return manager.respond(to: first, withResult: .invalidOffset)
+        }
+
+        // A central with no link never subscribed or was forgotten, and refusing it is how this side closes a link.
+        guard requests.allSatisfy({ link(for: $0.central) != nil }) else {
+            return manager.respond(to: first, withResult: .unlikelyError)
         }
 
         for request in requests {
@@ -573,12 +605,30 @@ extension Radio: CBPeripheralManagerDelegate {
         delegate?.radio(self, publishedOn: link, psm: UInt16(psm))
     }
 
+    /// A central opened a channel at a PSM this device published.
+    ///
+    /// Any central connected to this device can open one at any published PSM,
+    /// so a channel is used only by the link whose central opened it, and only
+    /// as that link's first. Any other is closed, and the PSM goes on waiting
+    /// for the link's own central. `docs/transport.md#the-l2cap-bandwidth-upgrade`.
     func peripheralManager(
         _ manager: CBPeripheralManager,
         didOpen channel: CBL2CAPChannel?,
         error: Error?
     ) {
-        guard let channel, let link = link(publishedAt: channel.psm) else { return }
+        guard let channel else { return }
+
+        guard
+            let link = link(publishedAt: channel.psm),
+            case .received(let subscriber)? = links[link],
+            channel.peer?.identifier == subscriber.identifier,
+            bulk[link] == nil
+        else {
+            // Closing its streams and holding no reference to it is what closes a channel.
+            channel.inputStream?.close()
+            channel.outputStream?.close()
+            return
+        }
 
         adopt(channel, on: link)
     }
@@ -613,12 +663,7 @@ extension Radio: BulkDelegate {
     func bulkClosed(_ channel: BulkChannel) {
         guard bulk[channel.link] === channel else { return }
 
-        bulk[channel.link] = nil
-
-        if let psm = published.removeValue(forKey: channel.link) {
-            peripheral.unpublishL2CAPChannel(psm)
-        }
-
+        closeL2cap(channel.link)
         bulkUnavailable(channel.link)
     }
 }
