@@ -4,25 +4,25 @@ import Layout from "../layouts/Layout.astro"
 
 <Layout
   title="Privacy · Dipity"
-  description="What Dipity keeps, what it shares with the people you meet, and what nobody receives at all.">
+  description="What Dipity stores on your phone, and what it shares with the people you meet.">
   <article class="prose mx-auto px-5 pt-10 sm:px-8">
     <h1>Privacy</h1>
     <p class="lede">
-      Everything Dipity knows stays on your phone, and it only talks to other phones within
-      Bluetooth range. Some of what it shares with them is not private, and this policy says which.
+      Dipity stores everything on your phone and talks only to other phones in Bluetooth range.
+      This policy describes what your phone keeps, and what it shares with the phones it meets.
     </p>
     <p><strong>Effective October 7, 2026.</strong></p>
 
     <h2>What we collect</h2>
     <p>
-      Nothing. Dipity is made by Coracle Social LLC ("Coracle", "we"), and the app never connects to Coracle or to anyone else
-      over the internet. We don't run a service it reports to, we don't use analytics or advertising
-      tools, and we never receive your posts, your contacts or your location.
+      Dipity is made by Coracle Social LLC ("Coracle", "we"). The app never connects to Coracle, or
+      to anyone else, over the internet. We run no service for it to report to, and we use no
+      analytics or advertising tools.
     </p>
     <p>
-      The one exception is a report you choose to send. Reporting a post opens your own mail app with
-      a message to us naming the post and its author, and we receive only what you send. It says
-      nothing about who passed the post to you, or where.
+      We receive a report only when you send one. Reporting a post opens your mail app with a
+      message to us that names the post and its author. The message says nothing about who passed
+      the post to you, or where.
     </p>
     <p>
       If you download Dipity from Google Play or the App Store, Google or Apple may collect
@@ -33,74 +33,76 @@ import Layout from "../layouts/Layout.astro"
     <ul>
       <li>
         <strong>Your key.</strong> Your identity is a cryptographic key, created on your phone and
-        kept in the phone's secure storage. Anyone who has it can post as you. It only leaves your
-        phone if you back it up or move it to another phone of yours.
+        kept in the phone's secure storage. Anyone who has the key can post as you. The key leaves
+        your phone only when you back it up or move it to another phone of yours.
       </li>
       <li>
-        <strong>Posts and pictures</strong>, yours and the ones your phone has collected from others.
-        They are stored on your phone without additional encryption, so anyone with access to an
-        unlocked phone can read them.
+        <strong>Posts and pictures</strong>, both yours and the ones your phone has collected from
+        others. Dipity does not encrypt them, so anyone who can unlock your phone can read them.
       </li>
       <li>
-        <strong>Who handed you what.</strong> Your phone records which phones it received each post
-        from and passed it to, and when. This is never shared with anyone, but it is a record of who
-        you were near, so it would be visible to someone who took and unlocked your phone.
+        <strong>Who handed you what.</strong> Your phone records who handed it each post, who it
+        passed each post to, and when. Dipity never shares this record. The record shows who you
+        were near, so anyone who takes and unlocks your phone can learn that.
       </li>
       <li><strong>Your settings</strong>, and the names you've given the people you've paired with.</li>
     </ul>
 
     <h2>What the people you meet learn</h2>
-    <p>
-      Dipity works by meeting people, so some things are shared with the phones yours connects to.
-    </p>
     <ul>
       <li>
         <strong>Who you are, and that you were there.</strong> When your phone connects to another,
-        it shares your public key, which identifies you on Dipity, and so reveals that you were
-        nearby at that moment. With the app open, your phone introduces itself to anyone nearby.
-        With it closed, it meets a few strangers a day, or none if you turn that off in settings.
+        it shares your public key, which identifies you on Dipity. The other person then knows that
+        you were nearby at that moment. While the app is open, your phone shares your key with
+        anyone nearby. While the app is closed, it shares your key with a limited number of
+        strangers each day, or with none if you turn that off in settings.
       </li>
       <li>
-        <strong>Your posts</strong>, to the people your settings allow: only people you've paired
-        with, or anyone you meet. People you've paired with may pass your posts on once more, but
-        Dipity never carries a post more than two hops from you.
+        <strong>Your posts, reactions and flags</strong> go to the people your settings allow. You
+        choose between the people you've paired with, those people and their contacts, or anyone
+        you meet. Only the people you've paired with can pass your posts on, and Dipity never
+        carries a post more than two hops from you.
       </li>
       <li>
-        <strong>Proof that you wrote something.</strong> When you let people pass your posts on,
-        Dipity gives each of them your signature on the post, which proves you wrote it to anyone they
-        show it to. People further along only receive proof that is meaningless to anyone else.
+        <strong>Proof that you wrote something.</strong> When you let the people you've paired
+        with pass your posts on, Dipity gives each of them your signature on each post. Your
+        signature proves that you wrote the post to anyone they show it to. The people they pass
+        it to receive a proof that convinces nobody else.
       </li>
       <li>
-        <strong>The names you give people</strong> travel with your posts, following the same
-        settings. Your list of blocked and muted people goes only to people you've paired with, and
-        your bookmarks go to nobody.
+        <strong>Names and lists.</strong> The names you give people travel with your posts, under
+        the same settings. Only the people you've paired with can see who you've muted or
+        suppressed, and which topics you've muted. Nobody can see who you've blocked or what you've
+        bookmarked.
       </li>
     </ul>
     <p>
-      Your phone uses a fresh, temporary identifier for every connection, so nothing it broadcasts
-      can be used to recognize it later. That makes you harder to follow, but not impossible to
-      follow. Someone who stays near you, or places receivers around town, can still observe when
-      your phone is present. Dipity does not make you untrackable.
+      Apart from your public key, nothing your phone sends identifies it from one connection to the
+      next. Someone who stays near you, or who places receivers around town, can still tell when
+      your phone is present. Dipity makes you harder to track, but it does not make you
+      untrackable.
     </p>
 
     <h2>Pictures</h2>
     <p>
-      Before a picture is shared, Dipity shrinks it and removes the information your camera stored
-      in the file, including its location.
+      When you post a picture, Dipity shrinks it and removes the information your camera stored in
+      the file, including the location.
     </p>
 
     <h2>What other people can do</h2>
     <p>
-      Anyone who receives your post can keep it, copy it or screenshot it, and Dipity can't stop
-      them. When you delete one of your posts, Dipity asks every phone that has it to delete it too,
-      and the app honours that request, but a modified app or a screenshot would not.
+      Anyone who receives your post can keep it, copy it or take a screenshot of it. When you
+      delete one of your posts, Dipity sends a deletion request that travels the same way the post
+      did. Other phones running Dipity delete the post when the request reaches them, but a
+      modified app can ignore the request.
     </p>
 
     <h2>Removing your data</h2>
     <p>
-      Everything Dipity stores is on your phone, so uninstalling the app deletes it. Your posts on
-      other people's phones fade on their own after a while unless they bookmark them. If you back up
-      your key, keep the backup somewhere safe, and delete it when you no longer need it.
+      Uninstalling Dipity, or logging out of it, deletes everything it stored on your phone. Copies
+      of your posts on other phones expire after 90 days by default, unless their owners bookmark
+      them. If you back up your key, store the backup somewhere safe and delete it when you no
+      longer need it.
     </p>
 
     <h2>Children</h2>
@@ -108,13 +110,13 @@ import Layout from "../layouts/Layout.astro"
 
     <h2>Changes</h2>
     <p>
-      If this policy changes, we'll update it here and change the date above. The app itself has no
-      way to reach you, so check back from time to time.
+      If this policy changes, we'll update this page and the effective date. The app does not
+      connect to us, so it cannot tell you about a change.
     </p>
 
     <h2>Contact</h2>
     <p>
-      Questions about privacy? Email <a href="mailto:support@coracle.social"
+      Send questions about privacy to <a href="mailto:support@coracle.social"
         >support@coracle.social</a
       >.
     </p>
