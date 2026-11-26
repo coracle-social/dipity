@@ -143,7 +143,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
     /** Devices dialed and found not to serve our service, until their disconnect is reported. */
     private val foreign = mutableSetOf<String>()
 
-    /** The ATT MTU each connection negotiated, by device address, until its link is made. */
+    /** The ATT MTU each connection negotiated, by device address, for as long as the connection lasts. */
     private val negotiated = mutableMapOf<String, Int>()
 
     private var nextLink = 1UL
@@ -420,6 +420,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
         bulk.keys.toList().forEach(::closeL2cap)
         awaiting.values.forEach(BluetoothGatt::close)
         awaiting.clear()
+        negotiated.clear()
         server?.close()
         server = null
     }
@@ -443,11 +444,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
      * as an upgrade this device lost.
      */
     private fun forget(link: ULong) {
-        when (val held = links.remove(link)) {
-            is Link.Dialed -> negotiated.remove(held.gatt.device.address)
-            is Link.Received -> negotiated.remove(held.device.address)
-            null -> Unit
-        }
+        links.remove(link)
         closeL2cap(link)
     }
 
@@ -720,6 +717,9 @@ class Radio(private val context: Context, private val delegate: Delegate) {
             override fun onConnectionStateChange(device: BluetoothDevice, status: Int, state: Int) =
                 confined {
                     if (state != BluetoothProfile.STATE_CONNECTED) {
+                        // The server hears the connection itself drop, whichever side dialed, and the MTU goes with it.
+                        negotiated.remove(device.address)
+
                         linkFor(device)?.let {
                             forget(it)
                             delegate.linkDown(it)
@@ -740,9 +740,6 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
                 // Subscribing makes a link and unsubscribing ends one: before it there is no way to write back over the connection.
                 if (value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) {
-                    // Read before the old link is forgotten, because forgetting it drops the MTU the connection still has.
-                    val size = fragmentSize(device)
-
                     // A central subscribing again has started over, so its old link ends rather than taking the new handshake.
                     if (link != null) {
                         forget(link)
@@ -752,7 +749,7 @@ class Radio(private val context: Context, private val delegate: Delegate) {
                     val made = take()
                     links[made] = Link.Received(device)
 
-                    delegate.linkUp(made, null, false, size)
+                    delegate.linkUp(made, null, false, fragmentSize(device))
                 } else if (link != null) {
                     forget(link)
                     delegate.linkDown(link)
