@@ -1,5 +1,13 @@
 # Changelog
 
+# 0.2.0
+
+* Phones on this version can't trade posts with phones on 0.1.5 or earlier, so update every phone you trade with
+* Copy a post's text from its menu
+* Picture posts show up right away, with a placeholder until the picture arrives
+* Posts no longer stall for a minute after the app restarts while another phone is nearby
+* More reliable connections and picture transfers between iPhones and Android phones
+
 # 0.1.5
 
 * Log in with the key `testingkey` to try a demo with sample posts and people, which logging out leaves
