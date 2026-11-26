@@ -180,9 +180,8 @@ pub enum Secrecy {
 
 /// Cuts frames into fragments, and reassembles the fragments that arrive.
 ///
-/// One per link. Reassembly is per pipe as well as per channel, because the two
-/// pipes deliver independently: the last fragment of a blob frame on GATT and
-/// the first of the next on L2CAP can arrive in either order. NIP-BE.
+/// One per link, reassembling per pipe as well as per channel.
+/// `docs/transport.md#the-l2cap-bandwidth-upgrade`.
 #[derive(Debug, Default)]
 pub struct Codec {
     /// Partial frames, one per pipe and channel, since channels interleave and
@@ -302,12 +301,10 @@ impl Outbox {
 
     /// Move the blob channel back onto GATT, because the bulk pipe is gone.
     ///
-    /// The rest of a blob frame begun on GATT stays queued and finishes there,
-    /// because the peer is still reassembling it. Every other blob fragment
-    /// goes, and so does the write in flight on bulk, which nobody will
-    /// acknowledge: the rest of a frame begun on bulk went with the pipe, and a
-    /// frame not yet begun may be cut for the bulk MTU, which would overrun an
-    /// ATT write. The fetcher reissues whatever that cuts short. NIP-BE.
+    /// The rest of a blob frame begun on GATT stays queued and finishes there.
+    /// Every other blob fragment is dropped, and so is the write in flight on
+    /// bulk, which nobody will acknowledge.
+    /// `docs/transport.md#giving-up-the-upgrade`.
     pub fn close_bulk(&mut self) {
         self.bulk = false;
         self.in_flight.insert(Pipe::Bulk, false);

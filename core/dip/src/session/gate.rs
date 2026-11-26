@@ -15,11 +15,10 @@
 //! everyone else.
 
 use anyhow::Result;
-use coracle_lib::keys::PublicKey;
 
 use crate::clock;
 use crate::db::Db;
-use crate::model::{Policy, STRANGERS_PER_DAY};
+use crate::model::{PairSecret, Policy, STRANGERS_PER_DAY};
 
 /// What the gate decided about a peer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +29,17 @@ pub enum Verdict {
     Refused,
     /// An unadmitted stranger; hold for the user.
     Pending,
+}
+
+/// How the gate let a peer into the exchange, which rides on the session's
+/// state until the peer has named itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Consent {
+    /// The gate passed the peer.
+    Given,
+    /// A receiver whose gate would hold the dialer lets the exchange run to
+    /// see who it is first, which it may because the dialer discloses first.
+    Deferred,
 }
 
 /// Where the app is: in front, a stranger costs the disclosure bucket nothing,
@@ -45,31 +55,24 @@ pub enum Presence {
 /// One session's consent gate.
 #[derive(Debug, Default)]
 pub struct Gate {
-    /// Whether the gate has passed, by policy or by the user's approval.
-    /// Nothing that names an identity — a challenge answered, an `AUTH`
-    /// response accepted — happens before it has.
-    pub passed: bool,
     /// Whether the peer got in as an unrecognized stranger on the disclosure
     /// bucket alone, which is what spends from it. A recognized peer, a
     /// stranger met with the app in front, and one the user approved by hand
     /// spend nothing.
     pub spends_budget: bool,
-    /// Whether a receiver let the exchange run on to see who the dialer is
-    /// before holding them, which it may because the dialer discloses first.
-    pub deferred: bool,
     /// Where the app is, or `None` if the shell has not said this run.
     pub presence: Option<Presence>,
 }
 
 impl Gate {
-    /// Judge the peer the recognition exchange resolved, recording a pass.
+    /// Judge the peer by the pair secrets the recognition exchange resolved it to.
     pub fn evaluate(
         &mut self,
         db: &Db,
         policy: &Policy,
-        resolved: &[PublicKey],
+        recognized: &[PairSecret],
     ) -> Result<Verdict> {
-        let verdict = if resolved.is_empty() {
+        let verdict = if recognized.is_empty() {
             // A stranger is admitted outright, by the bucket, or waits on the user.
             match self.admits_stranger(db, policy)? {
                 Admission::Free => Verdict::Pass,
@@ -79,17 +82,16 @@ impl Gate {
                 }
                 Admission::Held => Verdict::Pending,
             }
-        } else if resolved.iter().any(|pubkey| policy.refuses(pubkey)) {
+        } else if recognized
+            .iter()
+            .any(|matched| policy.refuses(&matched.pubkey))
+        {
             // Refused wins over every identity the tags resolved to: one device, one decision.
             Verdict::Refused
         } else {
             // Paired peers pass silently.
             Verdict::Pass
         };
-
-        if verdict == Verdict::Pass {
-            self.passed = true;
-        }
 
         Ok(verdict)
     }
@@ -134,10 +136,23 @@ enum Admission {
 mod tests {
     use super::*;
 
+    use coracle_lib::keys::PublicKey;
+
     use crate::fixtures::author;
 
     fn policy() -> Policy {
         Policy::new(author(1))
+    }
+
+    /// What recognition resolves a device to that holds a pair secret under each of `pubkeys`.
+    fn recognized(pubkeys: &[PublicKey]) -> Vec<PairSecret> {
+        pubkeys
+            .iter()
+            .map(|pubkey| PairSecret {
+                pubkey: *pubkey,
+                secret: [0; 32],
+            })
+            .collect()
     }
 
     #[test]
@@ -148,10 +163,10 @@ mod tests {
         let mut gate = Gate::default();
 
         assert_eq!(
-            gate.evaluate(&db, &policy, &[author(2)]).unwrap(),
+            gate.evaluate(&db, &policy, &recognized(&[author(2)]))
+                .unwrap(),
             Verdict::Refused
         );
-        assert!(!gate.passed);
     }
 
     #[test]
@@ -168,10 +183,9 @@ mod tests {
         assert_ne!(resolved[0], author(3), "the fixture stopped being a test");
 
         assert_eq!(
-            gate.evaluate(&db, &policy, &resolved).unwrap(),
+            gate.evaluate(&db, &policy, &recognized(&resolved)).unwrap(),
             Verdict::Refused
         );
-        assert!(!gate.passed);
     }
 
     #[test]
@@ -180,10 +194,10 @@ mod tests {
         let mut gate = Gate::default();
 
         assert_eq!(
-            gate.evaluate(&db, &policy(), &[author(2)]).unwrap(),
+            gate.evaluate(&db, &policy(), &recognized(&[author(2)]))
+                .unwrap(),
             Verdict::Pass
         );
-        assert!(gate.passed);
     }
 
     #[test]
@@ -211,7 +225,6 @@ mod tests {
         }
 
         assert_eq!(gate.evaluate(&db, &policy, &[]).unwrap(), Verdict::Pending);
-        assert!(!gate.passed);
         assert!(!gate.spends_budget);
     }
 
@@ -239,16 +252,18 @@ mod tests {
         assert_eq!(gate.evaluate(&db, &policy(), &[]).unwrap(), Verdict::Pass);
         assert!(gate.spends_budget);
 
-        let mut recognized = Gate {
+        let mut known = Gate {
             presence: Some(Presence::Background),
             ..Default::default()
         };
 
         assert_eq!(
-            recognized.evaluate(&db, &policy(), &[author(2)]).unwrap(),
+            known
+                .evaluate(&db, &policy(), &recognized(&[author(2)]))
+                .unwrap(),
             Verdict::Pass
         );
-        assert!(!recognized.spends_budget);
+        assert!(!known.spends_budget);
     }
 
     #[test]

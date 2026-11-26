@@ -64,7 +64,7 @@ Everything below is under `core/dip/src/`. Modules mirror the design documents o
 | `session/` | One link's lifecycle: `State`, the consent `Gate`, `AuthExchange`, `recognition`, `Heartbeat`, `IdentityTransfer` (login with device) | `discovery.md`, `keys.md` |
 | `transport/` | `Wire` (the encrypted pipe), `noise` (Noise XX over `snow`), `frame` (channels, `Pipe`, fragmentation, priority) | `transport.md` |
 | `sync/` | `relay` (what this device serves), `client` (what it takes in), `blob`, `spending`, `message` | `sync.md` |
-| `model/` | The types the store is expressed in: `Policy`, `Query`, `Registers`, `AuthorshipProof`, `Blob`, `Graph` | `policy.md`, `proofs.md` |
+| `model/` | The types the store is expressed in: `Policy`, `Query`, `Registers`, `AuthorshipProof`, `Blob`, `Graph`, `PairSecret` | `policy.md`, `proofs.md` |
 | `db/` | `Db`, `Tx`, `query`, `command`, and one submodule per group of tables | `storage.md` |
 | `blobs/` | The `BlobStore` trait and its file-backed and in-memory implementations, and `verified`, the Bao proofs a range of a blob travels under | `sync.md` |
 | `backup.rs` | The key backup file: `nsec`/`ncryptsec` encoding and the prose around it, written to the shell's cache directory | `keys.md` |
@@ -101,9 +101,13 @@ The schema is `core/dip/migrations/`, listed in `db/core.rs::MIGRATIONS`, applie
 A `Session` is keyed on `LinkId` and performs no I/O. The lifecycle is `State`, and each phase's bookkeeping rides on its variant. A phase cannot exist without the data it needs, and no flag can disagree with the state it shadows.
 
 ```
-Linked → Secured → DialerIdentified → Identified → Syncing → Draining → Closed
-                                   ↘ GatePending ↗
+Linked → Secured → Admitted → DialerIdentified  → Identified → Syncing → Draining → Closed
+                            ↘ ReceiverChallenged ↗
+a dialer:   Secured → GatePending → Admitted
+a receiver: ReceiverChallenged → DialerHeld → Identified
 ```
+
+The exchange's turns are transitions, not flags. The dialer opens its half of the exchange, its recognition tags and its challenge, on entering `Secured`. `Admitted` is the gate having let the peer in, and each device takes its turn on whichever comes second of that and the peer's challenge: the dialer answers and becomes `DialerIdentified`, and the receiver opens its own half and becomes `ReceiverChallenged`. `Admitted` and `ReceiverChallenged` carry the gate's `Consent`, because a receiver whose gate would hold a stranger defers instead and decides once the dialer has named itself: a contact is let through, anybody else held in `DialerHeld`. A dialer holds only at the tags, in `GatePending`, before anybody is named, so the two holds take different inputs and are different states. `Session::identify` records a proved pubkey and moves nothing; the `AUTH` response that proved it takes the step the phase calls for, pairing it if the session already syncs. Each device's gate judges one tag list per session, and a second ends the link.
 
 Everything else is a behavior the session composes, each owning its own state: `Wire`, `Heartbeat`, `Gate`, `AuthExchange`, `Relay`, `Client`, `BlobExchange`, `SessionSpending`, `Upgrade`, `IdentityTransfer`. What stays on the session is the lifecycle, the `Peer` the exchange proved, and the policy it is bound under. None of them holds the wire: a behavior that owes the peer an answer returns the payload, and the session sends it.
 

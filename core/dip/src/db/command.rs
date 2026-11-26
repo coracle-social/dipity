@@ -271,7 +271,7 @@ mod tests {
         let held: Vec<_> = crate::db::query::pair_secrets(&db)
             .unwrap()
             .into_iter()
-            .map(|(pubkey, _)| pubkey)
+            .map(|pair_secret| pair_secret.pubkey)
             .collect();
         assert_eq!(held, vec![author(3)]);
     }

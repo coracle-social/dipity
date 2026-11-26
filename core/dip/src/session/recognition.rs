@@ -9,9 +9,10 @@
 //! that another implementation recognizes the same peers.
 
 use anyhow::{Context, Result, bail};
-use coracle_lib::keys::PublicKey;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
+
+use crate::model::PairSecret;
 
 /// How many tags go on the wire, whatever the device holds: padded up with
 /// random bytes, sampled down when it holds more pair secrets than this.
@@ -91,9 +92,8 @@ pub fn tag(pair_secret: &[u8; 32], handshake_hash: &[u8; 32]) -> Tag {
 /// The list to put on the wire for `secrets` in the session `handshake_hash`
 /// identifies: [`TAG_COUNT`] tags, however many pair secrets the device holds.
 ///
-/// A secret stored against several pubkeys, for a peer that proved more than
-/// one, is tagged once. Two equal tags in a list that is otherwise random
-/// would mark the device in every session.
+/// A secret stored against several pubkeys is tagged once, since a repeated
+/// tag would mark the device.
 ///
 /// Beyond that count the tags are a random sample, drawn again every session.
 /// A peer left out of one list is not recognized on that encounter — it arrives
@@ -101,10 +101,10 @@ pub fn tag(pair_secret: &[u8; 32], handshake_hash: &[u8; 32]) -> Tag {
 /// the next one, which a fixed truncation would not leave it. The alternative,
 /// sending everything, puts the pairing count on the wire exactly and grows the
 /// frame without bound.
-pub fn select(secrets: &[(PublicKey, [u8; 32])], handshake_hash: &[u8; 32]) -> Result<Tags> {
+pub fn select(secrets: &[PairSecret], handshake_hash: &[u8; 32]) -> Result<Tags> {
     let mut tags: Vec<Tag> = secrets
         .iter()
-        .map(|(_, secret)| tag(secret, handshake_hash))
+        .map(|pair_secret| tag(&pair_secret.secret, handshake_hash))
         .collect();
 
     tags.sort_unstable();
@@ -128,7 +128,7 @@ pub fn select(secrets: &[(PublicKey, [u8; 32])], handshake_hash: &[u8; 32]) -> R
     Ok(Tags(tags))
 }
 
-/// Which peers a list of tags resolves to, each with the pair secret it matched.
+/// Which of this device's pair secrets a list of tags resolves to.
 ///
 /// Trial-MACs every pair secret this device holds against `handshake_hash` and
 /// looks each result up in `offered`, one MAC per stored secret. Every match is
@@ -138,12 +138,16 @@ pub fn select(secrets: &[(PublicKey, [u8; 32])], handshake_hash: &[u8; 32]) -> R
 #[must_use]
 pub fn resolve(
     offered: &Tags,
-    secrets: &[(PublicKey, [u8; 32])],
+    secrets: &[PairSecret],
     handshake_hash: &[u8; 32],
-) -> Vec<(PublicKey, [u8; 32])> {
+) -> Vec<PairSecret> {
     secrets
         .iter()
-        .filter(|(_, secret)| offered.0.contains(&tag(secret, handshake_hash)))
+        .filter(|pair_secret| {
+            offered
+                .0
+                .contains(&tag(&pair_secret.secret, handshake_hash))
+        })
         .copied()
         .collect()
 }
@@ -169,16 +173,22 @@ fn shuffle<T>(items: &mut [T]) -> Result<()> {
 mod tests {
     use super::*;
 
+    use coracle_lib::keys::PublicKey;
+
     use crate::fixtures::author;
 
     fn secret(n: u8) -> [u8; 32] {
         [n; 32]
     }
 
+    fn pair_secret(pubkey: PublicKey, secret: [u8; 32]) -> PairSecret {
+        PairSecret { pubkey, secret }
+    }
+
     /// `count` pair secrets, each against its own pubkey.
-    fn secrets(count: u8) -> Vec<(PublicKey, [u8; 32])> {
+    fn secrets(count: u8) -> Vec<PairSecret> {
         (1..=count)
-            .map(|seed| (author(seed), secret(seed)))
+            .map(|seed| pair_secret(author(seed), secret(seed)))
             .collect()
     }
 
@@ -199,12 +209,12 @@ mod tests {
     #[test]
     fn a_matching_tag_resolves_to_the_devices_pubkey() {
         let pubkey = author(2);
-        let secrets = [(pubkey, secret(3))];
+        let secrets = [pair_secret(pubkey, secret(3))];
         let their_tags = Tags(vec![tag(&secret(3), &[9; 32])]);
 
         assert_eq!(
             resolve(&their_tags, &secrets, &[9; 32]),
-            vec![(pubkey, secret(3))]
+            vec![pair_secret(pubkey, secret(3))]
         );
     }
 
@@ -212,7 +222,10 @@ mod tests {
     fn every_pubkey_a_shared_secret_is_stored_against_resolves() {
         // What pairing writes for a peer that authenticated as two identities: one secret, twice.
         let shared = secret(3);
-        let secrets = [(author(2), shared), (author(3), shared)];
+        let secrets = [
+            pair_secret(author(2), shared),
+            pair_secret(author(3), shared),
+        ];
         let their_tags = Tags(vec![tag(&shared, &[9; 32])]);
 
         assert_eq!(resolve(&their_tags, &secrets, &[9; 32]), secrets);
@@ -221,7 +234,10 @@ mod tests {
     #[test]
     fn a_secret_stored_against_several_pubkeys_goes_on_the_list_once() {
         let shared = secret(3);
-        let secrets = [(author(2), shared), (author(3), shared)];
+        let secrets = [
+            pair_secret(author(2), shared),
+            pair_secret(author(3), shared),
+        ];
 
         let sent = select(&secrets, &[9; 32]).unwrap();
         let mine = tag(&shared, &[9; 32]);
@@ -232,8 +248,7 @@ mod tests {
 
     #[test]
     fn no_match_resolves_to_nobody() {
-        let pubkey = author(2);
-        let secrets = [(pubkey, secret(3))];
+        let secrets = [pair_secret(author(2), secret(3))];
 
         assert!(resolve(&Tags(vec![]), &secrets, &[9; 32]).is_empty());
     }
@@ -255,7 +270,7 @@ mod tests {
         let held = secrets(200);
         let real: Vec<Tag> = held
             .iter()
-            .map(|(_, secret)| tag(secret, &[9; 32]))
+            .map(|pair_secret| tag(&pair_secret.secret, &[9; 32]))
             .collect();
 
         let sent = select(&held, &[9; 32]).unwrap();

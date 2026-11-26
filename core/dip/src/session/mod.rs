@@ -46,7 +46,7 @@ use crate::clock;
 use crate::db::Db;
 use crate::keys::{Batch, KeyCustody};
 use crate::link::{LinkId, Role};
-use crate::model::{BlobHash, Identity, Policy, Standing};
+use crate::model::{BlobHash, Identity, PairSecret, Policy, Standing};
 use crate::sync::blob::BlobExchange;
 use crate::sync::blob_message::BlobMessage;
 use crate::sync::client::Client;
@@ -56,7 +56,7 @@ use crate::sync::{Message, Quota};
 use crate::transport::{Channel, Frame, Pipe, Wire};
 
 use auth::AuthExchange;
-use gate::{Gate, Presence, Verdict};
+use gate::{Consent, Gate, Presence, Verdict};
 use heartbeat::Heartbeat;
 use l2cap::{Step, Upgrade};
 use transfer::IdentityTransfer;
@@ -116,8 +116,16 @@ mod control {
 pub enum State {
     /// GATT connected, no security.
     Linked,
-    /// The channel is encrypted and nobody is identified.
+    /// The channel is encrypted, nobody is identified, and the gate has not
+    /// judged the peer. The dialer opens its half of the exchange, its tags
+    /// and its challenge, on entering it.
     Secured,
+    /// The gate let the peer into the exchange, and this device's turn waits
+    /// on the peer's challenge.
+    Admitted(Consent),
+    /// The receiver has taken its turn, opening its half of the exchange, and
+    /// waits for the dialer to name itself.
+    ReceiverChallenged(Consent),
     /// The dialer has named itself. The receiver has disclosed nothing, and
     /// may still leave without doing so.
     DialerIdentified,
@@ -125,9 +133,16 @@ pub enum State {
     Identified,
     /// Events, then blobs.
     Syncing,
-    /// Holding an unadmitted stranger, up to [`GATE_HOLD_SECONDS`], for the
-    /// app to come to the front.
+    /// A dialer holding an unadmitted stranger at its tags, before anybody is
+    /// named, up to [`GATE_HOLD_SECONDS`], for the app to come to the front.
     GatePending {
+        /// When the hold began.
+        since: i64,
+    },
+    /// A receiver holding a dialer that named itself as a stranger, up to
+    /// [`GATE_HOLD_SECONDS`], for the app to come to the front. The receiver
+    /// has disclosed nothing.
+    DialerHeld {
         /// When the hold began.
         since: i64,
     },
@@ -199,9 +214,9 @@ pub struct Session {
     identity: PublicKey,
     /// The proved pubkeys bound under policy, once the peer has proved any.
     pub peer: Option<Peer>,
-    /// Who the peer's recognition tags resolved to, each with the pair secret
-    /// it matched, which is a secret this device and the peer both hold.
-    recognized: Vec<(PublicKey, [u8; 32])>,
+    /// The pair secrets the peer's recognition tags resolved to, each one
+    /// this device and the peer both hold.
+    recognized: Vec<PairSecret>,
     /// The proved pubkeys the shell has already been told about.
     announced: Identity,
     /// Whether the peer asked to pair and the shell has not been told yet.
@@ -289,24 +304,18 @@ impl Session {
     /// A peer may authenticate as several pubkeys across several responses, so
     /// this accumulates rather than replacing. A peer that turns out to be
     /// refused is closed here: the consent gate ran before anyone was named.
+    /// The lifecycle moves on the response that proved them, in
+    /// [`on_auth_response`](Self::on_auth_response).
     pub fn identify(&mut self, pubkeys: impl IntoIterator<Item = PublicKey>) {
         self.auth.prove(pubkeys);
         self.bind_peer();
-
-        // A newly proved identity moves a secured link to Identified; a syncing one stays.
-        if matches!(
-            self.state,
-            State::Secured | State::DialerIdentified | State::Identified
-        ) {
-            self.state = State::Identified;
-        }
     }
 
     /// Bind the peer from the pubkeys it has proved, under the current policy,
     /// closing the session if any of them is refused.
     ///
     /// Binds only, whatever the phase: a peer that has proved nothing stays
-    /// `None`, and the lifecycle moves in [`identify`](Self::identify) alone.
+    /// `None`.
     fn bind_peer(&mut self) {
         if self.auth.proved.is_empty() {
             return;
@@ -337,14 +346,15 @@ impl Session {
     /// Judge a held stranger again, which the app coming to the front is the
     /// occasion for: a stranger met with the app open is admitted outright.
     pub fn reconsider_gate(&mut self, db: &Db) -> Result<()> {
-        if !matches!(self.state, State::GatePending { .. }) {
+        if !matches!(
+            self.state,
+            State::GatePending { .. } | State::DialerHeld { .. }
+        ) {
             return Ok(());
         }
 
-        let resolved: Vec<PublicKey> = self.recognized.iter().map(|(pubkey, _)| *pubkey).collect();
-
-        match self.gate.evaluate(db, &self.policy, &resolved)? {
-            Verdict::Pass => self.admit(db),
+        match self.gate.evaluate(db, &self.policy, &self.recognized)? {
+            Verdict::Pass => self.release(db),
             Verdict::Refused => {
                 self.close(Ending::Refused);
                 Ok(())
@@ -353,28 +363,20 @@ impl Session {
         }
     }
 
-    /// Let a held stranger through, resuming whatever the gate held back.
-    fn admit(&mut self, db: &Db) -> Result<()> {
-        self.gate.passed = true;
+    /// Let through a stranger the gate held, or deferred until the dialer
+    /// named itself, resuming the exchange where the gate stopped it.
+    fn release(&mut self, db: &Db) -> Result<()> {
         self.identify_by = self.identify_by.max(clock::now() + IDENTIFY_CAP_SECONDS);
 
-        // A deferred receiver has seen the dialer already, and approving is its turn to disclose.
-        if self.gate.deferred {
-            self.gate.deferred = false;
-            self.state = State::Identified;
-            self.answer_peer_challenge(db)?;
-
-            if self.peer.is_some() && self.auth.disclosed {
-                self.enter_syncing(db)?;
+        match self.state {
+            // Held at the tags, before anybody was named, the peer goes back into the exchange.
+            State::GatePending { .. } => self.admit(db, Consent::Given),
+            // A receiver that has seen the dialer discloses in turn.
+            State::ReceiverChallenged(Consent::Deferred) | State::DialerHeld { .. } => {
+                self.disclose_in_turn(db)
             }
-
-            return Ok(());
+            _ => Ok(()),
         }
-
-        self.state = State::Secured;
-
-        // Resume the held turn, if the peer's challenge has already arrived.
-        self.take_turn(db)
     }
 
     /// Ask the peer to pair, which puts this device's request in front of
@@ -476,10 +478,9 @@ impl Session {
     ///
     /// The bulk pipe carries the blob channel and nothing else — the wire
     /// refuses a fragment that says otherwise — so there is no dispatch to
-    /// make here, unlike the characteristic. A read the shell delivers after
-    /// the upgrade went off is the tail of what went with the channel, and is
-    /// dropped rather than read as the peer misbehaving, because giving up the
-    /// channel never closes the link. NIP-BE.
+    /// make here, unlike the characteristic. A read the shell delivers once
+    /// the upgrade is no longer open is the tail of a channel already given
+    /// up, and is dropped.
     pub fn receive_bulk(&mut self, db: &Db, read: &[u8]) -> Result<()> {
         if !self.upgrade.is_open() {
             return Ok(());
@@ -503,10 +504,13 @@ impl Session {
             State::Linked => self.advance_handshake(db, frame)?,
             // Every secured state takes control frames, which keep arriving after identification.
             State::Secured
+            | State::Admitted(_)
+            | State::ReceiverChallenged(_)
             | State::DialerIdentified
             | State::Identified
             | State::Syncing
-            | State::GatePending { .. } => self.on_control_frame(db, frame)?,
+            | State::GatePending { .. }
+            | State::DialerHeld { .. } => self.on_control_frame(db, frame)?,
             _ => {}
         }
 
@@ -540,7 +544,10 @@ impl Session {
         };
 
         // A peer the gate holds has proved who it is, and is served nothing until the user answers.
-        if matches!(self.state, State::GatePending { .. }) {
+        if matches!(
+            self.state,
+            State::GatePending { .. } | State::DialerHeld { .. }
+        ) {
             bail!("sync traffic while the gate holds the peer");
         }
 
@@ -609,7 +616,10 @@ impl Session {
             bail!("blob traffic before the peer is identified");
         };
 
-        if matches!(self.state, State::GatePending { .. }) {
+        if matches!(
+            self.state,
+            State::GatePending { .. } | State::DialerHeld { .. }
+        ) {
             bail!("blob traffic while the gate holds the peer");
         }
 
@@ -719,7 +729,9 @@ impl Session {
     /// Whether this device recognized `pubkey` by a pair secret on this link.
     #[must_use]
     pub fn recognized(&self, pubkey: &PublicKey) -> bool {
-        self.recognized.iter().any(|(known, _)| known == pubkey)
+        self.recognized
+            .iter()
+            .any(|matched| matched.pubkey == *pubkey)
     }
 
     /// Every pubkey the peer proved that the shell has been told of, which is
@@ -791,15 +803,10 @@ impl Session {
     /// Once both identities are bound, store the pair secret and open the
     /// reconciliation.
     ///
-    /// Runs once, because [`identify`](Self::identify) never regresses a
-    /// session that is already syncing. The opening move is a bare filter,
-    /// because the accept policy gates ingest and the peer's relay half bounds
-    /// what it will answer.
+    /// Taken on leaving [`Identified`](State::Identified), which a session
+    /// does once. The opening move is a bare filter, because the accept policy
+    /// gates ingest and the peer's relay half bounds what it will answer.
     fn enter_syncing(&mut self, db: &Db) -> Result<()> {
-        if self.state != State::Identified {
-            return Ok(());
-        }
-
         self.state = State::Syncing;
         self.synced = true;
 
@@ -817,20 +824,16 @@ impl Session {
     /// Store a pair secret against every pubkey the peer proved and
     /// recognition did not.
     ///
-    /// A recognized peer already shares a secret with this device and keeps it,
-    /// and a pubkey it proves that recognition did not name is stored against
-    /// that same secret, which the peer already holds. One that was not
-    /// recognized either never paired or holds a secret this device does not,
-    /// because one side missed the end of an earlier session, and both sides
-    /// replacing theirs with this session's is what brings the two back into
-    /// agreement.
+    /// The secret is the one recognition matched, which the peer already
+    /// holds, or else this session's, which both ends store in place of
+    /// whatever they held. `docs/discovery.md#recognition`.
     fn pair(&mut self, db: &Db) -> Result<()> {
         let Some(peer) = self.peer.as_ref() else {
             return Ok(());
         };
 
         let secret = match self.recognized.first() {
-            Some((_, matched)) => *matched,
+            Some(matched) => matched.secret,
             None => recognition::derive_secret(&self.wire.noise.handshake_hash()?),
         };
         let pubkeys: Vec<PublicKey> = peer
@@ -895,13 +898,14 @@ impl Session {
     ///
     /// A channel too small to carry a fragment is one this link does without,
     /// rather than a reason to end it: the upgrade is bandwidth. One reported
-    /// after the upgrade went off is left unused and the shell told to close
-    /// it, because both ends have moved blob traffic back to GATT for the rest
-    /// of the session. NIP-BE.
+    /// after the upgrade went off is left unused, and the shell told to close
+    /// it.
     pub fn l2cap_opened(&mut self, db: &Db, mtu: usize) -> Result<()> {
         log::debug!("L2CAP open on {:?} at MTU {mtu}", self.link);
 
-        if !self.upgrade.opened() {
+        self.upgrade.opened();
+
+        if !self.upgrade.is_open() {
             log::debug!(
                 "the upgrade went off first on {:?}, staying on GATT",
                 self.link
@@ -941,8 +945,7 @@ impl Session {
     /// the store holds.
     ///
     /// The fetch starts over whether or not a channel opened here, because the
-    /// peer's may have: the request in flight, or its answer, can have gone
-    /// over a channel one end never read, and nothing would ever answer it.
+    /// peer's may have. `docs/transport.md#giving-up-the-upgrade`.
     fn fall_back_to_gatt(&mut self, db: &Db) -> Result<()> {
         self.wire.close_bulk();
         self.blobs.abandon_in_flight();
@@ -962,8 +965,7 @@ impl Session {
     ///
     /// The peer giving up an upgrade this end was counting on moves this end
     /// off it too, whether a channel had opened here or not: what the peer had
-    /// queued for it is gone either way. A step this end cannot read does the
-    /// same at worst, and never closes the link.
+    /// queued for it is gone either way.
     fn on_l2cap(&mut self, db: &Db, payload: &[u8]) -> Result<()> {
         let was_live = self.upgrade.is_live();
         let owed = self.upgrade.receive(payload);
@@ -1152,11 +1154,15 @@ impl Session {
             State::Draining { since } => {
                 !self.has_work_in_flight() || now - since >= DRAIN_CAP_SECONDS
             }
-            State::GatePending { since, .. } => now - since >= GATE_HOLD_SECONDS,
-            // A link that has not named anyone cannot sync and has its own deadline.
-            State::Linked | State::Secured | State::DialerIdentified => {
-                self.heartbeat.timed_out() || now >= self.identify_by
+            State::GatePending { since } | State::DialerHeld { since } => {
+                now - since >= GATE_HOLD_SECONDS
             }
+            // A link that has not named anyone cannot sync and has its own deadline.
+            State::Linked
+            | State::Secured
+            | State::Admitted(_)
+            | State::ReceiverChallenged(_)
+            | State::DialerIdentified => self.heartbeat.timed_out() || now >= self.identify_by,
             _ => self.heartbeat.timed_out(),
         }
     }
@@ -1180,10 +1186,12 @@ impl Session {
     pub fn deadline(&self) -> i64 {
         match self.state {
             State::Draining { since } => since + DRAIN_CAP_SECONDS,
-            State::GatePending { since, .. } => since + GATE_HOLD_SECONDS,
-            State::Linked | State::Secured | State::DialerIdentified => {
-                self.heartbeat.timeout_deadline().min(self.identify_by)
-            }
+            State::GatePending { since } | State::DialerHeld { since } => since + GATE_HOLD_SECONDS,
+            State::Linked
+            | State::Secured
+            | State::Admitted(_)
+            | State::ReceiverChallenged(_)
+            | State::DialerIdentified => self.heartbeat.timeout_deadline().min(self.identify_by),
             _ if self.beats() => self
                 .heartbeat
                 .next_beat_at
@@ -1216,11 +1224,8 @@ impl Session {
     /// Answer the peer's beat with one of this device's own, if it has sent
     /// nothing for [`heartbeat::QUIET_SECONDS`].
     ///
-    /// The write itself proved the peer alive in `receive`. The answer is for
-    /// a phone whose platform suspends its timers in the background, which
-    /// then beats as often as its peer does rather than never. NIP-BE. Two
-    /// devices do not answer each other forever, because the answer counts as
-    /// sending: the peer that beat has just sent, and lets it pass.
+    /// The peer that beat has just sent, so it lets the answer pass.
+    /// `docs/discovery.md#heartbeat-and-teardown`.
     fn answer_heartbeat(&mut self) -> Result<()> {
         if !self.heartbeat.quiet() {
             return Ok(());
@@ -1236,10 +1241,13 @@ impl Session {
         matches!(
             self.state,
             State::Secured
+                | State::Admitted(_)
+                | State::ReceiverChallenged(_)
                 | State::DialerIdentified
                 | State::Identified
                 | State::Syncing
                 | State::GatePending { .. }
+                | State::DialerHeld { .. }
         )
     }
 
@@ -1281,46 +1289,49 @@ impl Session {
             other => log::debug!("ignoring control frame {other:#04x} on {:?}", self.link),
         }
 
-        // Both identities bind once the peer is verified and this device has disclosed.
-        if self.peer.is_some() && self.auth.disclosed {
-            self.enter_syncing(db)?;
-        }
-
         Ok(())
     }
 
     /// Resolve the peer's recognition tags and run the consent gate on the
     /// result, before anyone has disclosed a pubkey.
+    ///
+    /// The gate judges one list per session, which is all a peer sends, so a
+    /// second ends the link wherever it arrives. `docs/discovery.md#recognition`.
     fn on_tags(&mut self, db: &Db, payload: &[u8]) -> Result<()> {
-        // Recognition happens once: a later list would knock a syncing session back to a hold.
         if self.state != State::Secured {
             bail!("recognition tags arrived after the exchange moved past the gate");
         }
 
         self.recognized = self.resolve_recognition(db, payload)?;
 
-        let resolved: Vec<PublicKey> = self.recognized.iter().map(|(pubkey, _)| *pubkey).collect();
-
-        match self.gate.evaluate(db, &self.policy, &resolved)? {
-            Verdict::Pass => {}
-            Verdict::Refused => self.close(Ending::Refused),
+        match self.gate.evaluate(db, &self.policy, &self.recognized)? {
+            Verdict::Pass => self.admit(db, Consent::Given),
+            Verdict::Refused => {
+                self.close(Ending::Refused);
+                Ok(())
+            }
             // The dialer discloses first, which lets a receiver see who it is before holding them.
-            Verdict::Pending if self.role == Role::Receiver => self.gate.deferred = true,
-            Verdict::Pending => self.hold(),
+            Verdict::Pending if self.role == Role::Receiver => self.admit(db, Consent::Deferred),
+            Verdict::Pending => {
+                self.state = State::GatePending {
+                    since: clock::now(),
+                };
+                Ok(())
+            }
         }
-
-        // A challenge that came ahead of the tags drew a turn that waited on the gate.
-        self.take_turn(db)
     }
 
-    /// Hold the link for the app to come to the front, from the first time
-    /// it was held: a peer proving another pubkey does not extend the hold.
-    fn hold(&mut self) {
-        if !matches!(self.state, State::GatePending { .. }) {
-            self.state = State::GatePending {
-                since: clock::now(),
-            };
+    /// Let the peer into the exchange, and take this device's turn at once if
+    /// the peer's challenge is already here.
+    fn admit(&mut self, db: &Db, consent: Consent) -> Result<()> {
+        self.state = State::Admitted(consent);
+
+        // A challenge that arrived while the gate was deciding drew a turn that waited on it.
+        if self.auth.peer_challenge.is_some() {
+            return self.take_turn(db, consent);
         }
+
+        Ok(())
     }
 
     /// Whether the peer proved a contact's pubkey, which a receiver that
@@ -1344,13 +1355,9 @@ impl Session {
         }
     }
 
-    /// Take the peer's challenge, and this device's turn if the gate allows
-    /// it. A challenge arriving before the gate passes waits; approval
-    /// resumes the turn.
-    ///
-    /// Only the first challenge counts. A later one changes nothing, because
-    /// this device answers the first for the whole session and has already
-    /// taken, or is holding, the turn it drew. NIP-BE.
+    /// Take the peer's challenge, and this device's turn if the gate has let
+    /// the peer in. A challenge arriving before that waits for it, and one
+    /// after the first changes nothing.
     fn on_challenge(&mut self, db: &Db, challenge: String) -> Result<()> {
         if !self.auth.receive_challenge(challenge) {
             log::debug!("ignoring a repeated AUTH challenge on {:?}", self.link);
@@ -1358,45 +1365,59 @@ impl Session {
             return Ok(());
         }
 
-        self.take_turn(db)
+        if let State::Admitted(consent) = self.state {
+            return self.take_turn(db, consent);
+        }
+
+        Ok(())
     }
 
     /// The receiver challenges back without answering; the dialer answers,
     /// identifying first.
     ///
-    /// Taken once the gate allows it and the peer's challenge has arrived,
-    /// whichever comes second, and harmless to take again: each device opens
-    /// its half of the exchange once and answers once.
-    fn take_turn(&mut self, db: &Db) -> Result<()> {
-        if (!self.gate.passed && !self.gate.deferred) || self.auth.peer_challenge.is_none() {
-            return Ok(());
-        }
-
+    /// Taken once, on whichever comes second of the gate letting the peer in
+    /// and the peer's challenge arriving.
+    fn take_turn(&mut self, db: &Db, consent: Consent) -> Result<()> {
         match self.role {
             // The receiver names no pubkey yet, and answers only after it has seen the dialer.
-            Role::Receiver => self.open_exchange(db)?,
+            Role::Receiver => {
+                self.open_exchange(db)?;
+                self.state = State::ReceiverChallenged(consent);
+            }
             // The dialer identifies itself first.
             Role::Dialer => {
-                if self.answer_peer_challenge(db)? {
-                    self.state = State::DialerIdentified;
-                }
+                self.answer_peer_challenge(db)?;
+                self.state = State::DialerIdentified;
             }
         }
 
         Ok(())
     }
 
-    /// Verify one of the peer's AUTH events. The receiver discloses here, once
-    /// it has seen the dialer.
+    /// Verify one of the peer's AUTH events, one per pubkey it holds, answer
+    /// it with an `OK`, and take the step the pubkey it proves calls for in
+    /// the phase it arrives in.
     ///
-    /// A peer may send one event per pubkey it holds, each answering the same
-    /// challenge, and each is answered with its own `OK`. Nothing is accepted
-    /// while the gate holds: a held stranger cannot identify itself into being
-    /// served before the user has answered. A receiver that deferred its gate
-    /// to see who the dialer is keeps taking events while it holds, and one
-    /// proving a contact admits the dialer the way approval would.
+    /// Nothing is accepted before the gate lets the peer in, or while a dialer
+    /// holds it at the tags, so a held stranger cannot identify itself into
+    /// being served. A receiver holding a dialer it deferred keeps taking
+    /// events.
     fn on_auth_response(&mut self, db: &Db, event: &coracle_lib::events::Event) -> Result<()> {
-        if !self.gate.passed && !self.gate.deferred {
+        let admitted = match self.state {
+            State::Admitted(_)
+            | State::ReceiverChallenged(_)
+            | State::DialerIdentified
+            | State::Identified
+            | State::Syncing
+            | State::DialerHeld { .. } => true,
+            State::Linked
+            | State::Secured
+            | State::GatePending { .. }
+            | State::Draining { .. }
+            | State::Closed => false,
+        };
+
+        if !admitted {
             bail!("an AUTH response arrived before the gate passed");
         }
 
@@ -1406,54 +1427,59 @@ impl Session {
         let accepted = Message::Ok(event.id.to_hex(), true, String::new());
         self.send_control(control::AUTH, &accepted.encode())?;
 
-        let syncing = self.state == State::Syncing;
-
         self.identify([pubkey]);
 
-        if self.state == State::Closed {
-            return Ok(());
-        }
-
-        // A pubkey proved once the two sync shares the pair secret the first ones hold.
-        if syncing {
-            return self.pair(db);
-        }
-
-        // A deferred gate decides now: a contact passes, anybody else waits on the user.
-        if self.gate.deferred && !self.gate.passed {
-            if self.proved_known() {
-                return self.admit(db);
+        match self.state {
+            State::ReceiverChallenged(Consent::Given) => self.disclose_in_turn(db),
+            // The receiver names itself after the dialer has, which names both.
+            State::DialerIdentified => {
+                self.state = State::Identified;
+                self.enter_syncing(db)
             }
-
-            self.hold();
-            return Ok(());
+            // A pubkey proved once the two sync shares the pair secret the first ones hold.
+            State::Syncing => self.pair(db),
+            // A deferred gate decides now: a contact passes, anybody else waits on the user.
+            State::ReceiverChallenged(Consent::Deferred) | State::DialerHeld { .. }
+                if self.proved_known() =>
+            {
+                self.release(db)
+            }
+            State::ReceiverChallenged(Consent::Deferred) => {
+                self.state = State::DialerHeld {
+                    since: clock::now(),
+                };
+                Ok(())
+            }
+            // A refused peer is closed already, a held dialer stays held from when it first was, and a peer named before this device's turn waits on it.
+            _ => Ok(()),
         }
-
-        // The receiver now discloses, having evaluated the dialer's identity.
-        if self.role == Role::Receiver {
-            self.answer_peer_challenge(db)?;
-        }
-
-        Ok(())
     }
 
-    /// Open this device's half of the exchange: its recognition tags, then a
-    /// NIP-42 challenge, once per session.
-    ///
-    /// Both go once because the peer acts on each once. A second tag list is
-    /// refused, and a second challenge would leave the peer answering one this
-    /// device no longer holds. NIP-BE.
-    fn open_exchange(&mut self, db: &Db) -> Result<()> {
-        let Some(challenge) = self.auth.make_challenge()? else {
-            return Ok(());
-        };
+    /// The receiver's turn to disclose, once it has seen the dialer: it
+    /// answers the dialer's challenge, which names both ends, and the two
+    /// sync.
+    fn disclose_in_turn(&mut self, db: &Db) -> Result<()> {
+        self.state = State::Identified;
+        self.answer_peer_challenge(db)?;
+        self.enter_syncing(db)
+    }
 
+    /// Open this device's half of the exchange: its recognition tags, then its
+    /// NIP-42 challenge.
+    ///
+    /// Taken once, on the dialer's transition into [`Secured`](State::Secured)
+    /// and the receiver's into [`ReceiverChallenged`](State::ReceiverChallenged),
+    /// because the peer acts on one of each per session.
+    /// `docs/discovery.md#recognition`.
+    fn open_exchange(&mut self, db: &Db) -> Result<()> {
         self.send_recognition_tags(db)?;
+
+        let challenge = self.auth.make_challenge()?;
+
         self.send_control(control::AUTH, &Message::AuthChallenge(challenge).encode())
     }
 
-    /// Answer the peer's challenge, disclosing this device's identity — if one
-    /// is waiting and this device has not disclosed already.
+    /// Answer the peer's challenge, disclosing this device's identity.
     ///
     /// This is where the disclosure bucket is spent from, because it is where
     /// the identity leaves the device. The dialer discloses first and cannot
@@ -1461,31 +1487,32 @@ impl Session {
     /// away costs a disclosure all the same. A receiver has seen the dialer's
     /// pubkeys by now, and a contact costs nothing.
     /// `docs/policy.md#discoverability`.
-    fn answer_peer_challenge(&mut self, db: &Db) -> Result<bool> {
+    fn answer_peer_challenge(&mut self, db: &Db) -> Result<()> {
         let remote = self
             .wire
             .noise
             .remote_static
             .ok_or_else(|| anyhow::anyhow!("the handshake has not completed"))?;
 
-        match self.auth.answer(&self.custody.identity()?, remote)? {
-            Some(event) => {
-                let message = Message::AuthResponse(Box::new(event));
+        let event = self
+            .auth
+            .answer(&self.custody.identity()?, remote)?
+            .context("answering a challenge this device does not hold, or has answered")?;
 
-                self.send_control(control::AUTH, &message.encode())?;
+        self.send_control(
+            control::AUTH,
+            &Message::AuthResponse(Box::new(event)).encode(),
+        )?;
 
-                if self.gate.spends_budget && !self.proved_known() {
-                    crate::db::command::spend_disclosure(
-                        db,
-                        crate::model::STRANGERS_PER_DAY,
-                        clock::now(),
-                    )?;
-                }
-
-                Ok(true)
-            }
-            None => Ok(false),
+        if self.gate.spends_budget && !self.proved_known() {
+            crate::db::command::spend_disclosure(
+                db,
+                crate::model::STRANGERS_PER_DAY,
+                clock::now(),
+            )?;
         }
+
+        Ok(())
     }
 
     // ------------------------------------------------------------ Recognition
@@ -1506,8 +1533,8 @@ impl Session {
     }
 
     /// Trial-MAC the offered tags against every pair secret this device holds,
-    /// returning every pubkey they resolve to with the secret it matched.
-    fn resolve_recognition(&self, db: &Db, payload: &[u8]) -> Result<Vec<(PublicKey, [u8; 32])>> {
+    /// returning every one they resolve to.
+    fn resolve_recognition(&self, db: &Db, payload: &[u8]) -> Result<Vec<PairSecret>> {
         let offered = recognition::Tags::decode(payload)?;
         let hash = self.wire.noise.handshake_hash()?;
         let secrets = crate::db::query::pair_secrets(db)?;
@@ -1598,7 +1625,7 @@ mod tests {
         .unwrap()
     }
 
-    /// A session past its handshake, where identification is legal.
+    /// The dialer of a [`secured_pair`], for a test that needs no peer.
     fn secured_session(policy: Policy) -> Session {
         secured_pair(policy).0
     }
@@ -1673,7 +1700,6 @@ mod tests {
         let peer = session.peer.as_ref().unwrap();
 
         assert_eq!(peer.pubkeys.len(), 2);
-        assert_eq!(session.state, State::Identified);
     }
 
     #[test]
@@ -1842,7 +1868,7 @@ mod tests {
         let mut session = secured_session(policy());
 
         session.identify([author(2)]);
-        assert_eq!(session.state, State::Identified);
+        session.state = State::Identified;
 
         let mut refused = policy();
         refused.refuse(author(2));
@@ -1933,23 +1959,11 @@ mod tests {
     }
 
     #[test]
-    fn a_beat_heard_soon_after_this_device_sent_is_not_answered() {
-        let db = Db::open_in_memory().unwrap();
-        let (mut dialer, mut receiver) = clock::at(1_000, || secured_pair(policy()));
-
-        clock::at(1_000 + heartbeat::QUIET_SECONDS - 1, || {
-            dialer.send_control(control::HEARTBEAT, &[]).unwrap();
-            pump(&mut dialer, &mut receiver, &db);
-
-            assert!(receiver.next_write(Pipe::Gatt).unwrap().is_none());
-        });
-    }
-
-    #[test]
     fn a_heartbeat_is_absorbed_without_moving_the_session() {
         let db = Db::open_in_memory().unwrap();
         let mut session = secured_session(policy());
         session.identify([author(2)]);
+        session.state = State::Identified;
 
         let frame = Frame {
             channel: crate::transport::Channel::Control,
@@ -1965,6 +1979,7 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let mut session = secured_session(policy());
         session.identify([author(2)]);
+        session.state = State::Identified;
 
         let frame = Frame {
             channel: crate::transport::Channel::Control,
@@ -2109,7 +2124,7 @@ mod tests {
         ));
 
         // The response side: the dialer answers a challenge outright, because it identifies first.
-        dialer.gate.passed = true;
+        dialer.state = State::Admitted(Consent::Given);
         dialer
             .advance(
                 &db,
@@ -2441,7 +2456,7 @@ mod tests {
         // Each side stored a secret for the other, both derived from the shared handshake hash.
         let secrets = crate::db::query::pair_secrets(&db).unwrap();
         assert_eq!(secrets.len(), 2);
-        assert_eq!(secrets[0].1, secrets[1].1);
+        assert_eq!(secrets[0].secret, secrets[1].secret);
     }
 
     /// [`full_exchange`] between two devices that each keep their own store.
@@ -2482,7 +2497,7 @@ mod tests {
         receiver.gate.presence = Some(Presence::Foreground);
         exchange_apart(&mut dialer, &mut receiver, &dialer_db, &receiver_db);
 
-        let held = |db: &Db| crate::db::query::pair_secrets(db).unwrap()[0].1;
+        let held = |db: &Db| crate::db::query::pair_secrets(db).unwrap()[0].secret;
         assert_eq!(held(&dialer_db), held(&receiver_db));
 
         // Agreeing again, they recognize each other with nobody in front of the screen.
@@ -2525,7 +2540,7 @@ mod tests {
             crate::db::query::pair_secrets(&receiver_db)
                 .unwrap()
                 .iter()
-                .all(|(_, secret)| *secret == held[0].1)
+                .all(|pair_secret| pair_secret.secret == held[0].secret)
         );
 
         let mut dialer = pair(4096, Role::Dialer, 1);
@@ -2620,7 +2635,7 @@ mod tests {
 
         held_after_the_dialer_names_itself(&mut dialer, &mut receiver, &db);
 
-        assert!(matches!(receiver.state, State::GatePending { .. }));
+        assert!(matches!(receiver.state, State::DialerHeld { .. }));
         assert!(
             !receiver.auth.disclosed,
             "nothing disclosed before approval"
@@ -2722,8 +2737,16 @@ mod tests {
 
         // The second pubkey is paired too, under the session's one secret.
         let secrets = crate::db::query::pair_secrets(&db).unwrap();
-        assert!(secrets.iter().any(|(pubkey, _)| *pubkey == author(3)));
-        assert!(secrets.windows(2).all(|both| both[0].1 == both[1].1));
+        assert!(
+            secrets
+                .iter()
+                .any(|pair_secret| pair_secret.pubkey == author(3))
+        );
+        assert!(
+            secrets
+                .windows(2)
+                .all(|both| both[0].secret == both[1].secret)
+        );
     }
 
     #[test]
@@ -2779,27 +2802,6 @@ mod tests {
     }
 
     #[test]
-    fn a_dialer_that_challenges_again_still_proves_its_second_pubkey_under_the_first_challenge() {
-        let db = Db::open_in_memory().unwrap();
-        let (mut dialer, mut receiver) =
-            (pair(4096, Role::Dialer, 1), pair(4096, Role::Receiver, 2));
-        dialer.gate.presence = Some(Presence::Foreground);
-        receiver.gate.presence = Some(Presence::Foreground);
-
-        up_to_the_dialer_answering(&mut dialer, &mut receiver, &db);
-        challenge_again(&mut dialer);
-        let second = answer_again_as(&mut dialer, &secret(3));
-        let into_dialer = quiesce(&mut receiver, &mut dialer, &db);
-
-        let mut both = vec![author(1), author(3)];
-        both.sort();
-        assert_eq!(bound(&receiver), both);
-        assert_eq!(receiver.state, State::Syncing);
-        assert_eq!(dialer.state, State::Syncing);
-        assert!(accepted(&into_dialer).contains(&second.id.to_hex()));
-    }
-
-    #[test]
     fn a_repeated_challenge_draws_no_second_tag_list_challenge_or_answer() {
         let db = Db::open_in_memory().unwrap();
         let (mut dialer, mut receiver) =
@@ -2840,6 +2842,72 @@ mod tests {
     }
 
     #[test]
+    fn a_second_tag_list_ends_the_link_before_either_end_is_named() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut dialer, mut receiver) =
+            (pair(4096, Role::Dialer, 1), pair(4096, Role::Receiver, 2));
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
+
+        dialer.initiate().unwrap();
+        pump(&mut dialer, &mut receiver, &db); // msg1
+        pump(&mut receiver, &mut dialer, &db); // reply
+        pump(&mut dialer, &mut receiver, &db); // msg3
+        pump(&mut dialer, &mut receiver, &db); // dialer tags: the receiver lets the dialer in
+        pump(&mut dialer, &mut receiver, &db); // dialer challenge: the receiver opens its half
+        pump(&mut receiver, &mut dialer, &db); // receiver tags: the dialer lets the receiver in
+
+        // Each end has judged one list, and neither has named itself.
+        let again = Frame {
+            channel: Channel::Control,
+            payload: [
+                &[control::TAGS][..],
+                &recognition::select(&[], &[0; 32]).unwrap().encode(),
+            ]
+            .concat(),
+        };
+
+        assert!(receiver.advance(&db, &again).is_err());
+        assert!(dialer.advance(&db, &again).is_err());
+    }
+
+    #[test]
+    fn a_receiver_answering_before_it_challenges_leaves_the_dialer_on_its_identify_cap() {
+        let db = Db::open_in_memory().unwrap();
+        let mut dialer = clock::at(1_000, || pair(4096, Role::Dialer, 1));
+        let mut receiver = clock::at(1_000, || pair(4096, Role::Receiver, 2));
+        dialer.gate.presence = Some(Presence::Foreground);
+        receiver.gate.presence = Some(Presence::Foreground);
+
+        clock::at(1_000, || {
+            dialer.initiate().unwrap();
+            pump(&mut dialer, &mut receiver, &db); // msg1
+            pump(&mut receiver, &mut dialer, &db); // reply
+            pump(&mut dialer, &mut receiver, &db); // msg3
+            pump(&mut dialer, &mut receiver, &db); // dialer tags
+            pump(&mut dialer, &mut receiver, &db); // dialer challenge: the receiver opens its half
+            pump(&mut receiver, &mut dialer, &db); // receiver tags: the dialer lets the receiver in
+            pump_frame(&mut receiver, &mut dialer); // receiver challenge, lost on the way
+            answer_again_as(&mut receiver, &secret(2));
+            pump(&mut receiver, &mut dialer, &db); // receiver response, out of turn
+        });
+
+        // The receiver is bound, but the dialer has named nobody, and a beating peer does not keep the link.
+        assert_eq!(bound(&dialer), vec![author(2)]);
+
+        let cap = 1_000 + GATE_HOLD_SECONDS + IDENTIFY_CAP_SECONDS;
+
+        clock::at(cap - 1, || {
+            dialer.heartbeat.heard();
+            assert!(!dialer.expired());
+        });
+        clock::at(cap, || {
+            dialer.heartbeat.heard();
+            assert!(dialer.expired());
+        });
+    }
+
+    #[test]
     fn a_dialer_a_receiver_named_is_let_through_whatever_else_it_proves() {
         let db = Db::open_in_memory().unwrap();
         let (mut dialer, mut receiver) =
@@ -2876,7 +2944,7 @@ mod tests {
         receiver.set_policy(Arc::new(named));
 
         held_after_the_dialer_names_itself(&mut dialer, &mut receiver, &db);
-        assert!(matches!(receiver.state, State::GatePending { .. }));
+        assert!(matches!(receiver.state, State::DialerHeld { .. }));
         assert!(!receiver.auth.disclosed);
 
         answer_again_as(&mut dialer, &secret(3));
@@ -2904,7 +2972,7 @@ mod tests {
             pump(&mut dialer, &mut receiver, &db);
         });
 
-        assert_eq!(receiver.state, State::GatePending { since: 1_000 });
+        assert_eq!(receiver.state, State::DialerHeld { since: 1_000 });
         assert!(!receiver.auth.disclosed);
         assert_eq!(bound(&receiver).len(), 2);
     }
@@ -2921,7 +2989,7 @@ mod tests {
             held_after_the_dialer_names_itself(&mut dialer, &mut receiver, &db)
         });
 
-        assert!(matches!(receiver.state, State::GatePending { .. }));
+        assert!(matches!(receiver.state, State::DialerHeld { .. }));
 
         // The dialer waits out the whole hold rather than its identify cap.
         clock::at(1_000 + GATE_HOLD_SECONDS - 1, || {
@@ -3089,88 +3157,6 @@ mod tests {
     }
 
     #[test]
-    fn an_upgrade_step_this_end_cannot_read_leaves_the_link_up() {
-        let db = Db::open_in_memory().unwrap();
-        let (mut dialer, mut receiver) = secured_pair(policy());
-        dialer.want_l2cap().unwrap();
-        pump(&mut dialer, &mut receiver, &db);
-
-        // An empty step and an unknown one are passed over without an answer.
-        receiver.send_control(control::L2CAP, &[]).unwrap();
-        receiver
-            .send_control(control::L2CAP, &[0xff, 1, 2])
-            .unwrap();
-        pump(&mut receiver, &mut dialer, &db);
-        pump(&mut receiver, &mut dialer, &db);
-        assert!(dialer.next_write(Pipe::Gatt).unwrap().is_none());
-
-        // A PSM too short to read ends the upgrade, and the dialer says so.
-        receiver
-            .send_control(control::L2CAP, &[l2cap::message::PUBLISHED, 0x80])
-            .unwrap();
-        pump(&mut receiver, &mut dialer, &db);
-
-        assert_eq!(
-            pump_frame(&mut dialer, &mut receiver).payload,
-            vec![control::L2CAP, l2cap::message::UNAVAILABLE]
-        );
-        assert_eq!(dialer.state, State::Secured);
-        assert_eq!(dialer.poll_l2cap().unwrap(), None);
-        assert!(!dialer.wire.bulk_is_open());
-    }
-
-    #[test]
-    fn a_receiver_asked_again_after_the_upgrade_went_off_says_it_is_unavailable() {
-        let db = Db::open_in_memory().unwrap();
-        let (mut dialer, mut receiver) = secured_pair(policy());
-
-        dialer.want_l2cap().unwrap();
-        pump(&mut dialer, &mut receiver, &db);
-        receiver.poll_l2cap().unwrap();
-        receiver.l2cap_unavailable(&db).unwrap();
-        pump(&mut receiver, &mut dialer, &db);
-
-        // A peer asking again gets the same answer, and no second channel is published.
-        dialer
-            .send_control(control::L2CAP, &[l2cap::message::REQUEST])
-            .unwrap();
-        pump(&mut dialer, &mut receiver, &db);
-
-        assert_eq!(
-            pump_frame(&mut receiver, &mut dialer).payload,
-            vec![control::L2CAP, l2cap::message::UNAVAILABLE]
-        );
-        assert_eq!(
-            receiver.poll_l2cap().unwrap(),
-            Some(Step::Close),
-            "the shell withdraws what it was asked for, and publishes nothing new"
-        );
-        assert_eq!(receiver.poll_l2cap().unwrap(), None);
-    }
-
-    #[test]
-    fn a_dialer_handed_a_psm_after_the_upgrade_went_off_says_it_is_unavailable() {
-        let db = Db::open_in_memory().unwrap();
-        let (mut dialer, mut receiver) = secured_pair(policy());
-
-        receiver
-            .send_control(control::L2CAP, &[l2cap::message::UNAVAILABLE])
-            .unwrap();
-        pump(&mut receiver, &mut dialer, &db);
-
-        receiver
-            .send_control(control::L2CAP, &[l2cap::message::PUBLISHED, 0x00, 0x80])
-            .unwrap();
-        pump(&mut receiver, &mut dialer, &db);
-
-        assert_eq!(
-            pump_frame(&mut dialer, &mut receiver).payload,
-            vec![control::L2CAP, l2cap::message::UNAVAILABLE]
-        );
-        assert_eq!(dialer.poll_l2cap().unwrap(), None);
-    }
-
-    #[test]
     fn losing_the_channel_mid_write_leaves_nothing_in_flight() {
         let db = Db::open_in_memory().unwrap();
         let (mut dialer, _receiver) = secured_pair(policy());
@@ -3216,30 +3202,6 @@ mod tests {
 
         assert!(!dialer.wire.bulk_is_open());
         assert!(!receiver.wire.bulk_is_open());
-    }
-
-    #[test]
-    fn both_shells_let_go_of_a_channel_given_up_once_and_the_link_stays() {
-        let db = Db::open_in_memory().unwrap();
-        let (mut dialer, mut receiver) = secured_pair(policy());
-
-        dialer.want_l2cap().unwrap();
-        pump(&mut dialer, &mut receiver, &db);
-        receiver.poll_l2cap().unwrap();
-        receiver.l2cap_published(0x0080).unwrap();
-        pump(&mut receiver, &mut dialer, &db);
-        dialer.poll_l2cap().unwrap();
-        dialer.l2cap_opened(&db, 512).unwrap();
-        receiver.l2cap_opened(&db, 512).unwrap();
-
-        dialer.l2cap_unavailable(&db).unwrap();
-        pump(&mut dialer, &mut receiver, &db);
-
-        for end in [&mut dialer, &mut receiver] {
-            assert_eq!(end.poll_l2cap().unwrap(), Some(Step::Close));
-            assert_eq!(end.poll_l2cap().unwrap(), None);
-            assert_eq!(end.state, State::Secured);
-        }
     }
 
     #[test]

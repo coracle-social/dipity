@@ -199,13 +199,9 @@ pub enum Action {
         psm: u16,
     },
     /// Close this link's L2CAP channel, or withdraw it if it is only
-    /// published, and keep the link up.
-    ///
-    /// Raised when the upgrade is given up on a link whose shell was asked for
-    /// a channel or reported one, and again for a channel a publish or an open
-    /// still under way delivers after that. Holding nothing for the link, do
-    /// nothing. Reporting the closed channel to [`Node::l2cap_unavailable`]
-    /// changes nothing.
+    /// published, and keep the link up. Holding nothing for the link, do
+    /// nothing; reporting the close to [`Node::l2cap_unavailable`] is harmless.
+    /// [`dip::node::Action::CloseL2cap`] says when it is raised.
     CloseL2cap {
         /// The link whose channel to close.
         link: LinkId,

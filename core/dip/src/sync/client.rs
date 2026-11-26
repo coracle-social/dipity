@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context, Result, bail};
 use coracle_lib::events::{EventExtensionId, EventId, HashedEvent};
 use coracle_lib::filters::Filter;
-use coracle_lib::sync::{FrameBudget, SyncSet};
+use coracle_lib::sync::{FrameBudget, SyncSet, WireError};
 
 use crate::clock;
 use crate::db::Db;
@@ -79,6 +79,18 @@ pub struct Negotiation {
     budget: FrameBudget,
 }
 
+/// Where one `NEG-MSG` from the peer's relay left a [`Negotiation`].
+#[derive(Debug, PartialEq)]
+pub enum Round {
+    /// The diff goes on, and this `NEG-MSG` is this device's next turn.
+    Next(Box<Message>),
+    /// Reconciliation completed.
+    Finished,
+    /// The peer's frame did not decode, which abandons this diff and nothing
+    /// else.
+    Malformed(WireError),
+}
+
 impl Negotiation {
     /// Begin diffing against `filter`, returning the opening frame to send.
     ///
@@ -121,29 +133,33 @@ impl Negotiation {
         Ok((negotiation, message))
     }
 
-    /// Consume one `NEG-MSG` from the peer's relay, returning the next round's
-    /// `NEG-MSG`, or `None` once the diff is over.
+    /// Consume one `NEG-MSG` from the peer's relay, answering whether the diff
+    /// goes on, finished, or ended on a frame that did not decode.
     ///
-    /// A diff is over when reconciliation completes, or when the peer's frame
-    /// does not decode, which abandons this diff and nothing else. Either way
-    /// [`need`](Self::need) holds what it found missing.
-    pub fn step(&mut self, frame: &[u8]) -> Option<Message> {
-        let incoming = coracle_lib::sync::Message::decode(frame).ok()?;
+    /// However it ends, [`need`](Self::need) holds what it found missing.
+    pub fn step(&mut self, frame: &[u8]) -> Round {
+        let incoming = match coracle_lib::sync::Message::decode(frame) {
+            Ok(incoming) => incoming,
+            Err(error) => return Round::Malformed(error),
+        };
         let out = coracle_lib::sync::reconcile_initiator(&self.local, &incoming, self.budget);
 
         self.have.extend(out.have);
         self.need.extend(out.need);
 
-        let reply = out.next?;
-
-        Some(Message::NegMsg(self.subscription.clone(), reply.encode()))
+        match out.next {
+            Some(reply) => Round::Next(Box::new(Message::NegMsg(
+                self.subscription.clone(),
+                reply.encode(),
+            ))),
+            None => Round::Finished,
+        }
     }
 
     /// The `REQ` for what the finished diff found missing, and the fetch that
     /// follows it, or `None` when it found nothing.
     ///
-    /// It reuses the negotiation's id, which NIP-77 keeps in a namespace apart
-    /// from `REQ` ids, and which the `NEG-CLOSE` ahead of it has released.
+    /// It reuses the negotiation's id, which NIP-77 keeps apart from `REQ` ids.
     fn fetch(&self) -> Option<(Message, Fetch)> {
         let need: BTreeSet<EventId> = self.need.iter().copied().collect();
 
@@ -214,6 +230,22 @@ impl Client {
     pub fn open_negotiation(&mut self, negotiation: Negotiation) {
         self.negotiations
             .insert(negotiation.subscription.clone(), negotiation);
+    }
+
+    /// End a negotiation whose diff is over, answering NIP-77's `NEG-CLOSE`,
+    /// which releases the peer's side, the `REQ` for what the diff found
+    /// missing, if anything, and the live subscription.
+    fn close_negotiation(&mut self, negotiation: Negotiation) -> Result<Vec<Message>> {
+        let mut replies = vec![Message::NegClose(negotiation.subscription.clone())];
+
+        if let Some((request, fetch)) = negotiation.fetch() {
+            self.fetches.insert(negotiation.subscription, fetch);
+            replies.push(request);
+        }
+
+        replies.extend(self.open_live()?);
+
+        Ok(replies)
     }
 
     /// Whether this device is still waiting on the peer for something it asked
@@ -332,23 +364,21 @@ impl Client {
                     bail!("a NEG-MSG arrived for a subscription that is not open");
                 };
 
-                if let Some(next) = negotiation.step(&frame) {
-                    self.negotiations.insert(subscription, negotiation);
+                match negotiation.step(&frame) {
+                    Round::Next(next) => {
+                        self.negotiations.insert(subscription, negotiation);
 
-                    return Ok(vec![next]);
+                        Ok(vec![*next])
+                    }
+                    Round::Finished => self.close_negotiation(negotiation),
+                    Round::Malformed(error) => {
+                        log::warn!(
+                            "abandoning the diff on {subscription:?} over a malformed NEG-MSG: {error}"
+                        );
+
+                        self.close_negotiation(negotiation)
+                    }
                 }
-
-                // NIP-77 has the initiator release the peer's side once the diff is over.
-                let mut replies = vec![Message::NegClose(subscription.clone())];
-
-                if let Some((request, fetch)) = negotiation.fetch() {
-                    self.fetches.insert(subscription, fetch);
-                    replies.push(request);
-                }
-
-                replies.extend(self.open_live()?);
-
-                Ok(replies)
             }
             Message::Eose(subscription) => {
                 // Every proof this subscription was going to carry has arrived by now.
@@ -902,8 +932,23 @@ mod tests {
         let (mut negotiation, opening) = open(&alice, Filter::new()).unwrap();
         let reply = answered(&opening, &[&bobs_note]);
 
-        assert_eq!(negotiation.step(&reply), None, "the diff took one round");
+        assert_eq!(
+            negotiation.step(&reply),
+            Round::Finished,
+            "the diff took one round"
+        );
         assert_eq!(negotiation.need, vec![bobs_note.id]);
+    }
+
+    #[test]
+    fn a_frame_that_does_not_decode_is_told_apart_from_a_finished_diff() {
+        let db = Db::open_in_memory().unwrap();
+        let (mut negotiation, _) = open(&db, Filter::new()).unwrap();
+
+        assert!(matches!(
+            negotiation.step(&[0xff, 0xff, 0xff]),
+            Round::Malformed(_)
+        ));
     }
 
     #[test]

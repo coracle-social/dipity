@@ -25,8 +25,8 @@ use crate::db::pref::query as pref;
 use crate::db::recipient_signature::query as signature;
 use crate::db::spending::query as spending;
 use crate::model::{
-    Blob, BlobHash, Charge, DisclosureBucket, NotificationPrefs, Policy, Pref, Provenance, Query,
-    RecipientSignature, Share, keys,
+    Blob, BlobHash, Charge, DisclosureBucket, NotificationPrefs, PairSecret, Policy, Pref,
+    Provenance, Query, RecipientSignature, Share, keys,
 };
 
 // ----------------------------------------------------- Policy and preferences
@@ -72,7 +72,7 @@ pub fn policy(db: &Db, identity: &PublicKey) -> Result<Policy> {
 
 /// Every pair secret this device holds, for trial-MACing a peer's recognition
 /// tags.
-pub fn pair_secrets(db: &Db) -> Result<Vec<(PublicKey, [u8; 32])>> {
+pub fn pair_secrets(db: &Db) -> Result<Vec<PairSecret>> {
     db.read(pairing::secrets)
 }
 

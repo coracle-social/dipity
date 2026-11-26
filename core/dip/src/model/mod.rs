@@ -15,8 +15,9 @@
 //! here, because they have to agree byte for byte with a peer running the other
 //! platform's build. What is here is what the store adds — where an event came
 //! from ([`Provenance`], [`ProvenanceFilter`]), how far it may travel
-//! ([`Register`]), who may be served it ([`Policy`]), and the metadata for the
-//! files it references ([`Blob`]).
+//! ([`Register`]), who may be served it ([`Policy`]), the metadata for the
+//! files it references ([`Blob`]), and the pair secrets a peer is recognized
+//! by ([`PairSecret`]).
 
 mod authorship_proof;
 mod blob;
@@ -26,6 +27,7 @@ mod graph;
 mod identity;
 mod kinds;
 mod order;
+mod pair_secret;
 mod policy;
 mod pref;
 mod provenance;
@@ -47,6 +49,7 @@ pub use kinds::{
     PeopleListWriter, REPORT, WITHHOLD, WithholdListReader, WithholdListWriter,
 };
 pub use order::Order;
+pub use pair_secret::PairSecret;
 pub use policy::{PeerPolicy, Policy};
 pub use pref::{NotificationPrefs, Pref, keys};
 pub use provenance::{Provenance, ProvenanceFilter, Share};

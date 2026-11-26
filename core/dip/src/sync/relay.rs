@@ -1008,7 +1008,7 @@ mod tests {
             panic!("expected the relay's NEG-MSG");
         };
 
-        assert_eq!(negotiation.step(reply), None);
+        assert_eq!(negotiation.step(reply), client::Round::Finished);
         assert_eq!(negotiation.need, vec![bobs_note.id]);
     }
 

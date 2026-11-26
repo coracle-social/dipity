@@ -1,24 +1,23 @@
 //! Reads over `pair_secret` and `disclosure_bucket`.
 
 use anyhow::{Context, Result};
-use coracle_lib::keys::PublicKey;
 use rusqlite::OptionalExtension;
 
 use crate::db::Tx;
 use crate::db::sql::{bytes_from_sql, pubkey_from_sql};
-use crate::model::DisclosureBucket;
+use crate::model::{DisclosureBucket, PairSecret};
 
-/// Every stored pair secret, as `(pubkey, secret)` pairs.
-pub fn secrets(tx: &Tx<'_>) -> Result<Vec<(PublicKey, [u8; 32])>> {
+/// Every stored pair secret, with the pubkey it is held against.
+pub fn secrets(tx: &Tx<'_>) -> Result<Vec<PairSecret>> {
     let mut prepared =
         tx.prepare_cached("SELECT pubkey, secret FROM pair_secret ORDER BY pubkey ASC")?;
 
     let secrets = prepared
         .query_map([], |row| {
-            Ok((
-                pubkey_from_sql(&row.get::<_, String>(0)?, 0)?,
-                bytes_from_sql::<32>(&row.get::<_, String>(1)?, 1)?,
-            ))
+            Ok(PairSecret {
+                pubkey: pubkey_from_sql(&row.get::<_, String>(0)?, 0)?,
+                secret: bytes_from_sql::<32>(&row.get::<_, String>(1)?, 1)?,
+            })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("listing pair secrets")?;
@@ -58,7 +57,13 @@ mod tests {
         command::save_secret(&tx, &author(1), &[1u8; 32], 100).unwrap();
         command::save_secret(&tx, &author(1), &[2u8; 32], 200).unwrap();
 
-        assert_eq!(secrets(&tx).unwrap(), vec![(author(1), [2u8; 32])]);
+        assert_eq!(
+            secrets(&tx).unwrap(),
+            vec![PairSecret {
+                pubkey: author(1),
+                secret: [2u8; 32]
+            }]
+        );
     }
 
     #[test]

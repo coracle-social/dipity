@@ -170,10 +170,9 @@ pub enum Action {
     ///
     /// Raised once the upgrade has gone off on a link whose shell was asked
     /// for a channel or reported one, and again for a channel reported after
-    /// that, which a publish or an open still under way can deliver. A shell
-    /// holding nothing for the link does nothing, and reporting the channel
-    /// this closes to [`Node::l2cap_unavailable`] changes nothing.
-    /// `docs/transport.md#the-l2cap-bandwidth-upgrade`.
+    /// that. A shell holding nothing for the link does nothing, and reporting
+    /// the closed channel to [`Node::l2cap_unavailable`] changes nothing.
+    /// `docs/transport.md#giving-up-the-upgrade`.
     CloseL2cap(LinkId),
     /// Show the user this six-digit comparison value and ask whether the other
     /// device shows the same one.
@@ -589,7 +588,9 @@ impl Node {
             if session.expired() {
                 match session.state {
                     // A gate hold and a drain both close outright: nothing in flight to finish.
-                    State::GatePending { .. } => session.close(Ending::Refused),
+                    State::GatePending { .. } | State::DialerHeld { .. } => {
+                        session.close(Ending::Refused)
+                    }
                     State::Draining { .. } => session.close(Ending::WalkedAway),
                     _ => session.drain(),
                 }
@@ -1195,9 +1196,8 @@ impl Node {
     /// Both ends keep the link the lower of the two pubkeys dialed, which lets
     /// both close the same one without a word passing between them. Two links
     /// dialed by the same side cannot be told apart that way, and both stay. A
-    /// peer that proves several pubkeys is compared by its lowest, which
-    /// NIP-BE has it prove first, so a comparison made before the rest arrive
-    /// already holds.
+    /// peer that proves several pubkeys is compared by its lowest, which it
+    /// proves first.
     fn close_duplicates(&mut self) {
         let identity = self.identity;
         let mut kept: BTreeMap<PublicKey, (PublicKey, LinkId)> = BTreeMap::new();
@@ -3342,7 +3342,7 @@ mod tests {
 
         assert!(matches!(
             two.sessions[&LinkId(1)].state,
-            State::GatePending { .. }
+            State::DialerHeld { .. }
         ));
 
         let admitted = two.notify_foregrounded();

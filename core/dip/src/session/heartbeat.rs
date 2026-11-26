@@ -2,8 +2,7 @@
 //! conclude the peer no longer is.
 //!
 //! A beat is sent on a jittered timer, and answered when this device has been
-//! quiet, because a platform that suspends a backgrounded app's timers would
-//! otherwise leave it beating never. NIP-BE.
+//! quiet.
 //!
 //! Liveness, not authorization. The transport already guarantees proximity,
 //! which leaves the beat only cleanup to do, and cleanup can afford to be
@@ -23,13 +22,10 @@ pub const MIN_INTERVAL_SECONDS: i64 = 15;
 pub const MAX_INTERVAL_SECONDS: i64 = 30;
 
 /// How long this device has to have sent nothing before it answers a beat
-/// from the peer: a device that answers whenever it has been quiet that long
-/// beats as often as its peer. NIP-BE.
+/// from the peer.
 ///
-/// The same fifteen seconds as [`MIN_INTERVAL_SECONDS`] today, and a separate
-/// constant because they answer to different rules: this one decides when a
-/// beat is owed back, and moving it has nothing to do with how soon this
-/// device beats on its own.
+/// The same as [`MIN_INTERVAL_SECONDS`] today, and a separate constant
+/// because it answers to a different rule: when a beat is owed back.
 pub const QUIET_SECONDS: i64 = 15;
 
 /// One link's liveness clock: what was last heard, and when to beat next.

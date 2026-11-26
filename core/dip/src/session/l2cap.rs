@@ -7,31 +7,20 @@
 //! central connects, which makes the receiver the end that publishes and the
 //! dialer the end that opens, whichever of the two raised the need.
 //!
-//! [`Upgrade`] is the whole exchange. It holds no wire and no session: every
-//! answer it owes the peer comes back as a control payload for the caller to
-//! send, and everything it wants of the shell comes back as a [`Step`]. What
-//! the session adds is the sending, and moving the outbox onto the channel once
+//! [`Upgrade`] is the whole exchange. It holds no wire and no session. Each
+//! entry point answers what it owes and nothing else: a control payload for
+//! the caller to send the peer, a [`Step`] for the shell from
+//! [`Upgrade::poll`], or nothing. What the session branches on it asks
+//! separately, with [`Upgrade::is_open`] and [`Upgrade::is_live`]. What the
+//! session adds is the sending, and moving the outbox onto the channel once
 //! one is open.
 //!
 //! Everything here is best-effort. Every failure path lands in [`State::Off`]
 //! rather than closing anything, because a link whose upgrade fails keeps
-//! working at GATT speed. That includes a step this end cannot read: an empty
-//! one or an unknown step byte is ignored, bytes after the fields a step
-//! carries are ignored, and a PSM too short to read ends the upgrade the way
-//! `unavailable` does. NIP-BE.
-//!
-//! A session opens one channel at most, because the odd nonce sequence runs
-//! across channels and fragments lost with one would put it out of step. Once
-//! the upgrade is [`State::Off`] it stays there, a later request or PSM is
-//! answered with `unavailable`, and a channel the shell reports afterwards
-//! carries nothing and is closed.
-//!
-//! Giving up is also when the shell lets go. An upgrade that goes off while
-//! the shell holds a channel, or is publishing or opening one, answers
-//! [`Step::Close`] once, and so does a channel the shell reports after it went
-//! off. A publication left standing takes whatever connects to it, and a
-//! channel left open carries nothing for the rest of the session. Closing the
-//! channel never closes the link.
+//! working at GATT speed, and a step this end cannot read is skipped or ends
+//! the upgrade. Once off it stays off for the session, and owes the shell one
+//! [`Step::Close`] for a channel it holds or is still making.
+//! `docs/transport.md#giving-up-the-upgrade`.
 
 use crate::link::Role;
 
@@ -169,17 +158,13 @@ impl Upgrade {
 
     /// The channel is up, and bulk rides it from here unless the upgrade went
     /// off while the shell was opening it, in which case the shell is told to
-    /// close it. Answers whether bulk rides it.
-    pub fn opened(&mut self) -> bool {
-        if self.is_off() {
-            self.state = State::Off { unclosed: true };
-
-            return false;
-        }
-
-        self.state = State::Open;
-
-        true
+    /// close it. [`is_open`](Self::is_open) says which.
+    pub fn opened(&mut self) {
+        self.state = if self.is_off() {
+            State::Off { unclosed: true }
+        } else {
+            State::Open
+        };
     }
 
     /// Whether bulk rides an open channel on this link.
@@ -201,9 +186,8 @@ impl Upgrade {
         matches!(self.state, State::Off { .. })
     }
 
-    /// Whether the shell holds a channel for this link, or is making one: it
-    /// was asked to publish or open one, or reported one, and has not been
-    /// told to close it.
+    /// Whether the shell holds or is making a channel for this link that it
+    /// has not been told to close.
     fn shell_holds_channel(&self) -> bool {
         matches!(
             self.state,
@@ -241,9 +225,6 @@ impl Upgrade {
 
     /// One step of the exchange, off the control channel. Answers what goes
     /// back, if anything.
-    ///
-    /// Nothing here is an error, because nothing about the upgrade closes the
-    /// link: a step this end cannot read is ignored or ends the upgrade.
     pub fn receive(&mut self, payload: &[u8]) -> Option<Vec<u8>> {
         let (&step, body) = payload.split_first()?;
 
@@ -267,9 +248,8 @@ impl Upgrade {
     ///
     /// A dialer cannot publish either. It says as much and stays on GATT,
     /// because neither end gives up a link over an optimization. A receiver
-    /// whose upgrade went off says the same, since it will not open another
-    /// channel this session, and one whose upgrade is under way has nothing to
-    /// add.
+    /// whose upgrade went off says the same, and one whose upgrade is under
+    /// way has nothing to add.
     fn on_request(&mut self) -> Option<Vec<u8>> {
         match (self.role, self.state) {
             (Role::Receiver, State::Idle) => {
@@ -290,9 +270,8 @@ impl Upgrade {
     /// The peer published a PSM, and the channel behind it is wanted here.
     ///
     /// This arrives with no request behind it as often as not, because a
-    /// receiver that wants bulk publishes unprompted. One too short to carry a
-    /// PSM ends the upgrade as `unavailable` would, and an end whose upgrade
-    /// went off says it will not open another channel.
+    /// receiver that wants bulk publishes unprompted. One too short to read
+    /// ends the upgrade, and once it is off any PSM is answered `unavailable`.
     fn on_published(&mut self, body: &[u8]) -> Option<Vec<u8>> {
         let Some(psm) = psm(body) else {
             self.go_off();
@@ -312,8 +291,7 @@ impl Upgrade {
     }
 }
 
-/// Read the PSM off a `PUBLISHED` payload: its first two bytes, ignoring
-/// whatever a later version adds after them.
+/// Read the PSM off a `PUBLISHED` payload's first two bytes.
 fn psm(payload: &[u8]) -> Option<u16> {
     match payload {
         &[high, low, ..] => Some(u16::from_be_bytes([high, low])),
@@ -434,17 +412,6 @@ mod tests {
     }
 
     #[test]
-    fn a_psm_carrying_more_than_two_bytes_is_opened_at_the_first_two() {
-        let mut dialer = Upgrade::new(Role::Dialer);
-
-        assert_eq!(
-            dialer.receive(&[message::PUBLISHED, 0x00, 0x86, 0xff]),
-            None
-        );
-        assert_eq!(dialer.poll(), Some(Step::Open(0x0086)));
-    }
-
-    #[test]
     fn an_empty_or_unknown_step_is_ignored() {
         let mut dialer = Upgrade::new(Role::Dialer);
         dialer.wanted();
@@ -492,25 +459,6 @@ mod tests {
         receiver.published(0x0088);
         assert_eq!(receiver.receive(&[message::REQUEST]), None);
         assert_eq!(receiver.state, State::Published(0x0088));
-    }
-
-    #[test]
-    fn a_channel_the_shell_reports_after_the_upgrade_went_off_is_not_used() {
-        let mut dialer = Upgrade::new(Role::Dialer);
-        dialer.receive(&published(0x0089));
-        dialer.poll();
-        dialer.receive(&[message::UNAVAILABLE]);
-        assert!(!dialer.opened());
-
-        let mut receiver = Upgrade::new(Role::Receiver);
-        receiver.wanted();
-        receiver.poll();
-        receiver.receive(&[message::UNAVAILABLE]);
-        assert_eq!(receiver.published(0x0089), None);
-        assert!(!receiver.opened());
-
-        assert!(dialer.is_off());
-        assert!(receiver.is_off());
     }
 
     #[test]

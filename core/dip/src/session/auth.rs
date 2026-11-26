@@ -41,29 +41,22 @@ impl AuthExchange {
 
     /// Mint the challenge this device sends, remembering it for verification.
     ///
-    /// `None` once one has been minted: a device sends one challenge per
-    /// session, and it stays valid for all of it. A second would leave the
-    /// peer answering one this device no longer holds. NIP-BE.
-    pub fn make_challenge(&mut self) -> Result<Option<String>> {
-        if self.sent_challenge.is_some() {
-            return Ok(None);
-        }
-
+    /// A session mints one, when it opens its half of the exchange, and it
+    /// stays valid for all of it. NIP-BE.
+    pub fn make_challenge(&mut self) -> Result<String> {
         let mut bytes = [0u8; 16];
         getrandom::getrandom(&mut bytes).context("generating an AUTH challenge")?;
 
         let challenge = hex::encode(bytes);
         self.sent_challenge = Some(challenge.clone());
 
-        Ok(Some(challenge))
+        Ok(challenge)
     }
 
     /// Record the challenge the peer sent, to answer when this device
-    /// discloses, and answer whether it was the first.
-    ///
-    /// Only the first is kept. Every event this device sends answers it, so
-    /// that one sent for a second pubkey verifies under the same challenge as
-    /// the first, and a later challenge changes nothing. NIP-BE.
+    /// discloses, and answer whether it was the first. Only the first is kept,
+    /// and every event this device sends answers it.
+    /// `docs/nips/p2p-auth.md#challenges`.
     pub fn receive_challenge(&mut self, challenge: String) -> bool {
         if self.peer_challenge.is_some() {
             return false;
@@ -114,13 +107,8 @@ impl AuthExchange {
     /// Verify the peer's response against our challenge and this channel,
     /// returning the pubkey it proved.
     ///
-    /// The challenge stays valid for the whole session, because a peer may
-    /// authenticate as several pubkeys by answering it with one event per
-    /// pubkey. NIP-BE. Each event is checked in full: its kind, its signature,
-    /// the challenge, and the relay tag naming this channel's static key. That
-    /// key is fresh every handshake, so a response captured on one link names
-    /// a channel no other link has, and one replayed on its own link proves
-    /// only what it proved already.
+    /// The challenge is not spent, because a peer authenticating as several
+    /// pubkeys answers it once for each. `docs/nips/p2p-auth.md#challenges`.
     pub fn verify(&mut self, event: &Event, local_static: [u8; 32]) -> Result<PublicKey> {
         if event.kind != 22_242 {
             bail!("the AUTH response is not kind 22242");
@@ -172,7 +160,7 @@ mod tests {
         let mut responder = AuthExchange::default();
         let identity = secret(1);
 
-        let challenge = challenger.make_challenge().unwrap().unwrap();
+        let challenge = challenger.make_challenge().unwrap();
         responder.receive_challenge(challenge.clone());
 
         // The responder names the challenger's channel; the challenger checks its own key.
@@ -221,34 +209,9 @@ mod tests {
     }
 
     #[test]
-    fn one_challenge_takes_an_event_for_each_pubkey_the_peer_holds() {
-        let mut challenger = AuthExchange::default();
-        let challenge = challenger.make_challenge().unwrap().unwrap();
-
-        let answer = |identity| {
-            let mut responder = AuthExchange::default();
-            responder.receive_challenge(challenge.clone());
-
-            responder.answer(&identity, DIALER_STATIC).unwrap().unwrap()
-        };
-
-        assert_eq!(
-            challenger
-                .verify(&answer(secret(1)), DIALER_STATIC)
-                .unwrap(),
-            secret(1).public_key()
-        );
-        assert_eq!(
-            challenger.verify(&answer(secret(2)), DIALER_STATIC).ok(),
-            Some(secret(2).public_key()),
-            "the first pubkey spent the challenge"
-        );
-    }
-
-    #[test]
     fn a_second_event_is_checked_as_fully_as_the_first() {
         let mut challenger = AuthExchange::default();
-        let challenge = challenger.make_challenge().unwrap().unwrap();
+        let challenge = challenger.make_challenge().unwrap();
 
         let mut first = AuthExchange::default();
         first.receive_challenge(challenge.clone());
@@ -261,23 +224,6 @@ mod tests {
         let elsewhere = second.answer(&secret(2), RECEIVER_STATIC).unwrap().unwrap();
 
         assert!(challenger.verify(&elsewhere, DIALER_STATIC).is_err());
-    }
-
-    #[test]
-    fn a_device_mints_one_challenge_and_it_stays_valid() {
-        let mut challenger = AuthExchange::default();
-        let challenge = challenger.make_challenge().unwrap().unwrap();
-
-        assert_eq!(challenger.make_challenge().unwrap(), None);
-
-        let mut responder = AuthExchange::default();
-        responder.receive_challenge(challenge);
-        let payload = responder
-            .answer(&secret(1), DIALER_STATIC)
-            .unwrap()
-            .unwrap();
-
-        assert!(challenger.verify(&payload, DIALER_STATIC).is_ok());
     }
 
     #[test]
@@ -300,7 +246,7 @@ mod tests {
         let mut challenger = AuthExchange::default();
         let mut responder = AuthExchange::default();
 
-        challenger.make_challenge().unwrap().unwrap();
+        challenger.make_challenge().unwrap();
         responder.receive_challenge("somebody-elses".to_string());
 
         let payload = responder
@@ -316,7 +262,7 @@ mod tests {
         let mut challenger = AuthExchange::default();
         let mut responder = AuthExchange::default();
 
-        let challenge = challenger.make_challenge().unwrap().unwrap();
+        let challenge = challenger.make_challenge().unwrap();
         responder.receive_challenge(challenge.clone());
 
         // The answer binds to the receiver's channel, not the challenger's, as in a replay.

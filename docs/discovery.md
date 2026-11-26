@@ -73,7 +73,7 @@ bitchat's `BLEConnectionScheduler.swift` is the reference for this.
                 └─────────┘
 ```
 
-One state sits off this line. **GATE_PENDING** is where an unadmitted stranger waits while the user is asked, entered from SECURED when the tags resolve to nobody and the [disclosure bucket](./policy.md#discoverability) does not admit them; approving returns the link to SECURED and the exchange resumes, refusing or the five-minute hold lapsing closes it.
+Two holds sit off this line, where an unadmitted stranger waits while the user is asked. Each is entered when the [disclosure bucket](./policy.md#discoverability) does not admit the stranger. A dialer holds at SECURED, when the receiver's tags resolve to nobody. A receiver defers until the dialer has named itself, and holds at DIALER_IDENTIFIED unless the dialer proves a contact. Approving resumes the exchange where it stopped, and refusing or the five-minute hold lapsing closes the link.
 
 [Login with device](./keys.md#login-with-device) sits off it in the other direction: it is an exchange on the control channel rather than a state, available only from SYNCING and only while the app is in the foreground, and the session goes on syncing throughout. A refusal at either end ends the exchange and leaves the link alone.
 

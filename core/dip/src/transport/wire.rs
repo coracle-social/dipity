@@ -83,13 +83,10 @@ impl Wire {
 
     /// The L2CAP channel went away, or never came, and bulk stays on GATT.
     ///
-    /// A channel that opened here hands the blob channel back to GATT as
-    /// [`Outbox::close_bulk`] says: a frame begun on GATT finishes there, and
-    /// the rest of the queue is dropped. A channel that never opened here
-    /// leaves the queue alone, since everything in it is cut for GATT. Either
-    /// way whatever half arrived on the channel is forgotten, because the rest
-    /// of it went with the channel, while a blob frame half arrived on GATT is
-    /// kept, because the peer finishes it there. NIP-BE.
+    /// A channel that opened here hands the outbox back to GATT with
+    /// [`Outbox::close_bulk`]. One that never did leaves the queue alone, since
+    /// everything in it is cut for GATT. Either way whatever arrived on the
+    /// channel without completing a frame is forgotten.
     pub fn close_bulk(&mut self) {
         if self.bulk_mtu.take().is_some() {
             self.outbox.close_bulk();
