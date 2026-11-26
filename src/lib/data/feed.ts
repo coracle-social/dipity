@@ -8,13 +8,13 @@
 
 import {derived, get, writable, type Readable} from "svelte/store"
 import {randomId, uniq} from "@welshman/lib"
-import {COMMENT, DELETE, PICTURE_NOTE, POLL_RESPONSE, REACTION} from "@welshman/util"
+import {COMMENT, DELETE, POLL_RESPONSE, REACTION} from "@welshman/util"
 import type {HashedEvent} from "@welshman/util"
 import {Dip, type EventDetail, type Order} from "$lib/core"
 import {muted, mutedTopics, social} from "$lib/data/contacts"
 import {trashed} from "$lib/data/trash"
 import {peopleNamed, wordsOf} from "$lib/data/search"
-import {attachment, pictureOf} from "$lib/data/media"
+import {attachment} from "$lib/data/media"
 import type {Encoded} from "$lib/data/encode"
 import {
   answering,
@@ -166,9 +166,7 @@ const respondedTo = (event: EventDetail["event"]): string | undefined => {
  * onto nothing, because a comment opens what it answers; it waits for the parent the way a boost
  * waits for its subject. `docs/stories.md`.
  */
-const grounded = async (all: Item[]): Promise<Item[]> => {
-  // A picture is its image. One whose bytes have not arrived has nothing to draw yet.
-  const items = all.filter(({event, media}) => event.kind !== PICTURE_NOTE || pictureOf(media))
+const grounded = async (items: Item[]): Promise<Item[]> => {
   const subjects = new Map<string, string>()
 
   for (const {event} of items) {

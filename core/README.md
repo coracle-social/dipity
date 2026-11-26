@@ -58,7 +58,7 @@ A build phase inherits none of a login shell's PATH. The script puts `~/.cargo/b
 
 Xcode 16's synchronized folder groups would make the file list automatic, and are not worth the conversion here: `ios/App/App/` also holds `public/`, the built web assets, which the bundle needs as one folder reference rather than as several hundred loose resources.
 
-`just ios` syncs the iOS half and opens the project. Double-clicking it opens it without the sync, which is enough unless Capacitor's config or plugins changed.
+`just open-ios` syncs the iOS half and opens the project. Double-clicking it opens it without the sync, which is enough unless Capacitor's config or plugins changed.
 
 ## Adding a dependency
 

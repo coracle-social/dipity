@@ -80,8 +80,10 @@ just bindings     # regenerate Swift + Kotlin from the built cdylib
 just sync         # both platforms: sync-android and sync-ios
 just sync-android # core → bindings → Android's library → web → cap sync android
 just sync-ios     # web → cap sync ios; Xcode builds the core itself
-just ios          # sync-ios, then open Xcode
-just android      # sync-android, then open Android Studio
+just open-ios     # sync-ios, then open Xcode
+just open-android # sync-android, then open Android Studio
+just run-ios      # sync-ios, then cap run ios on a device or simulator
+just run-android  # sync-android, then cap run android on a device or emulator
 just release      # build, sign and publish a release: docs/release.md
 ```
 

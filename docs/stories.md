@@ -87,7 +87,7 @@ Four facts about the transport decide most of the interface, and every story bel
 55. With the phone in their pocket, the user hears that somebody nearby asked to pair or that new things reached the board, once they switch that on in Settings or when the app offers it after their second post. — `NotificationOffer`, `Settings`
 56. The user decides whose pictures are blurred until tapped. — `Settings`, `Photo`
 57. The user mutes a topic by typing it, and unmutes one. — `Settings`
-58. A picture reaches the board once its image has, so that nothing is drawn as a hole. — `Board`
+58. A picture reaches the board before its image does, with a placeholder until the image arrives. — `Board`, `Photo`
 59. The user logs out, which erases the key and everything on the phone. — `Settings`
 
 ## No screen yet

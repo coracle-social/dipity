@@ -740,12 +740,19 @@ class Radio(private val context: Context, private val delegate: Delegate) {
 
                 // Subscribing makes a link and unsubscribing ends one: before it there is no way to write back over the connection.
                 if (value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) {
-                    if (link == null) {
-                        val made = take()
-                        links[made] = Link.Received(device)
+                    // Read before the old link is forgotten, because forgetting it drops the MTU the connection still has.
+                    val size = fragmentSize(device)
 
-                        delegate.linkUp(made, null, false, fragmentSize(device))
+                    // A central subscribing again has started over, so its old link ends rather than taking the new handshake.
+                    if (link != null) {
+                        forget(link)
+                        delegate.linkDown(link)
                     }
+
+                    val made = take()
+                    links[made] = Link.Received(device)
+
+                    delegate.linkUp(made, null, false, size)
                 } else if (link != null) {
                     forget(link)
                     delegate.linkDown(link)

@@ -29,8 +29,10 @@ just setup        # install dependencies, add Rust targets
 just dev          # Vite dev server (no BLE — a simulated core stands in)
 just core-test    # run Rust tests
 just sync         # core → bindings → Android's library → web → cap sync
-just ios          # open Xcode, which builds the core and the web assets itself
-just android      # sync, then open Android Studio
+just open-ios     # open Xcode, which builds the core and the web assets itself
+just open-android # sync, then open Android Studio
+just run-ios      # sync, then build and install on a device or simulator
+just run-android  # sync, then build and install on a device or emulator
 just qa           # types, lint, format, clippy, tests, the Android build — what CI runs
 ```
 

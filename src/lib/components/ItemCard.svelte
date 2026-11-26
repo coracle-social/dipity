@@ -1,5 +1,6 @@
 <script lang="ts">
   import Bookmark from "@lucide/svelte/icons/bookmark"
+  import Copy from "@lucide/svelte/icons/copy"
   import Ellipsis from "@lucide/svelte/icons/ellipsis"
   import Flag from "@lucide/svelte/icons/flag"
   import TriangleAlert from "@lucide/svelte/icons/triangle-alert"
@@ -78,6 +79,8 @@
   const category = $derived(categoryOf(item.event.kind))
 
   const topic = $derived(topicOf(item.event))
+
+  const text = $derived(item.event.content.trim())
 
   const opens = $derived(opensId(item))
 
@@ -250,8 +253,8 @@
         </Button>
       {/if}
       <DropdownMenu.Root>
-        <!-- The menu is empty on the user's own post when it has no topic. -->
-        <DropdownMenu.Trigger disabled={mine && !topic}>
+        <!-- The menu is empty on the user's own post when it has no text and no topic. -->
+        <DropdownMenu.Trigger disabled={mine && !text && !topic}>
           {#snippet child({props})}
             <Button {...props} variant="ghost" size="icon-sm" aria-label="More for this post">
               <Ellipsis />
@@ -259,6 +262,12 @@
           {/snippet}
         </DropdownMenu.Trigger>
         <DropdownMenu.Content align="end">
+          {#if text}
+            <DropdownMenu.Item onSelect={() => navigator.clipboard.writeText(text)}>
+              <Copy />
+              Copy text
+            </DropdownMenu.Item>
+          {/if}
           {#if !mine}
             <DropdownMenu.Item onSelect={() => go({at: "contact", pubkey: item.event.pubkey})}>
               <UserRound />

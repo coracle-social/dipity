@@ -146,12 +146,20 @@ sync-ios: build
     pnpm exec cap sync ios
 
 # Sync the iOS half and open Xcode.
-ios: sync-ios
+open-ios: sync-ios
     pnpm exec cap open ios
 
 # Sync the Android half and open Android Studio.
-android: sync-android
+open-android: sync-android
     pnpm exec cap open android
+
+# Sync the iOS half, then build and install on a device or simulator. Pass `--target <id>` to skip the prompt.
+run-ios *args: sync-ios
+    pnpm exec cap run ios --no-sync {{args}}
+
+# Sync the Android half, then build and install on a device or emulator. Pass `--target <id>` to skip the prompt.
+run-android *args: sync-android
+    pnpm exec cap run android --no-sync {{args}}
 
 # Render the app icon from resources/ into both shells. Needs rsvg-convert.
 icons:

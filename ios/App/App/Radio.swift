@@ -519,6 +519,12 @@ extension Radio: CBPeripheralManagerDelegate {
         central subscriber: CBCentral,
         didSubscribeTo characteristic: CBCharacteristic
     ) {
+        // A central subscribing again has started over, so its old link ends rather than taking the new handshake.
+        if let stale = self.link(for: subscriber) {
+            forget(stale)
+            delegate?.radio(self, downOn: stale)
+        }
+
         let link = take()
         links[link] = .received(subscriber)
 

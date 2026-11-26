@@ -179,7 +179,7 @@ Weight carries hierarchy before size does: a 14px semibold label reads as distin
 
 A picture is a NIP-68 kind 20 post: one image and a description. `src/lib/data/media.ts` re-encodes the file as soon as it is picked, in a worker where the webview can draw offscreen, as one JPEG of at most 1080 pixels on its long edge. Re-encoding is also what strips the camera's metadata, a location included. The core describes it for its `imeta` tag, which carries a hash rather than a url, and stores it beside the event.
 
-The view draws a blob from the file the core keeps it in, once all of it is there (`blobPath`). A picture post is left off the board until its image is whole, because the image is the post. A post from an older build may carry more than one, and the largest held is drawn.
+The view draws a blob from the file the core keeps it in, once all of it is there (`blobPath`). Until a picture post's image is whole, the post shows a placeholder in its place. A post from an older build may carry more than one, and the largest held is drawn.
 
 Whose pictures are blurred until tapped is a preference, `display.blur`: people outside the user's network by default, everyone but contacts, or everyone but the user.
 
